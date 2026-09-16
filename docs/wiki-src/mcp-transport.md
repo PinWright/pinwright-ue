@@ -220,6 +220,61 @@ Subsystem teardown stops new request handoffs before it destroys the dispatcher,
 
 Only after those responses are queued does transport stop begin its bounded drain. Each connection flushes pending response bytes, sends a write-side FIN, and continues reading and discarding inbound bytes during a bounded linger. This avoids an immediate close with unread request data turning into a TCP reset that discards the response at the peer. Connections are destroyed only after the peer closes or the drain/linger bounds expire.
 
+## Transport defaults
+
+- HTTP transport: enabled. The release package keeps it on because the plugin exists to provide editor automation.
+- Bind policy: loopback-only.
+- Port: per-project derived by default, see [Endpoint and port resolution](#endpoint-and-port-resolution).
+- Auth: bearer token required by default, see [Authentication](#authentication).
+- Request body limit: 1 MB.
+- Default request timeout: 120 seconds.
+- Maximum request timeout: 300 seconds.
+
+Review the plugin's settings under **Plugins -> PinWright** before using the gateway on a shared machine, remote desktop, studio build farm, or CI environment. If a client cannot connect, confirm that the Unreal Editor is open, the plugin is enabled, and no other local process is using the configured port.
+
+## Stdio proxy lifecycle tools
+
+The direct in-editor endpoint has exactly one tool, `call`. A client configured through the bundled stdio proxy sees four tools: `call`, `editor_start`, `editor_restart`, and `editor_prepare_tests`.
+
+- `editor_start({})` opens the project's `.uproject` through the registered file association (on Linux, which has none, it spawns the resolved editor directly, borrowing `DISPLAY`/`XAUTHORITY` from your desktop session when the proxy runs over SSH). Unreal owns prompts, compilation, and module loading for this path, and the engine comes from the project's `EngineAssociation` (on Linux, `UE_<version>=<engine root>` or a GUID key under `[Installations]` in `~/.config/Epic/UnrealEngine/Install.ini`), or from `$PINWRIGHT_ENGINE_ROOT` when set. An unresolved association fails with `EDITOR_ENGINE_NOT_FOUND`.
+- `editor_start({"map": "/Game/Maps/MyLevel"})` boots into a level. The map token is the first argument after the `.uproject`, so a map forces direct spawn and defaults `unattended_script` on.
+- `editor_restart({"map": "/Game/Maps/MyLevel"})` quits through `editor.quit`, waits for the endpoint to go down, then starts a fresh editor. Dirty or modal-blocked editors are reported rather than bypassed.
+- For tests, `editor_prepare_tests({"filter": "Project.Tests"})` is the only command-returning proxy verb. The `filter` is mandatory, must be non-empty, and has no default. The live-editor guard runs first and is reported as structured observation: a detected editor is `EDITOR_ALREADY_RUNNING`, an unavailable probe is `not_probed`, and only a safe probe proceeds to `COMMAND_READY`.
+
+All proxy-local lifecycle tools ping PinWright MCP before resolving or launching anything. If an editor answers, even while starting, lifecycle tools fail with `EDITOR_ALREADY_RUNNING`. A forwarded `call` while no editor is reachable reports `EDITOR_NOT_RUNNING`; an unavailable probe never licenses a second editor start.
+
+The dotted `system.run_ubt` and `system.run_tests` RPCs remain separate live-editor operations reached through `call`. They cannot start a stopped editor; use `editor_start` for a live editor or `editor_prepare_tests` to prepare a cold test command for the caller.
+
+## Cold test commands from editor_prepare_tests
+
+`COMMAND_READY` contains the resolved `UnrealEditor-Cmd` executable (off Windows, `UnrealEditor` when no `-Cmd` twin is built), the absolute project path, launch `argv`, explicit absolute `logPath`, checker executable, checker `argv`, and the `EngineAssociation`-resolved engine root. The verb returns immediately. It does not compile, launch, wait, kill, or return a test verdict.
+
+The caller runs the returned launch command and then the returned checker command with the exact same log path. The launch uses comma-separated `-ExecCmds` with `Automation RunTests <filter>,Quit`, `-TestExit="Automation Test Queue Empty"`, `-Abslog=<same absolute logPath>`, `-unattended`, `-nopause`, `-nocefaccelpaint`, `-ddc=InstalledNoZenLocalFallback`, and `-log`. It uses a real RHI and does not add `-NullRHI`.
+
+The command shape is:
+
+```powershell
+$log = "$env:HOST_ROOT\Saved\PinWright\test-runs\<run>\automation.log"
+& "$env:UE_ROOT\Engine\Binaries\Win64\UnrealEditor-Cmd.exe" "$env:HOST_ROOT\<HostProject>.uproject" `
+  '-ExecCmds=Automation RunTests Project.Tests,Quit' `
+  '-TestExit=Automation Test Queue Empty' `
+  "-Abslog=$log" `
+  -unattended -nopause -nocefaccelpaint -log
+```
+
+`check_suite_log.py` is the fail-closed verdict authority. The caller runs it under Unreal's bundled Python interpreter after the launch. It requires the counted `Automation Test Queue Empty <N> tests performed.` drain marker and distinguishes incomplete, empty, failed, skipped, and clean measurements. `PINWRIGHT_ASSERTIONS_SKIPPED` remains a distinct `COMPLETED_WITH_SKIPS` outcome, not a clean result.
+
+The checker states are:
+
+| state | meaning | code |
+| --- | --- | --- |
+| `CRASHED` | the editor died: a fatal/assert banner, or a non-ensure crash report in the run window | `EDITOR_TESTS_CRASHED` |
+| `DID_NOT_COMPLETE` | the queue never drained and no crash evidence exists, so the run was killed | `EDITOR_TESTS_INCOMPLETE` |
+| `NO_TESTS` | nothing was enqueued or recorded a success | `EDITOR_NO_TESTS` |
+| `COMPLETED_WITH_FAILURES` | the run drained with failures | `EDITOR_TESTS_FAILED` |
+| `COMPLETED_WITH_SKIPS` | the run drained but a skip marker was emitted | `EDITOR_TESTS_SKIPPED` |
+| `COMPLETED_CLEAN` | the run drained and every assertion ran | - |
+
 ## Not supported in v1
 
 - `GET /mcp` SSE channel (server-initiated streams) — `GET /mcp` returns 405; streaming exists only as the per-request upgrade on `POST /mcp` described above

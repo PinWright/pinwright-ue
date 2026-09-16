@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="290" viewBox="0 0 1200 290"
+     role="img" aria-labelledby="flowTitle flowDesc">
+  <title id="flowTitle">How PinWright connects</title>
+  <desc id="flowDesc">Your MCP client, such as Claude Code, Codex CLI, Cursor, Gemini CLI or VS Code Copilot, talks over one loopback MCP connection with a bearer token to the Unreal Editor, where the PinWright plugin runs in process. The project comes back as text: BPIR, widget XML, MGIR and asset dumps.</desc>
+
+  <rect x="0" y="0" width="1200" height="290" rx="16" fill="#0d1117"/>
+  <rect x="0.5" y="0.5" width="1199" height="289" rx="15.5" fill="none" stroke="#2a3340"/>
+
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+    <g id="client">
+      <rect x="40" y="44" width="376" height="168" rx="12" fill="#1a212b" stroke="#2a3340"/>
+      <text x="68" y="86" font-size="23" font-weight="700" fill="#e6edf3">Your MCP client</text>
+      <text x="68" y="114" font-size="18" fill="#8b97a5">not included: the one you already use</text>
+      <text x="68" y="150" font-size="19" fill="#e6edf3">Claude Code &#183; Codex CLI &#183; Cursor</text>
+      <text x="68" y="176" font-size="19" fill="#e6edf3">Gemini CLI &#183; VS Code Copilot</text>
+      <text x="68" y="200" font-size="18" fill="#8b97a5">or any other MCP client</text>
+    </g>
+
+    <g id="link">
+      <text x="600" y="92" font-size="19" fill="#8b97a5" text-anchor="middle">MCP &#183; loopback only &#183; bearer token</text>
+      <line x1="424" y1="120" x2="768" y2="120" stroke="#4c9aff" stroke-width="2"/>
+      <path d="M768 112l24 8-24 8z" fill="#4c9aff"/>
+      <circle cx="424" cy="120" r="5" fill="#4c9aff"/>
+      <text x="600" y="152" font-size="18" fill="#79c0ff" text-anchor="middle"
+            font-family="ui-monospace, 'SF Mono', 'Cascadia Code', Consolas, monospace">127.0.0.1:&lt;port&gt;/mcp</text>
+    </g>
+
+    <g id="editor">
+      <rect x="784" y="44" width="376" height="168" rx="12" fill="#1a212b" stroke="#2a3340"/>
+      <text x="812" y="86" font-size="23" font-weight="700" fill="#e6edf3">Unreal Editor</text>
+      <text x="812" y="114" font-size="18" fill="#8b97a5">UE 5.3&#8211;5.8 &#183; Windows and Linux</text>
+      <rect x="812" y="134" width="320" height="58" rx="10" fill="#0a0e14" stroke="#294a73"/>
+      <text x="832" y="158" font-size="19" fill="#4c9aff"
+            font-family="ui-monospace, 'SF Mono', 'Cascadia Code', Consolas, monospace">PinWright</text>
+      <text x="832" y="180" font-size="18" fill="#8b97a5">in process, editor-only</text>
+    </g>
+
+    <g id="return">
+      <path d="M972 212v34H468v-26" fill="none" stroke="#3fb950" stroke-width="2"/>
+      <path d="M460 222l8-24 8 24z" fill="#3fb950"/>
+      <text x="600" y="276" font-size="18" fill="#8b97a5" text-anchor="middle">the project comes back as text: BPIR, widget XML, MGIR, asset dumps</text>
+    </g>
+  </g>
+</svg>

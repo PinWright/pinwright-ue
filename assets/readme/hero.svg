@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="380" viewBox="0 0 1200 380"
+     role="img" aria-labelledby="pwTitle pwDesc">
+  <title id="pwTitle">PinWright</title>
+  <desc id="pwDesc">PinWright is an MCP plugin for the Unreal Editor. Its whole tool surface is one call tool with three shapes: call() returns the namespace index, call with a method name returns that operation's wiki page, and call with method plus arguments runs it in the editor.</desc>
+
+  <rect x="0" y="0" width="1200" height="380" rx="16" fill="#0d1117"/>
+  <rect x="0.5" y="0.5" width="1199" height="379" rx="15.5" fill="none" stroke="#2a3340"/>
+
+  <g id="title-block" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+    <text x="56" y="76" font-size="20" font-weight="700" letter-spacing="2.4" fill="#8b97a5">MCP PLUGIN FOR THE UNREAL EDITOR</text>
+    <text x="56" y="142" font-size="54" font-weight="700" letter-spacing="-1">
+      <tspan fill="#e6edf3">Pin</tspan><tspan fill="#4c9aff">Wright</tspan>
+    </text>
+    <text x="56" y="196" font-size="25" fill="#e6edf3">Your AI coding assistant, working</text>
+    <text x="56" y="230" font-size="25" fill="#e6edf3">inside the live Unreal Editor.</text>
+    <text x="56" y="276" font-size="20" fill="#8b97a5">It reads the project as text, authors</text>
+    <text x="56" y="302" font-size="20" fill="#8b97a5">assets, and you review every change.</text>
+  </g>
+
+  <g id="call-surface">
+    <rect x="596" y="56" width="552" height="252" rx="12" fill="#0a0e14" stroke="#2a3340"/>
+    <path d="M596 68a12 12 0 0 1 12-12h528a12 12 0 0 1 12 12v28H596z" fill="#161b22"/>
+    <line x1="596" y1="96" x2="1148" y2="96" stroke="#2a3340"/>
+    <text x="620" y="83" font-size="18" fill="#8b97a5"
+          font-family="ui-monospace, 'SF Mono', 'Cascadia Code', Consolas, monospace">the entire tool surface: one tool named call</text>
+
+    <g font-family="ui-monospace, 'SF Mono', 'Cascadia Code', Consolas, monospace">
+      <circle cx="622" cy="132" r="5" fill="#3fb950"/>
+      <text x="640" y="138" font-size="19" fill="#e6edf3">call()</text>
+      <text x="640" y="164" font-size="18" fill="#8b97a5"
+            font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">returns the namespace index</text>
+
+      <circle cx="622" cy="196" r="5" fill="#4c9aff"/>
+      <text x="640" y="202" font-size="19" fill="#e6edf3">call(<tspan fill="#79c0ff">"blueprint.compile_bpir"</tspan>)</text>
+      <text x="640" y="228" font-size="18" fill="#8b97a5"
+            font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">returns that operation's wiki page</text>
+
+      <circle cx="622" cy="260" r="5" fill="#d29922"/>
+      <text x="640" y="266" font-size="19" fill="#e6edf3">call(<tspan fill="#79c0ff">"blueprint.compile_bpir"</tspan>, {...})</text>
+      <text x="640" y="292" font-size="18" fill="#8b97a5"
+            font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">runs it in the editor</text>
+    </g>
+  </g>
+
+  <g id="meta-rail" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+    <line x1="56" y1="330" x2="1144" y2="330" stroke="#2a3340"/>
+    <text x="56" y="360" font-size="20" fill="#8b97a5">1,263 operations &#183; 68 namespaces &#183; 5,323 automation tests</text>
+    <text x="1144" y="360" font-size="20" fill="#8b97a5" text-anchor="end">UE 5.3&#8211;5.8 &#183; Windows and Linux &#183; MIT</text>
+  </g>
+</svg>
