@@ -1,0 +1,619 @@
+# Roman oil lamp - a low wheel-thrown reservoir with a KEYHOLE plan, a sunken
+# discus inside a grooved shoulder, a collared filling hole, a long blunt
+# nozzle and a ring handle, hollowed to a 2.6 wall.
+#
+# Modelled ten times life size, like chess_rook.pwmodel: 107 uu long against a
+# 107 mm lamp, so every number reads directly as a millimetre. Scale the actor
+# by 0.1 for a real one. It was 96.6 until the nozzle was lengthened - see 2.
+#
+# THE FAILURE THIS OBJECT HAS TO BEAT IS NOT "UNRECOGNISABLE" - IT IS
+# "TEAPOT". A low round pot with a spout at one end and a loop at the other is
+# a teapot to most people, and every proportion here was chosen against that
+# reading rather than against emptiness. Each one replaced something a render
+# showed failing:
+#
+#   1. THE KEYHOLE PLAN, the newest and the largest of these. From directly
+#      above this lamp used to be A CIRCLE WITH A TAB ON IT - the nozzle ran
+#      straight out of the body and the outline was convex from the handle all
+#      the way to the lip. A real Roman lamp's plan is a keyhole: the shoulder
+#      sweeps CONCAVELY in on both sides of the nozzle, and a concave outline
+#      is the one plan feature no pot has. Two `cone` tools subtracted at
+#      (32, +-27) carve it, 9.9 deep at the body's widest;
+#
+#      THE BLOCKER THIS FILE USED TO RECORD IS GONE, AND IT WAS AN ORDERING
+#      BUG, NOT A GEOMETRIC ONE. The old note said a shoulder notch could not
+#      be cut because it would open the shelled reservoir. It would - cut
+#      AFTER `shell`. Cut BETWEEN the nozzle union and `shell` it cannot,
+#      because the inner surface it would breach does not exist yet: the notch
+#      becomes part of the closed solid that `shell` then walls, so the 2.6
+#      wall follows the notched boundary. Measured on the shipped file:
+#      isClosed true, boundaryEdges 0, signedVolume +30,372, componentCount 3,
+#      zero diagnostics. Nothing else had to change. Reordering is the cheapest
+#      edit this format has and it had never been tried.
+#      RENDERED AND CONFIRMED. From above the plan is a keyhole: the outline is
+#      concave on both sides of the nozzle and the base ring below it is still a
+#      full circle. That is the one plan feature no pot has, and it is the single
+#      biggest thing separating this object from the teapot reading;
+#   2. the nozzle projects 37.4 clear of the body out of a 107 total, and its
+#      sides run NEARLY PARALLEL: 16.8 across at the nose against 26.8 where
+#      it leaves the body, converging about 5.6 degrees a side. It used to
+#      project 27.4, and at that length it was INVISIBLE from the one camera
+#      this object has always failed - three-quarters from behind the handle,
+#      where the nozzle points away from the lens and the body's crown hides
+#      it. That is measurable rather than aesthetic: from a camera at
+#      (-163.6, 64.3, 84.4) the old tip subtended -17.4 degrees of elevation
+#      against the crown's -16.9, so it sat BELOW the skyline and merged into
+#      the body; at x=72 it subtends -16.6 and clears it.
+#      Length is the only lever here that does not cascade. Raising the nozzle
+#      pushes its buried end up through the shoulder, and lowering the crown
+#      does the same thing from the other side - the buried end is 19.3 tall
+#      against a body only 24.4 tall, so there is 1.25 of headroom and no more.
+#      An earlier pass tapered from close to the body's full width down to a
+#      point over 37 and read as the spout of a watering can; the one before
+#      that used a constant-section capsule and read as a sausage lying against
+#      a pillow. A spout is long and THIN; a lamp nozzle is long and BLUNT, so
+#      the extra length is safe only while the taper stays this shallow and the
+#      nose stays round - which is why the tip was rounded in the same pass;
+#   3. THE SUNKEN DISCUS AND THE SHOULDER GROOVE - the two features a teapot
+#      cannot have and a Roman lamp always does. A shoulder crowning at z=24.4
+#      with a 0.7-deep turned ring incised into it between radius 22.8 and
+#      24.0, then a step down of 5.0 into a dished panel 16.6 in radius with
+#      the filling hole in the middle of it.
+#      The discus was 3.25 deep and at that depth it VANISHED at low camera
+#      angles: foreshortened to a crease, the whole top read as one smooth dome
+#      and the collar as a knob standing on it. At 5.0 the near wall of the
+#      well is a shadowed band from any angle above the horizon. The groove is
+#      the other half - a single turned line round the discus is the most
+#      universal Roman shoulder treatment, it costs six profile points and no
+#      boolean, and it converts a featureless dome into a moulded panel.
+#      An earlier pass domed the top smoothly all the way to the collar and the
+#      collar then read as a LID KNOB; a pass after that sank a discus only 4.4
+#      wider than the collar itself, which rendered as a washer rather than a
+#      panel;
+#   4. the body sits on a FLAT 52-wide base and turns over at a 44.4-degree
+#      carination at z=9.0 of its 24.4 height. Both halves of that matter: a
+#      widest point at mid-height closes the silhouette into a lens, and a
+#      turn softer than the 40 that split_normals is set to is averaged away
+#      by recalculate_normals and leaves an oblate blob. That is not
+#      hypothetical - a pass that widened the shoulder by softening this turn
+#      to 11 degrees came back as a featureless pebble, and it took the discus
+#      the change was meant to help down with it;
+#   5. the ring handle is 23.2 across against the body's 69.2 - a third - and
+#      its top clears the shoulder by 8.7. The earlier 27-across ring standing
+#      14 clear was the second half of the teapot: a handle that towers over a
+#      low body is a handle you POUR with.
+#
+# HONEST LIMIT, AND IT IS THE NOTCH. Subtracting a convex tool from a convex
+# body ALWAYS leaves a crease, and here that crease is well over the 40 that
+# split_normals hardens - so it comes back as a hard edge and the notch face
+# reads as a lit FACET rather than as a thrown waist. RENDERED AND CONFIRMED,
+# and it is the worst thing on this object: from a true side elevation the notch
+# face is a hard-edged shield-shaped plate that looks stuck ON the lamp rather
+# than turned into it. It is much less objectionable from a three-quarter above
+# the horizon, where it reads as a scallop, which is why it survives.
+# (This paragraph used to blame "the key light at +Y and no fill". Both halves
+# were wrong. The key is near azimuth 110, and the scene HAS fill - warm frames
+# put minLuminance around 0.02-0.05. The "no fill" reading came from cold first
+# captures into a freshly opened preview, which are about nine tenths of a stop
+# dark with the ambient still absent and `warmup.settled` reporting true anyway.
+# The facet is a geometry problem and it is visible under any lighting.)
+# It is not tunable away, and the three ways out were each checked and each fails:
+#   - depth and crease-softness trade off directly. A rim turning less than 40
+#     degrees needs 1197.2 - m^2 < R(2m - 53.01), for min radius m and tool
+#     radius R. At m=26 - the depth the plan read needs - the right-hand side
+#     is negative for every R, so there is no solution at any tool size;
+#   - the tool cannot be slid forward to sit AT the junction instead of on the
+#     flank. The nearer the nozzle axis, the thinner the wedge between the body
+#     circle and the nozzle flank, and the largest tool that still clears the
+#     nozzle at 30 degrees of azimuth has radius about 4 - a groove, not a
+#     shoulder;
+#   - two overlapping subtracts do not fillet the corner, they SPIKE it. Two
+#     removed discs meeting at an angle leave a wedge of material pointing into
+#     the gap between them. That is visible already as the small spurs at each
+#     notch corner in the plan render, which are the same effect where the
+#     cone's cut runs out into the shoulder.
+# What is left to choose is the tool's SECTION, and that is what the cone is
+# for; the notch block below records the two sections tried before it.
+#
+# WHERE THIS STANDS, SHOT AND LOOKED AT RATHER THAN ARGUED. Five whole-object
+# views at pinned exposure, all warm frames, camera near the key at azimuth 110:
+#   three-quarter above the horizon (pitch -32 and -18) - reads as a Roman oil
+#     lamp, and the gravy-boat reading this file was built against is gone. A
+#     gravy boat is open on top; this is closed, with a collared filling hole in
+#     a sunken discus and a long blunt nozzle. Those are not pouring vessels;
+#   plan (pitch -70) - the strongest of the five. The keyhole is unmistakable;
+#   true side elevation (pitch -5) - reads as a lamp, but the notch facet is a
+#     foreign object on it. See HONEST LIMIT;
+#   three-quarter from BEHIND THE HANDLE - still the weakest camera and still
+#     worth keeping in the set. The nozzle now clears the crown, exactly as item
+#     2 predicted, but with the nozzle pointing away and the collar standing on
+#     the skyline it reads as a squat lidded pot. That is a bad side, not a bad
+#     object, and the fix for it is the fix item 2 already rejected.
+# The wick is what settles the close read, which is why the wick and the hole it
+# stands in are sized to be seen rather than to be exact - at a tight framing it
+# is plainly a charred fibre stub in an open hole, matte and near-black against
+# terracotta. At whole-object framing it is about fifteen pixels and carries much
+# less of the load than this file assumes; the plan and the nozzle carry it.
+#
+# THE TWO WHITE-GEOMETRY DEFECTS ARE FIXED, AND THAT IS NOW CHECKED BY EYE rather
+# than by the compile, which never mentioned either. A close render straight down
+# through the collar shows the collar bore, the filling-hole bore and the shell's
+# inner wall all terracotta. Both blocks below are describing history, not a live
+# defect - but they are the only record of it, so they stay.
+#
+# BUILD ORDER IS LOAD-BEARING, and it now carries three separate constraints:
+#   reservoir and nozzle are unioned into one closed solid FIRST, because
+#     hollowing the reservoir and then adding a nozzle gives a nozzle with no
+#     oil channel into the body - the lamp that does not work;
+#   the shoulder notches are subtracted AFTER that union and BEFORE `shell`,
+#     which is the whole of item 1 above;
+#   the collar is unioned AFTER `shell`, because a collar hollowed to a 2.6
+#     wall would be a chimney rather than a rim, and the two holes are opened
+#     last of all.
+
+pwmodel 0
+
+materials {
+    # Rebind to your own clay and fibre - nothing else changes.
+    #
+    # TWO SLOTS, TWO BEHAVIOURS, AND THE WICK IS THE WHOLE ARGUMENT. The header
+    # above says the failure this object has to beat is TEAPOT, and that the wick
+    # is "the single feature that decides whether this object is a lamp or a gravy
+    # boat". A charred wick is a sooty fibre stub: near-black, and matte to the
+    # point of having no highlight at all. Bound to the same material as the clay
+    # it reads as a clay knob standing in a hole - the spout finial of a teapot,
+    # which is precisely the reading this model is built against. Cloth is the
+    # behaviour that says burnt fibre; the near-black `color=` on the capsule is
+    # the other half.
+    Clay = "/Game/PinWrightExamples/Materials/MI_PwModelExample_MatteDielectric"
+    Wick = "/Game/PinWrightExamples/Materials/MI_PwModelExample_Cloth"
+}
+
+part vessel {
+    # The reservoir. 69.2 across against 24.4 tall - a lamp is a low thing,
+    # because a tall one tips when the nozzle is loaded and lit.
+    #
+    # Reading the profile bottom to top:
+    #   a flat 52-wide resting base. A lamp with a domed underside rocks, and
+    #     in a render it also floats: the contact shadow is the only thing
+    #     telling the eye the object has weight;
+    #   a wall that runs out and nearly VERTICAL to the widest point at
+    #     (34.6, 9.0), where the profile turns back in. The direction change
+    #     there is 44.4 degrees - the carination, and the one hard horizontal
+    #     the lower half has;
+    #   a shoulder climbing from there to a crown at z=24.4, flattening as it
+    #     goes: the last four points before the rim rise only 1.6 over 6 of
+    #     radius, so the top half reads as a dish rather than a dome;
+    #   THE SHOULDER GROOVE, three points cutting a 0.7-deep V between radius
+    #     24.0 and 22.8 - (24.0, 23.45), (23.4, 22.75), (22.8, 23.45). Its two
+    #     lips turn 82.4 and 98.8 degrees, both far over the 40 that
+    #     split_normals hardens, so the groove comes back as two crisp
+    #     concentric lines rather than a soft dimple. It is a turned line, not
+    #     a modelled one: authored into the profile, so its vertices are the
+    #     generator's own and take `color=` - which a `bevel` in the same place
+    #     would not, and that is why there is no bevel anywhere on this model;
+    #   THE DISCUS RIM at (20.0, 24.4). The direction change there is 59.2
+    #     degrees, over the 40 that split_normals hardens, so the rim comes
+    #     back as an edge. The two points below it turn 11.1 and 37.1, both
+    #     under 40, so the wall of the step and the floor it lands on come back
+    #     smooth. That asymmetry is the point: a step hardened at both ends
+    #     reads as a machined counterbore, not as thrown clay;
+    #   the sunken discus floor at 19.4, 5.0 below the crown. It was 21.15 and
+    #     3.25 below; the header records why it was deepened, and note that
+    #     moving this floor is a change to CHECK AGAINST THE COLLAR, whose
+    #     `pipe` has to grow downwards by the same amount or it ends up
+    #     floating above the floor it is supposed to stand in.
+    #
+    # The first and last points sit on the axis (radius 0), which is what
+    # closes the revolution into a solid rather than an open surface.
+    revolve steps=48 material="Clay" profile=[(0, 0), (26, 0), (30, 1.0), (33, 3.2), (34.4, 6.0), (34.6, 9.0), (33.4, 10.4), (32.2, 12.8), (30.6, 15.8), (28.8, 18.6), (27.0, 21.0), (25.0, 22.8), (24.0, 23.45), (23.4, 22.75), (22.8, 23.45), (22.0, 23.95), (21.0, 24.35), (20.0, 24.4), (18.8, 22.6), (17.8, 20.2), (16.6, 19.5), (8.0, 19.4), (0, 19.35)] color=(0.68, 0.42, 0.26, 1)
+
+    # THE NOZZLE, and it is a second revolve rather than a cone on purpose. A
+    # cone gives a straight-sided funnel: the taper is linear, the tip is a
+    # disc as wide as the cone's own end, and the join to the body is a hard
+    # V. A profile can do what a nozzle actually does - run nearly parallel
+    # over the part that shows, then flare hard where it enters the pot.
+    #
+    # A revolve turns about local Z and rotate=(0, 90, 0) lays local +Z along
+    # world -X, so the profile's z reads as distance BACK from the tip: z=0 is
+    # the tip at x=72 and z=46 is the buried end at x=26, well inside the 34.6
+    # wall so the union has real overlap rather than a tangency.
+    #
+    # THE NOSE IS ROUNDED, AND IT USED TO BE A FLAT DISC. The profile began
+    # (0, 0), (6.6, 0) - a 13.2-wide disc standing square across the end of the
+    # nozzle - and in every three-quarter render from the nozzle side that disc
+    # was a large flat ellipse facing the camera, which reads as a CUT-OFF PIPE
+    # STUB. Six points now turn the tip over on a 8.4 x 2.6 quarter-ellipse, so
+    # the nozzle ends in a blunt dome. The turns inside the cap peak at 26.7
+    # degrees, all under the 40 split_normals hardens, so the nose comes back
+    # smooth-shaded and no edge shows.
+    # A `bevel` on the old flat disc would have done the same job and could not
+    # be used: bevel faces are new vertices no generator made, so they bake out
+    # WHITE (see the collar block below). Profile points are the generator's
+    # own and take `color=`. That is the general rule on this model - round
+    # things in the profile, never with a modifier.
+    #
+    # scale is applied in the revolve's own frame BEFORE that rotation, so
+    # (0.72, 1, 1) squashes the cross-section and not the length: local X
+    # becomes world Z - the flattened tongue a real nozzle is, and not the
+    # round pipe that scaling after the rotation would give. 0.72 rather than
+    # the 0.6 an earlier pass used, because at 0.6 the nozzle rendered as a
+    # blade lying on the table.
+    #
+    # WHERE the buried end has to be checked is not obvious: the section is an
+    # ellipse, so its extreme y and its extreme z are different points and
+    # neither is a corner. Its widest points are (26, +-13.4, 11) - radius
+    # 29.25 from the lamp's axis, where the body stands to 17.9, so they are
+    # 6.9 under the wall; its highest point is (26, 0, 20.65), against a body
+    # standing to 21.9 on that radius. A bounding box over the same solid
+    # pairs y=13.4 with z=20.65, a point the nozzle does not contain, and
+    # reports a clash that does not exist.
+    #
+    # THAT 1.25 OF HEADROOM IS THE BUDGET FOR THE WHOLE UPPER BODY. Lower the
+    # crown, flatten the shoulder, or raise the nozzle by more than 1.25 and
+    # the buried end erupts through the shoulder as a ridge. It is the reason
+    # the "make the lamp flatter" fix for the behind-the-handle view was
+    # rejected in favour of lengthening the nozzle: at a crown of 22.0 the body
+    # stands to only 19.9 on radius 26, and the nozzle would break surface.
+    union {
+        revolve steps=28 rotate=(0, 90, 0) scale=(0.72, 1, 1) at=(72.0, 0, 11.0) profile=[(0, 0), (4.22, 0.35), (5.73, 0.7), (6.86, 1.1), (7.75, 1.6), (8.24, 2.1), (8.4, 2.6), (8.7, 4.5), (9.0, 8.0), (9.6, 16.0), (10.3, 25.0), (11.3, 34.0), (13.4, 46.0), (0, 46.0)] color=(0.68, 0.42, 0.26, 1)
+    }
+
+    # THE SHOULDER NOTCHES - the keyhole, and THE POSITION OF THESE TWO OPS IN
+    # THE FILE IS THE FEATURE. Between the nozzle union and `shell`: see the
+    # header. Move either one below `shell` and it opens the reservoir.
+    #
+    # A `cone`, not a cylinder and not a sphere, and BOTH OF THOSE WERE BUILT
+    # AND RENDERED FIRST:
+    #
+    #   a CYLINDER radius=16 at (32, +-27) gives the best plan of the three -
+    #     8.7 deep, a clean keyhole - and the worst elevation. A vertical wall
+    #     has no shading gradient at all, so in a true side view it reads as a
+    #     flat panel with a dead-straight vertical crease running the full
+    #     height from base to shoulder. Straight vertical lines do not happen
+    #     on thrown pottery, and that one line was the whole of the problem;
+    #
+    #   a SCALED SPHERE - `sphere radius=1 scale=(16.6, 16.6, 24)` - was the
+    #     obvious fix and is the worst of the three. It fades to zero depth top
+    #     and bottom, which is exactly what a soft scallop wants, and a boolean
+    #     rim where the cut depth goes to zero is a TANGENTIAL rim: the two
+    #     surfaces meet at a vanishing angle and the intersection curve
+    #     zigzags across facets. The render came back with a visible SAWTOOTH
+    #     round the whole scallop, the compile reported 3 degenerate triangles
+    #     - the first this model has ever had - and at subdivisions=48 it cost
+    #     21,096 triangles against 6,854 for the cylinder. The rule that falls
+    #     out: a boolean tool must leave the body TRANSVERSALLY. Anything that
+    #     tapers to a tangency along an arc will comb.
+    #
+    # The cone keeps the cylinder's transversal exits (constant slope, so the
+    # cut always terminates where the BODY's own radius falls away from it) and
+    # buys back two things. It leans 11.3 degrees, so the crease is not
+    # vertical; and because it is wider at the top it goes on cutting up
+    # through the shoulder - 4.7 deep at z=21 - so the SHOULDER RING narrows
+    # beside the nozzle instead of only the belly. That narrowing is what makes
+    # the plan read as a lamp rather than as a bitten pot.
+    #
+    # The numbers, since none of them is guessable from the op line:
+    #   tool radius r(z) = 15.37 + 0.20z; centre distance from the lamp axis
+    #     41.87; so the cut reaches radius 41.87 - r(z);
+    #   z=0     -> 26.50 against a 26.0 base: THE BASE IS NOT CUT, and it must
+    #     not be, or the resting ring goes non-circular;
+    #   z=9     -> 24.70 against the body's widest 34.6: the 9.9 that the plan
+    #     silhouette shows;
+    #   z=21    -> 22.30 against 27.0: 4.7 into the shoulder;
+    #   z=24.4  -> 21.62 against the crown's 20.0: 1.6 of clearance, so the
+    #     DISCUS RIM is untouched. Deepen this notch and that is the number that
+    #     runs out first;
+    #   THE SHOULDER GROOVE IS NOT UNTOUCHED, and this block used to claim it
+    #     was. Run the same formula at the groove's own heights instead of at the
+    #     crown: z=22.75 -> 21.95 and z=23.45 -> 21.81, against groove lips at
+    #     radius 24.0, 23.4 and 22.8. All three are OUTSIDE the safe radius, so
+    #     the notch cuts the groove away wherever it bites, by up to 2.2. It is
+    #     visible in any render from above - the turned ring runs round the
+    #     shoulder and stops dead at each notch. That is what a real lamp does, so
+    #     it is kept, but it is a consequence rather than a clearance: the crown
+    #     was checked and the groove, which sits 1.6 lower and 3-4 further out,
+    #     was not. Check the LOWEST and WIDEST feature, not the innermost one;
+    #   at z=11 the tool overshoots the nozzle flank by 1.15 and the overshoot
+    #     tapers to nothing by x=38. It has to overshoot: stop the tool short
+    #     of the nozzle and a thin wedge of body is left standing between the
+    #     two, which `shell` then has to wall on both sides.
+    subtract {
+        cone base_radius=12.97 top_radius=22.57 height=48 segments=48 at=(32, 27, 12) color=(0.68, 0.42, 0.26, 1)
+    }
+    subtract {
+        cone base_radius=12.97 top_radius=22.57 height=48 segments=48 at=(32, -27, 12) color=(0.68, 0.42, 0.26, 1)
+    }
+
+    # Hollow it. 2.6 is a potter's wall at this scale: thin enough that the
+    # lamp is mostly reservoir, thick enough to survive being fired. shell
+    # needs the closed solid above it, which is why the union comes first.
+    shell thickness=2.6
+
+    # THE COLLAR around the filling hole - a 6.1-high ring wall standing in the
+    # sunken discus, of which 5.7 shows above the floor and 0.7 above the
+    # shoulder crown. THE 0.7 IS THE NUMBER THAT MATTERS, NOT THE 6.1: the
+    # 6.5-high version that rendered as a teapot's lid knob stood 3.1 PROUD OF
+    # THE CROWN, and it is standing proud, not overall height, that reads as a
+    # knob. This collar grew from 4.4 to 6.1 only because the discus floor
+    # dropped from 21.15 to 19.4 under it; its top has not moved.
+    # Unioned after the shell so it stays solid.
+    #
+    # A `pipe`, and THIS FILE USED TO SAY IT COULD NOT BE. The comment it
+    # replaces claimed pipe "generates the two tube walls and NO end caps",
+    # that it was therefore an open surface which would leave a hole in
+    # anything it was unioned into, and that it placed its at= at its BASE
+    # where every other generator here is centred on it - and built the collar
+    # from a solid cylinder bored by the filling-hole subtract instead. Every
+    # one of those claims was true when it was written and every one is now
+    # false. The op table reads: "A hollow tube along local Z: a closed solid
+    # with an outer wall, a bore and both annular end caps. Centred like every
+    # other generator - height=H spans z -H/2..+H/2, the same span as cylinder
+    # height=H."
+    #
+    # THE REASON THE SWAP WAS MADE NO LONGER EXISTS, AND THE PIPE STAYS ANYWAY.
+    # The argument was about `bevel`: it walks polygroup edges, a pipe brings
+    # four circles where a cylinder brings two, so one bevel would round the
+    # bore's rim as well as the outer one - which a cylinder could not do at any
+    # setting, because its bore did not exist yet when the bevel ran. That bevel
+    # was then deleted for rendering WHITE (next paragraph but one), so the pipe
+    # is now carrying a rolled-rim argument for a rim that is sharp. Read the two
+    # paragraphs together before quoting either: this file has contradicted
+    # itself here once already.
+    # The pipe is still the right op on its own merits - it is one closed solid
+    # where the old arrangement was a cylinder plus a bore cut afterwards, so
+    # there is one op instead of two and no ordering to get wrong - but if the
+    # bevel ever comes back, it comes back for the reason above and that reason
+    # has to be re-argued, not inherited.
+    #
+    # inner_radius 5.4 against the filling hole's 5.2 below is deliberate. The
+    # two are no longer the same surface, so they cannot z-fight, and the 0.2
+    # difference reads as the ledge a thrown collar has. What the old
+    # arrangement bought instead was that collar and hole could not drift out
+    # of register, because one subtract cut both; keeping them separate means
+    # a change to either is now a change to check against the other.
+    #
+    # Offset to x=5, not centred: a Roman discus puts its filling hole
+    # slightly toward the nozzle, and here it also buys the clearance the ring
+    # handle needs.
+    # THE COLLAR RIM IS SHARP, AND IT USED TO BE CHAMFERED. `bevel distance=1.1
+    # segments=3` sat here and is deliberately gone, because it rendered as a WHITE
+    # RING round the filling hole - the single most visible feature on the lamp from
+    # anywhere above it, on an object that is otherwise entirely terracotta.
+    #
+    # NOTHING THE MODEL CAN SAY WOULD HAVE COLOURED IT. `color=` is a generator
+    # parameter, and a bevel is a modifier: the chamfer faces are new vertices that
+    # no generator made, so they carry no colour overlay and bake out white.
+    # `set_vertex_color set_all=true` does not rescue them either - it was tried in
+    # two positions, immediately after the booleans and as the part's last op, and
+    # the ring stayed white both times. The op reaches generator-made vertices and
+    # not much else.
+    #
+    # The wall is only 3.2 thick, so a 1.1 chamfer off both edges consumed most of
+    # the annulus: nearly the whole visible top of the collar was bevel geometry,
+    # which is why this read as a painted white washer rather than as a soft edge.
+    # It also cost 786 triangles at the time it was removed, when the whole model
+    # was 7,346 with the bevel and 6,560 without. The model is 8,244 now - the
+    # keyhole notches arrived after this was written - so do not read 6,560 as a
+    # current figure or 786 as what a bevel would cost today.
+    #
+    # A sharp rim on thrown clay is a small lie. A white rim is a large one. Put the
+    # bevel back the day a modifier can inherit the colour it is modifying - or
+    # author the rounded rim into a `revolve` profile, where the vertices are the
+    # generator's own and do take `color=`.
+    union {
+        pipe outer_radius=8.6 inner_radius=5.4 height=6.1 radial_steps=28 at=(5, 0, 22.05) color=(0.68, 0.42, 0.26, 1)
+    }
+
+    # The filling hole, through the discus floor and the well floor under it.
+    # It no longer has to bore the collar - the pipe arrived with its bore -
+    # so this only has to open the two floors, at 19.4 and 16.8. It spans
+    # 15 -> 39, which clears the lower floor by 1.8 and stops 12.4 above the
+    # reservoir's inner base at 2.6.
+    #
+    # `color=` ON A SUBTRACT TOOL IS NOT DECORATION HERE, IT IS THE FIX FOR A
+    # SHIPPED DEFECT. This tool and the wick-hole tool below both carried no
+    # colour, so the faces the cut created carried none either and baked out
+    # WHITE - and the bore of the filling hole is the single most visible
+    # interior surface on the object, straight down through the collar from
+    # every overhead render. It shipped that way and no compile ever mentioned
+    # it. `set_vertex_color set_all=true` at the end of the part does NOT
+    # rescue it: the op was moved to immediately after the booleans as well as
+    # left at the end, and the bore stayed white in both positions, which is
+    # the same behaviour the collar block below records for `bevel`.
+    # The rule, and it is the one thing to carry to another model: a boolean
+    # TOOL takes `color=` and its cut faces inherit it reliably; a MODIFIER's
+    # new faces inherit nothing and `set_vertex_color` will not reach them.
+    # Give every boolean tool the body colour even when the cut looks internal.
+    subtract {
+        cylinder radius=5.2 height=24 segments=24 at=(5, 0, 27) color=(0.68, 0.42, 0.26, 1)
+    }
+
+    # THE WICK HOLE, 5.5 back from the tip - as far forward as the rounded nose
+    # allows, because a wick hole in the middle of the spout reads as a
+    # chimney. 4.0 of radius in a nozzle 17.6 wide there. The earlier 2.8 in a
+    # narrower nozzle disappeared behind the wick entirely, and the one
+    # feature that says "this burns" was then invisible in every render of it;
+    # at 4.0 against a 2.3 wick there is 1.7 of open hole showing all round.
+    #
+    # It runs 13.5 -> 27, which opens the top wall (there at z=17.33) and
+    # reaches the cavity without reaching the floor (the inner floor there is
+    # at 7.27): a hole long enough to punch through both walls gives a lamp
+    # that drains onto the table.
+    #
+    # It moved from x=56.5 to x=66.5 with the nozzle tip, and so did the wick
+    # capsule in the part below. Those three x values are one number in three
+    # places - lengthen the nozzle again and all three move together, or the
+    # wick ends up standing on solid clay.
+    subtract {
+        cylinder radius=4.0 height=13.5 segments=20 at=(66.5, 0, 20.25) color=(0.68, 0.42, 0.26, 1)
+    }
+
+    # `shell` BUILDS THE INNER WALL, AND THAT WALL COMES BACK WHITE.
+    # The reservoir is hollowed by `shell thickness=2.6` above, which creates a
+    # whole second surface the generators never touched - so it carries no vertex
+    # colour, and through the filling hole the lamp's interior rendered as a bright
+    # white collar inside a terracotta pot. It is the most visible thing on the
+    # object from directly above and nothing in the compile mentions it.
+    #
+    # `set_vertex_color set_all=true` does reach it, unlike the boolean-tool and
+    # swept geometry it misses elsewhere in this corpus (see spiral_stair.pwmodel),
+    # so one line closes it. The whole part is one clay body, so repainting all of
+    # it is exactly what is wanted here.
+    #
+    # STILL TRUE, AND RE-MEASURED - but it was not the whole of the white. A
+    # close render down through the collar showed a white floor under a
+    # correctly terracotta collar bore, which looks exactly like this shell
+    # defect coming back. It was not: it was the two hole tools above carrying
+    # no `color=` of their own, so THEIR cut faces baked white while the shell
+    # wall beside them was already clay. Colouring the two tools fixed it and
+    # this line did not have to change. The lesson is the diagnosis, not the
+    # fix - "white geometry inside the reservoir" has two independent causes on
+    # this one model, and the boolean-tool one is invisible in the compile
+    # response and reachable only by looking through the hole.
+
+    recalculate_normals
+
+    # And then harden what recalculate_normals has just softened away.
+    # recalculate_normals re-averages WITHIN existing hard edges and cannot
+    # create one, so on a single welded revolve every profile corner comes back
+    # smooth - including the carination and the discus rim the profile was
+    # written to produce. split_normals is the op that splits, and 40 degrees
+    # is picked to sit above the revolve's own 7.5-degree facet step and below
+    # the smallest turn that has to harden. Measured off the profile, every turn
+    # over 40 degrees is: the carination 44.4, the two groove lips 82.4 and 98.8,
+    # and the discus rim 59.2. Those four harden, plus the base edge and the
+    # collar rim; nothing else does, and in particular not the 11.1 and 37.1 of
+    # the two turns below the discus rim, which is what keeps the step's wall and
+    # floor smooth and stops it reading as a machined counterbore.
+    # TWO OF THOSE NUMBERS WERE WRONG HERE and are worth the correction: this
+    # comment used to say the discus rim turned 45.4 (it is 59.2 - the profile
+    # block above had it right and these two disagreed) and that the turn below
+    # it was 31.7 (it is 37.1). Neither error changes the setting, because 40
+    # still lands between 37.1 and 44.4 - but the margin is 2.9 degrees on one
+    # side, not the 8-ish the wrong numbers implied. Move any point around the
+    # discus step and re-derive before assuming 40 still works.
+    split_normals split_angle=40
+
+    # box, not cylindrical, and the union is the reason. The reservoir alone is
+    # a body of revolution and would take a cylindrical projection perfectly,
+    # but the nozzle runs along X: one cylindrical wrap about Z would smear it
+    # into a stripe. A box projection costs the reservoir a seam it would not
+    # otherwise have and gives the nozzle usable texels.
+    uv channel=0 mode=box scale=(1, 1)
+
+    # Channel 1 is the lightmap, in one op. xatlas writes real elements -
+    # measured on this build, against an otherwise identical model with no
+    # channel 1 at all, which compiles with "the mesh does not carry that UV
+    # channel; the asset uses channel 0" where this one compiles clean.
+    uv channel=1 mode=xatlas
+    set_vertex_color set_all=true color=(0.68, 0.42, 0.26, 1)
+}
+
+part handle {
+    # The ring handle, standing in the XZ plane behind the reservoir - the
+    # plane that contains the lamp's long axis, which is the only plane a
+    # finger can lift the lamp in without the nozzle fouling the hand.
+    #
+    # Its own part, not part of the vessel: a handle is solid clay, and if it
+    # were unioned in before the shell it would be hollowed out too.
+    #
+    # Centred at (-26, 21.5) - inside the reservoir, not beside it. The ring's
+    # front leg is at x=-17, where the discus step stands to 19.7, and the
+    # tube there spans 18.9 to 24.1: it CROSSES the surface rather than
+    # grazing it, which is what keeps the junction clean. Its back leg at
+    # x=-35 is outside the body's 34.6 altogether, so the arc emerges from the
+    # pot on one side and stands clear on the other, which is the difference
+    # between a handle and a hoop leaning on a lamp.
+    #
+    # 9.0 by 2.6 rather than the 10.5 by 3.0 of an earlier pass, and centred
+    # 3.5 lower. The top now reaches 33.1 against the shoulder's 24.4 - 8.7 of
+    # clearance rather than 14 - and the opening is 12.8. That is a handle you
+    # hook a finger into and lift a 107 mm lamp with, not one you pour with,
+    # and the difference is most of what stopped this object reading as a
+    # teapot.
+    torus major_radius=9.0 minor_radius=2.6 major_segments=32 minor_segments=12 rotate=(90, 0, 0) at=(-26, 0, 21.5) material="Clay" color=(0.68, 0.42, 0.26, 1)
+
+    recalculate_normals
+    uv channel=0 mode=cylindrical scale=(1, 1)
+    uv channel=1 mode=xatlas
+}
+
+part wick {
+    # The wick itself, standing out of the wick hole - the one thing on the
+    # lamp that is not clay, the whole reason for a second material slot, and
+    # the single feature that decides whether this object is a lamp or a gravy
+    # boat.
+    #
+    # A CAPSULE, NOT A CONE, and that is a fix rather than a preference. The
+    # cone before it was 10 tall tapering 2.4 -> 1.1 and rendered as a snapped
+    # drinking straw: a cone's top is a flat disc with a hard rim round it,
+    # and a hard-rimmed tube standing in a hole reads as a broken pipe however
+    # the taper is set. Shortening it to 7 and fattening it to 3.0 -> 1.9 did
+    # not help, because the flat top was the problem, not the proportion. A
+    # capsule ends in a hemisphere and reads as a charred stub, which is the
+    # whole job. What it costs is the taper: a capsule has none.
+    #
+    # 2.3 of radius against the hole's 4.0, standing about 3.0 clear of the
+    # nozzle top (17.33 at x=66.5).
+    #
+    # A NEGATIVE pitch leans it out over the nozzle lip, the way a wick leans
+    # once it has burned; a positive one leans it back toward the filling
+    # hole, which is the direction a wick never goes. 30 rather than the 16 of
+    # the first pass: at 16 the lean is inside the noise of a 3/4 view and the
+    # wick reads as a vertical stub.
+    capsule radius=2.3 length=2.6 hemisphere_steps=3 segments=14 rotate=(0, -30, 0) at=(66.5, 0, 17.2) material="Wick" color=(0.09, 0.08, 0.075, 1)
+
+    recalculate_normals
+    uv channel=0 mode=cylindrical scale=(1, 1)
+    uv channel=1 mode=xatlas
+}
+
+uv_layout channel=1 texture_resolution=64
+
+# 64 rather than the UStaticMesh default of 4. `lightmap channel=1` on its own
+# compiles with a warning and then bakes the authored UVs into a 4x4 lightmap,
+# which throws away the unwrap the parts above just paid for. The warning is
+# easy to skim past because the compile still says success and the triangle
+# counts are unchanged.
+lightmap channel=1 resolution=64
+
+collision {
+    complexity = simple_and_complex
+
+    # Three hulls: reservoir, nozzle, handle. This is the hand-authored
+    # convex-decomposition path, one block per convex piece.
+    #
+    # One hull over the whole lamp would span the notch where the nozzle meets
+    # the body and fill it, and that notch is the one place on this lamp
+    # anything ever rests against.
+    #
+    # The reservoir hull keeps four of the twenty-three profile points - base,
+    # carination, discus rim, axis. Every point it drops lies either on a
+    # convex arc the hull rebuilds anyway or inside the concavity the hull
+    # discards, so the coarse profile and the fine one produce the same solid
+    # at a fifth of the input. The shoulder groove is one of the dropped ones
+    # for exactly that reason.
+    #
+    # THE HULL DOES NOT CARRY THE KEYHOLE NOTCHES, and it cannot: a hull
+    # discards concavity by definition, so collision fills both shoulder
+    # scallops back in. The rendered plan and the collision plan therefore
+    # disagree by up to 9.9 either side. That is the right trade at this scale
+    # - nothing in a game feels its way into a 10 mm scallop on a lamp - but it
+    # is worth knowing that it happens silently, exactly as it does for the
+    # hole through the handle below.
+    hull {
+        revolve steps=16 profile=[(0, 0), (26, 0), (34.6, 9.0), (21.0, 24.4), (0, 19.35)]
+    }
+    hull {
+        revolve steps=12 rotate=(0, 90, 0) scale=(0.72, 1, 1) at=(72.0, 0, 11.0) profile=[(0, 0), (8.4, 2.6), (9.0, 8.0), (13.4, 46.0), (0, 46.0)]
+    }
+
+    # hull discards concavity, so the ring comes back as a filled disc and the
+    # hole through the handle is gone. That is the right trade here - nothing
+    # in a game threads a finger through a lamp handle - and it is worth
+    # knowing that it happens silently rather than as a warning.
+    hull {
+        torus major_radius=9.0 minor_radius=2.6 rotate=(90, 0, 0) at=(-26, 0, 21.5)
+    }
+}

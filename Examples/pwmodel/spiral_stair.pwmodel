@@ -1,0 +1,333 @@
+pwmodel 0
+
+# Cast-iron spiral stair, one full 360 turn between two floors.
+#
+# PROPORTION. Every dimension below follows from three numbers, and changing one
+# of them predicts the rest:
+#
+#   rise per tread   17.5   175 mm, the rise a person climbs without thinking
+#   treads per turn  16     360 / 16 = 22.5 of sweep each
+#   well radius      120    a 2.4 m well, the smallest a stair still walks in
+#
+# 16 x 17.5 = 280 uu floor to floor, which is a 2.8 m storey. Blondel's rule
+# (2 x rise + going = 630 mm) is met on the walking line, taken 55% out along
+# the tread at r = 76.8: going = 76.8 x 22.5deg = 30.2 uu, so 2(17.5) + 30.2 =
+# 65.2 -> 652 mm. Inside the 600-660 band, which is what makes it climbable.
+#
+# Widen the well and you must add treads or the going runs long; raise the
+# storey and you add treads at 17.5 each, never a taller rise.
+
+materials {
+    # Slot names are the contract. Point them at your own checker plate, cast
+    # iron and oak - nothing else in the file changes.
+    #
+    # TWO OF THESE THREE SLOTS BIND THE SAME INSTANCE, AND THE THIRD DOES NOT.
+    # That split is the whole lesson of this block. TreadPlate and Iron are both
+    # rough metal - a stair tread and the column it hangs off are the same
+    # material with a different finish - so they are one shading behaviour and
+    # differ only in `color=`. Timber is a dielectric and cannot be reached from
+    # either by any tint, so it keeps its own instance.
+    #
+    # THE TREADS ARE THE LIGHTER OF THE TWO, and this is a legibility decision
+    # rather than a taste one. A stair is read from its tread EDGES: sixteen
+    # nosings stepping round a helix is the only thing in the silhouette that says
+    # stair rather than screw. Treads, column and balusters that all shade
+    # identically read as one helical blob - which is what this file shipped, and
+    # what three different engine materials were being spent to avoid. Now the
+    # treads sit near 0.40 and everything cast-iron sits near 0.15, so the nosings
+    # stand off the column instead of merging into it.
+    #
+    # The old block leaned on M_Grid doubling as checker plate. It never did: that
+    # texture falls by WORLD position, not by UV, so it tiled straight across the
+    # tread edges and made the flight harder to read, not easier - the same defect
+    # driftwood.pwmodel spent four versions blaming on its own geometry.
+    TreadPlate = "/Game/PinWrightExamples/Materials/MI_PwModelExample_RoughMetal"
+    Iron       = "/Game/PinWrightExamples/Materials/MI_PwModelExample_RoughMetal"
+    Timber     = "/Game/PinWrightExamples/Materials/MI_PwModelExample_MatteDielectric"
+}
+
+# THE HANDRAIL IS ONE SWEPT HELIX, NOT FIFTEEN CHORDS.
+#
+# It used to be fifteen `cylinder` ops, each spanning one tread from baluster top
+# to baluster top and overlapping its neighbour by 2 so the joints closed. Three
+# things were wrong with that and all three are visible in a render: every joint
+# reads as a kink because a chord is straight and a rail is not; the fifteen
+# overlaps are APPENDED, not unioned, so each one buries two end caps inside the
+# rail and the compiler raises fourteen PWMODEL_UNUNIONED_OVERLAP warnings; and
+# the last chord ran past the top newel post and ended in mid-air on its own cap.
+#
+# `extrude_along_spline` says the shape directly: a section swept along a list of
+# frames. IT SWEEPS OPEN AND CAPS BOTH ENDS unless the last frame comes back
+# within 0.01 uu of the first, and this path does not - so the rail is a capped
+# open tube, not a ring. That distinction is load-bearing rather than pedantic.
+# The op used to sweep EVERY path as a loop, and an asset baked by that build
+# carries a sixteenth span running straight from the last frame back to the
+# first. At those two frames the chord lies 13.5 off the section plane, so it
+# comes back not as a tube but as a flattened 266 uu ribbon - a white plank lying
+# diagonally across the whole stair. It cost +4 triangles and raised nothing: no
+# diagnostic, no degenerate count, no boundary edge. If a render shows that plank,
+# the ASSET is stale; recompile before looking for a fault in this file.
+#
+# THE FRAMES ARE THE BALUSTER HELIX SUBDIVIDED FOUR WAYS - r = 108, climbing 17.5
+# per 22.5 of sweep, so every fourth frame sits exactly on top of a baluster and
+# the 61st lands on the top newel post. Sixty-one frames, not sixteen: at one
+# frame per baluster each span is a 42 uu straight chord, and a tube swept over
+# those reads as a bent polyline with a visible kink at every joint. That is what
+# "the rail is edgy" was, and the frame count is the whole of it. Measured, both
+# halves separately: raising the profile from 8 to 16 points while the path stays
+# at 16 frames leaves the same bent polyline, and raising the path to 61 frames
+# while the profile stays at 8 points fixes it outright. The profile is 16 points
+# anyway, for 256 triangles, because framed 40 uu wide an octagon's silhouette
+# still breaks into straight runs where a hexadecagon's does not.
+# Changing the stair means regenerating both lists from the header's three numbers.
+#
+# EVERY FRAME CARRIES pitch=22.42. A frame's local +X is the sweep direction and
+# the profile lands in its local YZ plane, so a frame left at pitch 0 sections
+# the rail vertically and the tube comes out sheared. 22.42 is atan(4.375 / 10.60)
+# - the rise over the arc length of one 5.625 step at r = 108. Subdividing does
+# not move it: halving rise and arc together leaves the ratio alone, so this is
+# the same angle atan(17.5 / 42.41) gave the fifteen chords.
+#
+# The first frame is at z = 107.5 and the last at 370, which are the tops of the
+# two newel posts in `balusters`: the rail's end caps finish INSIDE the posts
+# rather than short of them, so nothing hangs in air at either end.
+#
+# THE SWEEP CARRIES NO color=, so `set_vertex_color set_all` is still the only way
+# to put a vertex colour on this rail. It DOES take `material=` now.
+#
+# IT TAKES THE SLOT OF THE GEOMETRY IT APPENDS ONTO. The finial above it tags
+# Timber, so the rail is Timber - whatever position this part occupies in the file.
+# `material="Timber"` on the op itself says the same thing explicitly and is worth
+# writing if the finial is ever removed, because an appending modifier with nothing
+# in front of it has nothing to inherit and warns
+# PWMODEL_MODIFIER_MATERIAL_AMBIGUOUS.
+#
+# THIS PART USED TO BE FIRST IN THE FILE FOR THAT REASON ALONE, AND NO LONGER HAS
+# TO BE. Swept triangles used to keep material ID 0 - the model-wide slot table's
+# first entry in first-use order across the whole document, which has nothing to do
+# with which part the op sits in. Measured on a two-part probe: part `a` tags Alpha,
+# part `b` tags only Beta and then sweeps, and the swept rod came back on ALPHA.
+# Written last, as this part once was, `treads` claimed slot 0 and the oak handrail
+# shipped bound to TreadPlate - a rough-metal rail with an oak tint on it, beside an
+# oak finial correctly on Timber. One part, two materials, no diagnostic, and a slot
+# count of 3 either way. The part order is left as it is because it costs nothing;
+# it is no longer load-bearing.
+#
+# The frame list is ONE LINE because a value list may not span lines - a wrapped
+# `path=[` fails with PWSRC_UNEXPECTED_TOKEN on every continuation line. A
+# sixty-one-frame path is therefore a very long line - 2,900 characters here -
+# and there is no way to break it. Generate it and paste it; do not try to
+# format it.
+part handrail {
+    # The finial capping the top newel post, and the part's material anchor.
+    sphere radius=8 subdivisions=5 at=(105.92, -21.07, 381.00) material="Timber" color=(1, 1, 1, 1)
+
+    extrude_along_spline profile=[(4.00, 0.00), (3.70, 1.53), (2.83, 2.83), (1.53, 3.70), (0.00, 4.00), (-1.53, 3.70), (-2.83, 2.83), (-3.70, 1.53), (-4.00, 0.00), (-3.70, -1.53), (-2.83, -2.83), (-1.53, -3.70), (-0.00, -4.00), (1.53, -3.70), (2.83, -2.83), (3.70, -1.53)] path=[(105.92, 21.07, 107.50, 0, 22.42, 101.25), (103.35, 31.35, 111.88, 0, 22.42, 106.88), (99.78, 41.33, 116.25, 0, 22.42, 112.50), (95.25, 50.91, 120.62, 0, 22.42, 118.12), (89.80, 60.00, 125.00, 0, 22.42, 123.75), (83.49, 68.51, 129.38, 0, 22.42, 129.38), (76.37, 76.37, 133.75, 0, 22.42, 135.00), (68.51, 83.49, 138.12, 0, 22.42, 140.62), (60.00, 89.80, 142.50, 0, 22.42, 146.25), (50.91, 95.25, 146.88, 0, 22.42, 151.88), (41.33, 99.78, 151.25, 0, 22.42, 157.50), (31.35, 103.35, 155.62, 0, 22.42, 163.12), (21.07, 105.92, 160.00, 0, 22.42, 168.75), (10.59, 107.48, 164.38, 0, 22.42, 174.38), (0.00, 108.00, 168.75, 0, 22.42, 180.00), (-10.59, 107.48, 173.12, 0, 22.42, 185.62), (-21.07, 105.92, 177.50, 0, 22.42, 191.25), (-31.35, 103.35, 181.88, 0, 22.42, 196.88), (-41.33, 99.78, 186.25, 0, 22.42, 202.50), (-50.91, 95.25, 190.62, 0, 22.42, 208.12), (-60.00, 89.80, 195.00, 0, 22.42, 213.75), (-68.51, 83.49, 199.38, 0, 22.42, 219.38), (-76.37, 76.37, 203.75, 0, 22.42, 225.00), (-83.49, 68.51, 208.12, 0, 22.42, 230.62), (-89.80, 60.00, 212.50, 0, 22.42, 236.25), (-95.25, 50.91, 216.88, 0, 22.42, 241.88), (-99.78, 41.33, 221.25, 0, 22.42, 247.50), (-103.35, 31.35, 225.62, 0, 22.42, 253.12), (-105.92, 21.07, 230.00, 0, 22.42, 258.75), (-107.48, 10.59, 234.38, 0, 22.42, 264.38), (-108.00, 0.00, 238.75, 0, 22.42, 270.00), (-107.48, -10.59, 243.12, 0, 22.42, 275.62), (-105.92, -21.07, 247.50, 0, 22.42, 281.25), (-103.35, -31.35, 251.88, 0, 22.42, 286.88), (-99.78, -41.33, 256.25, 0, 22.42, 292.50), (-95.25, -50.91, 260.62, 0, 22.42, 298.12), (-89.80, -60.00, 265.00, 0, 22.42, 303.75), (-83.49, -68.51, 269.38, 0, 22.42, 309.38), (-76.37, -76.37, 273.75, 0, 22.42, 315.00), (-68.51, -83.49, 278.12, 0, 22.42, 320.62), (-60.00, -89.80, 282.50, 0, 22.42, 326.25), (-50.91, -95.25, 286.88, 0, 22.42, 331.88), (-41.33, -99.78, 291.25, 0, 22.42, 337.50), (-31.35, -103.35, 295.62, 0, 22.42, 343.12), (-21.07, -105.92, 300.00, 0, 22.42, 348.75), (-10.59, -107.48, 304.38, 0, 22.42, 354.38), (-0.00, -108.00, 308.75, 0, 22.42, 0.00), (10.59, -107.48, 313.12, 0, 22.42, 5.62), (21.07, -105.92, 317.50, 0, 22.42, 11.25), (31.35, -103.35, 321.88, 0, 22.42, 16.88), (41.33, -99.78, 326.25, 0, 22.42, 22.50), (50.91, -95.25, 330.62, 0, 22.42, 28.12), (60.00, -89.80, 335.00, 0, 22.42, 33.75), (68.51, -83.49, 339.38, 0, 22.42, 39.38), (76.37, -76.37, 343.75, 0, 22.42, 45.00), (83.49, -68.51, 348.12, 0, 22.42, 50.62), (89.80, -60.00, 352.50, 0, 22.42, 56.25), (95.25, -50.91, 356.88, 0, 22.42, 61.88), (99.78, -41.33, 361.25, 0, 22.42, 67.50), (103.35, -31.35, 365.62, 0, 22.42, 73.12), (105.92, -21.07, 370.00, 0, 22.42, 78.75) ]
+
+    # THIS OP CANNOT COLOUR THE RAIL, AND THAT IS WHY THE HANDRAIL IS WHITE.
+    # READ THIS BEFORE CHANGING THE VALUE - A COLOUR WRITTEN HERE IS NOT WHAT
+    # RENDERS.
+    #
+    # The old comment called `set_vertex_color set_all` "the one thing that can do
+    # what nothing else can" - the only way to put a vertex colour on a rail that
+    # `extrude_along_spline` builds, since only generators carry `color=`. The
+    # first half is right and the second is wrong: it is the only op that COULD,
+    # and it does not.
+    #
+    # Measured on a two-part probe, both slots on the same matte instance so the
+    # result is a colour fact and not a shading one: a `box` with `color=red`
+    # renders red, a `sphere` with `color=blue` renders blue, and a rod built by
+    # `extrude_along_spline` in the same part with `set_vertex_color set_all=true
+    # color=blue` after it renders WHITE. `set_all` reaches only vertices a
+    # GENERATOR contributed. The same hole shows on boolean-tool geometry (see the
+    # note in amphora.pwmodel and watchtower.pwmodel) - the op is not the
+    # paint-the-whole-part tool its name and its docs promise.
+    #
+    # Nothing reports it. No diagnostic, no count, no health field; the compile is
+    # clean and the rail is white.
+    #
+    # SO THE HANDRAIL IS PAINTED WHITE ON PURPOSE. Written as oak, this part
+    # shipped a warm tan finial on a white rail - one handrail in two colours,
+    # which reads as a defect because it is one. The finial is set to the same
+    # white the rail is stuck with, so the assembly is coherent: a white-painted
+    # rail on black cast iron, which is what half the cast-iron stairs ever
+    # installed actually look like. When the op is fixed, put oak back in BOTH
+    # places at once.
+    #
+    # The value below is therefore the default, written out so it is visibly a
+    # decision rather than an omission.
+    #
+    # It shows only through a material that reads Vertex Color. Under the engine
+    # placeholder this slot used to carry it was invisible - data on disk - which
+    # is why it was checked by binding the slot to a vertex-colour material and
+    # rendering, rather than assumed. Timber now binds one, so it is visible.
+    #
+    # `set_all` HAS A HOLE IN IT, AND THIS PART IS SAFE ONLY BECAUSE IT HAS NO
+    # BOOLEAN. Measured on a two-op probe: a `box` plus `union { cylinder }` with
+    # `set_vertex_color set_all=true` last renders a coloured box and a WHITE
+    # cylinder. Geometry contributed by a boolean tool is not reached, and nothing
+    # in the compile says so - no diagnostic, no count. The general rule is
+    # therefore to write `color=` on every generator INCLUDING the ones inside
+    # `union { }` blocks, and to reach for `set_all` only where no generator can
+    # carry the colour, which is exactly this rail. There is no boolean anywhere
+    # in this part, so the finial and the whole spline are covered.
+    set_vertex_color set_all=true color=(1, 1, 1, 1)
+
+    uv channel=0 mode=cylindrical scale=(0.05, 0.05)
+}
+
+# The treads. inner_radius 24 clears the 22-radius newel by 2, so the tread
+# roots meet the column without intersecting it.
+#
+# spiral_stairs emits each tread as a solid wedge the full 17.5 of the rise,
+# which is a concrete stair, not a plated one. Subtracting the SAME stair
+# dropped by 6 cuts 11.5 off every underside at once and leaves a 6 uu (60 mm)
+# tread plate - one line instead of sixteen.
+#
+# Read the drop as the answer, not as the cut: what survives is exactly the
+# distance the copy moved, because the copy's own top face becomes the new
+# underside. Want 8 mm checker plate, write 0.8.
+part treads {
+    spiral_stairs step_width=96 step_height=17.5 inner_radius=24 curve_angle=360 num_steps=16 floating=true material="TreadPlate" color=(0.40, 0.40, 0.41, 1)
+    # `color=` ON BOTH TOOLS BELOW. Faces a boolean CREATES take the default
+    # white unless the tool that cut them carries a colour, and here those faces
+    # are the underside of every tread and both cheeks of every joint - the
+    # surfaces a stair is mostly seen from underneath. See model.vertex-color.
+    subtract {
+        spiral_stairs step_width=96 step_height=17.5 inner_radius=24 curve_angle=360 num_steps=16 floating=true at=(0, 0, -6) color=(0.40, 0.40, 0.41, 1)
+    }
+    # Sixteen separate castings do not touch: they are hung off the column with
+    # a gap. Without it the treads share an exact edge, the plan reads as a
+    # blank disc, and nothing tells you it is a stair. One radial blade arrayed
+    # sixteen times cuts a 1.2 uu (12 mm) joint on every tread line at once -
+    # array_radial's count must stay equal to num_steps or the cuts drift off
+    # the joints.
+    #
+    # The blade starts at r = 10 rather than at the axis. Sixteen blades that
+    # all reach x = 0 overlap each other in a 1.2-wide knot on the centreline,
+    # and array_radial APPENDS its copies rather than unioning them, so that
+    # knot is a self-intersecting tangle inside the tool. Starting at 10 puts
+    # 3.9 of clear air between neighbours - and the treads begin at 24 anyway,
+    # so the 14 given up cuts nothing.
+    subtract {
+        box size=(290, 1.2, 400) at=(155, 0, 200) color=(0.40, 0.40, 0.41, 1)
+        array_radial count=16 axis=z angle=360 center=(0, 0, 0)
+    }
+    # NO `transform_uvs` HERE, AND THE REASON IS THE MATERIAL, NOT THE OP.
+    # Chequer plate is a diamond pattern, `uv` projects axis-aligned and has no
+    # rotation parameter, and `transform_uvs channel=0 rotate=45` is the only way
+    # to say it - so this looks like the op's home. It was written, compiled and
+    # rendered, and NOTHING CHANGED.
+    #
+    # Measured with a three-panel probe: one plane at `uv mode=box scale=(0.02,
+    # 0.02)`, one at `(0.10, 0.02)`, one with `transform_uvs rotate=45 scale=(5,
+    # 5)` on top of the first - all three bound to M_Grid, rendered side by side.
+    # The three came back identical, and the heavy grid lines fell at different
+    # places on each panel according to where the panel stood in the WORLD.
+    # `/Engine/EngineMaterials/M_Grid` and `WorldGridMaterial` are world-space:
+    # they never sample a UV channel, so no UV op can be seen through them.
+    #
+    # The op may well have written the channel correctly. Nothing in this project
+    # can show that it did, and an example that ships an unverifiable change is
+    # the failure this corpus exists to avoid. Bind TreadPlate to a material that
+    # samples UV0 and the rotation becomes both useful and checkable.
+    uv channel=0 mode=box scale=(0.01, 0.01)
+}
+
+# The newel is the structure. It runs 300 - 20 clear above the top tread - so
+# the column reads as continuing into the floor above rather than stopping at it.
+#
+# On a cast-iron stair each tread is threaded onto the column and held off the
+# one below by a tubular collar, so the collar pitch IS the rise: array_linear
+# at offset 17.5 is the same number the treads are cut to, not a decorative
+# spacing. Each collar is 8 tall and centred at 12, which drops it into the open
+# riser between a 6-thick tread and the 17.5 underside of the next one. At 26 it
+# also oversails the treads' 24 bore by 2, so the tread roots land on the collar
+# instead of stopping short of the column.
+#
+# ONE PART, NOT TWO. The collars swallow 4 of the 22 column, and separate parts
+# cannot be booleaned against each other - a part is appended to the merged mesh
+# whole. Two parts here would bury sixteen full cylinder walls inside the newel
+# and sixteen newel walls inside the collars. Same part, `union`, one solid.
+# 32 segments on both, and a collar that is a 4-deep astragal at 25.5 rather
+# than an 8-deep disc at 26. At 16 segments the column is visibly a hexadecagon
+# and the collars are visibly a coarser one stacked on it; at 8 x 26 they read
+# as a pile of hockey pucks rather than as the rings a tread is threaded onto.
+# The collar still oversails the treads' 24 bore, which is the job it has to do.
+part newel {
+    cylinder radius=22 height=300 segments=32 height_steps=1 at=(0, 0, 150) material="Iron" color=(0.15, 0.145, 0.14, 1)
+    uv channel=0 mode=cylindrical scale=(0.02, 0.01)
+}
+
+# The collars stay their OWN part for two reasons, both worth knowing.
+#
+# array_linear multiplies the whole part mesh accumulated so far, not the op
+# above it, so a collar arrayed in the newel's part would array the newel too.
+# A modifier's subject is the part, and that is what separates these two.
+#
+# And `union { collar; array_linear count=16 }` - which is what removes the
+# sixteen buried cylinder walls properly - is still not worth it, but the margin
+# is now 2.4x rather than the fifty-fold this comment used to quote.
+#
+# THE OLD PARAGRAPH IS A STALE MEASUREMENT AND IT IS WORTH KEEPING THE CORRECTION
+# VISIBLE. It said "PinWright pins the engine's boolean to bSimplifyOutput=false
+# and gives .pwmodel no way to turn it back on", and cited 135,324 triangles
+# against 2,608. Both halves have moved. All four boolean ops now publish
+# `simplify_output`, and it defaults TRUE - the engine's own default - so the
+# pinning is gone and the flag is reachable. Re-measured on this exact geometry:
+#
+#     append (what ships here)          3,072
+#     union, simplify_output default    7,740   <- includes the 192-tri newel
+#     union simplify_output=false     135,324   <- the old pinned behaviour
+#
+# 135,324 was never wrong; it was the cost of a flag that is no longer set that
+# way. `simplify_output` collapses the near-coplanar fan debris the cut itself
+# creates - it only touches triangles the CUT made, and cannot distort polygroups,
+# UVs or normals - which is exactly the sixteen full-height fans that number was.
+#
+# The append still wins, and now on the honest argument rather than an alarming
+# one: 2.4x the triangles to delete sixteen walls buried inside an opaque iron
+# column, which no camera can reach. If the column were ever glass, union it.
+part collars {
+    cylinder radius=25.5 height=4 segments=32 at=(0, 0, 12) material="Iron" color=(0.15, 0.145, 0.14, 1)
+    array_linear count=16 offset=(0, 0, 17.5)
+    uv channel=0 mode=cylindrical scale=(0.05, 0.05)
+}
+
+# Balusters, one per tread, standing on the tread it guards at r = 108 - twelve
+# units in from the outer edge so the rod is not on the arris. 90 uu of rod puts
+# the handrail 900 mm above the nosing, which is the guard height.
+#
+# Enumerated, not arrayed: array_radial rotates about an axis and cannot climb,
+# and a helix needs both. pwmodel has no loop by design - generate the list and
+# commit the result, which is what this block is.
+#
+# FOURTEEN rods and TWO POSTS, not sixteen rods. The first and last stations
+# carry the newel posts the handrail dies into: r = 5 against the rods' 3, and
+# each runs past the rail's own end so the post closes over it instead of
+# leaving a cap hanging in air. The file used to stand a 3-radius rod at the top
+# station AS WELL as the post, entirely inside it - sixteen triangles' worth of
+# cylinder that nothing can ever see.
+part balusters {
+    cylinder radius=5 height=100 segments=12 at=(105.92, 21.07, 62.50) material="Iron" color=(0.15, 0.145, 0.14, 1)
+    cylinder radius=3 height=90 segments=8 at=(89.80, 60.00, 80.00) material="Iron" color=(0.15, 0.145, 0.14, 1)
+    cylinder radius=3 height=90 segments=8 at=(60.00, 89.80, 97.50) material="Iron" color=(0.15, 0.145, 0.14, 1)
+    cylinder radius=3 height=90 segments=8 at=(21.07, 105.92, 115.00) material="Iron" color=(0.15, 0.145, 0.14, 1)
+    cylinder radius=3 height=90 segments=8 at=(-21.07, 105.92, 132.50) material="Iron" color=(0.15, 0.145, 0.14, 1)
+    cylinder radius=3 height=90 segments=8 at=(-60.00, 89.80, 150.00) material="Iron" color=(0.15, 0.145, 0.14, 1)
+    cylinder radius=3 height=90 segments=8 at=(-89.80, 60.00, 167.50) material="Iron" color=(0.15, 0.145, 0.14, 1)
+    cylinder radius=3 height=90 segments=8 at=(-105.92, 21.07, 185.00) material="Iron" color=(0.15, 0.145, 0.14, 1)
+    cylinder radius=3 height=90 segments=8 at=(-105.92, -21.07, 202.50) material="Iron" color=(0.15, 0.145, 0.14, 1)
+    cylinder radius=3 height=90 segments=8 at=(-89.80, -60.00, 220.00) material="Iron" color=(0.15, 0.145, 0.14, 1)
+    cylinder radius=3 height=90 segments=8 at=(-60.00, -89.80, 237.50) material="Iron" color=(0.15, 0.145, 0.14, 1)
+    cylinder radius=3 height=90 segments=8 at=(-21.07, -105.92, 255.00) material="Iron" color=(0.15, 0.145, 0.14, 1)
+    cylinder radius=3 height=90 segments=8 at=(21.07, -105.92, 272.50) material="Iron" color=(0.15, 0.145, 0.14, 1)
+    cylinder radius=3 height=90 segments=8 at=(60.00, -89.80, 290.00) material="Iron" color=(0.15, 0.145, 0.14, 1)
+    cylinder radius=3 height=90 segments=8 at=(89.80, -60.00, 307.50) material="Iron" color=(0.15, 0.145, 0.14, 1)
+    cylinder radius=5 height=105 segments=12 at=(105.92, -21.07, 322.50) material="Iron" color=(0.15, 0.145, 0.14, 1)
+    uv channel=0 mode=cylindrical scale=(0.05, 0.05)
+}
+
+collision {
+    complexity = complex_as_simple
+}

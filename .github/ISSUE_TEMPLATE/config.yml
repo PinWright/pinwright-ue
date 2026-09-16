@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 📖 Install / build / test questions
+    url: https://github.com/PinWright/pinwright-ue/blob/master/CONTRIBUTING.md
+    about: How to clone into a host project, build it, and run the test suite. Open a blank issue if that does not answer it.

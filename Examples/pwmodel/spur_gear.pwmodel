@@ -1,0 +1,284 @@
+# spur_gear.pwmodel - a 24-tooth, module-10 spur gear with a webbed blank and a bronze bushing.
+#
+# Every dimension below is derived from two numbers, so changing the gear means changing
+# those two and re-deriving the rest. They are:
+#
+#     module   m = 10 uu     (tooth size; pitch diameter per tooth)
+#     teeth    z = 24
+#     pressure angle  a = 20 deg   (the near-universal modern standard)
+#
+# and everything else follows from the ISO spur-gear relations:
+#
+#     pitch radius   Rp = m*z/2        = 120        the circle the teeth are sized against
+#     tip radius     Ra = Rp + m       = 130        addendum is one module, by definition
+#     root radius    Rf = Rp - 1.25*m  = 107.5      dedendum is 1.25 m, leaving 0.25 m clearance
+#     circular pitch p  = pi*m         = 31.416     arc from tooth to tooth at Rp
+#     tooth / space  p/2               = 15.708     equal at the pitch circle on a standard gear
+#     face width     b  = 6*m          = 60         6..12 m is the normal range; 6 m is a light gear
+#
+# TOOTH FORM. A real involute flank is a curve no primitive here can express. What IS
+# expressible - and what a real gear is actually cut with - is the RACK: a straight-sided
+# cutter whose flanks stand at the pressure angle. Rolling that rack generates the involute.
+# This file subtracts the rack tooth-space directly, so the flanks are the rack's straight
+# lines rather than the involute they would generate. At z=24 the two agree exactly at the
+# pitch circle and diverge by under 1% of the module at the tip - below the width of a facet
+# on this mesh, and far below anything a viewer resolves.
+#
+# The tooth space is therefore the region between two straight flank planes, and the natural
+# way to say "between two planes" is an INTERSECTION of two half-spaces - see part `blank`.
+#
+# HAND-DERIVED CONSTANTS. The format has no expressions, so the four numbers the rack
+# geometry needs are worked out here once and written into the ops:
+#
+#     tan 20 deg = 0.3639702    flank slope: the space widens by this much per unit of radius
+#     sin 20 deg = 0.3420201
+#     cos 20 deg = 0.9396926
+#     half space width at Rp = p/4 = 7.853982
+#
+#     space half-width  w(r) = 7.853982 + (r - 120) * 0.3639702
+#                       w(107.5) = 3.304   at the root
+#                       w(130)   = 11.494  at the tip     -> tip land 11.0, a blunt, castable tip
+#
+# If you change m or z, re-derive w() and re-place the two flank boxes; nothing else in the
+# tooth cut needs touching.
+#
+# THE WEB POCKET AND THE BUSHING ARE `pipe`, AND THEY USED NOT TO BE. Both are annuli and
+# `pipe` is the op that names an annulus, but `pipe` did not return a closed solid: it appended
+# an UNCAPPED outer cylinder and subtracted an inner cylinder that never reached it, so the
+# result was two open single-sided walls with no annular end faces, and it was placed by its
+# base while every other generator is placed by its centre. Nothing warned. As a subtract TOOL
+# an open wall cuts an unpredictable pocket; as the bushing it rendered as a hole. Both were
+# therefore written out as a solid cylinder with its bore subtracted.
+#
+# BOTH DEFECTS ARE FIXED. `pipe` now emits a closed solid - outer wall, bore and both annular
+# end caps - and is centred like everything else, so `pipe height=96` spans z -48..+48 exactly
+# as `cylinder height=96` does. Each annulus is therefore one op again instead of a two-op
+# boolean, and the pair below is the same geometry with two booleans removed.
+#
+# ORIGINS. Every primitive used below is placed by its CENTRE - `cylinder height=60` at the
+# origin spans z -30..+30 - so each `at=` is a midpoint. `pipe` included, now.
+
+pwmodel 0
+
+materials {
+    # Repoint Steel at a machined steel and Bronze at a bearing bronze. Two slots, not one,
+    # because the bushing is a different metal from the gear - that is the only reason a slot
+    # boundary exists here.
+    #
+    # THIS IS THE ONE MODEL IN THE CORPUS WHERE THE TWO SLOTS ARE THE SAME BEHAVIOUR AND STILL
+    # EARN SEPARATE INSTANCES. Steel and bronze are both metal, so on the watchtower test they
+    # ought to collapse to one instance plus two tints. They do not, because on a metal the
+    # base colour IS the reflectance tint and the finish is the other half of the read: a
+    # machined gear blank is turned and left, a press-fit bearing bushing is burnished by the
+    # fit itself. Rough against polished is a real difference here in a way it is not between a
+    # tread and a newel post.
+    #
+    # Both slots used to resolve to BasicShapeMaterial, so the press-fit bronze shaded
+    # identically to the steel it sits in and the whole assembly rendered as one machined lump
+    # - the slot boundary existed in the asset and nowhere in the image. The fix was a second
+    # engine material picked for being a different grey; the fix now is a warm `color=` on a
+    # material that samples it, which is the difference a viewer actually names.
+    #
+    # Both are Metallic 1 and reflect their surroundings. Unlit, both come back near-black and
+    # the model reads as broken; that is the lighting, not the binding.
+    Steel  = "/Game/PinWrightExamples/Materials/MI_PwModelExample_RoughMetal"
+    Bronze = "/Game/PinWrightExamples/Materials/MI_PwModelExample_PolishedMetal"
+}
+
+part blank {
+    # The tip cylinder. 144 radial segments = 24 * 6, so every tooth gets an identical set of
+    # six facets across its pitch and no tooth is a facet wider than its neighbour. Any segment
+    # count not divisible by z shows up immediately in a top view as teeth of unequal crispness.
+    #
+    # 144 and not 288: the tip LAND is 11 wide (see w(130) in the header) out of a 34 pitch, so
+    # 288 spent only about 4 of its 12 facets per tooth on the surface anyone sees, and the land
+    # is nearly flat anyway - its sagitta over 11 uu at r=130 is 0.12 uu, a tenth of the 1.2
+    # chamfer that runs along its edge. Halving this halves the two flat faces the booleans
+    # below have to retriangulate, which is where this part's triangles actually go.
+    cylinder radius=130 height=60 segments=144 height_steps=1 material="Steel" color=(0.44, 0.45, 0.47, 1)
+
+    # HUB BOSS. Outer radius 44 = 1.7 x the 26 bore radius; 1.6..2.0 x bore is the usual range
+    # for a keyed steel hub. It is 90 long against the 60 face width, so it stands 15 proud on
+    # each side - that shoulder is what a bearing or a spacer seats against.
+    union {
+        cylinder radius=44 height=90 segments=48 color=(0.44, 0.45, 0.47, 1)
+    }
+
+    # ---- TOOTH SPACES -------------------------------------------------------------------
+    # One space is built at the origin, then arrayed 24 times. The space is the intersection
+    # of two half-spaces, each carried by an oversize box whose face lies on one rack flank.
+    #
+    # Flank +Y passes through the pitch point (120, +7.853982) at 20 deg to the radial. The box
+    # is yawed 20 deg and its centre is pushed 40 (half its 80 width) along the flank's inward
+    # normal (sin20, -cos20), which puts its +Y face exactly on the flank line:
+    #     centre = (120 + 0.3420201*40, 7.853982 - 0.9396926*40) = (133.681, -29.734)
+    # The box is 200 long so it overruns both the root and the tip; the boolean does the
+    # trimming, not the box extents.
+    #
+    # `color=` ON EVERY TOOL IN THIS PART, including the ones nested inside this block. Faces
+    # a boolean CREATES take the default white unless the tool that cut them carries a colour,
+    # and on this part those faces ARE the part: 48 tooth flanks, 24 root lands, both web
+    # pockets, six lightening bores and the main bore. Untinted they render as white base
+    # colour, which on a Metallic surface is a neutral chrome reflection rather than steel.
+    # See model.vertex-color.
+    subtract {
+        box size=(200, 80, 100) at=(133.681, -29.734, 0) rotate=(0, 0, 20) color=(0.44, 0.45, 0.47, 1)
+
+        # The -Y flank is the same box mirrored across the tooth-space centreline. Intersecting
+        # the two leaves exactly the wedge between the flanks - which is what a rack tooth is.
+        # This is the one place an intersection is the honest operator: the space is defined by
+        # being inside BOTH half-spaces, and expressing it as unions or subtracts would mean
+        # inventing a bounding shape that is not part of the definition.
+        intersection {
+            box size=(200, 80, 100) at=(133.681, 29.734, 0) rotate=(0, 0, -20) color=(0.44, 0.45, 0.47, 1)
+        }
+
+        # The two flanks converge and cross at r = 98.4, well below the root. Clipping the tool
+        # against the root cylinder stops the cut there and leaves a proper cylindrical root land
+        # between adjacent teeth instead of a knife-edge crack running into the rim.
+        subtract {
+            cylinder radius=107.5 height=200 segments=144 color=(0.44, 0.45, 0.47, 1)
+        }
+
+        # Half a pitch (360/24/2 = 7.5 deg) puts a TOOTH on +X rather than a space, so the
+        # model is symmetric about both the XZ and YZ planes and a true front/top view can be
+        # read for symmetry at a glance.
+        transform rotate=(0, 0, 7.5)
+
+        array_radial count=24 axis=z angle=360 center=(0, 0, 0)
+    }
+
+    # ---- WEB ---------------------------------------------------------------------------
+    # Two pockets, one per face, leave a 20-thick web between a 19.5-thick rim (Rf 107.5 down
+    # to 88; a rim under the root wants at least 1.5 m of back-up and this is 1.95 m) and the
+    # hub. 20 of web on 60 of face is the usual third.
+    #
+    # ONE `pipe`, not a disc with a disc taken out of it. The tool is an annulus 44..88 either
+    # way; `pipe` is the op that says so, and now that it returns a closed centred solid it can
+    # be used as a boolean tool, which the open-shell version could not.
+    #
+    # radial_steps=48, NOT 64. `pipe` gives both walls the same count, and the count that
+    # matters is the BORE's: at r=44 it lands exactly on the hub boss's own 48-segment wall.
+    # Matched, the two surfaces cut cleanly; at 64 against 48 they cross at every facet instead
+    # and the blank came back 3,836 triangles heavier for a surface buried inside the gear. The
+    # outer wall's 64 is what is given up, and it is an internal face nothing ever sees.
+    #
+    # The pocket is authored once, on the +Z face, and mirrored: the part is symmetric about
+    # its own mid-plane, so writing the second pocket out by hand would be two places to keep
+    # in step instead of one. weld=false because the two pockets never touch z=0 - there is no
+    # seam on the mirror plane to weld and asking for one only costs a pass.
+    subtract {
+        pipe outer_radius=88 inner_radius=44 height=20 radial_steps=48 at=(0, 0, 20) color=(0.44, 0.45, 0.47, 1)
+        # A 180 DEGREE ROTATION ABOUT X, NOT A Z-MIRROR - AND THE REASON HAS CHANGED, SO READ
+        # THIS BEFORE "FIXING" IT TO A MIRROR.
+        #
+        # The pocket is an annulus centred on Z, so turning it 180 degrees about X maps
+        # z 10..30 onto z -30..-10 and leaves the annulus itself unchanged - exactly the second
+        # pocket a z-mirror would make. The two ops differ by a further y-flip, which for a
+        # 48-gon starting on +X maps the vertex set onto itself. Same solid, different vertex
+        # ordering.
+        #
+        # THE OLD REASON WAS A DEFECT AND IT IS FIXED. This line used to explain that `mirror`
+        # appended the negated copy without reversing triangle winding, so the copy was
+        # inside-out - and an inside-out TOOL is an anti-solid that does not cut. The gear's
+        # whole -Z face came back black and uncut, triangle count inflated from 43k to 100k as
+        # `bevel` chewed on the degenerate half. `GeometryOps::Mirror` now passes
+        # bFixOrientationForNegativeScale; `mirror axis=z weld=false` cuts correctly here and
+        # was rendered to confirm it. Do not repeat the old claim.
+        #
+        # THE ROTATION STAYS ON A MEASUREMENT, NOT ON THE OLD STORY. Compiled both ways, one
+        # line apart, everything else identical:
+        #
+        #     array_radial count=2 axis=x   15,528 triangles, 0 degenerate
+        #     mirror axis=z weld=false      15,560 triangles, 8 degenerate
+        #
+        # The pocket tool's outer face sits exactly on the blank's own face at z = +-30 - the
+        # touch-exactly case the degenerate diagnostic names - and the two orderings tessellate
+        # that coincidence differently. The rotation happens to land on the clean side. Eight
+        # degenerates is not a defect (the static-mesh build drops six of them) but a shipped
+        # example should not carry avoidable ones, and 32 triangles is 32 triangles.
+        #
+        # pipe_junction.pwmodel had the same workaround and went the OTHER way, because there
+        # `mirror` measured 6 triangles CHEAPER at 0 degenerates. Measure per model; neither op
+        # is generally better, and PWMODEL_UNUNIONED_OVERLAP will not help you either way -
+        # it fires only from the generator path and never on `mirror` or any `array_*`.
+        array_radial count=2 axis=x angle=360 center=(0, 0, 0)
+    }
+
+    # ---- LIGHTENING HOLES ---------------------------------------------------------------
+    # Six holes, because 24 teeth / 6 holes = 4 teeth per hole: the holes land on the same
+    # angular grid the teeth do, which is what makes a cast gear look designed rather than
+    # drilled at random. Bolt circle 66 is the midline of the web annulus (44..88); radius 14
+    # leaves an 8-wide ligament to the hub and 8 to the rim, the same on both sides.
+    subtract {
+        cylinder radius=14 height=120 at=(66, 0, 0) segments=24 color=(0.44, 0.45, 0.47, 1)
+        array_radial count=6 axis=z angle=360 center=(0, 0, 0)
+    }
+
+    # ---- BORE ---------------------------------------------------------------------------
+    # 34 is the bushing's outside diameter, not the shaft's. The shaft is 26 and lives inside
+    # the bronze - see part `bushing`.
+    subtract {
+        cylinder radius=34 height=120 segments=48 color=(0.44, 0.45, 0.47, 1)
+    }
+
+    # Every boolean above cut a new seam, and each cut leaves coincident-but-separate vertices
+    # along it. bevel walks POLYGROUP edges: where a seam is split, the edge loop is split with
+    # it and the bevel stops dead at the break. Welding first is what makes the next line
+    # produce one continuous chamfer around each tooth instead of 24 disconnected fragments.
+    # The tolerance is loose relative to the boolean's own precision and tight relative to the
+    # smallest real feature here (the 8-wide web ligament), so nothing geometric can collapse.
+    weld_vertices tolerance=0.01
+
+    # A break edge, not a functional chamfer: 1.2 uu is 0.12 m, about what a deburring pass
+    # takes off. segments=1 keeps it a flat chamfer - a machined edge break is flat, not round.
+    bevel distance=1.2 segments=1
+
+    # Box projection, because the two faces and the rim are the surfaces anyone will ever look
+    # at and box gives all three a straight, unsheared grain. Cylindrical would smear the faces
+    # into a spiral around the bore; xatlas would be correct and unpredictable, which is the
+    # wrong trade for a part whose texture is a machining direction.
+    uv channel=0 mode=box scale=(1, 1)
+}
+
+part bushing {
+    # A plain bronze sleeve bearing pressed into the steel bore. 26 bore (the shaft), 34.4
+    # outside against a 34 bore: 0.4 of interference. A press fit IS interference in reality,
+    # and here it also keeps the two cylindrical surfaces from being coincident, which is what
+    # would otherwise z-fight along the whole length of the bore.
+    #
+    # 96 long against the hub's 90 leaves the bronze 3 proud at each end, so the shoulder that
+    # takes thrust is bronze rather than steel-on-steel.
+    pipe outer_radius=34.4 inner_radius=26 height=96 radial_steps=48 material="Bronze" color=(0.66, 0.45, 0.22, 1)
+
+    # Light chamfers on both bore mouths: a sleeve bearing is always chamfered so the shaft
+    # leads in rather than scraping the edge on assembly.
+    bevel distance=1.0 segments=1
+
+    # Cylindrical here and box on the blank, deliberately: this part IS a cylinder about Z, so
+    # a cylindrical projection lays the texture along the bore with a single seam.
+    uv channel=0 mode=cylindrical split_angle=45
+}
+
+collision {
+    complexity = simple_and_complex
+
+    # Two hulls, and neither of them has a bore. That is not an oversight - `hull` keeps only
+    # the convex hull of its block, so a hulled bored gear is a solid disc no matter how the
+    # block is written. Simple collision here means "a disc with a boss"; anything that has to
+    # see the bore or the tooth spaces has to trace complex, which is why complexity is
+    # simple_and_complex rather than simple_as_complex.
+    #
+    # 24 segments, with the generator's first vertex on +X and a tooth centred there, puts one
+    # hull vertex on each of the 24 tooth tips. The hull is then exactly the tip polygon: no
+    # slack over the tips and no phantom material in the spaces.
+    hull {
+        cylinder radius=130 height=60 segments=24
+    }
+
+    # The hub boss, which stands 15 proud of the blank on each side and would otherwise be
+    # swallowed by the disc hull's flat faces.
+    hull {
+        cylinder radius=44 height=90 segments=16
+    }
+}

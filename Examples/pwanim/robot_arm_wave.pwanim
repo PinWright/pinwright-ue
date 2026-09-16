@@ -1,0 +1,16 @@
+pwanim 0
+
+use skeleton from "/Game/Examples/SK_RobotArm"
+timebase rate=(30, 1) frames=30 loop=true
+
+bone "upper_arm" ease=ease_in_out {
+    key frame=0 rotate=(0, 0, -20)
+    key frame=15 rotate=(0, 0, 20)
+    key frame=30 rotate=(0, 0, -20)
+}
+
+bone "forearm" {
+    key frame=0 rotate=(0, 0, 10)
+    key frame=15 rotate=(0, 0, -25) ease=ease_out
+    key frame=30 rotate=(0, 0, 10)
+}

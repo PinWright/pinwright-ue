@@ -1,0 +1,73 @@
+{
+  "include": [
+    { "path": "Config" },
+    { "path": "Resources" },
+    { "path": "Source/PinWright" },
+    { "path": "Source/PinWrightGeometry" },
+    { "path": "Source/PinWrightPCG" },
+    { "path": "Source/PinWrightChooser" },
+    { "path": "Source/PinWrightPoseSearch" },
+    { "path": "Source/PinWrightCommonUI" },
+    { "path": "Source/PinWrightRecorder" },
+    { "path": "Content/Python" },
+    { "path": "Examples" },
+    { "path": "docs/wiki-src" },
+    { "path": "PinWright.uplugin" },
+    { "path": "README.md" }
+  ],
+  "excludePaths": [
+    ".claude",
+    "CLAUDE.md",
+    ".git",
+    "Binaries",
+    "Intermediate",
+    "logs",
+    "tasks",
+    "docs/logs",
+    "Source/PinWright/Private/Tests",
+    "Source/PinWrightGeometry/Private/Tests",
+    "Source/PinWrightPCG/Private/Tests",
+    "Source/PinWrightChooser/Private/Tests",
+    "Source/PinWrightPoseSearch/Private/Tests",
+    "Source/PinWrightCommonUI/Private/Tests",
+    "Content/Python/__pycache__",
+    "Content/Python/tests"
+  ],
+  "blockedPaths": [
+    ".claude",
+    "CLAUDE.md",
+    ".git",
+    "Binaries",
+    "Intermediate",
+    "logs",
+    "tasks",
+    "docs/logs",
+    "Source/PinWright/Private/Tests",
+    "Source/PinWrightGeometry/Private/Tests",
+    "Source/PinWrightPCG/Private/Tests",
+    "Source/PinWrightChooser/Private/Tests",
+    "Source/PinWrightPoseSearch/Private/Tests",
+    "Source/PinWrightCommonUI/Private/Tests",
+    "Content/Python/__pycache__",
+    "Content/Python/tests"
+  ],
+  "requiredFiles": [
+    "PinWright.uplugin",
+    "README.md",
+    "Resources/Icon128.png",
+    "Source/PinWright/PinWright.Build.cs",
+    "Source/PinWrightRecorder/PinWrightRecorder.Build.cs"
+  ],
+  "createEmptyPaths": [],
+  "requiredPaths": [
+    "Content",
+    "Examples/pwmodel",
+    "Examples/pwskel",
+    "Examples/pwanim",
+    "Examples/mgir"
+  ],
+  "descriptor": {
+    "isBetaVersion": true,
+    "isExperimentalVersion": true
+  }
+}

@@ -1,0 +1,37 @@
+# M_PwModelExample_VertexColor - the material the .pwmodel examples expect.
+#
+# WHY THIS FILE EXISTS. Every geometry op in a .pwmodel accepts color=(r,g,b,a),
+# and the compiler writes it into the static mesh's FColorVertexBuffer. Nothing
+# in the engine's stock material set samples that buffer, so an example bound to
+# BasicShapeMaterial renders every op the same grey and the colour is data on
+# disk that no one can see. This material is the missing half: VertexColor into
+# BaseColor.
+#
+# HOW TO INSTALL IT. Compile this text into your project - the entry path below
+# is where the examples expect to find it:
+#
+#   call("material.compile_mgir", { text: <this file>, save: true })
+#   call("material.authoring.compile_material",
+#        { assetPath: "/Game/PinWrightExamples/Materials/M_PwModelExample_VertexColor" })
+#
+# Nothing breaks if you skip it. A slot bound to a path that will not load
+# degrades to the default material with a named PWMODEL_STAGE_WARNING and the
+# asset is still written.
+#
+# THE SLOT/COLOUR SPLIT. A material slot is for a different SHADING BEHAVIOUR -
+# iron against gasket, clay against wick. Vertex colour is for tint variation
+# WITHIN one slot. Roughness/Metallic/Specular are scalar parameters here so one
+# graph serves every surface family through material instances; see
+# model.vertex-color.md in the wiki for the instance table.
+
+entry material `/Game/PinWrightExamples/Materials/M_PwModelExample_VertexColor` {
+    %vertexColor = call `/Script/Engine.MaterialExpressionVertexColor`() @(-600, -100)
+    %roughness = call `/Script/Engine.MaterialExpressionScalarParameter`(ParameterName: "Roughness", Group: "Surface", SortPriority: 32, DefaultValue: 0.6) @(-600, 120)
+    %metallic = call `/Script/Engine.MaterialExpressionScalarParameter`(ParameterName: "Metallic", Group: "Surface", SortPriority: 32, DefaultValue: 0.0) @(-600, 260)
+    %specular = call `/Script/Engine.MaterialExpressionScalarParameter`(ParameterName: "Specular", Group: "Surface", SortPriority: 32, DefaultValue: 0.5) @(-600, 400)
+
+    output BaseColor: %vertexColor
+    output Roughness: %roughness
+    output Metallic: %metallic
+    output Specular: %specular
+}

@@ -1,0 +1,23 @@
+/Binaries
+/Intermediate
+/logs
+/.polyskill/logs/
+/tasks
+/dist
+.claude/settings.local.json
+.claude/worktrees/
+Content/Python/__pycache__/
+Content/Python/tests/__pycache__/
+Content/Python/tests/logs/
+/scratchpad/
+
+# Codex agent working notes: scratch plans written into the repo by `codex exec`.
+# They are per-run agent state, not project artifacts.
+.codex/
+
+# Editor output for this plugin (logs, intermediate artifacts). Never tracked.
+Saved/
+
+# Host-specific vocabulary for the package publicity guards (scripts/package-fab.ps1). It names
+# the private host project's proper nouns, which is exactly what must never ship in this repo.
+/scripts/package-fab.local.ps1

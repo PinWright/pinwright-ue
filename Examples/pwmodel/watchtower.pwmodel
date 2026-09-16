@@ -1,0 +1,357 @@
+pwmodel 0
+
+# A small stone watchtower: 3 m across, 10 m to the finial, with an external
+# stair to a first-floor door.
+#
+# PROPORTION. The tower is set out from the man who stands on it, not from a
+# ratio. Working up from the ground:
+#
+#   0 - 105     battered plinth, 178 at the ground splaying in to the shaft.
+#               A batter is how a wall this thin stops a ram and sheds water.
+#   95 - 705    shaft, radius 150 - a 3 m drum, which is the smallest that
+#               takes a stair and a lookout.
+#   700 - 740   corbel flare back out to 172, so the parapet oversails the
+#               shaft and a defender can see the foot of his own wall. 172 and
+#               not 180: see the corbel op for why the two must not meet.
+#   735 - 915   parapet. 180 is the height of a merlon, because a merlon that
+#               does not cover a standing man is a decoration.
+#   840         crenel sill: 100 above the walk, which is where a bow rests,
+#               leaving the crenel 75 deep.
+#   880 - 1100  the cone, sprung above the crenel sills so it reads as a roof
+#               rather than as a spike standing in an open ring. It stops at a
+#               4-radius seating rather than a needle point.
+#   1095 - 1113 the finial bedded on that seating.
+#
+# The door sill is at 120 and the flight has 8 risers of 15, so 8 x 15 = 120
+# and the top tread IS the threshold. Move the door and you change one number
+# in two places.
+
+materials {
+    # Slot names are the contract. Point them at your own stone, slate and oak -
+    # nothing else in the file changes.
+    #
+    # ALL THREE SLOTS BIND THE SAME INSTANCE, AND THE TONAL BREAK MOVED TO
+    # `color=`. Until now this file spent three DIFFERENT engine materials on the
+    # three slots, for one reason: a slate roof and an oak door that shade
+    # identically to the stone turn the tower into one white extrusion, and no
+    # stock material samples Vertex Color, so a per-op tint was data on disk and
+    # nothing you could see. Three grid textures were standing in for three
+    # colours.
+    #
+    # The two mechanisms are not interchangeable and this model needs only one of
+    # them. A SLOT IS A SHADING BEHAVIOUR - metal against cloth against glass,
+    # different roughness and metallic. `color=` IS A TINT WITHIN ONE SLOT.
+    # Stone, slate and oak are all matte dielectrics: one behaviour, three
+    # colours. So the slots stay - they are what a consumer retargets - and the
+    # difference is carried by the `color=` on each generator, against a material
+    # that actually samples it.
+    #
+    # EVERY GENERATOR CARRIES ONE, INCLUDING THE ONES INSIDE `union { }`. A tool
+    # inside a union contributes surviving geometry, and it does NOT inherit the
+    # tint of the op it is unioned onto - measured: a coloured box unioned with an
+    # uncoloured cylinder renders coloured box, WHITE cylinder. `set_vertex_color
+    # set_all=true` does not rescue it either (see the note in spiral_stair) - it
+    # missed the union'd geometry in the same probe. Write the colour on the op.
+    #
+    # AND SO DOES EVERY BOOLEAN TOOL, WHICH IS THE OTHER HALF OF THE SAME RULE
+    # AND IS NOT IN THE DOCS. `subtract` leaves the TOOL'S surface behind as the
+    # new face - the hollow bore, the door reveal, the arrow-slit cheeks, the
+    # crenel notches - and that face takes the TOOL'S `color=`, not the solid's.
+    # Left off it renders WHITE: measured here, the eight crenels were bright
+    # white rectangles between the merlons until the crenel box was given a tint.
+    # `model.vertex-color` calls boolean-contributed geometry "unreliable" for
+    # `set_vertex_color set_all=true`, and it is - but a `color=` written on the
+    # tool op lands every time.
+    #
+    # THE THREE VALUES ARE PUSHED, AND THEY HAD TO BE. Limestone was
+    # (0.70, 0.66, 0.56) and rendered as cream. With three slots on one instance
+    # these three numbers ARE the whole tonal break, so a stone that light drags
+    # slate and oak up with it and the tower reads as one pale object. Weathered
+    # limestone is a warm grey-buff, not an off-white; slate is blue-black, not
+    # mid grey; oak is mid-brown. Judge every one of them on a render - the
+    # preview key light is worth about a stop, so a value that looks right in the
+    # file comes back a shade washed on screen.
+    Stone  = "/Game/PinWrightExamples/Materials/MI_PwModelExample_MatteDielectric"
+    Slate  = "/Game/PinWrightExamples/Materials/MI_PwModelExample_MatteDielectric"
+    Timber = "/Game/PinWrightExamples/Materials/MI_PwModelExample_MatteDielectric"
+}
+
+# Plinth, shaft and corbel flare, hollowed, then opened for a door and three
+# arrow slits.
+#
+# THE THREE PIECES OVERLAP AND ARE UNIONED. Ops written one after another in a
+# part are APPENDED, not unioned: the triangles are concatenated and nothing is
+# resolved. Three drums stacked so their end caps meet exactly at z = 100 and
+# z = 700 therefore keep those caps, buried inside the tower as internal walls,
+# and every later boolean has to work on a self-intersecting mesh. Worse, an
+# exactly-shared face is the degenerate case for the boolean itself.
+#
+# So the plinth runs 10 long to 105 and closes at 148, the shaft starts 5 early
+# at 95, and the corbel opens at 148 rather than 150. Each junction is now a
+# real crossing between two surfaces of different radius instead of two faces
+# resting on each other, and `union` resolves it into one solid.
+part shaft {
+    cone base_radius=178 top_radius=148 height=105 segments=32 at=(0, 0, 52.5) material="Stone" color=(0.50, 0.45, 0.35, 1)
+    union {
+        cylinder radius=150 height=610 segments=32 height_steps=1 at=(0, 0, 400) color=(0.50, 0.45, 0.35, 1)
+    }
+    # 172, NOT 180 - AND 180 IS WHAT THE PARAPET'S OUTER WALL IS.
+    #
+    # Flared to 180 this cone's rim and the parapet drum above it end at the same
+    # radius, on the same 32-gon count, in phase: two surfaces converging to zero
+    # separation over a whole ring. They belong to different PARTS, so no boolean
+    # is ever going to resolve it - the only way out is to not let the two radii
+    # meet. `render.detect_z_fighting` reports 0 affected pixels at 180, so this
+    # is a latent hazard removed rather than a visible artefact fixed; say it
+    # that way round, because the file used to carry the opposite claim.
+    #
+    # 172 also reads better. The corbel is then 8 inside the parapet's face for
+    # its last 5 of height, buried where nothing sees it, and the parapet
+    # oversails it by 8 below 735 - the soffit a corbel table is supposed to
+    # have, instead of a flush face that reads as one continuous drum.
+    union {
+        cone base_radius=148 top_radius=172 height=40 segments=32 at=(0, 0, 720) color=(0.50, 0.45, 0.35, 1)
+    }
+
+    # Hollow it. The wall is left 40 thick, which is what makes the door a
+    # doorway rather than a niche, and gives the arrow slits somewhere to open
+    # into. The 60 of stone below the void is the ground floor.
+    subtract {
+        cylinder radius=110 height=730 segments=32 at=(0, 0, 425) color=(0.50, 0.45, 0.35, 1)
+    }
+
+    # Round-headed door: a rectangle to the springing plus a half-round head,
+    # the same figure as any Romanesque opening. The tool runs to y = 0 so it
+    # certainly reaches the hollow.
+    #
+    # The jamb is 78, two narrower than the 80 head, and runs 5 PAST the
+    # springing to 255. Drawn the obvious way - an 80 box stopping exactly at
+    # the centre of an 80 arch - the box's two top corners land exactly on the
+    # arc, which is three surfaces through one point and the case the boolean
+    # answers with zero-area shards. Narrower and overlapping, the box's sides
+    # cross the arc transversally at 241 and its top face is wholly inside the
+    # head. The 1 that leaves at 241 is the impost, which a Romanesque door has.
+    subtract {
+        box size=(78, 200, 135) at=(0, -100, 187.5) color=(0.50, 0.45, 0.35, 1)
+        union {
+            cylinder radius=40 height=200 segments=24 rotate=(90, 0, 0) at=(0, -100, 250) color=(0.50, 0.45, 0.35, 1)
+        }
+    }
+
+    # Three arrow slits at one level - a firing gallery, not scattered holes.
+    # 14 wide is 140 mm, the width that lets an arrow out and nothing in.
+    subtract {
+        box size=(14, 200, 90) at=(0, -100, 450) color=(0.50, 0.45, 0.35, 1)
+        array_radial count=3 axis=z angle=360 center=(0, 0, 0)
+    }
+
+    # NO `remove_degenerates` HERE, and the measurement is the reason. Six
+    # booleans have run over this part, so it looks like the obvious place for
+    # one - but this part contributes ZERO degenerate triangles. Compiled with
+    # the op in front of the bevel this part then carried, behind it, and absent:
+    # 4312 triangles and 64 degenerates in all three cases, to the triangle. Every
+    # one of the 64 came from the roof cone apex (see `part roof`), and the op
+    # belongs where the geometry is, not where the booleans are.
+    #
+    # NO `bevel` EITHER, AND THAT IS A COLOUR DECISION RATHER THAN A SILHOUETTE
+    # ONE. `bevel distance=2 segments=1` used to soften every arris on this part.
+    # A chamfer is geometry a MODIFIER made, so it carries no vertex colour and
+    # renders PURE WHITE: at any framing closer than the whole tower the plinth
+    # ring, the corbel and every arrow-slit rim were white hairlines drawn on a
+    # limestone wall - one of the two reasons this model read as "a white
+    # material". `set_vertex_color set_all=true` placed after the bevel does not
+    # reach it: measured here, the capture came back byte-identical to the one
+    # without it, same sizeBytes and the same mean luminance to 16 digits.
+    # Deleting the op is the only fix available today and it costs less than the
+    # triangle count suggests - the shaft drops 3094 -> 966 and the silhouette at
+    # whole-object framing is unchanged. `oil_lamp` dropped a collar bevel for
+    # exactly this. Put it back the day `bevel` output carries a colour.
+    uv channel=0 mode=cylindrical scale=(0.004, 0.004)
+    uv channel=1 mode=xatlas
+}
+
+# The parapet, lifted onto the corbel flare by the part transform rather than by
+# an at= on every op inside it, and turned 22.5 - half a crenel pitch - so that
+# no merlon lands on the arrow slit below it.
+#
+# 735, not 740, so the ring sinks 5 into the corbel rather than resting a face
+# on it. Everything inside is then measured from the ring's own base at 735.
+part parapet at=(0, 0, 735) rotate=(0, 0, 22.5) {
+    # ONE `pipe`. This was a drum with a taller drum subtracted out of it, and
+    # the comment that justified the pair said `pipe` emitted two nested UNCAPPED
+    # tubes - 64 boundary edges over 2 disconnected components, which every
+    # boolean downstream inherited and multiplied - and that it built upward from
+    # its origin instead of straddling it. Both were true and both are FIXED.
+    # `pipe` is now a closed solid: outer wall, bore, and both annular end caps,
+    # centred like every other generator, so height=180 spans -90..+90 and
+    # at=(0, 0, 90) puts it at 0..180 - the same span the two drums covered, with
+    # no boolean and no tool to keep clear of either end.
+    pipe outer_radius=180 inner_radius=150 height=180 radial_steps=32 at=(0, 0, 90) material="Stone" color=(0.50, 0.45, 0.35, 1)
+
+    # Eight crenels on a 1037 circumference: 60 of gap leaves 70 of merlon, so
+    # the merlons read wider than the openings, which is what stops a
+    # crenellation looking like a comb.
+    #
+    # The tool runs to 120, thirty above the parapet's own top at 90, so it
+    # breaks the surface it cuts instead of resting a face on it. array_radial
+    # is right here where it was wrong in the trefoil of gothic_window: it
+    # APPENDS its copies without unioning them, which only matters when the
+    # copies overlap, and eight boxes 45 degrees apart on a 165 radius do not.
+    # Local 105 is world 840, the crenel sill. The tool runs to local 215, well
+    # past the ring's own top at 180, so the crenels are gaps in the top edge
+    # and the tool breaks the surface instead of ending flush with it.
+    subtract {
+        box size=(60, 100, 110) at=(0, 165, 160) color=(0.50, 0.45, 0.35, 1)
+        array_radial count=8 axis=z angle=360 center=(0, 0, 0)
+    }
+
+    # The merlon tops were weathered here - `inset` to leave a 5 margin, then
+    # `offset_faces -5` to sink the middle so water runs off. Both are gone, and
+    # the reason is worth keeping:
+    #
+    # `inset` TEARS THE MESH OPEN. On this parapet it leaves 272 boundary edges
+    # on its own - measured with offset_faces removed, so it is inset and not
+    # its partner - turning a closed solid into a shell. It inserts the smaller
+    # face without stitching it to the border it was cut from. Nothing in the
+    # compile says so: it reports success, and only geometry.check_health sees
+    # the hole.
+    #
+    # Channel 1 is xatlas. It was a box projection, carrying a comment that said
+    # inset and offset_faces were "the only reason `uv mode=xatlas` worked on
+    # this part at all - remove them and the unwrap silently writes nothing",
+    # which the compiler turned into a hard NO_UV_ELEMENTS failure for the whole
+    # model. That was a real bug and it is FIXED: this exact part, with no inset
+    # and no offset_faces, unwraps and compiles clean. An atlas is the right
+    # lightmap for a ring with eight notches cut out of its top edge.
+    uv channel=0 mode=box scale=(0.006, 0.006)
+    uv channel=1 mode=xatlas
+}
+
+# The roof springs from 880, ABOVE the crenel sills at 840, not from 740.
+# Sprung at 740 the cone starts at the foot of the parapet and is only 45 wide
+# by the time it clears the merlons - a thin spike inside a ring, which from
+# outside reads as an open tower with a pole in it. Sprung at 880 it is still
+# 121 wide at the merlon tops, so it fills the crown and the tower reads as
+# roofed. 220 over a 148 base is a 56 degree pitch; anything shallower and
+# stone slates slide off it.
+part roof at=(0, 0, 990) {
+    # top_radius=4, NOT 0, AND THAT IS THE WHOLE OF THIS MODEL'S DEGENERATE
+    # COUNT. `cone top_radius=0` does not build a true apex: it builds a
+    # truncated cone whose top ring has radius zero, so all 32 top-ring vertices
+    # sit on one point, the top cap is a fan of 32 zero-area triangles and each
+    # side quad splits into one real triangle and one more. Measured on a lone
+    # cone: 192 triangles, 64 of them degenerate - exactly the 64 the whole
+    # watchtower was carrying.
+    #
+    # `remove_degenerates` DOES delete them (192 -> 128, both at the default
+    # thresholds and at aggressive ones), and it is the wrong fix: the 32
+    # coincident apex vertices stop being shared, so the part comes back with 64
+    # boundary edges and PWMODEL_MESH_NOT_CLOSED. Trading a silent degenerate for
+    # an open mesh is a worse trade than not making the apex collapse at all.
+    #
+    # A 4-radius truncation is also what the roof wants. A stone spire is not
+    # honed to a needle; it stops at a seating and a finial is bedded on it -
+    # which is what the header means by "10 m to the finial" and what the tower
+    # did not actually have.
+    cone base_radius=148 top_radius=4 height=220 segments=32 material="Slate" color=(0.11, 0.13, 0.18, 1)
+    union {
+        sphere radius=9 subdivisions=5 at=(0, 0, 114) color=(0.11, 0.13, 0.18, 1)
+    }
+    uv channel=0 mode=cylindrical scale=(0.01, 0.01)
+    uv channel=1 mode=xatlas
+}
+
+# The flight: ONE `stairs` op with its understructure kept, not `stairs
+# floating=true` sitting on a `ramp`.
+#
+# The pair it replaces neither touched the tower nor climbed toward it, and the
+# reason is that both ops place themselves differently from what their parameter
+# names read like. Measured on this engine, from single-op probes:
+#
+#   stairs step_size=(w, r, d) num_steps=n   runs along +X from x = 0 to n*d,
+#           is w wide CENTRED on Y, and rises from z = 0 to n*r. The depth is
+#           along X and the width along Y - the transpose of the parameter doc's
+#           "per-step width, rise and depth along local X, Z and Y".
+#   ramp size=(a, b, c)                      is corner-placed, not centred, and
+#           permutes its own arguments: size=(90, 240, 120) spans x 0..240,
+#           y 0..120, z 0..90.
+#
+# Written as if both ran along Y, the ramp landed BESIDE the treads instead of
+# under them - in the render the wedge stands on edge between the steps, crossing
+# them - and the whole flight ran east along +X, 390 out from a tower wall it
+# never reached, with its top tread at ground level instead of at the door. The
+# compile was clean and every count was green. Only a render said so.
+#
+# One op cannot disagree with itself. `stairs` with floating left off IS the
+# raking wall, which is what carries a stone flight anyway. Turned 90 about Z it
+# runs along +Y toward the tower; at=(0, -380, 0) then puts the bottom riser at
+# y = -380 and the top tread's face at y = -140, ten inside the 150 shaft, so the
+# flight dies into the wall instead of stopping short of it. 8 risers of 15 is
+# 120, and 120 is the door sill: the top tread IS the threshold.
+part stair {
+    stairs step_size=(90, 15, 30) num_steps=8 rotate=(0, 0, 90) at=(0, -380, 0) material="Stone" color=(0.50, 0.45, 0.35, 1)
+    uv channel=0 mode=box scale=(0.01, 0.01)
+    uv channel=1 mode=xatlas
+}
+
+# The leaf, hung on the inner face of the 40-thick wall so the opening keeps a
+# deep reveal. at= on the part is the whole placement.
+#
+# UNIONED, not appended. The head used to be appended with a comment saying a
+# union here compiles a mesh that `uv mode=xatlas` silently fails to
+# parameterise, failing the whole model with NO_UV_ELEMENTS. Same bug as the
+# parapet's, same status: fixed. The union costs 6 triangles and removes two
+# buried caps and a PWMODEL_UNUNIONED_OVERLAP warning.
+#
+# THE UV SCALE ON THIS LEAF DOES NOTHING VISIBLE, AND THAT IS WORTH KNOWING.
+# Box-projected square, the leaf reads as a grid of panes - a WINDOW, which is
+# exactly what a first-floor opening in a stone tower must not read as. The
+# obvious fix is an anisotropic scale: denser across the leaf than up it, so the
+# pattern reads as vertical boarding. Both orientations were tried, (0.08, 0.02)
+# and (0.02, 0.08), compiled and rendered. The leaf came back BYTE-IDENTICAL
+# both times and identical to the square projection.
+#
+# `/Engine/EngineMaterials/M_Grid` is world-space. Measured on a three-panel
+# probe: three planes at three different UV scales, one of them additionally
+# rotated 45, rendered side by side under M_Grid - all three identical, with the
+# heavy grid lines falling by WORLD position rather than by UV. The same is true
+# of WorldGridMaterial. No UV op can be seen through either of them.
+#
+# So the leaf stays on a square projection and the read is carried by geometry
+# instead: the deep reveal and the round head are what say door. Bind Timber to a
+# material that samples UV0 and the anisotropic scale becomes worth writing.
+#
+# IT STILL DOES NOTHING, AND THE REASON CHANGED. Timber now binds
+# MI_PwModelExample_MatteDielectric, which samples Vertex Color and carries no
+# texture at all - so there is no longer a grid to fight, and equally nothing for
+# a UV scale to move. What the rebind DOES buy is the `color=` on the two ops
+# below: an oak leaf against limestone jambs, which is the read the paragraph
+# above was trying to get out of a texture and could not.
+part door at=(0, -118, 0) {
+    box size=(76, 8, 133) at=(0, 0, 186.5) material="Timber" color=(0.34, 0.21, 0.11, 1)
+    union {
+        cylinder radius=39 height=8 segments=24 rotate=(90, 0, 0) at=(0, 0, 250) color=(0.34, 0.21, 0.11, 1)
+    }
+    uv channel=0 mode=box scale=(0.02, 0.02)
+    uv channel=1 mode=xatlas
+}
+
+uv_layout channel=1 texture_resolution=128
+
+# Without a resolution the asset keeps the UStaticMesh default of 4, and every
+# lightmap UV authored above bakes into a 4x4 texture - which the compiler warns
+# about and nothing else does. 128 is one texel per ~8 uu on a 3 m drum.
+lightmap channel=1 resolution=128
+
+collision {
+    complexity = simple_and_complex
+
+    # A capsule is the right primitive for a drum, and the wrong one for its
+    # foot: the lower cap pulls in below z = 180 and a pawn can clip the plinth.
+    # That is the trade a capsule always makes - two elements, not fifty.
+    capsule radius=180 height=1000 at=(0, 0, 500)
+
+    # The flight, as one box over the raking wall. It follows the `stairs` bounds
+    # measured above: x -45..45, y -380..-140, z 0..120.
+    box size=(90, 240, 120) at=(0, -260, 60) rotate=(0, 0, 0)
+}

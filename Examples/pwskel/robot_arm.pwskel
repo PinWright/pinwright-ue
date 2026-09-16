@@ -1,0 +1,11 @@
+pwskel 0
+
+bone "root" {
+    bone "base" at=(0, 0, 10) {
+        bone "upper_arm" at=(0, 0, 35) {
+            bone "forearm" at=(0, 0, 40) {
+                bone "gripper" at=(0, 0, 30) { }
+            }
+        }
+    }
+}

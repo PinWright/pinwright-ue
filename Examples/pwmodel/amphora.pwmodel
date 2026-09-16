@@ -1,0 +1,266 @@
+# Storage amphora - a two-handled jar in the Greek neck-amphora family.
+#
+# Units are Unreal units (cm); the origin sits at the centre of the foot, so
+# the mesh drops onto a floor at Z=0 with no offset to remember.
+#
+# The vessel is one drawn profile revolved about Z, and the pair of handles is
+# ONE authored strap that `mirror` copies across. Every silhouette decision
+# therefore lives in two lists: the revolve's (radius, height) profile, and the
+# sweep's path. Change a number in one and the shape changes there and nowhere
+# else.
+
+pwmodel 0
+
+materials {
+    # Rebind to your own fired clay and black slip - nothing else changes.
+    #
+    # TWO SLOTS AND TWO DIFFERENT SHADING BEHAVIOURS, which is what earns the
+    # boundary. Terracotta is a matte dielectric: unglazed fired clay is a dry,
+    # open, almost chalky surface. Slip is not - a black-figure slip is a
+    # vitrified sinter that fires to a genuine sheen, and the difference between
+    # the body and the decoration on a real pot is at least as much GLOSS as it is
+    # colour. So the two slots differ in roughness AND in `color=`, and neither
+    # one alone would say it: a satin terracotta reads as glazed earthenware, and
+    # a matte black slip reads as soot.
+    Terracotta = "/Game/PinWrightExamples/Materials/MI_PwModelExample_MatteDielectric"
+    Slip       = "/Game/PinWrightExamples/Materials/MI_PwModelExample_SatinDielectric"
+}
+
+part body {
+    # 69.5 tall against 37.2 across the belly - close to the 2:1 that storage
+    # amphorae settle on once they have to stand upright in a ship's rack.
+    #
+    # Reading the profile bottom to top:
+    #   the foot (0 -> 8.4): a ring that rolls out to 10.5 at Z=2.6 and back
+    #     in to a 7.6 waist at Z=6.6 before the body starts. A pad that just
+    #     flares as it descends reads as a squashed disc stuck under the jar -
+    #     the waist above the roll is what makes it a FOOT;
+    #   the belly at Z=33, the widest point, kept just below mid-height so the
+    #     mass sits rather than floats;
+    #   the shoulder at Z=44.5, which is 0.618 of the 69.5 height. The golden
+    #     section is load-bearing here: the shoulder is the one horizontal the
+    #     eye lands on, and at half-height the jar reads squat;
+    #   the neck, 14 tall (a fifth of the vessel) and waisted at Z=60 so the
+    #     lip has something to flare away from;
+    #   the lip, rolled out to 10.4 over 5 of height - 1.6x the neck. Under
+    #     about 1.4x a rim stops reading as a lip and reads as a cut pipe, and
+    #     a lip with no vertical depth reads as a plate stuck on the top.
+    #
+    # The first and last points sit on the axis (radius 0), which is what
+    # closes the revolution into a solid rather than an open surface.
+    revolve steps=48 material="Terracotta" profile=[(0, 0), (9.0, 0), (10.2, 1.2), (10.5, 2.6), (9.6, 4.2), (8.2, 5.4), (7.6, 6.6), (8.6, 8.4), (10.6, 11.0), (12.8, 14.2), (15.0, 18.0), (16.6, 22.0), (17.8, 26.0), (18.4, 30.0), (18.6, 34.0), (18.3, 38.0), (17.3, 41.5), (15.6, 44.5), (13.6, 46.8), (11.6, 49.0), (9.6, 51.0), (8.4, 52.5), (7.4, 54.5), (6.8, 57.0), (6.6, 60.0), (7.0, 62.5), (8.6, 64.2), (9.9, 65.6), (10.4, 67.2), (10.1, 68.8), (9.0, 69.5), (0, 69.5)] color=(0.58, 0.28, 0.16, 1)
+
+    # The mouth. A truncated cone, widest at the rim and narrowing downward,
+    # so the bore follows the neck in and the wall keeps a roughly even
+    # thickness. It stops at Z=44, on the shoulder: the jar only has to read
+    # as open, it does not have to be hollow to the floor.
+    #
+    # `color=` ON THE TOOL. Faces a boolean CREATES take the default white
+    # unless the tool carries a colour, and the bore wall is in the frame from
+    # any camera that can see into the mouth - it rendered as a white crescent
+    # inside a terracotta jar. See model.vertex-color.
+    subtract {
+        cone base_radius=5.2 top_radius=7.6 height=28 at=(0, 0, 58) color=(0.58, 0.28, 0.16, 1)
+    }
+
+    # The revolve hands back one hard-edged ring per profile segment, which
+    # shades as horizontal banding on a form that should be turned-smooth.
+    # Recomputing normals is what removes it.
+    recalculate_normals
+
+    # Cylindrical is the only projection that fits a body of revolution: U
+    # wraps once around the axis, V runs up the profile, so a painted band
+    # stays a band instead of shearing.
+    uv channel=0 mode=cylindrical scale=(1, 1) split_angle=45
+
+    # Channel 1 is the lightmap, in one op. Measured on this build: against an
+    # otherwise identical model with no channel 1 at all - which compiles with
+    # "the mesh does not carry that UV channel; the asset uses channel 0" and
+    # 125 asset vertices - the xatlas unwrap compiles clean at 137, so it is
+    # writing real elements with their own seams. (patch_builder + layout is
+    # the other route and lands at 178 on the same mesh; it charts more
+    # aggressively, which is worth the extra vertices on a big lightmap and
+    # not on this one.)
+    uv channel=1 mode=xatlas
+}
+
+part handles {
+    # ONE handle, authored on +X, then mirrored. `mirror axis=x` reverses the
+    # copy's triangle winding, which is what a reflection requires - verified
+    # here rather than assumed: a cone built at x=+25 and mirrored renders as
+    # two solid, identically shaded, identically shadowing cones.
+    #
+    # A vertical strap handle running shoulder to neck. Its two roots are the
+    # points the arc is drawn between:
+    #   the lower root at radius 12.0, Z=44.5. The shoulder is 15.6 there, so
+    #     the centreline is buried 3.6;
+    #   the upper root at radius 3.5, Z=59.5, on the NECK (6.6 there) and 3
+    #     below where the lip begins to flare at Z=62.5. An earlier pass ran
+    #     it to 63.2, inside the flare, and the handle then cut a wedge-shaped
+    #     notch out of the underside of the rim: the lip is the one place on
+    #     this jar where the wall turns outward faster than a handle root can
+    #     follow, so anything landing in it takes a bite.
+    #
+    # Burial depth is the number to watch, because a strap 8.8 wide meets a
+    # curved wall and its two outer corners therefore sit on a SHORTER radius
+    # than its centre: at 4.4 off the mid-plane the shoulder is only 14.97,
+    # not 15.6. What makes the crossing clean is not depth alone but ANGLE -
+    # the strap's axis meets the shoulder wall at 84 degrees here, so it
+    # punches through instead of running tangent to it. Two near-tangent
+    # surfaces are what produced the speckled seam an earlier pass had.
+    #
+    # THIS CUBE IS CEREMONY, and saying so is cheaper than a story about it.
+    # `sweep` cannot open a part: it is classed as a modifier and rejected
+    # with PWMODEL_PART_NEEDS_PRIMITIVE as a first op, even though with both
+    # `profile` and `path` given it builds its geometry from nothing but its
+    # own arguments and never reads the mesh it appends to. And `sweep` takes
+    # no `material=` - only generators do - so without a generator the strap
+    # would land on slot 0 instead of its own.
+    #
+    # One generator answers both. It is 2 across, sits at the strap's own
+    # lower frame - inside a section 8.8 by 3.45, so enclosed on every side -
+    # and `self_union` below absorbs it. Two builds were spent trying to make
+    # this slot carry a real feature instead: a clay pad at the lower
+    # attachment. Both rendered as a faceted wart, because a pad big enough
+    # to see is a pad big enough to break the shoulder's silhouette where the
+    # body is narrowing by 2 of radius every 2.3 of height. A buried 2-unit
+    # cube is the honest version of a workaround for a format limitation.
+    #
+    # Slip, not Terracotta: on black-figure ware the handles carry the same
+    # black slip as the painted decoration, so they are their own slot.
+    box size=(2, 2, 2) at=(12.0, 0, 44.5) material="Slip" color=(0.07, 0.06, 0.055, 1)
+
+    # THE STRAP, and `sweep` is the honest tool because a pulled handle is a
+    # cross-section dragged along a curve - which is the op's definition. The
+    # construction it replaces was a torus cut in half, scaled 1.8 in one
+    # axis and pinched with `taper`, and it rendered as a round sausage
+    # because a scaled circle is still an ellipse: it has no flat inner face
+    # and no edge. A strap has both.
+    #
+    # THE FRAME CONVENTION, measured rather than assumed: the profile's
+    # (u, v) lands on each frame's local (Y, Z), and the sweep advances along
+    # the frame's local +X. Probe: profile spanning u 0..4 and v 0..20 swept
+    # along path (0,0,0) -> (50,0,0) comes back occupying x 0..50, y 0..4,
+    # z 0..20. Getting this backwards is quiet rather than loud - the same
+    # profile swept along (0,0,0) -> (0,0,50) puts the section plane along the
+    # path and returns a flat slab that still reports success, closed, with
+    # four degenerate triangles as the only hint.
+    #
+    # The frames are NOT resampled - `steps` does not touch `path=` - so they
+    # are written out, and how many there are is a silhouette decision rather
+    # than a tessellation setting. They walk an ellipse centred at
+    # (7.75, 52.0) in the XZ plane: semi-axis 8.62 along the chord between the
+    # two roots, and 7.4 across it. Across it, not 8.62: a circular arc would
+    # carry the centreline out to 15.46+1.95 = 17.4 and a semicircle to
+    # 17.25+1.95, which breaks the 18.6 belly - the widest point has to stay
+    # the belly or the jar reads as having ears. The path runs from -15 to 195
+    # degrees rather than 0 to 180, so both end caps finish well inside the
+    # wall.
+    #
+    # 22 frames, one every 10 degrees. The first build used 15 at 15 degrees
+    # and the arc's outer edge rendered as a visible run of flats - the strap
+    # is the one part of this jar whose silhouette is a short curve seen
+    # broadside, so it needs a finer step than the 48 the body's revolve gets
+    # for a circle four times the size.
+    #
+    # The section is 8.8 across the pot by 3.45 through it - a 2.5:1 strap,
+    # against the 1.8:1 the ellipse managed. The inner face is flat, the outer
+    # face is domed, and the two corners between them are the 35-degree turns
+    # that `split_normals` below hardens into the strap's edge.
+    #
+    # WHICH WAY v POINTS IS NOT COSMETIC. For a frame at pitch P, local +Z is
+    # (-sin P, 0, cos P), so over the crest of this arc - P near 93 degrees -
+    # local +Z points at the jar's axis. Writing the domed face at +v
+    # therefore turns it inward and leaves the FLAT face outward, and a flat
+    # face between two hardened edges renders as a gutter: the first build of
+    # this part came back with two handles that read as lengths of channel
+    # iron. The list below is that one negated in v and reversed in order -
+    # negating alone would have flipped the section's winding with it.
+    sweep profile=[(-4.1, 1.0), (-4.4, 0), (-4.1, -1.0), (-3.2, -1.7), (0, -1.95), (3.2, -1.7), (4.1, -1.0), (4.4, 0), (4.1, 1.0), (3.4, 1.5), (-3.4, 1.5)] path=[(10.19, 0, 43.81, 0, 12.2, 0), (11.42, 0, 44.21, 0, 23.7, 0), (12.54, 0, 44.85, 0, 35.4, 0), (13.52, 0, 45.70, 0, 46.9, 0), (14.32, 0, 46.74, 0, 58.1, 0), (14.92, 0, 47.95, 0, 68.7, 0), (15.31, 0, 49.28, 0, 78.9, 0), (15.46, 0, 50.69, 0, 88.5, 0), (15.38, 0, 52.14, 0, 97.7, 0), (15.07, 0, 53.58, 0, 106.6, 0), (14.53, 0, 54.98, 0, 115.2, 0), (13.79, 0, 56.29, 0, 123.8, 0), (12.87, 0, 57.47, 0, 132.5, 0), (11.79, 0, 58.48, 0, 141.4, 0), (10.59, 0, 59.29, 0, 150.5, 0), (9.30, 0, 59.88, 0, 160.2, 0), (7.96, 0, 60.24, 0, 170.3, 0), (6.62, 0, 60.34, 0, -179.0, 0), (5.31, 0, 60.19, 0, -167.8, 0), (4.08, 0, 59.79, 0, -156.3, 0), (2.96, 0, 59.15, 0, -144.6, 0), (1.98, 0, 58.30, 0, -133.1, 0)]
+
+    # The pad and the strap overlap, and sibling ops APPEND rather than union,
+    # so the faces between them survive buried inside the solid. `self_union`
+    # is what resolves that: it is the one op that treats the accumulated mesh
+    # as a single boolean operand against itself.
+    self_union
+
+    # Now the second handle. This is the whole reason the pair is one part.
+    mirror axis=x
+
+    recalculate_normals
+
+    # 30 degrees, not the usual 40: the sharpest corner on the strap section
+    # is the 35.5-degree turn from the flat inner face onto the rounded edge,
+    # so a 40-degree threshold hardens nothing at all and the strap comes back
+    # as a smooth tube - the exact defect the section was rewritten to fix.
+    split_normals split_angle=30
+
+    # THE STRAP CANNOT BE COLOURED ANY OTHER WAY. `color=` is a parameter on
+    # GENERATORS, and `sweep` is classed as a modifier - the same fact the ceremony
+    # cube above exists for. So the cube carries the slip colour (which allocates
+    # the part's colour overlay) and this op paints the strap the cube could not
+    # reach. Without it the pot ships black-slip handles that render white, which
+    # is a stranger failure than no colour at all.
+    #
+    # `set_all` IS SAFE HERE ONLY BECAUSE `self_union` RAN BEFORE IT. Measured on a
+    # probe: `set_vertex_color set_all=true` does NOT reach geometry a boolean has
+    # contributed as a TOOL - a box unioned with an uncoloured cylinder comes back
+    # coloured box, white cylinder, with no diagnostic. `self_union` takes one mesh
+    # against itself rather than against a tool, and this op runs after it, so
+    # every vertex on both handles is already in the mesh when the write happens.
+    set_vertex_color set_all=true color=(0.07, 0.06, 0.055, 1)
+
+    uv channel=0 mode=cylindrical scale=(1, 1)
+    uv channel=1 mode=xatlas
+}
+
+uv_layout channel=1 texture_resolution=64
+
+# 64 rather than the UStaticMesh default of 4. Requesting a lightmap channel
+# and no resolution compiles with a warning and bakes the authored UVs into a
+# 4x4 lightmap, which throws away the unwrap the line above just paid for.
+lightmap channel=1 resolution=64
+
+collision {
+    complexity = simple_and_complex
+
+    # One capsule for the vessel. Sized to the belly rather than to the mean,
+    # which over-covers the neck badly and the foot a little; a capsule is a
+    # coarse fit for a profile that changes radius three times, and choosing
+    # WHERE it is wrong is the whole decision. Over-covering a neck costs a
+    # player nothing; under-covering the belly lets things sink into the pot.
+    # height is the total including both caps, not the cylindrical section,
+    # so 69 spans the foot at 0 to the rim at 69.
+    capsule radius=18 height=69 at=(0, 0, 34.5)
+
+    # One hull per handle - the hand-authored convex-decomposition path.
+    # THE COLLISION BLOCK HAS NO `mirror`, so the pair that the render part
+    # gets for free is still kept in step by hand here. That asymmetry is the
+    # reason to check both blocks when either root moves.
+    #
+    # The hull does not repeat the sweep: hull discards concavity, so whatever
+    # is fed in comes back as a filled D and a coarse half-torus on the same
+    # chord is the cheapest thing that produces it. major_radius 8.62 is the
+    # chord's own half-length; the 29.5-degree pitch is that chord's angle;
+    # minor_radius 2.6 covers the strap's 4.4 half-width once the concavity is
+    # discarded. Nothing needs to pass through the gap between a handle and
+    # the neck, which is what makes the filled D the right answer rather than
+    # a loss.
+    hull {
+        torus major_radius=8.62 minor_radius=2.6 rotate=(90, 0, 0)
+        subtract {
+            box size=(40, 40, 40) at=(-20, 0, 0)
+        }
+        transform rotate=(0, 29.5, 0)
+        transform at=(7.75, 0, 52.0)
+    }
+    hull {
+        torus major_radius=8.62 minor_radius=2.6 rotate=(90, 0, 0)
+        subtract {
+            box size=(40, 40, 40) at=(-20, 0, 0)
+        }
+        transform rotate=(0, 29.5, 0)
+        transform rotate=(0, 0, 180)
+        transform at=(-7.75, 0, 52.0)
+    }
+}

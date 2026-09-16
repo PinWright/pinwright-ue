@@ -1,0 +1,293 @@
+# crystal_cluster.pwmodel - a quartz cluster growing out of its host rock.
+#
+# What this example is for:
+#   * faceted shading  - `split_normals split_angle=0` on the crystals, against a
+#     threshold split on the rock, so one file shows both ends of the same knob.
+#   * vertex colour    - `color=` per crystal. Twelve `revolve` lines, twelve tints;
+#     the variation is data, not a shader.
+#   * silhouette       - three tall, four medium, five small, none of them evenly
+#     spaced. Crystals read as a cluster only when the heights are uneven.
+#
+# Every crystal is ONE `revolve` line: a hexagonal prism with a pyramidal
+# termination, swept from a five-point profile at six steps. Moving a crystal is
+# editing its `at=`; re-proportioning it is editing its profile. That is the whole
+# argument for enumerated geometry over a loop.
+#
+# Profile points are (radius, height) in the part-local frame, revolved about local
+# Z. The shape is always: buried foot -> prism rim -> shoulder -> apex.
+#
+# THREE THINGS THAT MAKE A CLUSTER READ, ALL LEARNED BY GETTING THEM WRONG
+#   1. EVERY PROFILE STARTS AT z = -14, NOT z = 0. That first segment is a shaft
+#      buried in the rock. With the foot flush at z = 0 the crystals only grazed
+#      the matrix surface and every junction tore into black slivers with an open
+#      wedge you could see into.
+#      But DEEPER IS NOT BETTER, which took three goes to learn. The rock is a
+#      spherified mass, so it narrows toward its base, and a leaning shaft walks
+#      sideways as it descends. At -44 the feet arrived where the rock is thin and
+#      punched out through its flank, leaving a black cavity - and the two parts
+#      are separate meshes that merely interpenetrate, so nothing repairs that
+#      junction. The rock top sits at z = +16, so -14 already buries every foot 30
+#      units deep, in the thickest part of the mass. That is all the depth needed.
+#   2. THE ROCK IS A MASS, NOT A PLINTH. It stands 104 tall against a 164 tall
+#      crystal - nearly two thirds. At 48 it was a wafer and you could see daylight
+#      between the crystal feet.
+#   3. THE TILTS ARE IN roll AND pitch, NOT yaw. `rotate=(roll, pitch, yaw)`, and
+#      yaw only SPINS an upright prism about its own axis - it does not lean it.
+#      An earlier version varied yaw from 5 to 52 degrees and left twelve crystals
+#      standing dead parallel. The leans below are 12-38 degrees of roll/pitch.
+
+pwmodel 0
+
+materials {
+    # TWO SLOTS, TWO DIFFERENT BEHAVIOURS, AND THE DIFFERENCE IS THE POINT. Bound to
+    # the same white material the rock and the quartz are one undifferentiated white
+    # mass: in a shaded three-quarter render the crystals stopped reading as crystals
+    # and the whole thing read as a single carved lump. That break does more for
+    # legibility than any amount of geometry work on either half.
+    #
+    # THE HEADER PROMISES THIS FILE DEMONSTRATES VERTEX COLOUR, AND UNTIL NOW IT DID
+    # NOT. The twelve `color=` values below were always written into the mesh colour
+    # channel, but no stock engine material samples Vertex Color, so twelve tints
+    # rendered as twelve identical white prisms - the example's headline feature was
+    # data on disk and nothing else. Quartz now binds a material that reads the
+    # channel, which is the only change that makes the file do what it says.
+    #
+    # QUARTZ IS OPAQUE SATIN, NOT GLASS, AND THAT IS A MEASURED REJECTION RATHER THAN
+    # AN OVERSIGHT. Real quartz is translucent and the translucent instance is the
+    # obvious binding. It was tried, rendered, and it is wrong for THIS model, for
+    # two reasons that are both properties of the file rather than of the material:
+    #
+    #   1. THE CRYSTALS DELIBERATELY INTERPENETRATE. Eleven PWMODEL_UNUNIONED_OVERLAP
+    #      warnings on every compile say so, and they are correct and wanted - the
+    #      cluster is twelve separate solids sharing volume, not one welded mass.
+    #      Opaque, the buried faces are invisible. Through a two-sided translucent
+    #      material every one of them shows, and the cluster renders as a tangle of
+    #      overlapping planes instead of twelve crystals.
+    #   2. IT ERASES THE FEATURE THE FILE EXISTS FOR. The header promises twelve
+    #      tints. At the opacity the translucent instance actually reaches, the two
+    #      amethyst spars and the smoky brown one were indistinguishable from the
+    #      nine clear ones - the render was a set of colourless ghosts against the
+    #      sky. A tint you cannot see is the exact failure this block already
+    #      records from the placeholder era, arrived at from the other direction.
+    #
+    # Satin against the rock's matte is still a genuine two-behaviour split, so the
+    # slot boundary survives: cut quartz faces take a specular highlight, weathered
+    # matrix does not, and `split_normals split_angle=0` below is what makes those
+    # facets sharp enough to catch one. That contrast is now doing the work the
+    # tonal break used to do alone.
+    #
+    # ALPHA IS 1 ON EVERY CRYSTAL AND CARRIES NO MEANING HERE. Do not read the fourth
+    # component as cloudiness - on an opaque material it is ignored. It is written
+    # out only because `color=` is a vector4.
+    #
+    # The old block also rejected `/Engine/EngineMaterials/DefaultMaterial` for the
+    # rock - it carries a grid texture the box UVs tile across the boulder, so it
+    # reads as a texturing bug rather than as stone. That is still true of every
+    # textured stock material and is why the instances here carry no texture at all:
+    # every value in this model comes from its own `color=`.
+    #
+    # THE TWELVE TINTS ARE PUSHED, BECAUSE TEN OF THEM USED TO SIT WITHIN 3% OF
+    # WHITE. "Clear quartz is nearly white" is true of the mineral and useless as
+    # a value: rendered, nine near-identical 0.8-grey prisms are the same
+    # colourless cluster the translucent trial produced, arrived at from the
+    # opaque side. The nine clears now run a cool blue-grey band from
+    # (0.32, 0.44, 0.58) to (0.50, 0.48, 0.43), with two of them deliberately
+    # milky and warm rather than blue so the group has hue variation and not just
+    # a tint. The preview key light is worth about a stop, so the lit facets
+    # still resolve near white - which is what a cut face does - while the flanks
+    # carry the colour.
+    #
+    # AND THE MATRIX WENT DOWN, NOT THE CRYSTALS UP. (0.30, 0.29, 0.26) rendered
+    # as a mid grey barely a value below the quartz. At (0.14, 0.13, 0.11) the
+    # rock is a dark warm mass and the value break does the work no per-crystal
+    # tint can: crystals read as crystals because they are BRIGHT AGAINST
+    # SOMETHING. Amethyst (0.34, 0.20, 0.56) / (0.27, 0.16, 0.45) and the smoky
+    # spar (0.36, 0.27, 0.20) are the hue anchors that keep the blue band from
+    # reading as one colour.
+    Quartz = "/Game/PinWrightExamples/Materials/MI_PwModelExample_SatinDielectric"
+    Matrix = "/Game/PinWrightExamples/Materials/MI_PwModelExample_MatteDielectric"
+}
+
+# ---------------------------------------------------------------------------
+# The host rock the crystals grew in.
+# ---------------------------------------------------------------------------
+part matrix {
+    # 6x5x4 segments, not the 1x1x1 default: spherify and noise_deform both move
+    # existing vertices and create none, so a plain box would deform into a wedge.
+    # 104 tall - see note 2 at the top of the file.
+    box size=(132, 118, 104) segments=(5, 5, 4) material="Matrix" color=(0.14, 0.13, 0.11, 1)
+
+    # 0.7, and the box above is deliberately NEAR-CUBIC (132 x 118 x 104) rather
+    # than the slab it started as. Both numbers are load-bearing together:
+    # `spherify` pulls every vertex toward one sphere, so on a strongly oblong box
+    # it drags the long axis in much further than the short one, and at 0.82 on a
+    # 150 x 118 x 92 box that fold passed through the surface and left a black
+    # cavity in the flank that no amount of fiddling with the crystals fixed.
+    # Keep the box near-cubic and let the large noise octave below do the shaping.
+    spherify factor=0.7
+
+    # THE ONE THING `spherify` CANNOT BE ASKED TO LEAVE ALONE IS PROPORTION, WHICH IS
+    # WHY THIS OP EXISTS. Matrix off a vein is bedded - wider than it is tall - and
+    # the obvious way to say so is to author the box that shape. That is exactly the
+    # move the note above forbids: an oblong box is what makes `spherify` fold its
+    # long axis through the surface. So the box stays near-cubic to survive the
+    # spherify, and the proportion is put back afterwards, on the rounded mass, where
+    # no fold is possible. `stretch` is the only op that can reach the shape at that
+    # point - the generator's `size=` is three ops upstream and `spherify` has already
+    # thrown 70% of it away.
+    # 0.78 and not less: at 0.6 the rock was the wafer note 2 warns about. 0.78 takes
+    # the ~94-tall spherified mass to ~73 and leaves its top at z = +16 with the
+    # translate below unchanged, so every crystal foot is still buried 30 deep.
+    stretch axis=z factor=0.78
+
+    # Deliberate: spherify leaves the box's original segmentation, which is dense
+    # at the corners and sparse across the faces. noise_deform displaces vertices,
+    # so it inherits that unevenness and the boulder comes out lumpy in a grid
+    # pattern. A uniform remesh first is what makes the noise read as rock.
+    remesh_uniform target_triangle_count=2600
+
+    # Three octaves at different seeds. FREQUENCY IS PER UNIT, not a 0-1 knob, and
+    # the three are doing three different jobs. 0.014 is one lobe every ~70 units,
+    # so on a 150-wide boulder it makes two or three - that is the octave that
+    # destroys the cube, and no amount of fine detail substitutes for it. 0.034 is
+    # one lump every ~30 units, the rock's actual texture. The last is kept modest:
+    # at magnitude 3 the high octave folded the surface through itself and left
+    # black gashes. The obvious guess of a "low" frequency like 0.005 samples one
+    # almost-flat patch of the field and moves the whole rock instead of shaping it.
+    noise_deform magnitude=12 frequency=0.015 seed=7
+    noise_deform magnitude=5 frequency=0.036 seed=2
+    noise_deform magnitude=1.6 frequency=0.085 seed=13
+
+    # Drop the boulder so its top sits at z = +16 and the crystals' buried shafts
+    # (which run down to z = -14) are well inside it rather than grazing the skin.
+    translate_mesh translation=(0, 0, -30)
+
+    # 34 degrees creases where the noise actually folded the surface and leaves the
+    # broad faces smooth. Compare with split_angle=0 on the crystals below.
+    split_normals split_angle=34
+
+    # scale=(0.05, 0.05), NOT the default 1. Box UVs at unit scale put roughly ten
+    # WorldGridMaterial cells across a 130-wide boulder and the rock renders as a
+    # grey plaid - the same "reads as a texturing bug" failure the materials block
+    # rejects DefaultMaterial for, arrived at from the other direction. At 0.05 the
+    # whole rock sits inside one cell and the material is what it is wanted for: a
+    # flat dark value that lets the quartz read as quartz.
+    uv channel=0 mode=box scale=(0.05, 0.05)
+}
+
+# ---------------------------------------------------------------------------
+# The crystals. Grouped by size class, because that is the composition:
+# three talls carry the silhouette, four mediums fill it, five smalls break the
+# base line so the cluster does not read as a bundle of sticks.
+#
+# The two numbers before the last in each profile are the TERMINATION, and they are
+# deliberately all different: a low shoulder with a long point gives a sharp spike,
+# a high shoulder with a short point gives a blunt chisel. Twelve identical
+# terminations read as an array; these do not.
+# ---------------------------------------------------------------------------
+part crystals {
+    # --- three talls -------------------------------------------------------
+    revolve profile=[(0, -14), (16, -14), (16, 132), (7, 152), (0, 164)] steps=6 at=(3, -12, 4) rotate=(18, -9, 12) material="Quartz" color=(0.40, 0.52, 0.64, 1)
+    revolve profile=[(0, -14), (13, -14), (13, 104), (6, 120), (0, 130)] steps=6 at=(-21, 7, 2) rotate=(-22, 14, 40) material="Quartz" color=(0.52, 0.50, 0.46, 1)
+    revolve profile=[(0, -14), (11, -14), (11, 86), (3, 104), (0, 112)] steps=6 at=(22, 15, 0) rotate=(15, 24, 25) material="Quartz" color=(0.34, 0.20, 0.56, 1)
+
+    # --- four mediums ------------------------------------------------------
+    revolve profile=[(0, -14), (12, -14), (12, 60), (7, 72), (0, 79)] steps=6 at=(-33, -16, 0) rotate=(-28, -12, 5) material="Quartz" color=(0.34, 0.46, 0.60, 1)
+    revolve profile=[(0, -14), (10, -14), (10, 54), (3, 64), (0, 70)] steps=6 at=(30, -12, 1) rotate=(20, 26, 52) material="Quartz" color=(0.48, 0.60, 0.71, 1)
+    revolve profile=[(0, -14), (11, -14), (11, 47), (6, 56), (0, 63)] steps=6 at=(-7, 29, 0) rotate=(-33, 9, 18) material="Quartz" color=(0.27, 0.16, 0.45, 1)
+    revolve profile=[(0, -14), (9, -14), (9, 41), (2, 50), (0, 55)] steps=6 at=(38, 5, -2) rotate=(12, -30, 33) material="Quartz" color=(0.43, 0.55, 0.67, 1)
+
+    # --- five smalls -------------------------------------------------------
+    revolve profile=[(0, -14), (8, -14), (8, 26), (4, 33), (0, 37)] steps=6 at=(-40, 9, -2) rotate=(36, -14, 8) material="Quartz" color=(0.37, 0.49, 0.62, 1)
+    revolve profile=[(0, -14), (7, -14), (7, 20), (2, 26), (0, 30)] steps=6 at=(-23, -34, -3) rotate=(-19, -28, 46) material="Quartz" color=(0.50, 0.48, 0.43, 1)
+    revolve profile=[(0, -14), (8, -14), (8, 31), (5, 39), (0, 44)] steps=6 at=(12, 34, -3) rotate=(29, 17, 21) material="Quartz" color=(0.36, 0.27, 0.20, 1)
+    revolve profile=[(0, -14), (6, -14), (6, 15), (2, 20), (0, 23)] steps=6 at=(40, -17, -3) rotate=(-24, 31, 14) material="Quartz" color=(0.45, 0.57, 0.69, 1)
+    revolve profile=[(0, -14), (9, -14), (9, 35), (3, 43), (0, 48)] steps=6 at=(-3, -31, -2) rotate=(-16, -22, 37) material="Quartz" color=(0.32, 0.44, 0.58, 1)
+
+    # Cylindrical about the cluster's Z, not box. One projection covers the whole
+    # part, and every crystal is broadly upright, so V runs up the prisms the way
+    # growth banding does. A box projection would swap projection axis partway up
+    # each termination and put a seam across the facets that matter most.
+    uv channel=0 mode=cylindrical split_angle=30
+
+    # The reason this file exists. 0 degrees splits EVERY edge, so no facet shares a
+    # normal with its neighbour and the prism reads as cut quartz instead of as a
+    # smooth-shaded tube. Verify it on a raking side view, not on a flat 3/4.
+    split_normals split_angle=0
+
+    # Splitting the normals invalidated the tangent basis they were derived from,
+    # and MikkT needs the finished UVs, so this runs last of the three.
+    recompute_tangents
+}
+
+# ---------------------------------------------------------------------------
+# The druse: the second generation. A specimen that is only twelve big crystals on
+# a rock reads as twelve crystals on a rock; what makes it read as a SPECIMEN is a
+# crust of small ones down a fracture on the flank, at a scale the eye takes as
+# texture rather than as objects it has to count.
+#
+# WHY THIS ONE IS ARRAYED WHEN THE TWELVE ABOVE ARE ENUMERATED, which looks like a
+# contradiction and is the actual rule: enumerate what the COMPOSITION depends on,
+# array what is TEXTURE. Moving any of the twelve changes the silhouette, so each
+# is worth a line. The druse crystals are second-generation growth off one fracture
+# - in nature they really are near-identical, and no single one of them is load
+# bearing - so they are one shape placed seven times.
+#
+# `array_along_path` and not `array_linear`, because the thing that stops seven
+# copies reading as seven copies is that each sits at its own ANGLE off the rock,
+# and `array_linear` has only an offset. The frames below are absolute part-local
+# placements, not deltas: seven frames, seven copies, and the original is NOT left
+# standing in addition (write the identity frame first if you want one there).
+#
+# THE FRAMES ARE SOLVED, NOT SPRINKLED, and the arithmetic is the only reason any
+# of them is visible. With roll 0 a frame's local +Z lands on
+# (-sin(pitch)cos(yaw), -sin(pitch)sin(yaw), cos(pitch)), so pitch near -70 lays a
+# spur almost flat against the flank and yaw swings it round.
+# The POSITION is the part that was wrong the first time. A frame positions the
+# part's ORIGIN, and this spur's origin is 16 up its own axis from its foot - so a
+# frame placed at radius 40 buries the whole 56-unit spur in a flank that stands at
+# 54 to 67 and leaves three white specks on the rock that read as compile damage.
+# Each frame here sits at 0.88 of the flank radius for its own height, taken off the
+# spherified-then-stretched ellipsoid the matrix actually is:
+#     R(z) = 67 * sqrt(1 - ((z + 30) / 37)^2)
+# which buries the foot about 22 and leaves about 30 of crystal standing out. The
+# 0.88 rather than 1.0 is the margin for the +-12 the noise octaves move the surface
+# by; at 1.0 a spur that landed in a hollow would float free of the rock.
+# The roll varies only to spin the hexagon - a prism's roll changes which facet
+# catches the light and nothing else.
+#
+# ALL SEVEN SIT INSIDE ONE 90-DEGREE ARC OF FLANK, which is both what a druse is -
+# second-generation growth coats ONE fracture face, not the whole specimen - and
+# what stops the failure the first spread version had. Ringed evenly round the rock,
+# every camera angle found one spur pointing at it, and a 13-wide hexagonal prism
+# seen end-on with no neighbours beside it reads as a bolt head screwed to the rock.
+# In a patch, the foreshortened one is read as the near end of the group.
+part druse {
+    revolve profile=[(0, -16), (6.5, -16), (6.5, 24), (2.5, 33), (0, 40)] steps=6 material="Quartz" color=(0.41, 0.53, 0.65, 1)
+
+    # ONE LINE, AND NOT BY CHOICE: a bracketed list may not span lines, so a seven
+    # frame path is a long line and a hundred-frame one would be unreadable. Keep
+    # the frames grouped in the order they run down the fracture so the line can at
+    # least be read left to right.
+    array_along_path path=[(-54.1, -7.6, -16, 12, -56, -172), (-54.7, -22.1, -30, 40, -64, -158), (-39.9, -31.2, -11, 5, -48, -142), (-35.4, -45.3, -38, 25, -58, -128), (-21.5, -53.3, -22, 48, -44, -112), (-6.1, -58.5, -33, 18, -60, -96), (4.6, -52.2, -13, 33, -52, -85)]
+
+    uv channel=0 mode=cylindrical split_angle=30
+    split_normals split_angle=0
+    recompute_tangents
+}
+
+# Auto, because a spiky cluster has no honest hand-authored decomposition: every
+# crystal would need its own hull block and the rock another.
+#
+# `max_hulls_per_component`, NOT `max_hulls`. The old spelling still compiles and
+# warns, and the warning is worth reading rather than silencing: the number is spent
+# on EACH CONNECTED COMPONENT of the merged mesh, and this model is a rock plus a
+# dozen crystals plus the druse that no boolean joins, so it is in 19 pieces. Asking
+# for 8 therefore bought 47 elements, which the previous version of this comment
+# recorded as the parameter "not being honoured". It was being honoured exactly; the
+# name was lying. 2 x 19 is the budget that matters, and 2 is generous for a piece
+# whose parts are all convex anyway.
+collision {
+    complexity = simple_and_complex
+    auto method=convex_hulls max_hulls_per_component=2 simplify_to=400
+}

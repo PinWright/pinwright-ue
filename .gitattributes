@@ -1,0 +1,66 @@
+# Last match wins, so the blanket rules come first and the per-path pins below override them.
+
+# Text normalisation is declared here rather than inherited from whatever core.autocrlf each
+# clone happens to set. The index is ALREADY LF - 1597 of 1598 tracked .cpp/.h/.cs blobs, the
+# lone exception being Source/PinWright/Private/Tests/Assets/TestCreateBlendSpaceAxisConfig.cpp -
+# so this records the shape the repo is already in; it does not propose a new one. The working
+# tree stays mixed on purpose: git checks files out CRLF on Windows, agent editors write LF, and
+# NO renormalisation pass was run (see docs/lessons.md). Scripted edits must therefore read a
+# file's existing newlines rather than assume either style.
+* text=auto
+
+# Binaries, so text=auto's content heuristic never gets a vote on them. Resources/Icon128.png is
+# the only one tracked today; the rest are here so a file that lands later cannot be mangled
+# before anyone notices. Unreal content assets go through Git LFS in the HOST project
+# (../../.gitattributes) - the plugin tracks none, and the LFS filters are deliberately not
+# mirrored here, only the "never treat as text" half.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.bmp binary
+*.ico binary
+*.tga binary
+*.dds binary
+*.exr binary
+*.hdr binary
+*.psd binary
+*.wav binary
+*.mp3 binary
+*.ogg binary
+*.mp4 binary
+*.mov binary
+*.ttf binary
+*.otf binary
+*.pdf binary
+*.zip binary
+*.7z binary
+*.gz binary
+*.dll binary
+*.exe binary
+*.lib binary
+*.pdb binary
+*.so binary
+*.dylib binary
+*.uasset binary
+*.umap binary
+*.upk binary
+*.udk binary
+
+# mcp-instructions.md is a byte-exact contract, not prose: the `initialize` handshake text is
+# duplicated as a C++ literal (Transport/McpRequestCore.cpp) and a Python literal
+# (Content/Python/mcp_proxy.py), and both sync guards compare the file's bytes against those
+# literals. With core.autocrlf on, a Windows checkout rewrote its newlines to CRLF while the
+# literals stay \n, so PinWright.infra.request_core.Initialize failed on every such clone for a
+# difference no author could see. Pin the working-tree newlines instead of teaching each guard to
+# normalise, which would also hide real CRLF drift creeping into the literals.
+mcp-instructions.md text eol=lf
+
+# .pwmodel is source text with a grammar, not prose, and `model.format` will eventually write
+# whole files here. Declaring `text` explicitly takes the content heuristic in `* text=auto` out
+# of the decision, so the index shape is fixed before an emitter starts producing them. eol is
+# deliberately NOT pinned, unlike the entry above: the emitter's contract is to reproduce
+# the newline style of the file it rewrote (docs/pwmodel-emitter-and-migration.md), and
+# pinning eol=lf would force a renormalising checkout on Windows, which this repo has never run
+# (see the blanket note at the top).
+*.pwmodel text

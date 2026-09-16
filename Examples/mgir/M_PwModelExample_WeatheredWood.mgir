@@ -1,0 +1,304 @@
+# M_PwModelExample_WeatheredWood - procedural wood grain, tinted BY vertex colour.
+#
+# WHY THIS FILE EXISTS. `MI_PwModelExample_MatteDielectric` is a flat dielectric
+# reading a flat per-face vertex colour, and on `driftwood` that rendered as
+# painted clay - the report was "material itself does not look like driftwood at
+# all", and the before frame agrees: a smooth pale rod with tan slots that read as
+# strips of tape. Vertex colour is flat per face BY CONSTRUCTION - the overlay
+# stores one value per triangle corner - so it can carry which REGION a face
+# belongs to and nothing finer. Grain, fibre and weathering are sub-face detail
+# and need a graph. This is that graph.
+#
+# IT DOES NOT REPLACE VERTEX COLOUR, IT MODULATES IT. `M_PwModelExample_VertexColor`
+# wires VertexColor straight into Base Color; this master keeps that node as the
+# tone the whole surface is built on and multiplies grain, checks and weathering
+# over it. So `driftwood`'s five per-limb body tints (0.30 on the trunk up to 0.50
+# on the knob), its dark fissure tools and its honey heartwood all still read, and
+# any other model that binds this master keeps whatever its `color=` ops said.
+#
+# HOW TO INSTALL IT.
+#
+#   call("material.compile_mgir", { text: <this file>, save: true })
+#   call("material.authoring.compile_material",
+#        { assetPath: "/Game/PinWrightExamples/Materials/M_PwModelExample_WeatheredWood" })
+#
+# `compile_mgir` does NOT block on shader compilation and returns no compile
+# errors, so the second call is where a broken graph actually surfaces - read
+# `compileSucceeded`, not the first response's `blocksCompiled`.
+#
+# The defaults below are DRIFTWOOD's, because that is the model that forced this
+# material and shipping a master nobody can bind is worse than shipping one whose
+# defaults name a wood. Every one of them is a parameter; see THE WOOD TABLE at
+# the bottom for oak, boxwood and rough timber.
+#
+# ###########################################################################
+# THE TWO UV AXES DO NOT BEHAVE THE SAME WAY, AND THAT IS THE WHOLE TRICK.
+# A `.pwmodel` `uv mode=cylindrical` puts U around the limb and V along it, so
+# anisotropic noise stretched in V runs WITH the grain. But the two axes carry
+# COMPLETELY different ranges, and assuming they matched cost this material its
+# first three renders - the grain came back as soft camouflage blotches with no
+# fibre in them at all, because every bit of the visible variation was coming from
+# V and U was contributing a constant.
+#
+#   U (around the limb) spans about 0..1 PER FULL TURN, whatever `scale=` says.
+#     The projection frame's scale does not divide the angular coordinate.
+#     `GrainAcross` is therefore READ DIRECTLY AS "fibres around the limb" and it
+#     PORTS BETWEEN MODELS unchanged.
+#
+#   V (along the limb) is world distance DIVIDED by `scale=`. `driftwood` carries
+#     `uv ... scale=(0.02, 0.02)`, so V runs at 50 UV units per world unit and a
+#     475-long spar spans about 24,000. `GrainAlong` is in 1/UV and must be
+#     RE-DERIVED per model:  GrainAlong = uvScale / streakLengthInWorldUnits.
+#
+# Measured, not assumed. The axial figure came from instancing
+# `M_PwReview_UVChecker` down to `Tiles: 0.0004` until single bands were countable
+# - about nine bands across the 475-long spar, i.e. one 2500-UV tile per ~50 world
+# units. The angular figure came from setting `GrainAlong: 0` so the noise could
+# only vary around the limb, then bracketing `GrainAcross`: at 0.45 the limb was a
+# flat uniform tone, and at 24 it was a dense fibre. A range that needs a
+# multiplier of 24 to show one feature per turn is a range of about 1.
+#
+# TWO TRAPS ON THAT PROCEDURE, both of which look like a broken material:
+#   - At the checker's own default `Tiles: 8` the mesh renders a FLAT MID-GREY.
+#     That is 190,000 tiles aliasing to the average of the two checker colours,
+#     not a mesh with no UVs. Drop Tiles until you can count bands.
+#   - `GrainAlong: 0` renders a uniform DARK limb, not a blank one, because the
+#     grain multiplier collapses to its low end. Uniform is the signal; the
+#     darkness is incidental.
+#
+# The 20:1-and-up ratio between the two axes IS the grain. Bring them together and
+# you get isotropic noise, which reads as a lumpy sausage - the same failure
+# `driftwood`'s own header records for `noise_deform`, in the material instead of
+# the mesh.
+# ###########################################################################
+#
+# WEATHERING IS DRIVEN BY THE VERTEX COLOUR'S SATURATION, WHICH IS THE ONE TRICK
+# HERE WORTH READING TWICE. Sea-worn wood silvers; wood a fresh break just exposed
+# stays warm. Those two states are already distinguishable in the data, because a
+# bleached body tint is nearly neutral and a fresh-break tint is not:
+#
+#       trunk body      (0.30, 0.29, 0.265)   saturation 0.12  -> bleached
+#       fissure tools   (0.19, 0.17, 0.135)   saturation 0.29  -> part bleached
+#       break planes    (0.35, 0.30, 0.245)   saturation 0.30  -> part bleached
+#       heartwood tool  (0.66, 0.53, 0.34)    saturation 0.48  -> left warm
+#
+# `Bleach` is therefore scaled per pixel by `1 - saturate(sat * FreshSensitivity)`.
+# The body silvers, the fresh break keeps its honey, and the insides of the splits
+# - cut by tools carrying the warmer tints - stay darker and warmer than the
+# weathered flanks around them, which is where weathering does not reach on a real
+# piece. It also means this master does not need a second slot to say "heartwood":
+# `driftwood`'s materials block argues at length against inventing a second
+# shading behaviour, and this keeps that argument intact.
+#
+# The escape hatch is `FreshSensitivity: 0`, which makes the mask constant 1 and
+# bleaches everything uniformly. An oak or boxwood consumer instead sets
+# `Bleach: 0` and never reaches the mask at all.
+#
+# THE NORMAL IS THE HALF THAT STOPS IT READING AS PAINT, and it is cheap: the
+# grain noise is evaluated a second time one small step along U, and the
+# difference is the slope across the fibre. `float3(dU * GrainRelief, 0, 1)`
+# normalised is a valid tangent-space normal that tilts only across the grain,
+# which is the only direction a longitudinal fibre HAS a slope in. Without it the
+# grain is a stripe painted on a smooth revolve and the light does not catch it -
+# and `driftwood` is a smooth revolve by construction, with nothing else to catch
+# light.
+#
+# Three Noise evaluations is the whole cost: two for the grain (the second is the
+# normal's finite difference) and one for the checks.
+# `NOISEFUNCTION_GradientALU` is about 80 instructions per level, so at Levels 3,
+# 3 and 2 this graph is roughly 640 ALU instructions of noise. That is a hero-prop
+# budget, not a terrain budget. `NOISEFUNCTION_ValueALU` is about a third cheaper
+# if a consumer needs it and will not notice the softer crests.
+#
+# WHY THE GEOMETRY'S OWN CORDUROY IS NOT COMPETITION. `driftwood`'s header records
+# four authors hunting a fine corrugation that turned out to be a grid texture,
+# and the correction it draws - weathered wood IS corrugated along the grain - is
+# now geometry at wavelengths down to about 8 world units, the finest its mesh can
+# carry. This material works BELOW that: at `GrainAcross: 13` the fibre is roughly
+# thirteen ridges around a limb, which on a 12-unit radius is a ridge every 6
+# world units and finer on the thin limbs. The two stack rather than beat.
+#
+# NO TEXTURE ASSET, deliberately, and for the same reason `M_PwReview_UVChecker`
+# has none: `NOISEFUNCTION_GradientALU` is pure ALU Perlin with no sample, so
+# there is no import step, no sRGB or compression setting to get wrong, no mip
+# chain, and nothing for a future reader to mistake for a mesh defect. It also
+# keeps `driftwood`'s standing rule - NO TEXTURED MATERIAL, EVER, ON THIS MODEL -
+# true as written.
+
+entry material `/Game/PinWrightExamples/Materials/M_PwModelExample_WeatheredWood` {
+    property MaterialDomain: MD_Surface
+    property BlendMode: BLEND_Opaque
+    property ShadingModel: MSM_DefaultLit
+    property TwoSided: false
+    property bIsThinSurface: false
+    property TranslucencyLightingMode: TLM_VolumetricNonDirectional
+    property bUseMaterialAttributes: false
+    property OpacityMaskClipValue: 0.333300
+    property NumCustomizedUVs: 0
+
+    # ---- constants ---------------------------------------------------------
+    # `%uv.r` / `%uv.g` is MGIR's channel swizzle on an input reference.
+    # TextureCoordinate has ONE output pin carrying a float2, so the index form
+    # (`%uv[1]`) does not reach a channel here the way it does on VertexColor's
+    # five separate output pins.
+    %zero = call `/Script/Engine.MaterialExpressionConstant`(R: 0.0) @(-2600, 560)
+    %one = call `/Script/Engine.MaterialExpressionConstant`(R: 1.0) @(-2600, 640)
+
+    # The finite-difference step for the normal, in noise-space units. 0.18 of a
+    # feature: large enough to survive float precision on a V that reaches ~24000,
+    # small enough that the difference is still a slope and not a second pattern.
+    %reliefStep = call `/Script/Engine.MaterialExpressionConstant`(R: 0.18) @(-2600, 720)
+
+    %uv = call `/Script/Engine.MaterialExpressionTextureCoordinate`(CoordinateIndex: 0, UTiling: 1.0, VTiling: 1.0) @(-2600, 0)
+    %vertexColor = call `/Script/Engine.MaterialExpressionVertexColor`() @(-2600, 200)
+
+    # ---- parameters --------------------------------------------------------
+    # GrainAcross is fibres per turn and ports between models; GrainAlong is
+    # 1/UV and does not. See THE TWO UV AXES above before copying either.
+    %grainAcross = call `/Script/Engine.MaterialExpressionScalarParameter`(ParameterName: "GrainAcross", Group: "Grain", SortPriority: 0, DefaultValue: 13.0) @(-2600, -300)
+    %grainAlong = call `/Script/Engine.MaterialExpressionScalarParameter`(ParameterName: "GrainAlong", Group: "Grain", SortPriority: 1, DefaultValue: 0.0007) @(-2600, -220)
+    %grainRidges = call `/Script/Engine.MaterialExpressionScalarParameter`(ParameterName: "GrainRidges", Group: "Grain", SortPriority: 2, DefaultValue: 2.0) @(-2600, -140)
+    %grainContrast = call `/Script/Engine.MaterialExpressionScalarParameter`(ParameterName: "GrainContrast", Group: "Grain", SortPriority: 3, DefaultValue: 0.4) @(-2600, -60)
+    %grainRelief = call `/Script/Engine.MaterialExpressionScalarParameter`(ParameterName: "GrainRelief", Group: "Grain", SortPriority: 4, DefaultValue: 1.1) @(-2600, 20)
+
+    %checkAcross = call `/Script/Engine.MaterialExpressionScalarParameter`(ParameterName: "CheckAcross", Group: "Checks", SortPriority: 16, DefaultValue: 5.0) @(-2600, 100)
+    %checkAlong = call `/Script/Engine.MaterialExpressionScalarParameter`(ParameterName: "CheckAlong", Group: "Checks", SortPriority: 17, DefaultValue: 0.0001) @(-2600, 180)
+    %checkSharpness = call `/Script/Engine.MaterialExpressionScalarParameter`(ParameterName: "CheckSharpness", Group: "Checks", SortPriority: 18, DefaultValue: 6.0) @(-2600, 260)
+    %checkDepth = call `/Script/Engine.MaterialExpressionScalarParameter`(ParameterName: "CheckDepth", Group: "Checks", SortPriority: 19, DefaultValue: 0.55) @(-2600, 340)
+
+    %bleach = call `/Script/Engine.MaterialExpressionScalarParameter`(ParameterName: "Bleach", Group: "Weathering", SortPriority: 32, DefaultValue: 0.85) @(-2600, 420)
+    %freshSensitivity = call `/Script/Engine.MaterialExpressionScalarParameter`(ParameterName: "FreshSensitivity", Group: "Weathering", SortPriority: 33, DefaultValue: 3.2) @(-2600, 500)
+    %silverTint = call `/Script/Engine.MaterialExpressionVectorParameter`(ParameterName: "SilverTint", Group: "Weathering", SortPriority: 34, DefaultValue: [0.95, 0.97, 1.05, 1.0]) @(-2600, 800)
+
+    %roughnessMin = call `/Script/Engine.MaterialExpressionScalarParameter`(ParameterName: "RoughnessMin", Group: "Surface", SortPriority: 48, DefaultValue: 0.76) @(-2600, 880)
+    %roughnessMax = call `/Script/Engine.MaterialExpressionScalarParameter`(ParameterName: "RoughnessMax", Group: "Surface", SortPriority: 49, DefaultValue: 0.98) @(-2600, 960)
+    %metallic = call `/Script/Engine.MaterialExpressionScalarParameter`(ParameterName: "Metallic", Group: "Surface", SortPriority: 50, DefaultValue: 0.0) @(-2600, 1040)
+    %specular = call `/Script/Engine.MaterialExpressionScalarParameter`(ParameterName: "Specular", Group: "Surface", SortPriority: 51, DefaultValue: 0.22) @(-2600, 1120)
+
+    # ---- grain: anisotropic noise, stretched along V ------------------------
+    %grainU = call `/Script/Engine.MaterialExpressionMultiply`(A: %uv.r, B: %grainAcross) @(-2300, -260)
+    %grainV = call `/Script/Engine.MaterialExpressionMultiply`(A: %uv.g, B: %grainAlong) @(-2300, -180)
+    %grainUV = call `/Script/Engine.MaterialExpressionAppendVector`(A: %grainU, B: %grainV) @(-2100, -220)
+    %grainPos = call `/Script/Engine.MaterialExpressionAppendVector`(A: %grainUV, B: %zero) @(-1900, -220)
+    %grainRaw = call `/Script/Engine.MaterialExpressionNoise`(World Position: %grainPos, NoiseFunction: "NOISEFUNCTION_GradientALU", Scale: 1.0, Quality: 2, Levels: 3, OutputMin: 0.0, OutputMax: 1.0, LevelScale: 2.2, bTurbulence: true, bTiling: false) @(-1700, -220)
+
+    # Power skews a symmetric noise toward the dark end, which is what separates a
+    # hard latewood band from the soft spring wood either side of it. At 1.0 the
+    # grain is a soft cloud; the ridging is the difference between "wood" and "mud".
+    %grain = call `/Script/Engine.MaterialExpressionPower`(Base: %grainRaw, Exponent: %grainRidges) @(-1500, -220)
+
+    # ---- the same grain, one step along U, for the tangent-space normal -----
+    %grainUStep = call `/Script/Engine.MaterialExpressionAdd`(A: %grainU, B: %reliefStep) @(-2300, -100)
+    %grainUVStep = call `/Script/Engine.MaterialExpressionAppendVector`(A: %grainUStep, B: %grainV) @(-2100, -100)
+    %grainPosStep = call `/Script/Engine.MaterialExpressionAppendVector`(A: %grainUVStep, B: %zero) @(-1900, -100)
+    %grainRawStep = call `/Script/Engine.MaterialExpressionNoise`(World Position: %grainPosStep, NoiseFunction: "NOISEFUNCTION_GradientALU", Scale: 1.0, Quality: 2, Levels: 3, OutputMin: 0.0, OutputMax: 1.0, LevelScale: 2.2, bTurbulence: true, bTiling: false) @(-1700, -100)
+    %grainStep = call `/Script/Engine.MaterialExpressionPower`(Base: %grainRawStep, Exponent: %grainRidges) @(-1500, -100)
+
+    %grainSlope = call `/Script/Engine.MaterialExpressionSubtract`(A: %grainStep, B: %grain) @(-1300, -160)
+    %normalX = call `/Script/Engine.MaterialExpressionMultiply`(A: %grainSlope, B: %grainRelief) @(-1100, -160)
+    # Y is a hard zero: a fibre running along V has slope across it and none along
+    # it, so tilting in Y would only add a cross-grain wobble the wood does not
+    # have. The sign of X is not corrected either - on a symmetric noise an
+    # inverted relief is the same relief.
+    %normalXY = call `/Script/Engine.MaterialExpressionAppendVector`(A: %normalX, B: %zero) @(-900, -160)
+    %normalXYZ = call `/Script/Engine.MaterialExpressionAppendVector`(A: %normalXY, B: %one) @(-700, -160)
+    %normal = call `/Script/Engine.MaterialExpressionNormalize`(VectorInput: %normalXYZ) @(-500, -160)
+
+    # ---- checks: sparse, very long splits running with the grain ------------
+    %checkU = call `/Script/Engine.MaterialExpressionMultiply`(A: %uv.r, B: %checkAcross) @(-2300, 60)
+    %checkV = call `/Script/Engine.MaterialExpressionMultiply`(A: %uv.g, B: %checkAlong) @(-2300, 140)
+    %checkUV = call `/Script/Engine.MaterialExpressionAppendVector`(A: %checkU, B: %checkV) @(-2100, 100)
+    %checkPos = call `/Script/Engine.MaterialExpressionAppendVector`(A: %checkUV, B: %zero) @(-1900, 100)
+    %checkRaw = call `/Script/Engine.MaterialExpressionNoise`(World Position: %checkPos, NoiseFunction: "NOISEFUNCTION_GradientALU", Scale: 1.0, Quality: 1, Levels: 2, OutputMin: 0.0, OutputMax: 1.0, LevelScale: 2.0, bTurbulence: true, bTiling: false) @(-1700, 100)
+
+    # An exponent of 6 crushes everything but the crests, so what survives is a
+    # thin line rather than a broad band. This is the cheap stand-in for the F2-F1
+    # a Voronoi cell border would give: `material.authoring.add_voronoi` is this
+    # same Noise class with NOISEFUNCTION_VoronoiALU, which returns distance to
+    # the nearest feature point only - that makes blobs, not borders.
+    %check = call `/Script/Engine.MaterialExpressionPower`(Base: %checkRaw, Exponent: %checkSharpness) @(-1500, 100)
+    %checkFloor = call `/Script/Engine.MaterialExpressionOneMinus`(Input: %checkDepth) @(-1500, 200)
+    %checkMul = call `/Script/Engine.MaterialExpressionLinearInterpolate`(A: %one, B: %checkFloor, Alpha: %check) @(-1300, 140)
+
+    # ---- weathering mask from vertex-colour saturation ---------------------
+    # RgbToHsv's G channel is saturation, which is one node where a max/min pair
+    # over three masked channels would be seven.
+    %hsv = call `/Script/Engine.MaterialExpressionRgbToHsv`(Input: %vertexColor) @(-2300, 260)
+    %freshRaw = call `/Script/Engine.MaterialExpressionMultiply`(A: %hsv.g, B: %freshSensitivity) @(-2100, 300)
+    %fresh = call `/Script/Engine.MaterialExpressionSaturate`(Input: %freshRaw) @(-1900, 300)
+    %weathered = call `/Script/Engine.MaterialExpressionOneMinus`(Input: %fresh) @(-1700, 300)
+    %bleachLocal = call `/Script/Engine.MaterialExpressionMultiply`(A: %bleach, B: %weathered) @(-1500, 300)
+
+    # ---- base tone: desaturate toward silver, then modulate ----------------
+    # Desaturation preserves luminance, so the model's per-limb albedo spread
+    # (0.30 on the trunk to 0.50 on the knob) survives the bleach instead of
+    # collapsing into one grey. That spread is load-bearing on `driftwood`: an
+    # earlier revision lost a limb to shadow for exactly this reason.
+    %desaturated = call `/Script/Engine.MaterialExpressionDesaturation`(Input: %vertexColor, Fraction: %bleachLocal) @(-1300, 300)
+    %silvered = call `/Script/Engine.MaterialExpressionMultiply`(A: %desaturated, B: %silverTint) @(-1100, 340)
+    %tone = call `/Script/Engine.MaterialExpressionLinearInterpolate`(A: %desaturated, B: %silvered, Alpha: %bleachLocal) @(-900, 300)
+
+    %grainLow = call `/Script/Engine.MaterialExpressionSubtract`(A: %one, B: %grainContrast) @(-1300, 400)
+    %grainHigh = call `/Script/Engine.MaterialExpressionAdd`(A: %one, B: %grainContrast) @(-1300, 480)
+    %grainMul = call `/Script/Engine.MaterialExpressionLinearInterpolate`(A: %grainLow, B: %grainHigh, Alpha: %grain) @(-1100, 440)
+
+    %tonedGrain = call `/Script/Engine.MaterialExpressionMultiply`(A: %tone, B: %grainMul) @(-700, 340)
+    %baseColor = call `/Script/Engine.MaterialExpressionMultiply`(A: %tonedGrain, B: %checkMul) @(-500, 340)
+
+    # ---- roughness varies with the grain, and peaks inside a check ---------
+    # RoughnessMin below about 0.7 puts a wet sheen on the fibre crests that the
+    # normal creates - measured at 0.68, the trunk came back with white highlights
+    # reading as wet plastic. The floor is doing real work; do not lower it to
+    # "make the wood catch more light".
+    %roughGrain = call `/Script/Engine.MaterialExpressionLinearInterpolate`(A: %roughnessMin, B: %roughnessMax, Alpha: %grain) @(-1100, 900)
+    %roughness = call `/Script/Engine.MaterialExpressionLinearInterpolate`(A: %roughGrain, B: %roughnessMax, Alpha: %check) @(-900, 900)
+
+    output BaseColor: %baseColor
+    output Normal: %normal
+    output Roughness: %roughness
+    output Metallic: %metallic
+    output Specular: %specular
+}
+
+# ###########################################################################
+# THE WOOD TABLE. One master, one instance per wood; nothing below needs a second
+# graph. `create_material_instance` takes the whole set inline, one recompile for
+# the batch, exactly as the six surface-family instances in
+# `model.vertex-color.md` do. Note the nesting - the parameter sets go inside a
+# `parameters` object, and a bare `scalar:` at the top level is refused:
+#
+#   call("material.authoring.create_material_instance", {
+#     assetPath: "/Game/PinWrightExamples/Materials/MI_PwModelExample_Oak",
+#     parentMaterial: "/Game/PinWrightExamples/Materials/M_PwModelExample_WeatheredWood",
+#     parameters: { scalar: { Bleach: 0.10, GrainAcross: 9, GrainContrast: 0.35,
+#                             CheckDepth: 0.25, RoughnessMin: 0.45,
+#                             RoughnessMax: 0.70, Specular: 0.40 } } })
+#
+# | Wood         | Bleach | GrainAcross | GrainContrast | CheckDepth | Rough min/max | Specular |
+# |--------------|--------|-------------|---------------|------------|---------------|----------|
+# | driftwood    | 0.85   | 13          | 0.40          | 0.55       | 0.76 / 0.98   | 0.22     |
+# | oak          | 0.10   |  9          | 0.35          | 0.25       | 0.45 / 0.70   | 0.40     |
+# | boxwood      | 0.00   | 26          | 0.14          | 0.00       | 0.28 / 0.42   | 0.55     |
+# | rough timber | 0.35   |  7          | 0.30          | 0.40       | 0.60 / 0.88   | 0.30     |
+#
+# Reading the table. `Bleach` is the whole silvering axis and is the first thing
+# to move; at 0 the graph is a grain-and-roughness pass over the model's own
+# vertex colour and nothing else. `GrainAcross` is fibres per turn - boxwood is
+# the closest-grained wood in the corpus and wants roughly twice driftwood's, oak
+# is coarser, sawn timber coarser again. `CheckDepth: 0` removes the splits
+# entirely, which is what an interior turned or planed piece wants - a
+# `chess_rook` with sea-splits in it would be nonsense.
+#
+# ONE NUMBER IN THAT TABLE IS NOT PORTABLE AND IT IS NOT IN THE TABLE.
+# `GrainAlong` and `CheckAlong` are in 1/UV, and V's scale comes from the model's
+# own `uv ... scale=`. A consumer whose `.pwmodel` unwraps at a different scale
+# must re-derive both:
+#
+#       GrainAlong = uvScale / streakLengthInWorldUnits
+#
+# driftwood: 0.02 / 28.6 = 0.0007. A model unwrapped at `scale=1` needs 0.035 for
+# the same streak - fifty times driftwood's. Copy driftwood's number onto it and
+# every streak is fifty times too long, which renders as a limb with no
+# along-length variation at all: uniform fibre from end to end, which is a
+# brushed-metal read, not a wood one.
+# ###########################################################################

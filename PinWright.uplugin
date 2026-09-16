@@ -1,0 +1,224 @@
+{
+  "FileVersion": 3,
+  "Version": 7,
+  "VersionName": "0.8.0",
+  "FriendlyName": "PinWright",
+  "Description": "PinWright: drive the Unreal Editor from your AI coding assistant over MCP.",
+  "Category": "Automation",
+  "CreatedBy": "Alexander Penkin",
+  "CreatedByURL": "https://pinwright.com",
+  "DocsURL": "https://pinwright.com",
+  "MarketplaceURL": "",
+  "FabURL": "com.epicgames.launcher://ue/Fab/product/2ec45f7a-6c3d-4735-93ea-be841d903843",
+  "SupportURL": "https://github.com/PinWright/pinwright-ue/issues",
+  "CanContainContent": true,
+  "IsBetaVersion": true,
+  "IsExperimentalVersion": true,
+  "EnabledByDefault": true,
+  "SupportsUEBuildSystem": true,
+  "Modules": [
+    {
+      "Name": "PinWrightRecorder",
+      "Type": "Editor",
+      "LoadingPhase": "Default",
+      "PlatformAllowList": ["Win64", "Linux"]
+    },
+    {
+      "Name": "PinWright",
+      "Type": "Editor",
+      "LoadingPhase": "Default",
+      "PlatformAllowList": ["Win64", "Linux"]
+    },
+    {
+      "Name": "PinWrightGeometry",
+      "Type": "Editor",
+      "LoadingPhase": "None",
+      "PlatformAllowList": ["Win64", "Linux"]
+    },
+    {
+      "Name": "PinWrightPCG",
+      "Type": "Editor",
+      "LoadingPhase": "None",
+      "PlatformAllowList": ["Win64", "Linux"]
+    },
+    {
+      "Name": "PinWrightChooser",
+      "Type": "Editor",
+      "LoadingPhase": "None",
+      "PlatformAllowList": ["Win64", "Linux"]
+    },
+    {
+      "Name": "PinWrightPoseSearch",
+      "Type": "Editor",
+      "LoadingPhase": "None",
+      "PlatformAllowList": ["Win64", "Linux"]
+    },
+    {
+      "Name": "PinWrightCommonUI",
+      "Type": "Editor",
+      "LoadingPhase": "None",
+      "PlatformAllowList": ["Win64", "Linux"]
+    }
+  ],
+  "Plugins": [
+    {
+      "Name": "EditorScriptingUtilities",
+      "Enabled": true,
+      "TargetAllowList": ["Editor"]
+    },
+    {
+      "Name": "LevelSequenceEditor",
+      "Enabled": true,
+      "TargetAllowList": ["Editor"]
+    },
+    {
+      "Name": "MovieSceneTextTrack",
+      "Enabled": true,
+      "TargetAllowList": ["Editor"]
+    },
+    {
+      "Name": "SequencerScripting",
+      "Enabled": true,
+      "TargetAllowList": ["Editor"]
+    },
+    {
+      "Name": "Niagara",
+      "Enabled": true,
+      "TargetAllowList": ["Editor"]
+    },
+    {
+      "Name": "Chooser",
+      "Enabled": true,
+      "Optional": true,
+      "TargetAllowList": ["Editor"]
+    },
+    {
+      "Name": "EnvironmentQueryEditor",
+      "Enabled": true,
+      "TargetAllowList": ["Editor"]
+    },
+    {
+      "Name": "ControlRig",
+      "Enabled": true,
+      "TargetAllowList": ["Editor"]
+    },
+    {
+      "Name": "RigVM",
+      "Enabled": true,
+      "TargetAllowList": ["Editor"]
+    },
+    {
+      "Name": "ProceduralMeshComponent",
+      "Enabled": true,
+      "TargetAllowList": ["Editor"]
+    },
+    {
+      "Name": "Interchange",
+      "Enabled": true,
+      "Optional": true,
+      "TargetAllowList": ["Editor"]
+    },
+    {
+      "Name": "InterchangeOpenUSD",
+      "Enabled": true,
+      "Optional": true,
+      "TargetAllowList": ["Editor"]
+    },
+    {
+      "Name": "DataValidation",
+      "Enabled": true,
+      "TargetAllowList": ["Editor"]
+    },
+    {
+      "Name": "EnhancedInput",
+      "Enabled": true,
+      "TargetAllowList": ["Editor"]
+    },
+    {
+      "Name": "GeometryScripting",
+      "Enabled": true,
+      "Optional": true,
+      "TargetAllowList": ["Editor"]
+    },
+    {
+      "Name": "ChaosCloth",
+      "Enabled": true,
+      "Optional": true,
+      "TargetAllowList": ["Editor"]
+    },
+    {
+      "Name": "GameplayAbilities",
+      "Enabled": true,
+      "TargetAllowList": ["Editor"]
+    },
+    {
+      "Name": "GameplayTagsEditor",
+      "Enabled": true,
+      "TargetAllowList": ["Editor"]
+    },
+    {
+      "Name": "PoseSearch",
+      "Enabled": true,
+      "Optional": true,
+      "TargetAllowList": ["Editor"]
+    },
+    {
+      "Name": "IKRig",
+      "Enabled": true,
+      "TargetAllowList": ["Editor"]
+    },
+    {
+      "Name": "Metasound",
+      "Enabled": true,
+      "TargetAllowList": ["Editor"]
+    },
+    {
+      "Name": "StateTree",
+      "Enabled": true,
+      "TargetAllowList": ["Editor"]
+    },
+    {
+      "Name": "PropertyBindingUtils",
+      "Enabled": true,
+      "Optional": true,
+      "TargetAllowList": ["Editor"]
+    },
+    {
+      "Name": "CommonUI",
+      "Enabled": true,
+      "Optional": true,
+      "TargetAllowList": ["Editor"]
+    },
+    {
+      "Name": "PCG",
+      "Enabled": true,
+      "Optional": true,
+      "TargetAllowList": ["Editor"]
+    },
+    {
+      "Name": "MovieRenderPipeline",
+      "Enabled": true,
+      "TargetAllowList": ["Editor"]
+    },
+    {
+      "Name": "Water",
+      "Enabled": true,
+      "TargetAllowList": ["Editor"]
+    },
+    {
+      "Name": "GameFeatures",
+      "Enabled": true,
+      "TargetAllowList": ["Editor"]
+    },
+    {
+      "Name": "ChaosVehiclesPlugin",
+      "Enabled": true,
+      "TargetAllowList": ["Editor"]
+    },
+    {
+      "Name": "WebBrowserWidget",
+      "Enabled": true,
+      "TargetAllowList": ["Editor"]
+    }
+  ]
+}

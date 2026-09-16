@@ -1,0 +1,286 @@
+# pipe_junction.pwmodel - a flanged cast-iron equal tee, DN100-ish, in Unreal units.
+#
+# One number drives the casting and three ratios drive everything hung off it:
+#
+#     bore radius        50            the number to change
+#     wall               8             -> pipe outer radius 58
+#     flange radius      95            1.64 x the pipe outer radius (1.5..1.8 is the normal band)
+#     flange thickness   18
+#     bolt circle        76            midway between pipe OD and flange OD, as on a real flange
+#     bolt hole radius   8             8 bolts; ligament 68..84 clears both the pipe and the rim
+#     crotch collar      76            18 proud of the pipe - the SAME 18 as the flange thickness,
+#                                      so the casting has one wall scale and no stray dimension
+#
+#     run  length        400  (x -200..200)      branch length 220 (z 0..220)
+#
+# WHY EVERY LIMB IS CAST SOLID AND BORED AFTERWARDS. A foundry does not cast a tee as two
+# hollow tubes and hope they meet; it casts the junction solid and bores the two runs through
+# it. This file does the same, and for the same reason: two hollow limbs unioned leave each
+# other's wall standing across the opposite bore, so the bores have to be cut after the union
+# whatever the limbs started as. Once that is true, starting from solid cylinders is strictly
+# simpler - one op per limb, one boring pass at the end, and the wall thickness is the
+# difference between two numbers that are both on the page (58 outer, 50 bore).
+#
+# WHY THE LIMBS ARE STILL NOT `pipe`, AND IT IS NOT THE OLD REASON. This file used to carry a
+# paragraph saying `pipe` returned two open uncapped walls and was placed by its base, so it
+# could not be used at all. That was true when it was written and is FALSE now - the generator
+# was rebuilt. Measured here, not quoted: `pipe outer_radius=58 inner_radius=50 height=400
+# radial_steps=32` comes back closed, 0 boundary edges, 1 component, 384 triangles (12 per
+# radial step), and `static_mesh.describe` puts its bounds at origin (0,0,0) extent z 200 - so
+# it spans z -200..200, centred exactly like `cylinder height=400`. Do not repeat the old claim.
+#
+# The limbs are cylinders for the reason in the paragraph ABOVE instead. Two `pipe` limbs
+# unioned still leave each other's WALL standing across the opposite bore - the branch's outer
+# wall runs straight through the run's bore - so the bores would have to be re-cut after the
+# union anyway, and the crotch collar would then close over two sets of trapped interior walls
+# rather than over solid metal. The hollow start buys nothing and costs the one-line reading of
+# the wall thickness as 58 minus 50, both numbers on the page.
+#
+# `pipe` IS the right generator in this file, one part down. See `gaskets`: a gasket is a
+# single annulus with nothing intersecting it, which is the case `pipe` exists for.
+#
+# WHY THE CROTCH IS AN `intersection`. Where the branch meets the run the casting is thicker,
+# and the shape of that thickening is not something to sculpt: it is exactly the material an
+# oversize run and an oversize branch have in common. Two cylinders of radius 76 intersected
+# give that solid (the Steinmetz solid) and nothing else does, in one op, symmetric by
+# construction. It also pays off in `collision` below, where it is the one hull that loses
+# nothing.
+#
+# WHY THE BOLT HOLES SIT AT 22.5 DEGREES. Flange bolt holes straddle the principal centrelines
+# rather than sitting on them, so a flange can be rotated by one hole pattern and still bolt up,
+# and so no bolt lands where a level gauge or a tapping would go. Eight holes at 45 degrees,
+# offset by half a pitch, is the standard pattern: 22.5, 67.5, 112.5 ...
+#
+#     bolt hole 0 at radius 76, 22.5 deg:  (76*cos22.5, 76*sin22.5) = (70.219, 29.087)
+#
+# PRIMITIVE ORIGINS. `cylinder`, `cone`, `box`, `capsule`, `torus`, `disc`, `ring` and `pipe`
+# are all placed by their CENTRE: `cylinder height=400` at the origin spans z -200..200, which
+# is how every `at=` below reads. There is no exception left - `pipe` was once placed by its
+# base, and is not any more.
+#
+# ROTATION SENSE. rotate=(roll, pitch, yaw); a 90 deg pitch maps local +Z onto world -X. For a
+# centre-origin primitive that only matters for which end a taper points at, so the run and the
+# flanges below can be read straight off their `at=`.
+
+pwmodel 0
+
+materials {
+    # Repoint Iron at your own cast iron and Gasket at a compressed-fibre or graphite sheet.
+    #
+    # TWO SLOTS BECAUSE THE GASKETS ARE A DIFFERENT MATERIAL A VIEWER MUST TELL APART AT A
+    # GLANCE; that is the entire justification for a slot boundary, and here it survives the
+    # test that collapsed watchtower's three slots onto one instance. Cast iron is metal and
+    # a fibre gasket is a dielectric: they differ in METALLIC, not just in colour, so no tint
+    # reaches from one to the other. Bound to one material - which is what this file shipped
+    # - three flange faces and the three sheets clamped between them shade identically, and
+    # the joint that the whole model is about stops being visible.
+    #
+    # THE GASKET COLOUR IS DELIBERATELY THE ONE WARM THING ON THIS MODEL. A compressed-fibre
+    # sheet really is a red-brown, and against grey iron it is the only hue break in the
+    # frame, so three sheets 3 thick read at a framing that fits the whole tee.
+    #
+    # Iron is Metallic 1. It needs an environment to reflect: in a scene with no sky light
+    # and no reflection capture it renders near-black and reads as broken, which is a
+    # LIGHTING fault and not a binding fault. Judge it in a lit rig.
+    Iron   = "/Game/PinWrightExamples/Materials/MI_PwModelExample_RoughMetal"
+    Gasket = "/Game/PinWrightExamples/Materials/MI_PwModelExample_MatteDielectric"
+}
+
+part casting {
+    # THE RUN, along X, cast solid at 58 outer radius. A 90 deg pitch lays the generator's
+    # local Z onto world X; the cylinder is centre-origin, so this spans x -200..200.
+    cylinder radius=58 height=400 segments=48 height_steps=1 rotate=(0, 90, 0) material="Iron" color=(0.26, 0.25, 0.24, 1)
+
+    # THE BRANCH, up Z. at=(0,0,110) centres a 220-long cylinder on z=110, so it spans z 0..220
+    # and its lower half is buried in the run rather than sitting on the run's outer surface.
+    # Two limbs that merely touched would meet on a coincident plane - a zero-thickness seam at
+    # the crotch - so the overlap is deliberate and the union resolves it.
+    union {
+        cylinder radius=58 height=220 at=(0, 0, 110) segments=48 height_steps=1 color=(0.26, 0.25, 0.24, 1)
+    }
+
+    # THE CROTCH COLLAR. See the header: this is the intersection of an oversize run and an
+    # oversize branch, which is the material a cast tee actually carries at the junction. Both
+    # cylinders are 152 long so neither one's flat end can clip the other - the intersection is
+    # bounded by the two radii, never by an end cap.
+    union {
+        cylinder radius=76 height=152 segments=48 color=(0.26, 0.25, 0.24, 1)
+        intersection {
+            cylinder radius=76 height=152 segments=48 rotate=(0, 90, 0)
+        }
+    }
+
+    # THE TWO RUN FLANGES. Authored once at +X and mirrored, because they are the same flange:
+    # one place to edit the bolt pattern rather than two that can drift apart. The mirror is
+    # inside the union block so what gets unioned onto the casting is the finished PAIR - a
+    # mirror at part level would also reflect the branch, which is already symmetric about x=0
+    # and would come back doubled on top of itself.
+    #
+    # The flange spans x 182..200, so its outer face is flush with the end of the run; centred
+    # on 191, which is why the bolt-hole tool below is centred on 191 too.
+    union {
+        cylinder radius=95 height=18 at=(191, 0, 0) segments=48 rotate=(0, 90, 0) color=(0.26, 0.25, 0.24, 1)
+
+        # Bolt holes are drilled before the flange is unioned on, so they cut the flange and
+        # nothing else. 40 deep against an 18 flange: the tool overruns both faces, which is
+        # what stops a boolean leaving a skin of a face behind.
+        #
+        # `color=` ON EVERY TOOL IN THIS FILE, and it is not decoration: faces a boolean
+        # CREATES take the default white unless the tool that cut them carries a colour. The
+        # eight bore walls rendered as eight white dots on a cast-iron flange. Same for the
+        # two re-boring cuts below, whose walls are the first thing seen down either limb.
+        # See model.vertex-color.
+        subtract {
+            cylinder radius=8 height=40 at=(191, 70.219, 29.087) segments=16 rotate=(0, 90, 0) color=(0.26, 0.25, 0.24, 1)
+            array_radial count=8 axis=x angle=360 center=(0, 0, 0)
+        }
+
+        # `mirror`, WHICH THIS LINE COULD NOT SAY UNTIL THE DEFECT BEHIND IT WAS FIXED.
+        #
+        # It used to read `array_radial count=2 axis=z angle=360` - a 180 degree rotation
+        # standing in for a mirror. The substitution was exact only by luck: the flange is a
+        # solid of revolution about X and its bolt circle is the set 22.5 + 45k degrees, which
+        # a 180 degree turn about Z maps onto itself (theta -> 180 - theta returns the same
+        # eight angles). A rotation has determinant +1 so winding survived it, and that was the
+        # whole trick. It bought nothing that `mirror` should not have given directly, and it
+        # would not have worked at all on a chiral feature.
+        #
+        # The defect it dodged: `mirror` appended the axis-negated copy WITHOUT reversing its
+        # triangle winding, so the copy came out inside-out and rendered as black,
+        # backface-culled geometry - measured here by A/B, the mirrored build's whole -X flange
+        # was black and the triangle count rose 2.3x as `bevel` chewed on the degenerate half.
+        # That is FIXED. `GeometryOps::Mirror` passes bFixOrientationForNegativeScale, and the
+        # op table documents the reversal as part of what the op is.
+        #
+        # Two things about `mirror` are still true and still worth knowing here. It reflects the
+        # WHOLE accumulated block mesh rather than the previous op, which is exactly right in
+        # this block - flange, minus its bolt holes, is all there is. And it APPENDS rather than
+        # unions: safe here only because the two flanges sit at x +-182..200 and never meet.
+        # Nothing warns about that - PWMODEL_UNUNIONED_OVERLAP fires only from the generator
+        # path, so no `mirror` or `array_*` op can trip it. health.boundaryEdges and a render
+        # are the only checks.
+        mirror axis=x
+    }
+
+    # THE BRANCH FLANGE. Same flange, same bolt pattern, about Z instead of X; z 202..220,
+    # so centred on 211.
+    union {
+        cylinder radius=95 height=18 at=(0, 0, 211) segments=48 color=(0.26, 0.25, 0.24, 1)
+        subtract {
+            cylinder radius=8 height=40 at=(70.219, 29.087, 211) segments=16 color=(0.26, 0.25, 0.24, 1)
+            array_radial count=8 axis=z angle=360 center=(0, 0, 0)
+        }
+    }
+
+    # RE-BORING. Everything above was unioned, so the crotch is now solid and each limb's bore
+    # is blocked by the other limb's wall. These two cuts are the boring operation. The run bore
+    # runs the full length; the branch bore stops at z=0, on the run's axis - taken any lower it
+    # would cut a second hole in the BOTTOM of the run, which is the one mistake this geometry
+    # invites.
+    subtract {
+        cylinder radius=50 height=440 segments=48 rotate=(0, 90, 0) color=(0.26, 0.25, 0.24, 1)
+    }
+    subtract {
+        cylinder radius=50 height=230 at=(0, 0, 115) segments=48 color=(0.26, 0.25, 0.24, 1)
+    }
+
+    # Cast edges are never sharp. 2 uu is a quarter of the 8 wall, which is about what a
+    # foundry radius looks like at this scale; segments=1 keeps it a flat chamfer rather than
+    # spending triangles rounding something nobody will look at closely.
+    bevel distance=2 segments=1
+
+    # Box, not cylindrical: this part has TWO orthogonal axes. A cylindrical projection has one
+    # axis by definition, so whichever one it were given, the other limb would come out smeared
+    # around it. Box projection picks the nearest of six directions per face and gets the run,
+    # the branch and all three flange faces right at the cost of a seam on every corner - which
+    # a cast surface hides better than a spiral.
+    uv channel=0 mode=box scale=(1, 1)
+}
+
+part gaskets {
+    # THIS PART IS THE CASE `pipe` EXISTS FOR, AND THE CONTRAST WITH THE CASTING IS THE POINT.
+    # A gasket is one annulus: one bore, on one axis, with nothing crossing it. That is a
+    # `pipe` - outer wall, bore, both end caps, in a single op with no boolean at all. The
+    # casting above cannot use it, because its two bores intersect and each limb's wall would
+    # stand across the other's; nothing about the gaskets is like that. Same file, same
+    # generator, opposite answers - and the discriminator is whether a second bore crosses the
+    # first, not whether the shape "is a pipe".
+    #
+    # It replaced two solid discs plus a two-op boring pass. Both spellings compile; this one
+    # states the wall (68 outer, 50 bore) on the line that builds it instead of leaving the ID
+    # to be inferred from a cutter thirty lines later, and it drops both booleans.
+    #
+    # OD 68 is set by the bolt holes (they occupy 68..84), ID 50 matches the casting's bore, and
+    # 3 thick is a compressed sheet gasket. Centred on x 201.5 it spans x 200..203, proud of the
+    # flange face, so it reads as a separate material rather than as a coplanar decal that
+    # z-fights with the iron.
+    pipe outer_radius=68 inner_radius=50 height=3 radial_steps=48 at=(201.5, 0, 0) rotate=(0, 90, 0) material="Gasket" color=(0.48, 0.17, 0.12, 1)
+
+    # Same argument as the flanges - one gasket authored, two produced - and now the same
+    # `mirror`, the winding defect that forced a rotation here having been fixed. The two run
+    # gaskets sit at x 200..203 and -203..-200, so the append never buries a face.
+    mirror axis=x
+
+    # The branch gasket is not a mirror of anything, so it is written out. A generator after the
+    # first APPENDS to the part rather than replacing it, which is what makes a part able to
+    # hold a set of loose pieces like this. The three are disjoint, so APPEND is right here and
+    # the union that a `casting`-style block would need is not wanted.
+    pipe outer_radius=68 inner_radius=50 height=3 radial_steps=48 at=(0, 0, 221.5) material="Gasket" color=(0.48, 0.17, 0.12, 1)
+
+    # Box for the same reason as the casting: two of these gaskets face along X and one along
+    # Z, so no single cylindrical axis serves all three.
+    uv channel=0 mode=box scale=(1, 1)
+}
+
+collision {
+    complexity = simple_and_complex
+
+    # HAND-AUTHORED CONVEX DECOMPOSITION, and the model that shows why you would ever write one.
+    #
+    # `hull { }` keeps only the convex hull of its block, so a single hull of this tee would be
+    # a fat lozenge with the crotch filled in and both bores gone - useless. Even per limb the
+    # bore is lost: the hull of a bored pipe IS a solid cylinder, and nothing about how the
+    # block is written changes that. What the decomposition buys is not the bores; it is the
+    # SHAPE OF THE OUTSIDE - the L of the branch against the run, and the three flange discs
+    # standing proud of limbs less than two thirds their diameter.
+    #
+    # If something has to shoot down the bore, it has to trace complex. That is what
+    # simple_and_complex is for and why it is not simple_as_complex here.
+
+    # The two run limbs, each stopping short of its flange so the flange disc is its own element.
+    hull {
+        cylinder radius=58 height=182 at=(91, 0, 0) segments=12 rotate=(0, 90, 0)
+    }
+    hull {
+        cylinder radius=58 height=182 at=(-91, 0, 0) segments=12 rotate=(0, 90, 0)
+    }
+
+    # The branch limb, z 0..202.
+    hull {
+        cylinder radius=58 height=202 at=(0, 0, 101) segments=12
+    }
+
+    # The crotch collar - and the one element in this file that `hull` costs nothing at all.
+    # The block is the same intersection of two convex cylinders the casting uses, and the
+    # intersection of two convex solids is convex, so there is no concavity for the hull to
+    # discard. It is exact rather than approximate, which is worth knowing: everywhere else in
+    # this block, "hull" means "an over-approximation I have decided to accept".
+    hull {
+        cylinder radius=76 height=152 segments=12
+        intersection {
+            cylinder radius=76 height=152 segments=12 rotate=(0, 90, 0)
+        }
+    }
+
+    # The three flange discs. 16 segments, not 48: a collision hull pays for every vertex it
+    # stores and nothing queries a flange rim finely enough to notice a 16-gon.
+    hull {
+        cylinder radius=95 height=18 at=(191, 0, 0) segments=16 rotate=(0, 90, 0)
+    }
+    hull {
+        cylinder radius=95 height=18 at=(-191, 0, 0) segments=16 rotate=(0, 90, 0)
+    }
+    hull {
+        cylinder radius=95 height=18 at=(0, 0, 211) segments=16
+    }
+}

@@ -1,0 +1,101 @@
+name: Compatibility / engine version report
+description: PinWright will not install, load, or run at all on a particular Unreal Engine version or install.
+labels: ["type/compatibility", "status/needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form when the plugin **does not load or does not run at all** — it never appears in the
+        plugin browser, it refuses to enable, the editor fails to start with it enabled, the MCP server
+        never comes up, or the project stops compiling once the plugin is present.
+
+        If the plugin loads and one feature misbehaves, use the
+        [bug report](https://github.com/PinWright/pinwright-ue/issues/new?template=bug_report.yml)
+        form instead.
+
+        Supported engines are **UE 5.3 through 5.8, on Windows or Linux**. Reports from outside that range are
+        still worth filing — they tell us what to support next — but they are not defects against a
+        supported configuration.
+
+        Reports usually get a first response within two business days. That is a target rather than
+        a guarantee — replies can take longer around holidays and engine releases.
+  - type: dropdown
+    id: engine
+    attributes:
+      label: Unreal Engine version
+      description: Supported range is UE 5.3 through 5.8. Pick "Other" if yours is not listed.
+      options:
+        - "5.3"
+        - "5.4"
+        - "5.5"
+        - "5.6"
+        - "5.7"
+        - "5.8"
+        - "Other — not listed (5.2 or older, 6.x, or a custom fork)"
+    validations:
+      required: true
+  - type: input
+    id: engine_build
+    attributes:
+      label: Exact engine build
+      description: The full version string, and whether it is an Epic Launcher install, an engine built from source, or a custom fork.
+      placeholder: "5.6.2, Epic Launcher install"
+    validations:
+      required: true
+  - type: dropdown
+    id: failure
+    attributes:
+      label: What fails
+      options:
+        - "The plugin never appears in the plugin browser"
+        - "The plugin appears but fails to enable"
+        - "The editor fails to start or crashes on startup with the plugin enabled"
+        - "The plugin loads but the MCP server never starts / no port is served"
+        - "Building the project or editor target fails with the plugin present"
+        - "Something else — described below"
+    validations:
+      required: true
+  - type: textarea
+    id: install
+    attributes:
+      label: How the plugin was installed
+      description: Fab / Epic Launcher install into the engine, or a manual copy into the engine or project Plugins folder. Include the path it ended up at.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: error
+    attributes:
+      label: Exact error text
+      description: The error dialog, module-load message, or compiler output, copied verbatim. Screenshots are a useful extra, not a replacement for the text.
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Plugin version
+      description: From the plugin's .uplugin VersionName (e.g. 0.8.0). If the plugin never loaded, read it straight out of the .uplugin file.
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: "Windows 11, or Ubuntu 22.04"
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs (optional)
+      description: Editor log lines around the failure, ideally including any PinWright or LogPluginManager entries.
+      render: shell
+    validations:
+      required: false
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else? (optional)
+    validations:
+      required: false

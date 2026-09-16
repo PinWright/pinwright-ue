@@ -1,0 +1,389 @@
+pwmodel 0
+
+# A two-light Decorated Gothic window with plate tracery, in a stone panel.
+#
+# THE CONSTRUCTION. Everything here is struck with a compass from four points,
+# which is how the mason set it out and why the numbers are not arbitrary:
+#
+#   enclosing arch   equilateral: span 130, so both arcs have radius 130 and
+#                    are struck from the two springing points (-65, 165) and
+#                    (65, 165). Radius = span is what makes an arch "equilateral"
+#                    and fixes the apex at 165 + 130 x sin60 = 277.6.
+#   each lancet      the same figure at span 48, springing 150, apex 191.6.
+#   the trefoil      three foils of radius 16 whose centres sit 14 out from the
+#                    eye at (0, 232), so the light closes at overall radius 30.
+#
+# Change the span and the apex follows it: apex = springing + span x 0.866.
+# Change the springing and only the height moves.
+#
+# TWO RULES THIS FILE IS BUILT AROUND. Both were learned by breaking them, and
+# both are about how booleans behave, not about masonry:
+#
+#   1. SIBLING OPS ARE APPENDED, NOT UNIONED. Two shapes written one after the
+#      other inside a part are concatenated as triangles. If they overlap, the
+#      faces buried inside the other shape SURVIVE, and the result is a
+#      self-intersecting mesh whose interior walls z-fight through the surface.
+#      Every overlapping solid here is joined with an explicit `union { }`.
+#      Sibling ops are correct only for shapes that do not touch at all - the
+#      balusters of a stair, the bars below.
+#
+#   2. SHAPES MUST OVERLAP OR CLEAR, NEVER TOUCH EXACTLY. A tool face resting
+#      exactly on the face it cuts, two arcs meeting exactly at a point, a clip
+#      plane through the exact corner where two circles cross - each is three
+#      surfaces through one locus, and the boolean answers with zero-area
+#      triangles that render as black and white shards. This is measurable:
+#      three foils of radius 15 struck 15 from the eye all pass through the eye,
+#      and `geometry.check_health` reports 2 degenerate triangles. Radius 16
+#      struck 14 has the same overall radius 30, overlaps in an area instead of
+#      a point, and reports 0. That is the only reason those two numbers are
+#      what they are.
+#
+# So the arch head is clipped at z = 160 rather than at the springing line 165,
+# and the jamb below it is 1 narrower than the head it plugs into. The 0.9 that
+# leaves at the springing is not slop - it is the impost ledge, and it is what a
+# reveal actually has.
+#
+# RESTRAINT. Three cusps, once, in the head. A trefoil says gothic; a rose of
+# eight subfoils says a machine drew it. The tracery here is two lights and one
+# foiled eye, which is the whole vocabulary of a village church window.
+
+materials {
+    # Slot names are the contract. Point them at your own limestone, glazing and
+    # wrought iron - nothing else in the file changes.
+    #
+    # THREE SLOTS BECAUSE THERE ARE THREE SHADING BEHAVIOURS, which is the only
+    # thing a slot boundary is for. Stone is a matte dielectric, the glazing is
+    # translucent, the saddle bars are rough metal. No tint turns one into
+    # another, so these three cannot collapse onto one instance the way
+    # watchtower's Stone, Slate and Timber do.
+    #
+    # This block used to spend three different ENGINE materials for a different
+    # reason: bound to one white material the glazing, the ferramenta and the
+    # stone are one undifferentiated mass, the tracery cannot be read at all, and
+    # the hood mould disappears into the wall it stands 14.5 proud of. That was a
+    # TONAL problem being solved with whatever spread stock content happened to
+    # offer. It is now solved with `color=`, against materials that sample Vertex
+    # Color - and the slots are free to say what they are actually for.
+    #
+    # THE TWO STONE PARTS CARRY DIFFERENT TINTS IN THE SAME SLOT, which is the
+    # clearest case in the corpus for having both mechanisms. `part label` - the
+    # hood mould - is greyer and a shade darker than the panel it sits on. It is
+    # not a different material and does not want a second slot; it is the one
+    # member of this wall fully exposed to weather. The note at `part label`
+    # records that at a 7 tube the mould "read as absent from every three-quarter
+    # view", because a smooth white roll on a white wall has no edge to catch.
+    # Projection was raised to 14.5 to fix that; the tint is the other half of the
+    # same fix and costs no geometry at all.
+    #
+    # GLASS TAKES ITS OPACITY FROM VERTEX ALPHA, BUT NOT THE WAY THE PARAMETER NAME
+    # SUGGESTS, AND THE PANE IS AUTHORED AROUND THE DIFFERENCE. The translucent
+    # master computes `Opacity = VertexColor.A * OpacityFloor`, and the instance
+    # sets OpacityFloor = 0.35. It is a MULTIPLIER, not a floor: alpha scales a
+    # ceiling of 0.35 rather than being lifted to a minimum of it. So a = 1 is not
+    # an opaque blue slab - it is the MOST opaque this pane can be, at 0.35, which
+    # is about right for glazing seen from outside. Anything lower disappears.
+    #
+    # That is why the alpha below is 1 and not the 0.6 that reads as the sensible
+    # value for glass. Read the graph before choosing a number here; the name will
+    # mislead you by a factor of three.
+    #
+    # EVERY BOOLEAN TOOL IN `part stone` CARRIES A `color=` TOO, AND WITHOUT IT
+    # THIS MODEL IS WHITE WHATEVER THE PANEL IS SET TO. `subtract` leaves the
+    # TOOL'S surface behind as the new face, so the 6-deep reveal, both light
+    # heads, the mullion cheeks and the trefoil are all tool geometry - the
+    # tracery, which is the whole point of the model. Untinted they render pure
+    # white against a limestone panel, which is exactly what "uses basic white
+    # materials" was describing. The tool tint is (0.50, 0.46, 0.37), a shade
+    # LIGHTER than the panel's (0.45, 0.41, 0.33): sheltered stone weathers less
+    # than the face it is cut into, and 10% is enough to say so without reading
+    # as a second material.
+    #
+    # THE VALUES ARE PUSHED FROM THE FIRST COLOUR PASS. Panel was
+    # (0.74, 0.70, 0.60) and hood mould (0.63, 0.62, 0.55) - a 0.09 break between
+    # two near-whites, invisible at whole-object framing. The panel is now
+    # limestone rather than off-white and the mould is (0.34, 0.34, 0.31), a
+    # neutral weathered grey a full value below it. Judge on a render: the
+    # preview key light is worth about a stop, so these read a shade lighter on
+    # screen than they do in the file.
+    Stone = "/Game/PinWrightExamples/Materials/MI_PwModelExample_MatteDielectric"
+    Glass = "/Game/PinWrightExamples/Materials/MI_PwModelExample_Glass"
+    Iron  = "/Game/PinWrightExamples/Materials/MI_PwModelExample_RoughMetal"
+}
+
+# The panel and everything cut out of it. The wall is 25 thick and the whole
+# window is set out on its front face at y = -12.5.
+part stone {
+    box size=(180, 25, 320) at=(0, 0, 160) material="Stone" color=(0.45, 0.41, 0.33, 1)
+
+    # Projecting sill course. It runs 10 past the panel each side because a sill
+    # that stops flush with the jamb throws water onto the wall below, and it
+    # goes down to z = 0 so those overhanging ends stand on something.
+    #
+    # `union`, not a bare second box: it shares 25 of its height with the panel,
+    # and appending it would leave the buried half of each box inside the other.
+    union {
+        box size=(200, 40, 25) at=(0, -7.5, 12.5) color=(0.45, 0.41, 0.33, 1)
+    }
+
+    # The order of the arch: a 6-deep reveal in the shape of the enclosing arch,
+    # so the arch reads in elevation as a shadow line even before the lights are
+    # pierced. Two cylinders of radius 130 struck from the springing points
+    # intersect in a lens; the head is that lens clipped at z = 160, and the
+    # jamb is a 128-wide block plugged 12 up into it.
+    #
+    # The tool is 8.5 thick and sits at y = -10.75, so it spans -15 to -6.5 and
+    # stands 2.5 PROUD of the panel face it cuts. A tool that stopped exactly on
+    # that face at -12.5 would leave a coplanar lid over the whole reveal, and
+    # that lid is the ghost patch that flickers across the opening.
+    subtract {
+        cylinder radius=130 height=8.5 segments=48 rotate=(90, 0, 0) at=(-65, -10.75, 165) color=(0.50, 0.46, 0.37, 1)
+        intersection {
+            cylinder radius=130 height=8.5 segments=48 rotate=(90, 0, 0) at=(65, -10.75, 165) color=(0.50, 0.46, 0.37, 1)
+        }
+        # Clipped at 160, not at the springing 165: the two arcs cross exactly at
+        # (+-65, 165), so a plane through 165 passes through both crossings and
+        # puts three surfaces through one point.
+        intersection {
+            box size=(300, 8.5, 300) at=(0, -10.75, 310) color=(0.50, 0.46, 0.37, 1)
+        }
+        union {
+            box size=(124, 8.5, 146) at=(0, -10.75, 99) color=(0.50, 0.46, 0.37, 1)
+        }
+    }
+
+    # The left light, pierced right through. Same figure as the enclosing arch
+    # one size down: head = two radius-48 arcs struck from (-55, 150) and
+    # (-7, 150), clipped at 146; jamb = a 46-wide block running up to 158, which
+    # is 12 into the head and 1 clear of its edge on both sides.
+    #
+    # The 14 uu left between the two lights at x = -7..7 is the mullion - 140 mm
+    # of stone, which is about the least that will carry an arch head.
+    subtract {
+        cylinder radius=48 height=60 segments=32 rotate=(90, 0, 0) at=(-55, 0, 150) color=(0.50, 0.46, 0.37, 1)
+        intersection {
+            cylinder radius=48 height=60 segments=32 rotate=(90, 0, 0) at=(-7, 0, 150) color=(0.50, 0.46, 0.37, 1)
+        }
+        intersection {
+            box size=(300, 60, 300) at=(0, 0, 296) color=(0.50, 0.46, 0.37, 1)
+        }
+        union {
+            box size=(43, 60, 113) at=(-31, 0, 101.5) color=(0.50, 0.46, 0.37, 1)
+        }
+    }
+
+    # The right light, written out rather than mirrored.
+    #
+    # THE REASON THIS COMMENT USED TO GIVE IS NO LONGER TRUE. It said `mirror`
+    # appends a reflection without reversing triangle winding, so a mirrored half
+    # inside a subtract block is an ANTI-solid that does not cut and leaves the
+    # light it should have opened as blind stone. That was a real defect and it is
+    # FIXED: `GeometryOps::Mirror` passes bFixOrientationForNegativeScale, and the
+    # op table now states the reversal outright. A mirrored tool cuts.
+    #
+    # The block still stays written out, on the reason that was always the better
+    # one: an agent asked to widen ONE light edits one block, instead of unpicking
+    # a symmetry it then has to preserve. Two lights of a two-light window are not
+    # the same feature twice - they are the composition - and the mullion between
+    # them is set by where each one stops.
+    #
+    # `mirror` is also the wrong SHAPE of op here even when it works. It reflects
+    # the whole accumulated mesh, not the last op, so inside this block it would
+    # have to be the only thing in it.
+    subtract {
+        cylinder radius=48 height=60 segments=32 rotate=(90, 0, 0) at=(7, 0, 150) color=(0.50, 0.46, 0.37, 1)
+        intersection {
+            cylinder radius=48 height=60 segments=32 rotate=(90, 0, 0) at=(55, 0, 150) color=(0.50, 0.46, 0.37, 1)
+        }
+        intersection {
+            box size=(300, 60, 300) at=(0, 0, 296) color=(0.50, 0.46, 0.37, 1)
+        }
+        union {
+            box size=(43, 60, 113) at=(31, 0, 101.5) color=(0.50, 0.46, 0.37, 1)
+        }
+    }
+
+    # The foiled eye: three foils of radius 15.5 whose centres sit 15 out from
+    # the eye at (0, 232), at 0, 120 and 240 degrees.
+    #
+    # Written out and UNIONED rather than arrayed. `array_radial` was the
+    # obvious way to say "three of these", and it is wrong here for the reason
+    # in the header: it APPENDS its copies, so where the foils overlap the walls
+    # between them survive inside the tool, the subtraction carves them into the
+    # stone, and the eye fills with a dark web instead of opening. array_radial
+    # is right only for copies that do not touch - the arrow slits of a tower,
+    # the merlons of a parapet.
+    #
+    # 15.5 struck at 15, not 15 struck at 15: the header explains the point. The
+    # cusps land at 16 from the eye against an outer radius of 30.5, which is
+    # what makes three lobes read as three.
+    subtract {
+        cylinder radius=15.5 height=60 segments=24 rotate=(90, 0, 0) at=(0, 0, 247) color=(0.50, 0.46, 0.37, 1)
+        union {
+            cylinder radius=15.5 height=60 segments=24 rotate=(90, 0, 0) at=(12.99, 0, 224.5) color=(0.50, 0.46, 0.37, 1)
+        }
+        union {
+            cylinder radius=15.5 height=60 segments=24 rotate=(90, 0, 0) at=(-12.99, 0, 224.5) color=(0.50, 0.46, 0.37, 1)
+        }
+    }
+
+    # NO `bevel` HERE, AND THE COMMENT THAT USED TO DEFEND ONE WAS EXACTLY
+    # BACKWARDS. `bevel distance=1.5 segments=1` took 1.5 off every arris, on the
+    # argument that "stone is never delivered with a knife edge, and the chamfer
+    # is what gives the tracery a highlight instead of a flat grey face". The
+    # highlight it actually gave was PURE WHITE. A chamfer is geometry a MODIFIER
+    # made: no `color=` reaches it, `set_vertex_color set_all=true` does not
+    # reach it either, and the result outlined both lights, the trefoil and the
+    # whole reveal in white on an otherwise limestone wall - the single loudest
+    # reason this model read as "a white material" at whole-object framing.
+    # Without it the tracery reads as carved stone and the 6-deep reveal's own
+    # shadow line does the work the chamfer was supposed to do. 3002 -> 862
+    # triangles on this part. Restore it the day `bevel` output carries a colour.
+    uv channel=0 mode=box scale=(0.008, 0.008)
+}
+
+# The hood mould, or label: the drip that throws rainwater clear of the head.
+# It is struck from the same two springing points as the arch it follows, so it
+# is concentric with the reveal rather than merely near it. Radius 142 with a 7
+# tube leaves its inner edge 5 clear of the 130 reveal line, and that 5 is the
+# shadow gap that stops the label reading as part of the arch. It reaches the
+# centreline at 62.8 degrees, so each half must overshoot to overlap across the
+# apex, which is what `union` then closes into one solid.
+#
+# 63.6 AND NOT 65, AND THE 1.4 DEGREES IS THE WHOLE DIFFERENCE BETWEEN A CROWN AND
+# A FORKED BEAK. `arch` finishes its sweep with a flat cap perpendicular to the
+# tube, and past the crossing at 62.8 the two halves are already diverging: the
+# tails climb ABOVE the crossing point and splay apart in x, so at 65 they ended 10
+# apart with their two caps standing side by side over the join. In a shaded
+# close-up that is a notched two-lobed beak with a slit down the middle, and it was
+# the one part of this model that read as broken.
+# At 63.6 each tail runs 0.8 degrees - about 2 units - past the crossing: still an
+# overlap in area rather than at a point (rule 2 above), and now each flat cap is
+# buried well inside the other tube, 2 apart against a tube 18 across. The union
+# closes to the single point a hood mould over an equilateral arch actually has.
+# major_steps 18 rather than 14 for the same reason: at 14 the facet either side of
+# the apex was wide enough to read as a flat, and this is the one silhouette
+# everybody looks at.
+#
+# The second half is a second `arch` yawed 180 rather than a `mirror`. The reason
+# this line used to give - that a reflected half is inside out and reads as black
+# patches along the mould - is stale; `mirror` reverses winding now (see the right
+# light). The reason it stands on today is that `mirror` APPENDS rather than
+# unions, and these two halves deliberately OVERLAP by 0.8 degrees across the
+# apex. Appended, the two flat end caps would survive buried inside each other,
+# which is precisely what the `union` below exists to close. A second `arch` that
+# the union can consume is the op that says that.
+#
+# ROLL IS -90, NOT 90. `arch` sweeps in its local XY plane, from +X toward +Y
+# (measured: a 90-degree arch of major 100 / minor 10 has bounds x 0..110,
+# y 0..110, z -10..10). Unreal's roll is positive CLOCKWISE looking down +X, so
+# roll +90 sends local +Y to world MINUS Z and the mould sweeps down and out -
+# two tusks hanging off the jambs, which is exactly what it looked like. Roll
+# -90 sends +Y to +Z and it climbs the arch. The cylinders elsewhere in this
+# file do not care which way they were rolled, so this is the only op in the
+# model where the sign is load-bearing.
+# A 9 tube at y = -18, not a 7 at -16. At 7 the mould stood 10.5 proud of the
+# wall and was still effectively invisible in a shaded render: a smooth white
+# roll on a white wall, lit near head-on, has no edge to catch and casts almost
+# no shadow, and it read as absent from every three-quarter view even though the
+# geometry was there (the part's 45,929 of volume is in the merged mesh). At 9
+# it projects 14.5, matching the sill's 15, and throws a shadow line down the
+# wall - which is the whole point of a drip mould and the only thing that makes
+# it legible.
+part label {
+    arch major_radius=142 minor_radius=9 angle=63.6 major_steps=18 minor_steps=8 rotate=(-90, 0, 0) at=(-65, -18, 165) material="Stone" color=(0.34, 0.34, 0.31, 1)
+    union {
+        arch major_radius=142 minor_radius=9 angle=63.6 major_steps=18 minor_steps=8 rotate=(-90, 0, 180) at=(65, -18, 165) color=(0.34, 0.34, 0.31, 1)
+    }
+    # The apex boss, and it is not decoration - it is what closes the crown.
+    # Two tubes of the SAME minor radius crossing at an angle cannot be unioned into
+    # a clean point, however carefully the sweep is trimmed: each half ends in a flat
+    # cap perpendicular to its own tangent, and a disc of radius 9 centred barely off
+    # the other tube's axis always has rim points about 0.2 outside a tube of radius
+    # 9. Shortening the tails moves that sliver, never removes it. A boss placed on
+    # the crossing swallows both caps whole and the arithmetic is checkable: radius 12
+    # against caps whose furthest rim point is 9.8 from the crossing, and y scaled to
+    # 0.95 so the 11.4 half-extent still covers the +-9 the tubes reach out of the
+    # arch plane. It also happens to be what a mason would have put there.
+    union {
+        sphere radius=12 subdivisions=8 scale=(1, 0.95, 1) at=(0, -18, 291.3) color=(0.34, 0.34, 0.31, 1)
+    }
+    # The label stops: where the mould turns and dies into the wall. Each one
+    # swallows the springing end of its own half, so it is a union too.
+    union {
+        box size=(20, 20, 20) at=(80, -18, 165) color=(0.34, 0.34, 0.31, 1)
+    }
+    union {
+        box size=(20, 20, 20) at=(-80, -18, 165) color=(0.34, 0.34, 0.31, 1)
+    }
+    uv channel=0 mode=cylindrical scale=(0.02, 0.02)
+}
+
+# The glazing sits in the middle of the wall thickness, not on its face, which
+# is why a rectangle is enough: the stone is opaque and 25 thick, so the pane is
+# only ever seen through the lights it fills.
+#
+# A box 1.5 thick rather than a `plane`: a plane is one triangle layer with one
+# facing, so it is invisible from behind and black wherever a light lets you see
+# its back. Glass that is 15 mm of solid costs 12 triangles and is never wrong.
+part glass {
+    box size=(120, 1.5, 230) at=(0, 2, 155) material="Glass" color=(0.16, 0.28, 0.50, 1)
+    uv channel=0 mode=box scale=(0.01, 0.01)
+}
+
+# Ferramenta: the iron saddle bars the glazing panels are tied to. They sit 1.5 in
+# front of the glass, not through it - two parts that interpenetrate are two parts
+# whose buried faces both survive.
+#
+# 124 long against lights that stop at +-55, so each bar is buried 7 into the jamb
+# at both ends. The 112 they used to be reached +-56, which is 1 past the opening
+# and entirely inside the 1.5 chamfer, so both ends floated free.
+#
+# FOUR BARS, AND `array_along_path` RATHER THAN `array_linear`, FOR TWO REASONS AND
+# NEITHER OF THEM IS THE COUNT. `array_linear` would give four bars perfectly
+# happily; what it cannot give is either of the things that stop them reading as
+# extruded shelving:
+#   * The spacing is not constant. Saddle bars divide the GLAZING, which runs from
+#     z = 45 to the lancet apex at 191.6, and the divisions shorten as the head
+#     closes - 68, 104, 141, 174. A constant offset is the one spacing a glazier
+#     would not have used.
+#   * Each bar has its own `pitch`. These are forged and bedded by hand, and under a
+#     degree of tilt over 124 units is about 1.5 of drop at the end: far too little
+#     to read as a mistake and just enough that the four lines are not parallel.
+#     `array_linear` carries an offset and no rotation at all, so this is the only
+#     op in the vocabulary that can say it. `roll` is in there too but does almost
+#     nothing - a bar's long axis IS local X, so roll only spins its near-square
+#     section about itself.
+# The box is authored at z = 0 because the frames are ABSOLUTE part-local
+# placements, not offsets from the previous copy: leaving the generator at z = 80
+# would make every frame z read as a delta from it, which is exactly the habit
+# `array_linear` teaches. Four frames, four bars, and the original is NOT
+# additionally left standing at z = 0.
+part ferramenta {
+    box size=(124, 3, 2.5) at=(0, -1, 0) material="Iron" color=(0.08, 0.06, 0.05, 1)
+    array_along_path path=[(0, 0, 68, 3, 0.7, 0), (0, 0, 104, -2, -0.5, 0), (0, 0, 141, 4, 0.9, 0), (0, 0, 174, -3, -0.6, 0)]
+    uv channel=0 mode=box scale=(0.05, 0.05)
+}
+
+# Explicit elements, not `auto`, and not nothing - which is what this file shipped
+# with until now. A model with no `collision` block compiles to zero simple elements
+# and CTF_UseDefault, so a consumer gets whatever the project default is and a
+# character walks through the wall.
+#
+# THE OPENINGS ARE DELIBERATELY NOT MODELLED IN THE SIMPLE HULLS. Simple collision
+# is convex primitives and convex primitives cannot have holes, so the only way to
+# leave the two lights and the eye open would be to build the tracery out of a
+# dozen boxes - which costs more than it buys for a wall panel that is meant to be
+# walked past. `simple_and_complex` is the answer: gameplay hits the two boxes, and
+# anything that needs the light to actually be a hole (a line trace for visibility,
+# a projectile) asks for complex and gets the real render mesh. The model's own
+# triangle count is deliberately not written here - it moves whenever this file is
+# reworked; the dated corpus reading is in docs/wiki-src/model.examples.md.
+#
+# The hood mould stands 14.5 proud of the panel face and is left to complex
+# collision for the same reason: boxing an arch costs four elements to cover a
+# feature nothing collides with.
+collision {
+    complexity = simple_and_complex
+    box size=(180, 25, 320) at=(0, 0, 160)
+    box size=(200, 40, 25) at=(0, -7.5, 12.5)
+}

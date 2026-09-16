@@ -1,0 +1,396 @@
+# origami_crane.pwmodel - a folded paper crane (orizuru), built from explicit
+# vertex and triangle buffers.
+#
+# What this example is for:
+#   * `append_buffers` with real data. No boolean of primitives makes a crane: the
+#     form is flat panels meeting at hard creases, and the creases are the design.
+#   * the readability argument for this format. A crane as a triangle soup is 200
+#     unlabelled numbers. Here it is seven named panels, each one `append_buffers`
+#     line under a comment that says which fold it is, so moving the beak means
+#     editing three numbers on the line that says BEAK.
+#
+# THE FOUR FEATURES THAT MAKE IT A CRANE RATHER THAN A DART
+# Every one of these was got wrong at least once, and each time the model came back
+# reading as a glider or an insect. They are the acceptance criteria, not decoration:
+#
+#   1. THE NECK RISES. It leaves the body's front shoulder going UP and FORWARD at
+#      42 degrees. A neck that comes forward and DOWN is an aircraft nose-gear leg,
+#      and that single sign error is what read as "a glider".
+#   2. THE TAIL RISES TOO, and mirrors it - up and BACK at 40 degrees, about the same
+#      length. The tail is the neck's counterweight; without it the bird has a front
+#      and no back. A short vertical spike is a mast, not a tail.
+#   3. THE WINGS ARE SHORT AND CREASED. Root chord 88 against a 124-long body,
+#      rising 17.8 degrees, each one a quad whose w0-w2 DIAGONAL is a real fold
+#      because the quad is deliberately non-planar. Long flat swept wings are an
+#      aerofoil, and that is the third thing that read as "a glider".
+#   4. THE BODY IS A DEEP KEEL that comes to a point at the bottom. That point plus
+#      the two rising spikes is the whole orizuru silhouette.
+#
+# HOW THE PAPER IS BUILT
+# A sheet of paper is a plane, and a plane has no thickness, so a panel authored as
+# a flat polygon would be invisible edge-on and would z-fight against itself along
+# every crease. Every panel here is authored FLAT - the way it is drawn on the
+# unfolded square - and `extrude` then gives the whole part its paper thickness in
+# one op. That is why the vertex tables below are 2D outlines you can read, rather
+# than 3D shells you cannot.
+#
+# WHY `extrude` HAS NO `face_direction`
+# Counter-intuitive, and worth the paragraph. `face_direction` selects faces by
+# normal, and the docs warn that omitting it selects the whole mesh, "which
+# DUPLICATES a closed solid rather than thickening it". These parts are OPEN
+# sheets, not closed solids - and for an open sheet duplicate-and-wall IS
+# thickening, and it is the only path that produces a correct closed shell here.
+# Passing a matching `face_direction` instead gave a DEGENERATE result: the wings
+# came out at 14 triangles instead of 24, one wing missing its skin entirely.
+# So the whole-mesh path is deliberate, not an oversight.
+#
+# WHY `direction` SETS THE FACING, AND THE RULE THAT FOLLOWS
+# It does. An older paragraph here - and `model.authoring` with it - claimed the sign
+# of `direction` "only chooses which side of the authored surface the material lands
+# on". That claim shipped this file with an inside-out `sheet`. The mechanism, read
+# off the engine rather than inferred from a render:
+#
+#   * `OffsetMeshRegion.cpp:696-705` displaces THE ORIGINAL TRIANGLES by
+#     `direction * distance`. The originals keep their authored winding and end up on
+#     the +`direction` face of the new slab.
+#   * `OffsetMeshRegion.cpp:734-744` reverses the STATIONARY DUPLICATE, which is the
+#     -`direction` face.
+#
+# So the slab is outward-facing exactly when the authored facing normal points ALONG
+# +`direction`, and inside-out when it points against it. THE RULE:
+#
+#     extrude direction == the part's own facing normal (NOT the -RHR flip of it)
+#
+# `wings` obeyed it from the start - facing -Z, `direction=(0, 0, -1)`. `sheet` did
+# not: facing -Y against `direction=(0, 1, 0)`.
+#
+# HOW TO MEASURE IT, BECAUSE A NORMAL RENDER CANNOT SEE IT
+# A closed shell renders IDENTICALLY inside-out. Backface culling shows you whichever
+# wall faces you, the two walls carry opposite normals, and they sit 4 uu apart - so
+# every A/B of the `direction` sign comes back a no-op (measured: mean luminance
+# 0.035767 vs 0.035771), and every opposed-camera silhouette comes back complete.
+# Those two tests cannot fail, which is why they were quoted twice as proof and why
+# the defect survived two reports.
+#
+# The test that DOES work is to delete the `extrude` and render the bare panels from
+# both sides. A one-sided panel is invisible from behind, so the side it shows on IS
+# its facing normal, measured rather than derived. Done here: with the extrude gone,
+# `sheet` disappears completely from +Y and draws in full from -Y (facing -Y), while
+# `wings` do the opposite. Restore the extrude afterwards.
+#
+# The second test shows the RULE rather than the facing, and is worth building once:
+# take one panel, extrude it thick enough to hold a camera (distance=2000, then
+# `translate_mesh` to recentre) and shoot from inside. With `direction` along the
+# facing normal the mesh vanishes - every wall back-facing, you see straight out to
+# the backdrop. Against it you are standing in a lit corridor. Same geometry, same
+# bounds, one sign apart.
+#
+# THE BLACK PANEL: THREE CAUSES, AND THEY ARE NOT THE SAME BUG
+# "Inverted normals on the crane" has been reported three times and has had three
+# different answers. Separate them before fixing anything.
+#
+#   1. THE `sheet` SHELL REALLY WAS INSIDE-OUT, from the first version until the
+#      `direction=(0, -1, 0)` fix below. Every vertical part - keel, neck, head,
+#      beak, tail - is in `sheet`, which is exactly the set the third report named.
+#      A shaded render CANNOT see this (above), and neither can `health`: an
+#      inside-out shell is still closed, still manifold, still 0 boundary edges.
+#      What it DOES break is anything that reads winding rather than shading -
+#      the mesh distance field most of all, whose inside/outside sign is decided
+#      purely by counting backface hits (`MeshDistanceFieldUtilities.cpp:261-281`).
+#      An inverted shell inverts the field, and Lumen/DFAO then light the part as
+#      though the camera were inside it. In a lit scene that reads as - precisely -
+#      inverted normals, on the sheet parts only, with the wings looking fine.
+#   2. A CAST SHADOW. The near wing shadows the body. Turning `CastShadows` off on
+#      the key light alone lit the bottom half of the body straight back up - so more
+#      than half the dark area was never a facing question at all. Test a suspicious
+#      dark region this way first; it costs one property write.
+#   3. THE WING UNDERSIDE, a genuine DOWNWARD-FACING surface under lights that are
+#      all above. It survives the shadow test as a hard-edged dark quadrilateral and
+#      is bounded by the dihedral - see the wing table for why 17.8 and not 26.
+#      Unlike (1) this one IS visible to a shaded render, and only to one: not to
+#      `health`, not to a triangle count, not to an orthographic silhouette.
+#
+# Only (1) is a normals bug, and `flip_normals` / `recalculate_normals` are the wrong
+# tool even for it: the honest fix is the `direction` sign, at the op that got the
+# facing wrong. (2) and (3) are not repaired by touching normals at all.
+#
+# NEITHER OF THE OLD "PROOFS" WAS VALID. The opposed-camera silhouette test proves a
+# part is not a single-sided sheet; it says nothing about the winding of a closed one.
+# The `direction` A/B measured 0.00007 of mean luminance and was read as "the sign
+# does nothing", when what it actually shows is that this defect is invisible to that
+# measurement. Use the delete-the-extrude test above instead.
+#
+# THE SIGN THAT CATCHES EVERYONE
+# Unreal's front face is the NEGATION of the right-hand rule: for a triangle
+# (v0, v1, v2) the familiar (v1-v0) x (v2-v0) gives a vector, and the face you can
+# actually see points the OTHER way. Every table below is wound so that the
+# right-hand-rule normal is +Y for `sheet` and +Z for `wings` - so the FACING normals
+# are -Y and -Z, and those are the two numbers the `extrude` lines have to match.
+# `VectorUtil::Normal` in the engine spells the negation out: it returns
+# `(V2-V0) x (V1-V0)`, commented "Unreal has Left-Hand Coordinate System".
+#
+# Panels being consistent WITH EACH OTHER is necessary but is not the whole test, and
+# reading it as the whole test is what shipped the inside-out sheet: ONE inconsistent
+# panel renders as a black hole among white ones and is easy to spot, while a
+# UNIFORMLY inverted part renders exactly like a correct one and is invisible. Check
+# consistency, then check each part's facing against its `extrude direction`.
+#
+# For a `sheet` panel the test is arithmetic you can do in your head. With every
+# vertex at y = 0 the cross product collapses to a single term, so for (v0, v1, v2)
+# with e1 = v1 - v0 and e2 = v2 - v0 the right-hand-rule normal is +Y exactly when
+#
+#     e1.z * e2.x  -  e1.x * e2.z  >  0
+#
+# which is the same thing as listing the outline CLOCKWISE in (x right, z up). Every
+# sheet table below reads clockwise: down the front, along the belly, up the back,
+# across the top. Check the sign rather than trusting the pattern.
+#
+# THE TWO PLANES
+# A folded crane is flat except for its wings: body, neck, head and tail all lie in
+# the bird's centre plane. So there are two parts, one per plane:
+#   `sheet` - everything at y = 0, thickened along Y.
+#   `wings` - the two spread wings, thickened along Z.
+#
+# The wing ROOT walls are buried on purpose. Each wing's inboard end is a rectangle
+# spanning x -44..44 at z 70..72, and the body outline contains that whole rectangle,
+# so the wall never reaches a surface a camera can see. Parts are MERGED, not
+# unioned, so anything a part leaves poking out of another part stays poking out -
+# burying the root is what makes two parts safe here.
+#
+# Triangle indices are LOCAL to their own `append_buffers` call - index 0 is that
+# call's first vertex, not the mesh's. Panels are therefore independent: adding a
+# fold does not renumber the ones above it.
+#
+# ONE SLOT, AND `append_buffers` CAN NAME IT
+# An older paragraph here said explicit-buffer geometry could not be given a slot NAME,
+# only a `material_id=` INDEX. That is FALSE. `append_buffers` carries both, and they
+# are mutually exclusive (verified against `model.describe_ops`, not quoted):
+#   * `material="Paper"` - a slot NAME, which is what `pwmodel 0` binds by. Slot
+#     identity is the name, model-wide, exactly as on every generator op.
+#   * `material_id=2` - a RAW index that BYPASSES the slot table, so it can never
+#     satisfy a `materials { }` binding no matter what the block says.
+# So a named binding is available here and always was reachable; do not repeat the
+# old claim, and do not hand-manage indices to work around it.
+#
+# THE BLOCK USED TO BE ABSENT, ON THE ARGUMENT THAT "A ONE-SLOT MODEL GAINS NOTHING
+# FROM NAMING ITS ONE SLOT". That was true only while the alternative was a stock
+# engine material. Untagged geometry lands in a synthetic `Default` slot bound to
+# `WorldGridMaterial`, so the price of not naming the slot was a paper crane that
+# rendered as grey grid - and there is no way to reach the binding to change it,
+# because the slot the compiler invented is not one this file mentions. Naming the
+# slot is what makes the crane paper-coloured.
+#
+# ONE SLOT IS STILL CORRECT. A crane folded from one square is one material, and the
+# temptation to split the wings or the beak off should be resisted: a slot boundary is
+# a SHADING BEHAVIOUR boundary, and there is only one surface on this object. What
+# varies - if anything ever does - is `color=`, which is a tint within the slot.
+#
+# THE COLOUR IS ON `set_vertex_color`, NOT ON THE PANELS, AND THAT IS FORCED.
+# `append_buffers` takes `material=` but NOT `color=`: it already carries a per-vertex
+# `colors=` buffer, and a scalar `color=` would write every vertex and silently
+# overwrite it. So seven `colors=` buffers or one `set_vertex_color set_all=true` -
+# and for a single flat paper tone the op is the honest one. It is safe here because
+# neither part contains a boolean; `set_all` does not reach geometry a boolean has
+# contributed as a tool (see the note in amphora.pwmodel).
+#
+# If you ever DO add a second material - a printed wing, a gilt beak - add its name to
+# the block AND put `material="<Name>"` on the `append_buffers` lines that want it: a
+# block whose names no op references compiles with PWMODEL_UNUSED_MATERIAL ("the
+# binding is dropped") and does nothing.
+
+pwmodel 0
+
+materials {
+    # One sheet of paper, one shading behaviour, one slot. Matte: paper has a dry,
+    # open surface with almost no specular roll, and a satin binding here reads as
+    # foil or as plastic - which is the one thing a folded-paper example must not do.
+    Paper = "/Game/PinWrightExamples/Materials/MI_PwModelExample_MatteDielectric"
+}
+
+# ---------------------------------------------------------------------------
+# The centre plane: body, neck, head, beak, tail. Authored flat at y = 0 in
+# (x, z), x forward toward the beak, z up.
+# ---------------------------------------------------------------------------
+part sheet {
+    # --- BODY -------------------------------------------------------------
+    # A six-sided keel, listed clockwise from the neck root: front shoulder, down the
+    # breast, the belly POINT at the origin, up the back, the tail shoulder, and over
+    # the ridge peak. 124 long and 100 deep - almost square, which is what stops it
+    # reading as a fuselage.
+    #
+    # v2 IS A POINT, not a flat keel, and that is the change that made the silhouette
+    # a bird. The earlier body carried a 30-wide flat bottom so the model would stand
+    # up unaided; it also gave the whole thing the flat belly of an aircraft. A crane
+    # is displayed on a stand or in the air, so the point wins and the flat is gone.
+    #
+    # v5, the ridge peak at z=100, stands 28 above the wing roots at z=72. That gap is
+    # the crane's back showing between the wings and it is load-bearing - see THE BLACK
+    # PANEL in the header.
+    append_buffers vertices=[(62, 0, 66), (36, 0, 16), (0, 0, 0), (-36, 0, 16), (-62, 0, 66), (0, 0, 100)] triangles=[(0, 1, 2), (0, 2, 3), (0, 3, 4), (0, 4, 5)] material="Paper"
+
+    # --- NECK -------------------------------------------------------------
+    # ONE straight tapering strip, not two panels with a bend in them. Up and forward
+    # at 42 degrees, 22 wide at the root and 14 at the tip, rooted at (56, 62) so the
+    # inboard half is inside the body. A crane's neck is a single unbroken fold; the
+    # two-panel version with a kink in the middle read as a bird's neck in profile and
+    # as a bent wire from anywhere else.
+    #
+    # 42 degrees is the number to change. Below about 25 it stops reading as a crane
+    # and starts reading as a goose in flight; above about 55 the head sits behind the
+    # wings and the bird looks like it is rearing.
+    append_buffers vertices=[(49, 0, 70), (146, 0, 153), (156, 0, 143), (63, 0, 54)] triangles=[(0, 1, 2), (0, 2, 3)] material="Paper"
+
+    # --- HEAD -------------------------------------------------------------
+    # The reverse fold that turns the neck tip into a head, and the ONLY place the
+    # line changes direction: the neck runs up at +42 and the head runs forward and
+    # down at -20. That break is what a reverse fold looks like, and it is why the
+    # neck can be a single panel.
+    #
+    # 24 wide against a 14-wide neck tip. Broader than the neck so that neck and beak
+    # do not read as one continuous spike - but only just. An earlier head was 42 wide
+    # against a 20-wide neck and read as a paddle nailed to the end of a stick.
+    #
+    # THE HEAD MUST OVERLAP THE NECK, AND FOR TWO RELEASES IT DID NOT. The head panel
+    # used to start at (152, 134) / (160, 156), which is 5.8 PAST the neck tip edge
+    # (146, 153)-(156, 143): the two quads missed each other by about 3.6, so the head
+    # and beak were a DETACHED island floating off the end of the neck, and a camera
+    # that put the joint against the sky saw daylight through the notch. Nothing in
+    # `health` says so - the mesh is still closed with 0 boundary edges, because each
+    # island is closed on its own; the only tell is `componentCount`, and a count of 7
+    # on a model with 2 parts and 2 wings was read for two releases as "the parts are
+    # separate", which it is not.
+    #
+    # Both tables below are therefore shifted 9 BACK along the head's own -20 line,
+    # (-8.5, +3.1). The head's line, width and length are untouched; only where it
+    # starts moved. That buries the neck's tip corner (156, 143) inside the head quad
+    # and the head's back corner inside the neck strip, so the two interpenetrate over
+    # an area instead of chasing an exact meeting - the same rule the tracery in
+    # `gothic_window` is built on. Keep at least ~4 of overlap if these numbers move.
+    append_buffers vertices=[(143.5, 0, 137.1), (151.5, 0, 159.1), (171.5, 0, 149.1), (165.5, 0, 132.1)] triangles=[(0, 1, 2), (0, 2, 3)] material="Paper"
+
+    # --- BEAK -------------------------------------------------------------
+    # One triangle off the head's front edge, on the head's own -20 line so beak and
+    # head are one straight run. 44 long. Move v1 alone to re-aim it; keep v0 and v2
+    # apart or the jaw goes needle-thin.
+    #
+    # v0 and v2 ARE the head's front edge and must stay equal to it vertex for vertex,
+    # which is what keeps beak and head one welded island. They moved back with the
+    # head by the same (-8.5, +3.1) - see the note there - so the beak tip is now at
+    # x = 209.5 and that, not 218, is the model's +X bound.
+    append_buffers vertices=[(171.5, 0, 149.1), (209.5, 0, 125.1), (165.5, 0, 132.1)] triangles=[(0, 1, 2)] material="Paper"
+
+    # --- TAIL -------------------------------------------------------------
+    # The neck's counterweight, and deliberately built to the same recipe: a straight
+    # tapering strip out of the opposite shoulder, up and BACK at 40 against the neck's
+    # 42, 120 long against the neck's 128, 26 wide at the root against the neck's 22.
+    # Near-symmetry is the point - the two spikes read as one fold seen twice, which is
+    # exactly what they are on the unfolded square.
+    #
+    # It is 26 wide rather than the neck's 22 because the tail is never foreshortened
+    # by a head on the end of it, and at 18 it read as a length of wire taped to the
+    # back.
+    append_buffers vertices=[(-64, 0, 52), (-153, 0, 133), (-143, 0, 145), (-48, 0, 72)] triangles=[(0, 1, 2), (0, 2, 3)] material="Paper"
+
+    # Paper thickness. No face_direction - see the note at the top of the file.
+    #
+    # `direction` MUST POINT ALONG THE PANELS' OWN FACING NORMAL, which for these
+    # tables is -Y (see THE SIGN THAT CATCHES EVERYONE). It read (0, 1, 0) for two
+    # releases and that is what shipped the whole sheet - keel, neck, head, beak,
+    # tail - as an INSIDE-OUT shell. See WHY `direction` SETS THE FACING.
+    extrude distance=4 direction=(0, -1, 0)
+    # Re-centre: the extrude grew the sheet into -Y only.
+    translate_mesh translation=(0, 2, 0)
+
+    # xatlas, not box: the panels face every which way once folded, and a box
+    # projection smears the beak and the tail point across the same island.
+    # Kozo paper: warm off-white, never pure white. A 1.0 sheet clips flat under any
+    # key light and the whole point of this model - a dihedral crease you can read as
+    # a change of shade - disappears with it.
+    set_vertex_color set_all=true color=(0.93, 0.90, 0.83, 1)
+
+    uv channel=0 mode=xatlas
+
+    # Origami is defined by its creases. 0 degrees splits every edge, so no facet
+    # borrows its neighbour's normal and each fold stays a hard line.
+    split_normals split_angle=0
+}
+
+# ---------------------------------------------------------------------------
+# The wings. Authored in (x, y) with the dihedral already in z - the wing rises as
+# it goes out - so a single extrude along Z thickens both.
+#
+# The left wing is the right wing's table with y negated AND the vertex order
+# reversed. Negating one axis flips the winding and reversing puts it back, so the
+# two tables have the same right-hand-rule normal (+Z) and the pair is a true
+# mirror. Keep both edits together: change one table and the crane goes lopsided,
+# which is the one thing origami never is.
+# ---------------------------------------------------------------------------
+part wings {
+    # --- RIGHT WING -------------------------------------------------------
+    # A QUAD, AND THE DIAGONAL IS A REAL FOLD. w0-w3 is the root crease, buried in the
+    # body at y = 0 (see THE TWO PLANES). w1 is the shoulder of the leading edge and
+    # w2 the tip. The four points are deliberately NOT coplanar, so the w0-w2 diagonal
+    # that the triangle pair shares comes out as a genuine dihedral - a crease line you
+    # can see under any light, which is the "visible crease" a folded wing needs and a
+    # planar quad cannot give you at any triangle count.
+    #
+    #     root chord   88   against a 124-long body: SHORT. This is a folded flap.
+    #     span        106   per side
+    #     rise      72->106 across the span, which is 17.8 degrees
+    #     tip z       106   against the body ridge at 100 - level with it, not over it
+    #
+    # THE DIHEDRAL IS BOUNDED AT BOTH ENDS AND BOTH BOUNDS WERE HIT. At 12 degrees the
+    # pair read as one flat shelf capping the body and the model came back as a glider.
+    # At 26 the tips stood 24 clear of the ridge, and because a camera at the model's
+    # own mid-height then looks UP at the near wing, its underside filled the middle of
+    # every eye-level frame as a hard-edged dark panel - which is what has twice been
+    # reported as inverted normals. 17.8 puts the tips level with the ridge, which is
+    # also where a real orizuru carries them.
+    #
+    # w1 IS OFF THE w0-w2-w3 PLANE ON PURPOSE, BY ABOUT 19. That is the entire crease.
+    # Those three points define a plane on which y = 3.118 * (z - 72); at w1's z of 98
+    # the plane wants y = 81, and w1 sits at y = 62. Drop w1 onto the plane - it is an
+    # easy "tidy-up" to make - and the two triangles become coplanar, the shared w0-w2
+    # diagonal stops being a dihedral, and the wing loses its fold and reads as sheet
+    # metal. If you retune the wing, re-check that offset rather than the shape.
+    append_buffers vertices=[(44, 0, 72), (26, 62, 98), (-18, 106, 106), (-44, 0, 72)] triangles=[(0, 1, 2), (0, 2, 3)] material="Paper"
+
+    # --- LEFT WING --------------------------------------------------------
+    append_buffers vertices=[(-44, 0, 72), (-18, -106, 106), (26, -62, 98), (44, 0, 72)] triangles=[(0, 1, 2), (0, 2, 3)] material="Paper"
+
+    # Downward, so the authored z values stay the wing's upper surface.
+    #
+    # THE SIGN OF `direction` DOES SET THE FACING, and -Z is the correct one here: the
+    # wing tables' right-hand-rule normal is +Z, so their FACING normal is -Z, and the
+    # rule is `direction` == facing (see WHY `direction` SETS THE FACING in the header).
+    # Flip it to (0, 0, 1) and the wings go inside-out, exactly as `sheet` was.
+    #
+    # An earlier note here said the sign "does not set the facing", on an A/B that gave
+    # mean luminance 0.47222 vs 0.47229. That A/B was real and the reading of it was
+    # wrong: a closed shell renders identically inside-out, so the measurement can only
+    # ever come back a no-op. It is not evidence about the facing.
+    extrude distance=3 direction=(0, 0, -1)
+
+    # Kozo paper: warm off-white, never pure white. A 1.0 sheet clips flat under any
+    # key light and the whole point of this model - a dihedral crease you can read as
+    # a change of shade - disappears with it.
+    set_vertex_color set_all=true color=(0.93, 0.90, 0.83, 1)
+
+    uv channel=0 mode=xatlas
+    split_normals split_angle=0
+}
+
+# Explicit elements, not `auto`: a crane is five slabs at five angles, and naming
+# them is both cheaper and closer than any hull decomposition of the folded shell.
+# Element at= / rotate= are in MESH space, after every part transform, and a box's
+# local +X is tilted UP by a positive `pitch` - which is why the neck reads +42 and
+# the tail reads -40 even though the tail rises. A box is symmetric about its centre,
+# so -40 and +140 describe the same slab.
+collision {
+    complexity = simple_and_complex
+    box size=(128, 12, 104) at=(0, 0, 50)                       # body keel
+    box size=(150, 16, 30)  at=(104, 0, 106) rotate=(0, 42, 0)  # neck
+    box size=(90, 16, 30)   at=(185, 0, 134) rotate=(0, -20, 0) # head and beak
+    box size=(140, 16, 28)  at=(-102, 0, 100) rotate=(0, -40, 0)# tail
+    box size=(94, 216, 46)  at=(0, 0, 87)                       # both wings
+}

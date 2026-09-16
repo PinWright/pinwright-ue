@@ -1,0 +1,286 @@
+# ships_wheel.pwmodel - an eight-spoke ship's wheel: oak rim, turned spokes with handles
+# projecting past the rim, brass ferrules and a brass hub bezel.
+#
+# The wheel is authored flat, about local Z, the way it would be turned and assembled on a
+# bench. Stand it up when you place it; nothing in the file assumes an orientation.
+#
+# THE PROPORTIONS THAT MATTER, and they are the only two:
+#
+#     rim centreline radius   300      the number to change; everything below is a ratio of it
+#     rim tube radius          22      0.073 R - a rim you can close a hand around
+#     handle tip radius       442      1.37 x the rim's OUTER radius (322). A ship's wheel with
+#                                      handles at 1.2 looks stubby and at 1.6 looks like a
+#                                      capstan; the traditional range is about 1.3-1.4.
+#     spokes                    8      45 deg apart. Six reads sparse at this rim thickness and
+#                                      ten crowds the handles; eight is the common count and
+#                                      also divides 360 into an angle the eye recognises.
+#
+# WHY THE HANDLE IS FOUR OPS AND NOT ONE. A ship's wheel handle is a turned baluster - it
+# swells in the middle so a wet hand cannot slide off either end. That profile is three
+# truncated cones back to back plus a knob, and writing it out is what makes it adjustable:
+# move the swell by editing one `at=`, not by re-deriving a curve.
+#
+#     x 24 .. 346    spoke, tapering 19 -> 12.5      (buried in the hub at the inner end)
+#     x 322 .. 344   brass ferrule, over the spoke where it leaves the rim
+#     x 346 .. 372   neck,  12.5 -> 15
+#     x 372 .. 398   swell, 15   -> 19               the grip
+#     x 398 .. 420   waist, 19   -> 14
+#     x 412 .. 442   knob,  sphere r 15
+#
+# READ THE CONE RADII BACKWARDS. `cone` is built along local Z with `base_radius` at LOW z, and
+# rotate=(0, 90, 0) - the only way to aim one down +X - maps local -Z onto +X. So the BASE of
+# every rotated cone below lands at the OUTBOARD end and `base_radius` is the radius at the far
+# end, not the near one. The table above is in x order and the ops are written to match it; if
+# you edit a radius, check which end you actually moved. (Vertical cones such as the hub
+# shoulders are not rotated and read the obvious way: base_radius is the low-z radius.)
+#
+# THE HUB BORE IS BLIND. It is cut from the back only, up to z=30, leaving the front face
+# solid: the shaft goes into a ship's wheel, it does not come out through the front. That is
+# also what gives the brass medallion something to sit on.
+
+pwmodel 0
+
+materials {
+    # Repoint Oak at your own varnished hardwood and Brass at a polished brass.
+    #
+    # Two slots, and the brass is spread over TWO parts (`ferrules` and `trim`): slot identity
+    # is the NAME and slots are model-wide, so both parts land in one slot and one assignment
+    # covers every brass feature on the wheel.
+    #
+    # THE SLOT BOUNDARY IS METALLIC, NOT COLOUR, and that is why it cannot collapse. Varnished
+    # oak and polished brass are close enough in HUE that a tint alone would leave the ferrules
+    # reading as painted wooden bands - and eight ferrules plus the hub trim is most of what
+    # makes this read as a fitted-out wheel rather than a turned ring with sticks in it. What
+    # separates them is that one is a dielectric with a varnish sheen and the other is metal.
+    #
+    # Brass is Metallic 1 and therefore renders whatever is around it. With no sky light and no
+    # reflection capture it comes back near-black - a lighting fault, not a binding fault, and
+    # not something to "fix" by pulling the metal back toward a dielectric.
+    Oak   = "/Game/PinWrightExamples/Materials/MI_PwModelExample_SatinDielectric"
+    Brass = "/Game/PinWrightExamples/Materials/MI_PwModelExample_PolishedMetal"
+}
+
+part wheel {
+    # THE RIM. A torus is the whole of it: 72 segments around (9 per spoke bay, so every bay is
+    # identical) and 12 around the tube, which is enough that a 22-radius tube reads round at
+    # arm's length without spending triangles on a section nobody sees end-on.
+    torus major_radius=300 minor_radius=22 major_segments=72 minor_segments=12 material="Oak" color=(0.44, 0.25, 0.11, 1)
+
+    # ONE SPOKE AND ITS HANDLE, built along +X, then arrayed. Every generator after the first
+    # APPENDS, so the block below accumulates five turned sections into one tool mesh and
+    # array_radial merges eight rotated copies of the finished spoke - not eight copies of each
+    # section in turn, which is the mistake that costs 40 booleans instead of 1.
+    union {
+        # Spoke. Starts at x=24, outside the 22 bore, so its inner end is buried in hub wall
+        # rather than sticking into the shaft socket.
+        cone base_radius=12.5 top_radius=19 height=322 at=(185, 0, 0) segments=16 rotate=(0, 90, 0) color=(0.44, 0.25, 0.11, 1)
+
+        # Handle: neck, swell, waist, knob. See the table in the header for the x stations, and
+        # the note above it for why every base_radius/top_radius pair here reads back to front.
+        cone base_radius=15 top_radius=12.5 height=26 at=(359, 0, 0) segments=16 rotate=(0, 90, 0) color=(0.44, 0.25, 0.11, 1)
+        cone base_radius=19 top_radius=15 height=26 at=(385, 0, 0) segments=16 rotate=(0, 90, 0) color=(0.44, 0.25, 0.11, 1)
+        cone base_radius=14 top_radius=19 height=22 at=(409, 0, 0) segments=16 rotate=(0, 90, 0) color=(0.44, 0.25, 0.11, 1)
+        # subdivisions=6, not 16. `sphere` is a box-sphere - six subdivided quad faces pushed
+        # onto the sphere - and its triangle count is 12*(N-1)^2, so 16 costs 2700 triangles per
+        # knob and 21,600 over eight spokes, a third of the whole wheel for eight balls 30 across.
+        # 6 costs 300 each and is still smooth at the size a handle knob is ever seen. Note that
+        # subdivisions=1 and =2 both return a literal cube, silently.
+        sphere radius=15 at=(427, 0, 0) subdivisions=6 color=(0.44, 0.25, 0.11, 1)
+
+        # Those five sections OVERLAP at every joint, on purpose - sections that merely touched
+        # would meet on a coincident plane, which is a zero-thickness seam rather than a joint.
+        # The price is that the block mesh now intersects itself, and a boolean fed a
+        # self-intersecting tool is entitled to leave interior faces behind. self_union resolves
+        # the overlaps into one closed solid first.
+        self_union fill_holes=true
+
+        array_radial count=8 axis=z angle=360 center=(0, 0, 0)
+
+        # And again after the array: eight spokes 45 deg apart are 19 thick at a root that sits
+        # at radius 24, so near the hub they run into each other. Buried inside the hub or not,
+        # they have to be resolved before this becomes a boolean operand.
+        self_union fill_holes=true
+    }
+
+    # THE HUB, a turned drum with a coned shoulder at each end. 60 radius against the 19 spoke
+    # root is 3.2:1 - enough meat around eight mortices for the joint to be believable.
+    #
+    # THE SHOULDER'S SLOPE IS SET BY `split_normals`, NOT BY TASTE. 60 -> 44 over a height of
+    # 16 is a 45 degree wall, and 45 is on the hard side of the split_angle=40 threshold below,
+    # so the drum keeps a visible turned step. It was 60 -> 44 over 24, which is 33.7 degrees -
+    # UNDER the threshold - and the shoulder was therefore smoothed into the drum wall: the hub
+    # rendered as a plain ball with the spokes stuck into it, with no step anywhere on it. That
+    # is not a shading bug to chase in the normals; it is the geometry asking to be smoothed and
+    # being obeyed. Whenever a chamfer or shoulder must stay crisp, check its angle against
+    # split_angle first. Front face stays at z=72 and radius 44, which `trim` below depends on,
+    # so the drum grew from 100 to 116 to absorb the 8 the shoulder gave up.
+    union {
+        cylinder radius=60 height=116 segments=48 color=(0.44, 0.25, 0.11, 1)
+        cone base_radius=60 top_radius=44 height=16 at=(0, 0, 64) segments=48 color=(0.44, 0.25, 0.11, 1)
+        cone base_radius=44 top_radius=60 height=16 at=(0, 0, -64) segments=48 color=(0.44, 0.25, 0.11, 1)
+
+        # Each shoulder is set 2 INTO the drum rather than flush against it, for the same
+        # reason the handle sections overlap, and resolved the same way.
+        self_union fill_holes=true
+    }
+
+    # The blind shaft socket: 22 radius, cut from z=-78 up to z=30 only. Stops 42 short of the
+    # front face at z=72, which stays solid - see the header.
+    #
+    # `color=` ON THE TOOL, for hygiene rather than for a fault. Faces a boolean CREATES take
+    # the default white unless the tool carries a colour (see model.vertex-color), and this was
+    # the last uncoloured tool in the file. MEASURED: adding it changed nothing here - same
+    # 11840 render vertices, byte-identical preview capture - so this socket's walls were
+    # already taking the nave's tint. Do not read the line as a fix; read it as the rule.
+    #
+    # The pale crescent on the hub cap is NOT this. It is the polished-brass medallion rim
+    # mirroring the bright backdrop, and it moves with the camera the way a reflection does.
+    subtract {
+        cylinder radius=22 height=108 at=(0, 0, -24) segments=32 color=(0.44, 0.25, 0.11, 1)
+    }
+
+    # NO `bevel` ON THIS PART, and that is a decision rather than an omission. `bevel` walks
+    # POLYGROUP edges, and the torus arrives with every quad in its own group, so a bevel here
+    # does not chamfer the rim's silhouette - it chamfers all 72 x 12 interior quad boundaries
+    # and lays a repeating grid of small rectangular notches over the whole rim. At a glance it
+    # reads as woodworm, not as joinery. The gear and the tee bevel cleanly because their edges
+    # are boolean seams between large flat groups; a revolved primitive is the opposite case.
+    #
+    # The rim loses nothing by it: `split_normals` below already makes the tube read round, and
+    # a hand-finished edge on turned oak is a break you feel rather than see. The ferrules keep
+    # their bevel - they are drawn metal bands with a real machined edge, and they are cylinders
+    # whose caps are single groups.
+
+    # Turned wood is smooth; a machined gear is not. Without this the rim reads as a quilt of
+    # flat facets under raking light, because every face carries its own normal.
+    #
+    # 40 IS CHOSEN AGAINST THE ANGLES THIS PART ACTUALLY CONTAINS - measure them before copying
+    # the number anywhere else, because this threshold decides which features survive:
+    #
+    #     rim tube facets      360/12 = 30 deg   under 40, smoothed  - the rim reads round
+    #     spoke cone facets    360/16 = 22.5     under 40, smoothed  - the spokes read turned
+    #     hub shoulder wall    45                over  40, kept hard - the drum keeps its step
+    #
+    # The margin on the hub shoulder is only 5 degrees, and it has already been lost once: at
+    # the shoulder's old 33.7 the step was smoothed away and the hub rendered as a ball. See
+    # the note on the hub above. There is no warning for this - a feature that quietly falls
+    # under the threshold just stops existing, and only a shaded render shows it.
+    #
+    # `split_normals split_angle=` is the working knob. `recalculate_normals split_angle=` is
+    # REJECTED - not accepted-and-ignored, as this comment used to claim. It fails the parse
+    # outright with PWSRC_UNKNOWN_PARAM ("'recalculate_normals' has no parameter
+    # 'split_angle'. Valid parameters: area_weighted, angle_weighted"), so a file that uses it
+    # does not compile at all rather than silently doing nothing.
+    split_normals split_angle=40
+
+    # xatlas here, box on the tee and cylindrical on the gear's bushing - because this shape has
+    # no dominant axis at all. The rim is toroidal, the spokes are radial and the hub is axial;
+    # any one projection would smear two of the three. An atlas unwrap costs determinism and
+    # solve time and is worth it exactly when there is no right axis to pick.
+    uv channel=0 mode=xatlas
+}
+
+part ferrules {
+    # The brass ring that caps the mortice where each spoke leaves the rim - the joint a wooden
+    # wheel actually needs reinforcing. 17 against a spoke that is 12.7 there, so it stands
+    # about 4 proud and reads as a separate part rather than a stripe.
+    cylinder radius=17 height=22 at=(333, 0, 0) segments=20 rotate=(0, 90, 0) material="Brass" color=(0.76, 0.58, 0.22, 1)
+    array_radial count=8 axis=z angle=360 center=(0, 0, 0)
+
+    bevel distance=0.8 segments=1
+
+    # Same reason as the rim: a 20-segment ferrule is 18 deg per facet and should read as a
+    # turned band, not as a 20-sided nut.
+    split_normals split_angle=40
+
+    # Box, not cylindrical: these eight point outward along eight different axes, and a
+    # cylindrical projection has exactly one.
+    uv channel=0 mode=box scale=(1, 1)
+}
+
+part trim {
+    # THE HUB FACE. Both features start life as FLAT SURFACES - `ring` and `disc` have no
+    # thickness parameter because they have no thickness - and `shell` is what makes them
+    # parts. That pairing is the point: the format's flat generators are profiles, and shell
+    # (or offset_faces) is how a profile becomes a plate.
+    #
+    # `pipe` AND `cylinder` WOULD ALSO WORK NOW, AND THE REASON NOT TO IS ONE OP, NOT A DEFECT.
+    # This comment used to lean on `pipe` being broken. It is not any more - it returns a
+    # closed, centred tube (measured in pipe_junction.pwmodel's header) - so `pipe
+    # outer_radius=40 inner_radius=26 height=4` really would build this bezel. What it cannot
+    # do is build the medallion as well: two generators would then need two thicknesses kept in
+    # step by hand, where one `shell` over a profile PAIR keeps them equal by construction. The
+    # argument is op count and coupling, not capability.
+    #
+    # WHICH SIDE THE PLATE LANDS ON, MEASURED, BECAUSE THE TWO OPS DISAGREE. On this same ring
+    # at z=0, `shell thickness=4` returns bounds spanning z -4..0 and `offset_faces distance=4`
+    # returns z 0..4 - identical plates, same 384 triangles, same 40 outer radius, opposite
+    # sides of the authored plane. `shell` is used here, so every z below is the plate's TOP.
+    #
+    # 40 outer against a 44 front face leaves a 4 margin of oak; 26 inner against the 22
+    # medallion leaves a 4 reveal between the two brass pieces, so the bezel reads as a bezel.
+    # The bezel and the medallion sit at DIFFERENT z. Authored coplanar at 74 they shared an
+    # edge plane 4 apart in radius, and the two shelled rims fought along that circle - a
+    # doubled, broken arc on the hub cap. Lifting the medallion 3 makes it a separate piece
+    # sitting in the bezel's reveal, which is what a medallion is, and there is no longer a
+    # plane for the two to contend for.
+    ring outer_radius=40 inner_radius=26 segments=48 at=(0, 0, 74) material="Brass" color=(0.76, 0.58, 0.22, 1)
+    disc radius=22 segments=32 at=(0, 0, 77) material="Brass" color=(0.76, 0.58, 0.22, 1)
+
+    # 4 thick. Shell solidifies both surfaces in one pass; they are in the same part precisely
+    # so that one op serves both.
+    shell thickness=4
+
+    uv channel=0 mode=planar scale=(1, 1)
+}
+
+collision {
+    # AUTO, and this is the model that earns it - the contrast with pipe_junction.pwmodel,
+    # which hand-writes seven hulls.
+    #
+    # A hand decomposition works when the part is a handful of big convex lumps you can name.
+    # This wheel is not: it is a torus (whose hull is a solid disc - the hole is the whole
+    # point) plus eight thin rods radiating out of it. Doing it by hand means eight 45-degree
+    # rim arcs plus eight spoke elements plus a hub, seventeen blocks that all have to be
+    # re-derived the moment the spoke count changes. That is exactly the case the generator
+    # exists for.
+    #
+    # `auto` is EXCLUSIVE with explicit elements - one `auto` line or a list of hulls, never
+    # both in the same block.
+    complexity = simple_and_complex
+
+    # simplify_to first, because the decomposer's cost is driven by the source triangle count
+    # and none of the detail that survives an atlas unwrap tells it anything about the shape.
+    #
+    # THE PARAMETER IS `max_hulls_per_component`, AND THE OLD NAME IS WHY. `max_hulls=` still
+    # parses and warns on every compile ("the old spelling of max_hulls_per_component ... It
+    # read as an asset-wide budget and never was one"); this file used it until the rename and
+    # now spells it out. Use the long name - the warning is the parser telling you the short
+    # one taught the wrong model.
+    #
+    # It is spent PER CONNECTED PIECE, not per asset. This model is in 11 disconnected pieces -
+    # the welded wheel body, eight separate ferrules, and the two trim shells - and the
+    # decomposer runs on each. Measured on this file: 1 -> 11 elements, 16 -> 176.
+    #
+    # 2 is the budget, and it yields 11 elements on this mesh - fewer than the 22 the multiplier
+    # allows, because a component already convex enough comes back as one hull however much
+    # budget it is given. So the number is an upper bound per piece, not a quota.
+    #
+    # AND IT IS NOT REPRODUCIBLE. Measured on one unmodified file, one DLL, one session:
+    # budget 4 gave 44 elements on the first compile and 14 on the next five. The count is
+    # also not monotonic in the budget - 1 -> 11, 2 -> 11, 3 -> 13, 4 -> 44 or 14, 8 -> 22,
+    # 16 -> 37 against a 176 ceiling. Budget 1 is the one stable case, because the engine
+    # branches at MaxConvexHullsPerMesh > 1 and anything at or below it takes a different
+    # generator that emits one hull per piece and never reads the budget at all. Read
+    # collisionElements in the compile result; never assert on it, and never predict it.
+    #
+    # The compile also warns with the piece count whenever the total exceeds the budget, which is the normal case here
+    # and not an error.
+    #
+    # It is deliberately coarse. At that budget the wheel body's hulls close the gaps between
+    # the spokes, so simple collision here is a solid disc-and-handles proxy rather than an open
+    # wheel. That is the right trade only because `complexity` above is simple_and_complex -
+    # anything that has to pass through the rim traces complex, and simple collision is left as
+    # the cheap broad-phase shape it is meant to be.
+    auto method=convex_hulls max_hulls_per_component=2 simplify_to=600
+}

@@ -1,0 +1,67 @@
+# M_PwReview_UVChecker - the material that makes a `uv` op verifiable.
+#
+# WHY THIS FILE EXISTS. Nothing in the engine's stock material set samples a UV
+# channel. WorldGridMaterial, DefaultMaterial and M_Grid all project their grid
+# in WORLD space, so under any of them `uv mode=...`, `scale=`, `channel=` and
+# `split_angle=` are visual no-ops: the picture is identical before and after the
+# op, and identical between a correct unwrap and a broken one. This graph reads
+# TextureCoordinate directly, so what it draws IS the UV channel.
+#
+# HOW TO INSTALL IT.
+#
+#   call("material.compile_mgir", { text: <this file>, save: true })
+#   call("material.authoring.compile_material",
+#        { assetPath: "/Game/PinWrightExamples/Materials/M_PwReview_UVChecker" })
+#
+# HOW TO READ IT.
+#   - Squares are square         -> the unwrap is not stretched.
+#   - Squares are the same size  -> texel density is even across the part.
+#   - Squares stay square across a seam -> the seam is not shearing.
+#   A cylindrical projection at unit scale on a long thin part is the failure
+#   that reads as "fine ribbing" under a grid material: here it reads as squares
+#   squashed into stripes, which is what it actually is.
+#
+# NO TEXTURE ASSET. The checker is arithmetic on the UV, not a sampled bitmap:
+# floor(uv * Tiles) summed over U and V, halved, fractional part taken, doubled.
+# That lands on exactly 0 or 1 and alternates every whole tile. A procedural
+# checker has no import step, no sRGB/compression setting to get wrong, and no
+# mip chain - so a blurry or aliased result is the UV, never the texture.
+#
+# CHANNEL. TextureCoordinate CoordinateIndex 0 is UV0, the channel a `uv` op
+# writes by default. To inspect the LIGHTMAP unwrap instead, make an instance and
+# there is nothing to change - CoordinateIndex is not a parameter, so compile a
+# variant or use a ComponentMask probe. Stated because a reviewer WILL assume the
+# checker follows `channel=1` and it does not.
+
+entry material `/Game/PinWrightExamples/Materials/M_PwReview_UVChecker` {
+    %uv = call `/Script/Engine.MaterialExpressionTextureCoordinate`(CoordinateIndex: 0, UTiling: 1.0, VTiling: 1.0) @(-1200, -100)
+    %tiles = call `/Script/Engine.MaterialExpressionScalarParameter`(ParameterName: "Tiles", Group: "Review", SortPriority: 0, DefaultValue: 8.0) @(-1200, 60)
+
+    %scaled = call `/Script/Engine.MaterialExpressionMultiply`(A: %uv, B: %tiles) @(-1000, -60)
+    %floored = call `/Script/Engine.MaterialExpressionFloor`(Input: %scaled) @(-840, -60)
+
+    # Dot with (1,1) is floor(u) + floor(v) in one node - the parity of that sum
+    # is the checker. A ComponentMask pair would need two nodes and two bitfield
+    # properties to say the same thing.
+    %ones = call `/Script/Engine.MaterialExpressionConstant2Vector`(R: 1.0, G: 1.0) @(-1000, 100)
+    %sum = call `/Script/Engine.MaterialExpressionDotProduct`(A: %floored, B: %ones) @(-680, -20)
+
+    %half = call `/Script/Engine.MaterialExpressionConstant`(R: 0.5) @(-680, 140)
+    %halved = call `/Script/Engine.MaterialExpressionMultiply`(A: %sum, B: %half) @(-520, 20)
+    %parity = call `/Script/Engine.MaterialExpressionFrac`(Input: %halved) @(-380, 20)
+    %two = call `/Script/Engine.MaterialExpressionConstant`(R: 2.0) @(-380, 160)
+    %checker = call `/Script/Engine.MaterialExpressionMultiply`(A: %parity, B: %two) @(-240, 60)
+
+    %colorA = call `/Script/Engine.MaterialExpressionVectorParameter`(ParameterName: "ColorA", Group: "Review", SortPriority: 16, DefaultValue: [0.05, 0.05, 0.06, 1.0]) @(-600, -260)
+    %colorB = call `/Script/Engine.MaterialExpressionVectorParameter`(ParameterName: "ColorB", Group: "Review", SortPriority: 32, DefaultValue: [0.60, 0.60, 0.64, 1.0]) @(-600, -400)
+    %base = call `/Script/Engine.MaterialExpressionLinearInterpolate`(A: %colorA, B: %colorB, Alpha: %checker) @(-80, -100)
+
+    %roughness = call `/Script/Engine.MaterialExpressionScalarParameter`(ParameterName: "Roughness", Group: "Review", SortPriority: 48, DefaultValue: 0.55) @(-240, 300)
+    %metallic = call `/Script/Engine.MaterialExpressionScalarParameter`(ParameterName: "Metallic", Group: "Review", SortPriority: 64, DefaultValue: 0.0) @(-240, 440)
+    %specular = call `/Script/Engine.MaterialExpressionScalarParameter`(ParameterName: "Specular", Group: "Review", SortPriority: 80, DefaultValue: 0.5) @(-240, 580)
+
+    output BaseColor: %base
+    output Roughness: %roughness
+    output Metallic: %metallic
+    output Specular: %specular
+}

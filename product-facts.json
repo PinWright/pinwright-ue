@@ -1,0 +1,371 @@
+{
+    "version":  "0.8.0",
+    "ueRange":  "5.3-5.8",
+    "ueVersions":  [
+                       "5.3",
+                       "5.4",
+                       "5.5",
+                       "5.6",
+                       "5.7",
+                       "5.8"
+                   ],
+    "operations":  1263,
+    "operationsRounded":  "1,200+",
+    "namespaceCount":  68,
+    "namespacesRounded":  "60+",
+    "namespaces":  [
+                       {
+                           "slug":  "actor",
+                           "tier":  "core",
+                           "methods":  39
+                       },
+                       {
+                           "slug":  "ai",
+                           "tier":  "experimental",
+                           "methods":  33
+                       },
+                       {
+                           "slug":  "anim",
+                           "tier":  "experimental",
+                           "methods":  5
+                       },
+                       {
+                           "slug":  "animation",
+                           "tier":  "experimental",
+                           "methods":  72
+                       },
+                       {
+                           "slug":  "asset",
+                           "tier":  "core",
+                           "methods":  40
+                       },
+                       {
+                           "slug":  "audio",
+                           "tier":  "core",
+                           "methods":  96
+                       },
+                       {
+                           "slug":  "behavior_tree",
+                           "tier":  "experimental",
+                           "methods":  13
+                       },
+                       {
+                           "slug":  "blueprint",
+                           "tier":  "core",
+                           "methods":  83
+                       },
+                       {
+                           "slug":  "camera",
+                           "tier":  "experimental",
+                           "methods":  3
+                       },
+                       {
+                           "slug":  "character",
+                           "tier":  "experimental",
+                           "methods":  13
+                       },
+                       {
+                           "slug":  "chooser",
+                           "tier":  "core",
+                           "methods":  6
+                       },
+                       {
+                           "slug":  "container",
+                           "tier":  "core",
+                           "methods":  16
+                       },
+                       {
+                           "slug":  "controlrig",
+                           "tier":  "experimental",
+                           "methods":  2
+                       },
+                       {
+                           "slug":  "data_table",
+                           "tier":  "core",
+                           "methods":  6
+                       },
+                       {
+                           "slug":  "drive",
+                           "tier":  "core",
+                           "methods":  12
+                       },
+                       {
+                           "slug":  "editor",
+                           "tier":  "core",
+                           "methods":  42
+                       },
+                       {
+                           "slug":  "effect",
+                           "tier":  "experimental",
+                           "methods":  10
+                       },
+                       {
+                           "slug":  "environment",
+                           "tier":  "experimental",
+                           "methods":  10
+                       },
+                       {
+                           "slug":  "eqs",
+                           "tier":  "experimental",
+                           "methods":  6
+                       },
+                       {
+                           "slug":  "foliage",
+                           "tier":  "experimental",
+                           "methods":  6
+                       },
+                       {
+                           "slug":  "game_features",
+                           "tier":  "experimental",
+                           "methods":  1
+                       },
+                       {
+                           "slug":  "game_framework",
+                           "tier":  "experimental",
+                           "methods":  9
+                       },
+                       {
+                           "slug":  "gameplay_tags",
+                           "tier":  "experimental",
+                           "methods":  5
+                       },
+                       {
+                           "slug":  "gas",
+                           "tier":  "experimental",
+                           "methods":  27
+                       },
+                       {
+                           "slug":  "geometry",
+                           "tier":  "core",
+                           "methods":  92
+                       },
+                       {
+                           "slug":  "image",
+                           "tier":  "experimental",
+                           "methods":  3
+                       },
+                       {
+                           "slug":  "input",
+                           "tier":  "core",
+                           "methods":  5
+                       },
+                       {
+                           "slug":  "insights",
+                           "tier":  "core",
+                           "methods":  6
+                       },
+                       {
+                           "slug":  "interaction",
+                           "tier":  "experimental",
+                           "methods":  9
+                       },
+                       {
+                           "slug":  "landscape",
+                           "tier":  "experimental",
+                           "methods":  9
+                       },
+                       {
+                           "slug":  "level",
+                           "tier":  "core",
+                           "methods":  37
+                       },
+                       {
+                           "slug":  "lighting",
+                           "tier":  "experimental",
+                           "methods":  13
+                       },
+                       {
+                           "slug":  "localization",
+                           "tier":  "core",
+                           "methods":  2
+                       },
+                       {
+                           "slug":  "material",
+                           "tier":  "experimental",
+                           "methods":  76
+                       },
+                       {
+                           "slug":  "misc",
+                           "tier":  "core",
+                           "methods":  5
+                       },
+                       {
+                           "slug":  "model",
+                           "tier":  "experimental",
+                           "methods":  3
+                       },
+                       {
+                           "slug":  "mrq",
+                           "tier":  "experimental",
+                           "methods":  6
+                       },
+                       {
+                           "slug":  "navigation",
+                           "tier":  "experimental",
+                           "methods":  12
+                       },
+                       {
+                           "slug":  "networking",
+                           "tier":  "experimental",
+                           "methods":  22
+                       },
+                       {
+                           "slug":  "niagara",
+                           "tier":  "experimental",
+                           "methods":  54
+                       },
+                       {
+                           "slug":  "object",
+                           "tier":  "core",
+                           "methods":  1
+                       },
+                       {
+                           "slug":  "pcg",
+                           "tier":  "experimental",
+                           "methods":  15
+                       },
+                       {
+                           "slug":  "performance",
+                           "tier":  "core",
+                           "methods":  19
+                       },
+                       {
+                           "slug":  "physics",
+                           "tier":  "experimental",
+                           "methods":  3
+                       },
+                       {
+                           "slug":  "pipeline",
+                           "tier":  "internal",
+                           "methods":  1
+                       },
+                       {
+                           "slug":  "pose_search",
+                           "tier":  "experimental",
+                           "methods":  3
+                       },
+                       {
+                           "slug":  "post_process",
+                           "tier":  "experimental",
+                           "methods":  6
+                       },
+                       {
+                           "slug":  "property",
+                           "tier":  "core",
+                           "methods":  4
+                       },
+                       {
+                           "slug":  "python",
+                           "tier":  "core",
+                           "methods":  2
+                       },
+                       {
+                           "slug":  "recorder",
+                           "tier":  "core",
+                           "methods":  8
+                       },
+                       {
+                           "slug":  "render",
+                           "tier":  "core",
+                           "methods":  11
+                       },
+                       {
+                           "slug":  "rendering",
+                           "tier":  "experimental",
+                           "methods":  4
+                       },
+                       {
+                           "slug":  "sequencer",
+                           "tier":  "core",
+                           "methods":  53
+                       },
+                       {
+                           "slug":  "session",
+                           "tier":  "experimental",
+                           "methods":  4
+                       },
+                       {
+                           "slug":  "skeleton",
+                           "tier":  "experimental",
+                           "methods":  45
+                       },
+                       {
+                           "slug":  "source_control",
+                           "tier":  "core",
+                           "methods":  6
+                       },
+                       {
+                           "slug":  "spatial",
+                           "tier":  "experimental",
+                           "methods":  12
+                       },
+                       {
+                           "slug":  "spline",
+                           "tier":  "experimental",
+                           "methods":  14
+                       },
+                       {
+                           "slug":  "state_tree",
+                           "tier":  "experimental",
+                           "methods":  5
+                       },
+                       {
+                           "slug":  "static_mesh",
+                           "tier":  "core",
+                           "methods":  4
+                       },
+                       {
+                           "slug":  "system",
+                           "tier":  "core",
+                           "methods":  28
+                       },
+                       {
+                           "slug":  "texture",
+                           "tier":  "core",
+                           "methods":  25
+                       },
+                       {
+                           "slug":  "ui",
+                           "tier":  "core",
+                           "methods":  10
+                       },
+                       {
+                           "slug":  "vehicle",
+                           "tier":  "experimental",
+                           "methods":  5
+                       },
+                       {
+                           "slug":  "volume",
+                           "tier":  "experimental",
+                           "methods":  26
+                       },
+                       {
+                           "slug":  "water",
+                           "tier":  "experimental",
+                           "methods":  6
+                       },
+                       {
+                           "slug":  "widget",
+                           "tier":  "core",
+                           "methods":  30
+                       },
+                       {
+                           "slug":  "world_partition",
+                           "tier":  "experimental",
+                           "methods":  4
+                       }
+                   ],
+    "tests":  5323,
+    "testsRounded":  "5,300+",
+    "clientsOneClick":  [
+                            "Claude Code",
+                            "Codex CLI",
+                            "Cursor",
+                            "Gemini CLI",
+                            "VS Code Copilot"
+                        ],
+    "clientsManual":  [
+                          "Windsurf",
+                          "Cline"
+                      ]
+}

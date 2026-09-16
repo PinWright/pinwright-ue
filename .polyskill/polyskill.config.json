@@ -1,0 +1,7 @@
+{
+  "source": ".",
+  "targets": {
+    "claude": { "kind": "claude", "out": "../../.." },
+    "codex": { "kind": "codex", "out": "../../.." }
+  }
+}

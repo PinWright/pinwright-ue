@@ -1,0 +1,501 @@
+# mobius_band.pwmodel - a solid Mobius band: a 108 x 6 rectangular section swept
+# once around a 180-radius circle while the section itself turns a half turn, so
+# the two flat faces of the band are ONE face that goes round twice.
+#
+# THIS IS THE MACHINE-GENERATED TIER, AND IT IS THE ONLY EXAMPLE IN THIS FOLDER
+# THAT USES IT.
+# Every other file here is meant to be edited a line at a time: change
+# `radius=18` and you have moved a hole. Nothing below works that way. The part
+# opens with `procedural_mesh` - an explicitly empty mesh - fills it from one
+# `append_buffers` line of 400 positions and 800 index triples, and then edits
+# that mesh BY INDEX: `delete_triangle index=182`, `set_vertex_position
+# index=91`. A human must not type those numbers, and an LLM asked to "make the
+# hole bigger" must not edit them either. THERE IS NO GENERATOR TO RE-RUN - the
+# construction lives in this header instead, under THE CONSTRUCTION below, which
+# carries every formula the 400 positions came out of. Regenerate the whole part
+# from it ad hoc, run the seam tests, and replace the table in one go.
+#
+# WHY THE REST OF THE FORMAT CARRIES NO INDICES AT ALL
+# An index is a reference to a piece of geometry some earlier op produced, and
+# `.pwmodel` stores no such reference anywhere else - not to a face, an edge, a
+# vertex or a triangle - deliberately. `extrude` picks faces with
+# `face_direction`, a PREDICATE, which survives its input changing shape. An
+# index does not. Add one station to the sweep below and every triangle id after
+# it slides by 20; `delete_triangle index=182` then cuts a hole somewhere else,
+# `set_vertex_position index=91` moves the wrong vertex, and NOTHING FAILS - the
+# document still compiles, to a different and silently wrong mesh. That is the
+# face-identity problem the format avoids by not having identities. This tier is
+# the deliberate exception, and its contract is: the buffer and the indices that
+# address it are one artifact, regenerated together or not at all.
+#
+# WHY THIS SHAPE EARNS THE EXCEPTION - AND THE HALF OF THAT CLAIM THAT WAS FALSE
+# This section used to end "the one construction the op vocabulary cannot
+# express". That is WRONG, and it was wrong in the direction that keeps 400
+# hand-listed positions alive for no reason. `sweep` and `extrude_along_spline`
+# BOTH take `twist` - "total twist in degrees, applied linearly from the first
+# frame to the last" - which is precisely a profile frame that turns as it goes.
+# `torus` and the `twist` DEFORMER are still no use, for the reasons given; the
+# error was stopping there and not reading the sweep ops' own parameter list.
+#
+# What survives is narrower, and it is about CLOSING THE LOOP, not about twisting.
+# Measured 2026-08-21 on UE 5.8:
+#
+#   `sweep` never closes a path - it sweeps open and caps, always. N frames of a
+#   4-point profile give V = 4N and T = 8*(N-1) + 4. The obvious ring - 9 frames
+#   round a 180 circle, the last repeating the first - gives V=36 T=68, so Euler
+#   V - E + F = 36 - 102 + 68 = 2. That is a topological BALL: a twisted bar bent
+#   round until its two capped ends touch, both lids still in the mesh, one
+#   inside the other. It reports `isClosed: true`, `componentCount: 1`,
+#   `orientationConsistent: true`, positive volume and no diagnostics. Nothing in
+#   a health block says "this is not a band".
+#
+#   `extrude_along_spline` DOES close - when the last frame returns within
+#   0.01 uu of the first - and it takes `twist` as well. 40 frames round the same
+#   circle at `twist=180` give V=160 T=320, Euler 160 - 480 + 320 = 0, a torus,
+#   and it passes the CUT test below: one piece at a half twist, two at none and
+#   two at a full turn. It is a genuine Mobius band, in one line.
+#
+# The twist also reaches its full value on a closed path - the `scale_end` defect
+# that drops the last frame does NOT bite here. Two measurements: the band's peak
+# |z| lands between 54 and 56, against hypot(54, 3) = 54.083 for a section that
+# stands exactly upright; and the solid's volume excess over the ideal 108*6*L
+# falls as 1/N (148573 at N=40, 77483 at N=80, 39507 at N=160), i.e. it converges
+# to the true swept solid instead of holding the constant offset a mismatched
+# seam would leave.
+#
+# So a one-line sweep reproduces this SURFACE. What it does not reproduce is the
+# APERTURE: `delete_triangle index=`, `delete_vertex index=` and
+# `set_vertex_position index=` address the buffer BY ID, and
+# `docs/pwmodel-format.md` lists "vertex and triangle ORDER" under "Not
+# guaranteed, and do not assume". An explicit table is what makes an id mean
+# anything. That - not the twist - is what this tier actually buys, and whether a
+# hexagonal slot is worth 400 typed positions is a corpus question, not a
+# geometry one. It is open; nothing here has been rebuilt on the sweep.
+#
+# THE PROPORTION IS THE DESIGN, AND THE OBVIOUS FIX WAS THE WRONG WAY ROUND
+# 108 wide on a 180 mean radius: a width-to-radius ratio of 0.60. That number is
+# the whole redesign, and it was reached by rendering seven shapes across five
+# ratios at one pinned three-quarter (azimuth 90, elevation 28, `ev100: -1`)
+# rather than by picking it. Every row below is a render that was looked at.
+#
+#   0.42 x 16 thick   the shipped shape - reads as a bowl rim or a wide bangle
+#   0.27 x  8         a bangle. Narrower is worse, not better
+#   0.27 x  3         still a bangle. Thinning does not rescue a narrow band
+#   0.42 x  4         better - a ribbon, but the ring still reads as a dish
+#   0.56 x  5         reads
+#   0.60 x  6         reads - what ships
+#   0.83 x  6         a scoop. The flat half swallows the hole
+#
+# The standing advice was to NARROW the strip so its two legs separate where they
+# cross. Measured, that makes it worse at every width tried, and the reason is
+# worth keeping: the only visible evidence of a half twist is the band's own
+# surface rotating from flat to vertical, and narrowing is precisely what removes
+# the surface that carries it. A narrow twisted ring has nothing left to read but
+# its rim, and a rim is a bangle. What DOES read is a wide, thin ribbon: at 0.60
+# the band stands as a tall wall at theta 180 and lies as a broad sheet at theta
+# 0, and one frame contains both. Thickness matters too but second - 6 on 108 is
+# 18:1, and the 16-on-76 original read as masonry rather than as a ribbon.
+#
+# There is a ceiling as well as a floor. Past about 0.7 the flat half of the band
+# covers the hole and the model reads as a scoop, so the window is roughly
+# 0.55-0.67 and the middle of it is what ships.
+#
+# THE CONSTRUCTION - EVERY POSITION IN THIS FILE COMES OUT OF THESE LINES
+# The text is the source, so the construction has to live here rather than in a
+# script next to it. Angles in radians.
+#
+#   R = 180                    mean radius of the ring
+#   station s = 0 .. 39        theta = 2*pi*s / 40      (9 degrees apart)
+#   perimeter p = 0 .. 9       section point (a, b), a across the band,
+#                              b through its thickness:
+#                                p <= 4:  a = -54 + 27*p,        b = +3
+#                                p >= 5:  a = +54 - 27*(p - 5),  b = -3
+#                              so the section is the 108 x 6 rectangle, walked
+#                              out along the top face and back along the bottom.
+#   phi = theta / 2            THE HALF TWIST. The section turns once for every
+#                              two turns of theta, so a full trip round the ring
+#                              rotates it by pi.
+#
+#   surface(theta, a, b):
+#       u_r = a*cos(phi) - b*sin(phi)      offset along the outward radial
+#       u_z = a*sin(phi) + b*cos(phi)      offset along +Z
+#       x   = (R + u_r) * cos(theta)
+#       y   = (R + u_r) * sin(theta)
+#       z   = u_z
+#
+# vertex(s, p) = surface(2*pi*s/40, a(p), b(p)), emitted station-major, printed
+# to 3 decimals with trailing zeros and the point stripped - "126", not
+# "126.000". 11 of the 1200 coordinates round to a negative zero; they are
+# written "0".
+#
+# Quad (s, p) joins station s to station s+1 and is split on the s -> s+1
+# diagonal, which is the detail that decides the aperture's shape further down:
+#       A = v(s, p)   B = v(s+1, p)   C = v(s+1, p+1)   D = v(s, p+1)
+#       triangle (s, p, 0) = (A, B, C)      triangle (s, p, 1) = (A, C, D)
+# That order is what puts (v1-v0) x (v2-v0) INWARD on all 800 - see the note
+# above the buffer for why inward is the visible direction.
+#
+# THE SEAM. Station 40 IS station 0, but rotated: phi(2*pi) = pi carries the
+# section onto itself through (a, b) -> (-a, -b), and on this numbering that is
+# perimeter p -> (p + 5) mod 10. So the last ring of quads reads
+#       v(40, p) = v(0, (p + 5) mod 10)
+# and that one substitution, in ten quads, is the entire Mobius. Everything above
+# about proving it applies to this line and nothing else.
+#
+# The aperture rim targets come off the same function, not off a chord:
+#       target = surface(pi/2 + du/R, a, +/-3)
+# with pi/2 being station 10 and (du, a) walking the hexagon (+30, 0) (+15, +16)
+# (-15, +16) (-30, 0) (-15, -16) (+15, -16). The collision slabs are that
+# function again: slab k is the hull of surface() at stations 4k, 4k+2 and 4k+4
+# crossed with perimeter 0, 4, 5, 9 - the four corner rails, three stations,
+# twelve points, ten slabs of 36 degrees.
+#
+# Reproduced from these formulae alone on 2026-08-21 and checked against the
+# shipped text: all 400 positions, all 800 index triples, all 12
+# `set_vertex_position` targets, all 36 bore-wall coordinates and all 10
+# collision elements match exactly as written.
+#
+# HOW TO READ THE INDICES
+# The sweep is 40 stations around the ring, 10 points around the section:
+#
+#     vertex id   = station * 10 + perimeter
+#     triangle id = (station * 10 + perimeter) * 2 + (0 | 1)
+#
+# Perimeter 0..4 walk the top face (b = +3) from the inner rail to the outer,
+# 5..9 walk the bottom face (b = -3) back. So perimeter 0/4/5/9 are the four
+# corner rails and 4->5 and 9->0 are the two narrow edge faces. Vertex 91 is
+# station 9, perimeter 1. Triangle 182 is the first half of the quad at station
+# 9, perimeter 1. This mapping is a property of the emission order and is the
+# only thing that makes the file re-readable; it is also exactly what breaks if
+# the station count changes.
+#
+# Triangle ids being the emission order is MEASURED, not promised:
+# `docs/pwmodel-format.md` lists "vertex and triangle ORDER" under "Not
+# guaranteed, and do not assume". A probe appended two disjoint quads, deleted
+# ids 2 and 3, and got the second quad back - so on UE 5.8 ids are handed out in
+# supply order for a fresh `procedural_mesh`. Anything built on that has to
+# re-measure, which is the second half of why this tier is fenced off.
+#
+# THE HALF TWIST IS A PERMUTATION IN THE TRIANGLE LIST, NOT A SHAPE OP
+# Stations 0..38 wrap the obvious way: quad (i, p) joins station i to station
+# i+1 at the same perimeter index. The LAST ring is where the Mobius is: after a
+# half turn the section has mapped onto itself rotated by half its perimeter, so
+# station 39 joins station 0 at perimeter (p + 5) mod 10, not at p. Ten quads
+# with a +5 offset, buried in the middle of the index list, are the entire
+# topological content of this model. That is worth saying out loud, because it
+# is invisible: the mesh is closed and manifold either way, and closing it with
+# the naive p -> p correspondence produces a self-crossing tangle that still
+# compiles green.
+#
+# The positions cannot prove it either - the sweep formula carries the half turn
+# whatever the seam says, so both seams emit the SAME 400 positions. Three tests
+# do prove it. Run all three against any regenerated table:
+#
+#   GEOMETRIC   the point the seam joins perimeter p to must be surface(2*pi, a,
+#               b) for that p's section. Mobius: exact, to the last printed
+#               decimal. Naive: off by 108.167 - which is the section DIAGONAL,
+#               hypot(108, 6), not the band width of 108 this line used to name.
+#   TOPOLOGICAL walk the face strips across the seam. Strip p returns to strip
+#               (p + 5) mod 10, so every orbit has size 2 - one face that goes
+#               round twice, which is what "Mobius" means. Naive: every orbit
+#               has size 1, i.e. two faces, i.e. an ordinary annulus. Walked on
+#               the triangles instead - merging across every edge softer than
+#               the 40 degree split angle used below - the same test reads 2
+#               smooth regions, 640 triangles of face and 160 of rim, against
+#               the naive seam's 8.
+#   CUT         the classic one, and the only one that needs no index scheme at
+#               all: subtract a thin slab down the middle of the section, the
+#               whole way round, and count components. A Mobius band falls into
+#               ONE piece; an annulus falls into two. Measured on the swept
+#               surface: half twist 1, no twist 2, full turn 2.
+#
+# WINDING IS NOT ONE OF THE TESTS, though it is the one that looks like it. A
+# naive seam trips the inward-normal assert on 4 of 800 triangles at this width,
+# on 2 at 76 wide, and on NONE at 60 wide or under. A green winding check is
+# therefore not evidence the seam is right - it is evidence the band is narrow.
+#
+# NO `uvs=` ON THE BUFFER, DELIBERATELY
+# The bore wall further down is 12 `append_triangle` ops, and `append_triangle`
+# carries no UVs. Supplying `uvs=` on `append_buffers` would therefore leave UV
+# channel 0 SET on 788 triangles and UNSET on 12 - the partly-mapped state that
+# `docs/pwmodel-format.md` documents as fatal to `shell` and `bevel`, and which
+# the compiler's own box-projection fill will not rescue because it skips any
+# channel that already carries elements. So the buffer ships with no UVs at all
+# and a single `uv mode=cylindrical` at the end of the part maps everything,
+# appended triangles included.
+#
+# THE APERTURE IS THE TRIANGLE STAR OF ONE VERTEX, CUT TWICE, TWO WAYS
+# A hexagonal slot passes clean through the band at station 10, where the
+# section stands at 45 degrees and the twist reads most clearly. The opening on
+# each face is the triangle star of a single interior grid vertex - 102 on the
+# top face, 107 on the bottom - and the two are cut with different ops on
+# purpose. They produce identical openings; the contrast is the lesson:
+#
+#   top    `delete_triangle` x 6 - the star listed as six triangle ids.
+#   bottom `delete_vertex`   x 1 - the vertex. The op removes it AND every
+#                                  triangle using it, which is the same six.
+#
+# `delete_vertex` is shorter and re-derives its own extent, so it survives a
+# change of grid density that would leave six literal ids pointing at whatever
+# now sits at 182..205. `delete_triangle` is the only one of the two that can
+# remove a triangle no vertex uniquely owns. Neither is the right one; the file
+# shows both because the choice is real and the equivalence is not obvious.
+#
+# THE STAR IS SIX TRIANGLES, NOT EIGHT - MEASURED, AND IT DECIDES THE SHAPE
+# The intuition that an interior vertex of a quad grid owns four quads, and so
+# eight triangles, is wrong once the quads are triangulated. Every quad here is
+# split on the same A-C diagonal, so of the four quads touching a vertex, two
+# contribute both their triangles and two contribute one each: 6, and a one-ring
+# of six vertices, not eight. The first cut of this model was written for eight
+# and compiled green at 802 triangles with 6 boundary edges - a bore wall built
+# for an octagon stitched onto a hexagonal hole, which no count in the compile
+# response calls an error. `health.boundaryEdges` is what caught it.
+#
+# The one-ring is also SHEARED, for the same reason: at (station 10, perimeter
+# 2) it runs (+28,0) (+28,+27) (0,+27) (-28,0) (-28,-27) (0,-27) in
+# (arc offset, across-band offset). That is a parallelogram-ish hexagon whose
+# two long sides are staircases. It is the diagonal's shape, not a shape anyone
+# chose, and it is why the next section exists.
+#
+# SHAPING THE OPENING - WHAT `set_vertex_position` IS ACTUALLY FOR
+# Twelve `set_vertex_position` ops move the six rim vertices, on each face, from
+# that sheared hexagon onto a symmetric one 60 long and 32 wide: ends at
+# du = +/-30, corners at (+/-15, +/-16). The slot then runs WITH the band and
+# leaves a 38-wide rail down each side.
+#
+# The alternative was to re-run the generator with a station count and a section
+# subdivision whose grid happens to land on those numbers - design by divisor,
+# moving all 400 vertices to fix six. Moving six named vertices is the honest
+# fix and it is only expressible at this tier. Every target is still evaluated
+# ON the swept surface, surface(u + du/R, a, +/-3), so the rim stays on the band
+# instead of being nudged along a chord. At this radius the arc-to-chord
+# deviation is 0.6 uu at the +/-15 corners and 2.5 uu at the +/-30 ends. That is
+# not a rounding error on a band only 6 thick - half-thickness is 3, so a chord
+# would carry the two end points most of the way to the opposite face.
+#
+# The two rims run in OPPOSITE directions. The bottom face's perimeter
+# numbering increases the other way, so its one-ring, walked in the same order,
+# traces the hexagon backwards: rim vertex k on the bottom is sent to hexagon
+# corner (6 - k) mod 6. Get that wrong and the twelve moves still compile, still
+# report 800 triangles, and braid the bore into a hexagram.
+#
+# THE BORE WALL - `append_triangle` TAKES POSITIONS, NOT INDICES
+# Twelve `append_triangle` ops wall the slot from the top rim to the bottom rim.
+# Note the signature: v0=, v1=, v2=, three POSITIONS. No op anywhere in
+# `pwmodel 0` builds a triangle out of vertex ids, which is why the wall repeats
+# all 12 rim positions instead of referencing them, and why `weld_vertices` has
+# to run afterwards to stitch 36 duplicate vertices back onto the rims. The
+# coordinates below are the POST-`set_vertex_position` ones; retune the hexagon
+# without regenerating them and the weld quietly finds no pairs, leaving a
+# hairline crack round both rims that no count in the compile response reports.
+#
+# This is also the only honest use of `append_triangle` on a model like this.
+# Bulk geometry belongs in `append_buffers`: one line, local indices, no
+# duplication. `append_triangle` is the patch op - a handful of triangles laid
+# against geometry that already exists.
+#
+# THE WARNINGS THAT ARE NO LONGER THERE
+# This file used to compile with nine `PWMODEL_UNUNIONED_OVERLAP` warnings, one
+# per `append_triangle` overlapping another: the check compares sibling bounding
+# boxes, and the boxes of two triangles that share an edge always interpenetrate,
+# while its advice - wrap the second op in a union block - cannot apply to a
+# triangle, which encloses no volume.
+#
+# MEASURED 2026-08-21, on this geometry: `diagnosticSummary.total: 0`. The check
+# runs only from the generator path and `append_triangle` is not on it, the same
+# reason it can never fire on `mirror` or `array_*`. Do not add ops here
+# expecting to be warned about an overlap - on this file nothing will warn you,
+# and `health.componentCount` plus a render are the signals that remain.
+#
+# COLLISION IS 10 CONVEX SLABS, BECAUSE A RING HULLS TO A DISC
+# One hull round this model is a disc 468 across with the hole filled in - the
+# characteristic failure of convex collision on any closed loop. So the ring is
+# decomposed into ten 36-degree slabs, each the convex hull of the four corner
+# rails sampled at three stations. Twelve points per element, all computed. A
+# slab still over-covers slightly, because the section rotates 18 degrees across
+# the wedge and a hull cannot follow that; `complexity = simple_and_complex`
+# keeps an exact complex mesh alongside for anything that needs one.
+#
+# `convex points=[...]` is not the authoring path and the format reference says
+# so in those words. Element 0 is written the other way, as
+# `hull { procedural_mesh + append_vertex x 12 }`, to show what the compact form
+# compresses: a `hull` block runs its body through the ordinary op pipeline and
+# then keeps only the VERTEX POSITIONS, so a body of bare `append_vertex` ops
+# with no triangles at all is a legal point cloud and hulls correctly. That is
+# the one place a bare `append_vertex` means anything - inside a part it would
+# add a vertex no triangle could ever reference, since no op builds a triangle
+# from ids. The other nine elements are the same data in the form a generator
+# emits, and they are the ones to copy.
+
+pwmodel 0
+
+# THE SLOT IS BOUND BY ITS SYNTHETIC NAME, AND NOTHING IN THIS FILE IS TAGGED.
+# That combination is deliberate and it is the only one that gets this model a
+# colour without giving up the measurement below.
+#
+# THE MEASUREMENT. `append_buffers` takes `material="<Slot>"` like any generator,
+# but `append_triangle` takes neither `material=` nor `color=`. Binding the body
+# to a named slot therefore does NOT carry the bore wall with it. Compiled with
+# `materials { Cast = "/Engine/BasicShapes/BasicShapeMaterial" }` and
+# `material="Cast"` on both `procedural_mesh` and `append_buffers`, this model
+# reports `materialSlots: 2`, and `static_mesh.describe` names them:
+#
+#   [ { slot: "Cast",    path: ".../BasicShapeMaterial" },
+#     { slot: "Default", path: ".../WorldGridMaterial"  } ]
+#
+# The twelve appended wall triangles went to a synthetic "Default" slot - not to
+# slot index 0, which is what "raw material id, an index into the model-wide
+# slot list in first-use order" would predict - so the inside of the aperture
+# rendered in the grid material while the band rendered in the bound one. Naming
+# the slot on `procedural_mesh` as well does not change it. Do not do that.
+#
+# WHAT THE FILE DOES INSTEAD. `Default` is the slot the compiler invents for
+# UNTAGGED geometry, and it turns out to be an ordinary name that a `materials`
+# block can bind. Tag nothing, bind `Default`, and every triangle in the model -
+# swept, appended, welded - lands in one slot with one material. Verified:
+# `materialSlots: 1`, no diagnostics, `static_mesh.describe` names the single
+# slot `Default`.
+#
+# THE COLOUR IS ONE VALUE FOR THE WHOLE BAND, AND THAT IS THE SAME LIMITATION
+# SEEN FROM THE INSIDE. `append_triangle` takes no `color=` either, so the bore
+# wall cannot be tinted apart from the surface it is cut through even now:
+# `set_vertex_color set_all=true` is all-or-nothing by construction. A model that
+# needed a two-tone aperture would have to build the wall with `append_buffers`
+# and give up single-triangle placement - which is exactly the trade the
+# paragraph above names, arrived at from the colour side instead of the slot side.
+#
+# `set_all` is safe in this part because there is NO BOOLEAN in it. The op does
+# not reach geometry a boolean has contributed as a tool (measured; see the note
+# in amphora.pwmodel), and every op here - delete, reposition, append, weld - acts
+# on the one accumulating mesh.
+materials {
+    Default = "/Game/PinWrightExamples/Materials/MI_PwModelExample_MatteDielectric"
+}
+
+
+# ---------------------------------------------------------------------------
+# THE SWEPT SURFACE
+# 400 vertices = 40 stations x 10 perimeter points, emitted station-major.
+# 800 triangles = 40 wrap rings x 10 quads x 2, emitted in the same order, so
+# triangle (station, perimeter, half) is at (station * 10 + perimeter) * 2 + half.
+# The mesh is closed and manifold as it stands - the boolean-free, cut-free,
+# fully generated form of the model. Everything after this line is surgery.
+#
+# Winding: Unreal's visible face is the NEGATION of the right-hand-rule normal,
+# so every triangle here is wound so that (v1-v0) x (v2-v0) points INWARD, at
+# the centreline. The generator asserts that on all 800 before emitting; get it
+# backwards and the band renders as a black hole with a lit interior.
+# ---------------------------------------------------------------------------
+part band {
+    procedural_mesh
+    append_buffers vertices=[(126, 0, 3), (153, 0, 3), (180, 0, 3), (207, 0, 3), (234, 0, 3), (234, 0, -3), (207, 0, -3), (180, 0, -3), (153, 0, -3), (126, 0, -3), (124.381, 19.7, -1.246), (150.966, 23.911, 0.872), (177.551, 28.121, 2.991), (204.137, 32.332, 5.109), (230.722, 36.543, 7.228), (231.187, 36.616, 1.246), (204.602, 32.406, -0.872), (178.016, 28.195, -2.991), (151.431, 23.984, -5.109), (124.846, 19.774, -7.228), (120.019, 38.997, -5.484), (145.381, 47.237, -1.261), (170.744, 55.478, 2.963), (196.106, 63.719, 7.187), (221.469, 71.96, 11.411), (222.361, 72.25, 5.484), (196.999, 64.009, 1.261), (171.637, 55.768, -2.963), (146.274, 47.527, -7.187), (120.912, 39.287, -11.411), (112.972, 57.562, -9.689), (136.365, 69.481, -3.386), (159.757, 81.4, 2.917), (183.15, 93.319, 9.22), (206.542, 105.238, 15.523), (207.79, 105.874, 9.689), (184.398, 93.955, 3.386), (161.005, 82.036, -2.917), (137.613, 70.117, -9.22), (114.22, 58.198, -15.523), (103.324, 75.07, -13.834), (124.099, 90.163, -5.49), (144.873, 105.256, 2.853), (165.647, 120.35, 11.197), (186.422, 135.443, 19.54), (187.922, 136.533, 13.834), (167.147, 121.44, 5.49), (146.373, 106.346, -2.853), (125.599, 91.253, -11.197), (104.824, 76.159, -19.54), (91.19, 91.19, -17.893), (108.829, 108.829, -7.561), (126.467, 126.467, 2.772), (144.106, 144.106, 13.104), (161.745, 161.745, 23.437), (163.368, 163.368, 17.893), (145.73, 145.73, 7.561), (128.091, 128.091, -2.772), (110.452, 110.452, -13.104), (92.814, 92.814, -23.437), (76.72, 105.596, -21.842), (90.86, 125.059, -9.585), (105.001, 144.521, 2.673), (119.141, 163.984, 14.931), (133.282, 183.447, 27.189), (134.883, 185.65, 21.842), (120.742, 166.188, 9.585), (106.602, 146.725, -2.673), (92.461, 127.262, -14.931), (78.321, 107.8, -27.189), (60.104, 117.96, -25.657), (70.555, 138.472, -11.55), (81.007, 158.985, 2.558), (91.458, 179.497, 16.665), (101.91, 200.009, 30.773), (103.333, 202.802, 25.657), (92.881, 182.29, 11.55), (82.43, 161.778, -2.558), (71.978, 141.266, -16.665), (61.527, 120.754, -30.773), (41.578, 127.964, -29.313), (48.328, 148.739, -13.443), (55.078, 169.513, 2.427), (61.828, 190.287, 18.297), (68.578, 211.062, 34.167), (69.668, 214.416, 29.313), (62.918, 193.642, 13.443), (56.168, 172.867, -2.427), (49.418, 152.093, -18.297), (42.668, 131.318, -34.167), (21.43, 135.303, -32.789), (24.642, 155.581, -15.254), (27.853, 175.86, 2.281), (31.065, 196.138, 19.816), (34.277, 216.416, 37.351), (34.886, 220.265, 32.789), (31.675, 199.986, 15.254), (28.463, 179.708, -2.281), (25.251, 159.43, -19.816), (22.039, 139.152, -37.351), (0, 139.695, -36.062), (0, 158.787, -16.971), (0, 177.879, 2.121), (0, 196.971, 21.213), (0, 216.062, 40.305), (0, 220.305, 36.062), (0, 201.213, 16.971), (0, 182.121, -2.121), (0, 163.029, -21.213), (0, 143.938, -40.305), (-22.315, 140.892, -39.114), (-25.058, 158.212, -18.583), (-27.801, 175.531, 1.948), (-30.544, 192.85, 22.479), (-33.288, 210.169, 43.01), (-34.001, 214.675, 39.114), (-31.258, 197.356, 18.583), (-28.515, 180.037, -1.948), (-25.772, 162.718, -22.479), (-23.029, 145.399, -43.01), (-45.065, 138.695, -41.924), (-49.969, 153.788, -20.08), (-54.873, 168.882, 1.763), (-59.777, 183.975, 23.607), (-64.681, 199.069, 45.45), (-66.181, 203.685, 41.924), (-61.277, 188.592, 20.08), (-56.373, 173.498, -1.763), (-51.469, 158.405, -23.607), (-46.565, 143.312, -45.45), (-67.748, 132.962, -44.475), (-74.152, 145.532, -21.454), (-80.557, 158.102, 1.567), (-86.962, 170.672, 24.589), (-93.366, 183.242, 47.61), (-95.689, 187.8, 44.475), (-89.284, 175.23, 21.454), (-82.88, 162.66, -1.567), (-76.475, 150.09, -24.589), (-70.07, 137.521, -47.61), (-89.82, 123.627, -46.752), (-97.025, 133.544, -22.695), (-104.23, 143.461, 1.362), (-111.435, 153.377, 25.419), (-118.64, 163.294, 49.476), (-121.782, 167.619, 46.752), (-114.577, 157.702, 22.695), (-107.373, 147.786, -1.362), (-100.168, 137.869, -25.419), (-92.963, 127.952, -49.476), (-110.707, 110.707, -48.741), (-118.013, 118.013, -23.797), (-125.319, 125.319, 1.148), (-132.626, 132.626, 26.093), (-139.932, 139.932, 51.038), (-143.851, 143.851, 48.741), (-136.545, 136.545, 23.797), (-129.239, 129.239, -1.148), (-121.933, 121.933, -26.093), (-114.627, 114.627, -51.038), (-129.815, 94.316, -50.43), (-136.565, 99.22, -24.751), (-143.315, 104.124, 0.927), (-150.065, 109.028, 26.606), (-156.815, 113.933, 52.284), (-161.431, 117.287, 50.43), (-154.681, 112.383, 24.751), (-147.931, 107.478, -0.927), (-141.181, 102.574, -26.606), (-134.431, 97.67, -52.284), (-146.55, 74.671, -51.808), (-152.166, 77.532, -25.554), (-157.782, 80.394, 0.7), (-163.398, 83.255, 26.954), (-169.014, 86.117, 53.208), (-174.212, 88.766, 51.808), (-168.596, 85.904, 25.554), (-162.98, 83.043, -0.7), (-157.364, 80.181, -26.954), (-151.748, 77.32, -53.208), (-160.338, 52.097, -52.866), (-164.355, 53.402, -26.198), (-168.372, 54.707, 0.469), (-172.389, 56.013, 27.137), (-176.406, 57.318, 53.804), (-182.042, 59.149, 52.866), (-178.025, 57.844, 26.198), (-174.008, 56.539, -0.469), (-169.991, 55.233, -27.137), (-165.974, 53.928, -53.804), (-170.645, 27.028, -53.598), (-172.738, 27.359, -26.681), (-174.83, 27.69, 0.235), (-176.922, 28.022, 27.152), (-179.015, 28.353, 54.069), (-184.922, 29.289, 53.598), (-182.83, 28.957, 26.681), (-180.738, 28.626, -0.235), (-178.646, 28.295, -27.152), (-176.553, 27.963, -54.069), (-177, 0, -54), (-177, 0, -27), (-177, 0, 0), (-177, 0, 27), (-177, 0, 54), (-183, 0, 54), (-183, 0, 27), (-183, 0, 0), (-183, 0, -27), (-183, 0, -54), (-179.015, -28.353, -54.069), (-176.922, -28.022, -27.152), (-174.83, -27.69, -0.235), (-172.738, -27.359, 26.681), (-170.645, -27.028, 53.598), (-176.553, -27.963, 54.069), (-178.646, -28.295, 27.152), (-180.738, -28.626, 0.235), (-182.83, -28.957, -26.681), (-184.922, -29.289, -53.598), (-176.406, -57.318, -53.804), (-172.389, -56.013, -27.137), (-168.372, -54.707, -0.469), (-164.355, -53.402, 26.198), (-160.338, -52.097, 52.866), (-165.974, -53.928, 53.804), (-169.991, -55.233, 27.137), (-174.008, -56.539, 0.469), (-178.025, -57.844, -26.198), (-182.042, -59.149, -52.866), (-169.014, -86.117, -53.208), (-163.398, -83.255, -26.954), (-157.782, -80.394, -0.7), (-152.166, -77.532, 25.554), (-146.55, -74.671, 51.808), (-151.748, -77.32, 53.208), (-157.364, -80.181, 26.954), (-162.98, -83.043, 0.7), (-168.596, -85.904, -25.554), (-174.212, -88.766, -51.808), (-156.815, -113.933, -52.284), (-150.065, -109.028, -26.606), (-143.315, -104.124, -0.927), (-136.565, -99.22, 24.751), (-129.815, -94.316, 50.43), (-134.431, -97.67, 52.284), (-141.181, -102.574, 26.606), (-147.931, -107.478, 0.927), (-154.681, -112.383, -24.751), (-161.431, -117.287, -50.43), (-139.932, -139.932, -51.038), (-132.626, -132.626, -26.093), (-125.319, -125.319, -1.148), (-118.013, -118.013, 23.797), (-110.707, -110.707, 48.741), (-114.627, -114.627, 51.038), (-121.933, -121.933, 26.093), (-129.239, -129.239, 1.148), (-136.545, -136.545, -23.797), (-143.851, -143.851, -48.741), (-118.64, -163.294, -49.476), (-111.435, -153.377, -25.419), (-104.23, -143.461, -1.362), (-97.025, -133.544, 22.695), (-89.82, -123.627, 46.752), (-92.963, -127.952, 49.476), (-100.168, -137.869, 25.419), (-107.373, -147.786, 1.362), (-114.577, -157.702, -22.695), (-121.782, -167.619, -46.752), (-93.366, -183.242, -47.61), (-86.962, -170.672, -24.589), (-80.557, -158.102, -1.567), (-74.152, -145.532, 21.454), (-67.748, -132.962, 44.475), (-70.07, -137.521, 47.61), (-76.475, -150.09, 24.589), (-82.88, -162.66, 1.567), (-89.284, -175.23, -21.454), (-95.689, -187.8, -44.475), (-64.681, -199.069, -45.45), (-59.777, -183.975, -23.607), (-54.873, -168.882, -1.763), (-49.969, -153.788, 20.08), (-45.065, -138.695, 41.924), (-46.565, -143.312, 45.45), (-51.469, -158.405, 23.607), (-56.373, -173.498, 1.763), (-61.277, -188.592, -20.08), (-66.181, -203.685, -41.924), (-33.288, -210.169, -43.01), (-30.544, -192.85, -22.479), (-27.801, -175.531, -1.948), (-25.058, -158.212, 18.583), (-22.315, -140.892, 39.114), (-23.029, -145.399, 43.01), (-25.772, -162.718, 22.479), (-28.515, -180.037, 1.948), (-31.258, -197.356, -18.583), (-34.001, -214.675, -39.114), (0, -216.062, -40.305), (0, -196.971, -21.213), (0, -177.879, -2.121), (0, -158.787, 16.971), (0, -139.695, 36.062), (0, -143.938, 40.305), (0, -163.029, 21.213), (0, -182.121, 2.121), (0, -201.213, -16.971), (0, -220.305, -36.062), (34.277, -216.416, -37.351), (31.065, -196.138, -19.816), (27.853, -175.86, -2.281), (24.642, -155.581, 15.254), (21.43, -135.303, 32.789), (22.039, -139.152, 37.351), (25.251, -159.43, 19.816), (28.463, -179.708, 2.281), (31.675, -199.986, -15.254), (34.886, -220.265, -32.789), (68.578, -211.062, -34.167), (61.828, -190.287, -18.297), (55.078, -169.513, -2.427), (48.328, -148.739, 13.443), (41.578, -127.964, 29.313), (42.668, -131.318, 34.167), (49.418, -152.093, 18.297), (56.168, -172.867, 2.427), (62.918, -193.642, -13.443), (69.668, -214.416, -29.313), (101.91, -200.009, -30.773), (91.458, -179.497, -16.665), (81.007, -158.985, -2.558), (70.555, -138.472, 11.55), (60.104, -117.96, 25.657), (61.527, -120.754, 30.773), (71.978, -141.266, 16.665), (82.43, -161.778, 2.558), (92.881, -182.29, -11.55), (103.333, -202.802, -25.657), (133.282, -183.447, -27.189), (119.141, -163.984, -14.931), (105.001, -144.521, -2.673), (90.86, -125.059, 9.585), (76.72, -105.596, 21.842), (78.321, -107.8, 27.189), (92.461, -127.262, 14.931), (106.602, -146.725, 2.673), (120.742, -166.188, -9.585), (134.883, -185.65, -21.842), (161.745, -161.745, -23.437), (144.106, -144.106, -13.104), (126.467, -126.467, -2.772), (108.829, -108.829, 7.561), (91.19, -91.19, 17.893), (92.814, -92.814, 23.437), (110.452, -110.452, 13.104), (128.091, -128.091, 2.772), (145.73, -145.73, -7.561), (163.368, -163.368, -17.893), (186.422, -135.443, -19.54), (165.647, -120.35, -11.197), (144.873, -105.256, -2.853), (124.099, -90.163, 5.49), (103.324, -75.07, 13.834), (104.824, -76.159, 19.54), (125.599, -91.253, 11.197), (146.373, -106.346, 2.853), (167.147, -121.44, -5.49), (187.922, -136.533, -13.834), (206.542, -105.238, -15.523), (183.15, -93.319, -9.22), (159.757, -81.4, -2.917), (136.365, -69.481, 3.386), (112.972, -57.562, 9.689), (114.22, -58.198, 15.523), (137.613, -70.117, 9.22), (161.005, -82.036, 2.917), (184.398, -93.955, -3.386), (207.79, -105.874, -9.689), (221.469, -71.96, -11.411), (196.106, -63.719, -7.187), (170.744, -55.478, -2.963), (145.381, -47.237, 1.261), (120.019, -38.997, 5.484), (120.912, -39.287, 11.411), (146.274, -47.527, 7.187), (171.637, -55.768, 2.963), (196.999, -64.009, -1.261), (222.361, -72.25, -5.484), (230.722, -36.543, -7.228), (204.137, -32.332, -5.109), (177.551, -28.121, -2.991), (150.966, -23.911, -0.872), (124.381, -19.7, 1.246), (124.846, -19.774, 7.228), (151.431, -23.984, 5.109), (178.016, -28.195, 2.991), (204.602, -32.406, 0.872), (231.187, -36.616, -1.246)] triangles=[(0, 10, 11), (0, 11, 1), (1, 11, 12), (1, 12, 2), (2, 12, 13), (2, 13, 3), (3, 13, 14), (3, 14, 4), (4, 14, 15), (4, 15, 5), (5, 15, 16), (5, 16, 6), (6, 16, 17), (6, 17, 7), (7, 17, 18), (7, 18, 8), (8, 18, 19), (8, 19, 9), (9, 19, 10), (9, 10, 0), (10, 20, 21), (10, 21, 11), (11, 21, 22), (11, 22, 12), (12, 22, 23), (12, 23, 13), (13, 23, 24), (13, 24, 14), (14, 24, 25), (14, 25, 15), (15, 25, 26), (15, 26, 16), (16, 26, 27), (16, 27, 17), (17, 27, 28), (17, 28, 18), (18, 28, 29), (18, 29, 19), (19, 29, 20), (19, 20, 10), (20, 30, 31), (20, 31, 21), (21, 31, 32), (21, 32, 22), (22, 32, 33), (22, 33, 23), (23, 33, 34), (23, 34, 24), (24, 34, 35), (24, 35, 25), (25, 35, 36), (25, 36, 26), (26, 36, 37), (26, 37, 27), (27, 37, 38), (27, 38, 28), (28, 38, 39), (28, 39, 29), (29, 39, 30), (29, 30, 20), (30, 40, 41), (30, 41, 31), (31, 41, 42), (31, 42, 32), (32, 42, 43), (32, 43, 33), (33, 43, 44), (33, 44, 34), (34, 44, 45), (34, 45, 35), (35, 45, 46), (35, 46, 36), (36, 46, 47), (36, 47, 37), (37, 47, 48), (37, 48, 38), (38, 48, 49), (38, 49, 39), (39, 49, 40), (39, 40, 30), (40, 50, 51), (40, 51, 41), (41, 51, 52), (41, 52, 42), (42, 52, 53), (42, 53, 43), (43, 53, 54), (43, 54, 44), (44, 54, 55), (44, 55, 45), (45, 55, 56), (45, 56, 46), (46, 56, 57), (46, 57, 47), (47, 57, 58), (47, 58, 48), (48, 58, 59), (48, 59, 49), (49, 59, 50), (49, 50, 40), (50, 60, 61), (50, 61, 51), (51, 61, 62), (51, 62, 52), (52, 62, 63), (52, 63, 53), (53, 63, 64), (53, 64, 54), (54, 64, 65), (54, 65, 55), (55, 65, 66), (55, 66, 56), (56, 66, 67), (56, 67, 57), (57, 67, 68), (57, 68, 58), (58, 68, 69), (58, 69, 59), (59, 69, 60), (59, 60, 50), (60, 70, 71), (60, 71, 61), (61, 71, 72), (61, 72, 62), (62, 72, 73), (62, 73, 63), (63, 73, 74), (63, 74, 64), (64, 74, 75), (64, 75, 65), (65, 75, 76), (65, 76, 66), (66, 76, 77), (66, 77, 67), (67, 77, 78), (67, 78, 68), (68, 78, 79), (68, 79, 69), (69, 79, 70), (69, 70, 60), (70, 80, 81), (70, 81, 71), (71, 81, 82), (71, 82, 72), (72, 82, 83), (72, 83, 73), (73, 83, 84), (73, 84, 74), (74, 84, 85), (74, 85, 75), (75, 85, 86), (75, 86, 76), (76, 86, 87), (76, 87, 77), (77, 87, 88), (77, 88, 78), (78, 88, 89), (78, 89, 79), (79, 89, 80), (79, 80, 70), (80, 90, 91), (80, 91, 81), (81, 91, 92), (81, 92, 82), (82, 92, 93), (82, 93, 83), (83, 93, 94), (83, 94, 84), (84, 94, 95), (84, 95, 85), (85, 95, 96), (85, 96, 86), (86, 96, 97), (86, 97, 87), (87, 97, 98), (87, 98, 88), (88, 98, 99), (88, 99, 89), (89, 99, 90), (89, 90, 80), (90, 100, 101), (90, 101, 91), (91, 101, 102), (91, 102, 92), (92, 102, 103), (92, 103, 93), (93, 103, 104), (93, 104, 94), (94, 104, 105), (94, 105, 95), (95, 105, 106), (95, 106, 96), (96, 106, 107), (96, 107, 97), (97, 107, 108), (97, 108, 98), (98, 108, 109), (98, 109, 99), (99, 109, 100), (99, 100, 90), (100, 110, 111), (100, 111, 101), (101, 111, 112), (101, 112, 102), (102, 112, 113), (102, 113, 103), (103, 113, 114), (103, 114, 104), (104, 114, 115), (104, 115, 105), (105, 115, 116), (105, 116, 106), (106, 116, 117), (106, 117, 107), (107, 117, 118), (107, 118, 108), (108, 118, 119), (108, 119, 109), (109, 119, 110), (109, 110, 100), (110, 120, 121), (110, 121, 111), (111, 121, 122), (111, 122, 112), (112, 122, 123), (112, 123, 113), (113, 123, 124), (113, 124, 114), (114, 124, 125), (114, 125, 115), (115, 125, 126), (115, 126, 116), (116, 126, 127), (116, 127, 117), (117, 127, 128), (117, 128, 118), (118, 128, 129), (118, 129, 119), (119, 129, 120), (119, 120, 110), (120, 130, 131), (120, 131, 121), (121, 131, 132), (121, 132, 122), (122, 132, 133), (122, 133, 123), (123, 133, 134), (123, 134, 124), (124, 134, 135), (124, 135, 125), (125, 135, 136), (125, 136, 126), (126, 136, 137), (126, 137, 127), (127, 137, 138), (127, 138, 128), (128, 138, 139), (128, 139, 129), (129, 139, 130), (129, 130, 120), (130, 140, 141), (130, 141, 131), (131, 141, 142), (131, 142, 132), (132, 142, 143), (132, 143, 133), (133, 143, 144), (133, 144, 134), (134, 144, 145), (134, 145, 135), (135, 145, 146), (135, 146, 136), (136, 146, 147), (136, 147, 137), (137, 147, 148), (137, 148, 138), (138, 148, 149), (138, 149, 139), (139, 149, 140), (139, 140, 130), (140, 150, 151), (140, 151, 141), (141, 151, 152), (141, 152, 142), (142, 152, 153), (142, 153, 143), (143, 153, 154), (143, 154, 144), (144, 154, 155), (144, 155, 145), (145, 155, 156), (145, 156, 146), (146, 156, 157), (146, 157, 147), (147, 157, 158), (147, 158, 148), (148, 158, 159), (148, 159, 149), (149, 159, 150), (149, 150, 140), (150, 160, 161), (150, 161, 151), (151, 161, 162), (151, 162, 152), (152, 162, 163), (152, 163, 153), (153, 163, 164), (153, 164, 154), (154, 164, 165), (154, 165, 155), (155, 165, 166), (155, 166, 156), (156, 166, 167), (156, 167, 157), (157, 167, 168), (157, 168, 158), (158, 168, 169), (158, 169, 159), (159, 169, 160), (159, 160, 150), (160, 170, 171), (160, 171, 161), (161, 171, 172), (161, 172, 162), (162, 172, 173), (162, 173, 163), (163, 173, 174), (163, 174, 164), (164, 174, 175), (164, 175, 165), (165, 175, 176), (165, 176, 166), (166, 176, 177), (166, 177, 167), (167, 177, 178), (167, 178, 168), (168, 178, 179), (168, 179, 169), (169, 179, 170), (169, 170, 160), (170, 180, 181), (170, 181, 171), (171, 181, 182), (171, 182, 172), (172, 182, 183), (172, 183, 173), (173, 183, 184), (173, 184, 174), (174, 184, 185), (174, 185, 175), (175, 185, 186), (175, 186, 176), (176, 186, 187), (176, 187, 177), (177, 187, 188), (177, 188, 178), (178, 188, 189), (178, 189, 179), (179, 189, 180), (179, 180, 170), (180, 190, 191), (180, 191, 181), (181, 191, 192), (181, 192, 182), (182, 192, 193), (182, 193, 183), (183, 193, 194), (183, 194, 184), (184, 194, 195), (184, 195, 185), (185, 195, 196), (185, 196, 186), (186, 196, 197), (186, 197, 187), (187, 197, 198), (187, 198, 188), (188, 198, 199), (188, 199, 189), (189, 199, 190), (189, 190, 180), (190, 200, 201), (190, 201, 191), (191, 201, 202), (191, 202, 192), (192, 202, 203), (192, 203, 193), (193, 203, 204), (193, 204, 194), (194, 204, 205), (194, 205, 195), (195, 205, 206), (195, 206, 196), (196, 206, 207), (196, 207, 197), (197, 207, 208), (197, 208, 198), (198, 208, 209), (198, 209, 199), (199, 209, 200), (199, 200, 190), (200, 210, 211), (200, 211, 201), (201, 211, 212), (201, 212, 202), (202, 212, 213), (202, 213, 203), (203, 213, 214), (203, 214, 204), (204, 214, 215), (204, 215, 205), (205, 215, 216), (205, 216, 206), (206, 216, 217), (206, 217, 207), (207, 217, 218), (207, 218, 208), (208, 218, 219), (208, 219, 209), (209, 219, 210), (209, 210, 200), (210, 220, 221), (210, 221, 211), (211, 221, 222), (211, 222, 212), (212, 222, 223), (212, 223, 213), (213, 223, 224), (213, 224, 214), (214, 224, 225), (214, 225, 215), (215, 225, 226), (215, 226, 216), (216, 226, 227), (216, 227, 217), (217, 227, 228), (217, 228, 218), (218, 228, 229), (218, 229, 219), (219, 229, 220), (219, 220, 210), (220, 230, 231), (220, 231, 221), (221, 231, 232), (221, 232, 222), (222, 232, 233), (222, 233, 223), (223, 233, 234), (223, 234, 224), (224, 234, 235), (224, 235, 225), (225, 235, 236), (225, 236, 226), (226, 236, 237), (226, 237, 227), (227, 237, 238), (227, 238, 228), (228, 238, 239), (228, 239, 229), (229, 239, 230), (229, 230, 220), (230, 240, 241), (230, 241, 231), (231, 241, 242), (231, 242, 232), (232, 242, 243), (232, 243, 233), (233, 243, 244), (233, 244, 234), (234, 244, 245), (234, 245, 235), (235, 245, 246), (235, 246, 236), (236, 246, 247), (236, 247, 237), (237, 247, 248), (237, 248, 238), (238, 248, 249), (238, 249, 239), (239, 249, 240), (239, 240, 230), (240, 250, 251), (240, 251, 241), (241, 251, 252), (241, 252, 242), (242, 252, 253), (242, 253, 243), (243, 253, 254), (243, 254, 244), (244, 254, 255), (244, 255, 245), (245, 255, 256), (245, 256, 246), (246, 256, 257), (246, 257, 247), (247, 257, 258), (247, 258, 248), (248, 258, 259), (248, 259, 249), (249, 259, 250), (249, 250, 240), (250, 260, 261), (250, 261, 251), (251, 261, 262), (251, 262, 252), (252, 262, 263), (252, 263, 253), (253, 263, 264), (253, 264, 254), (254, 264, 265), (254, 265, 255), (255, 265, 266), (255, 266, 256), (256, 266, 267), (256, 267, 257), (257, 267, 268), (257, 268, 258), (258, 268, 269), (258, 269, 259), (259, 269, 260), (259, 260, 250), (260, 270, 271), (260, 271, 261), (261, 271, 272), (261, 272, 262), (262, 272, 273), (262, 273, 263), (263, 273, 274), (263, 274, 264), (264, 274, 275), (264, 275, 265), (265, 275, 276), (265, 276, 266), (266, 276, 277), (266, 277, 267), (267, 277, 278), (267, 278, 268), (268, 278, 279), (268, 279, 269), (269, 279, 270), (269, 270, 260), (270, 280, 281), (270, 281, 271), (271, 281, 282), (271, 282, 272), (272, 282, 283), (272, 283, 273), (273, 283, 284), (273, 284, 274), (274, 284, 285), (274, 285, 275), (275, 285, 286), (275, 286, 276), (276, 286, 287), (276, 287, 277), (277, 287, 288), (277, 288, 278), (278, 288, 289), (278, 289, 279), (279, 289, 280), (279, 280, 270), (280, 290, 291), (280, 291, 281), (281, 291, 292), (281, 292, 282), (282, 292, 293), (282, 293, 283), (283, 293, 294), (283, 294, 284), (284, 294, 295), (284, 295, 285), (285, 295, 296), (285, 296, 286), (286, 296, 297), (286, 297, 287), (287, 297, 298), (287, 298, 288), (288, 298, 299), (288, 299, 289), (289, 299, 290), (289, 290, 280), (290, 300, 301), (290, 301, 291), (291, 301, 302), (291, 302, 292), (292, 302, 303), (292, 303, 293), (293, 303, 304), (293, 304, 294), (294, 304, 305), (294, 305, 295), (295, 305, 306), (295, 306, 296), (296, 306, 307), (296, 307, 297), (297, 307, 308), (297, 308, 298), (298, 308, 309), (298, 309, 299), (299, 309, 300), (299, 300, 290), (300, 310, 311), (300, 311, 301), (301, 311, 312), (301, 312, 302), (302, 312, 313), (302, 313, 303), (303, 313, 314), (303, 314, 304), (304, 314, 315), (304, 315, 305), (305, 315, 316), (305, 316, 306), (306, 316, 317), (306, 317, 307), (307, 317, 318), (307, 318, 308), (308, 318, 319), (308, 319, 309), (309, 319, 310), (309, 310, 300), (310, 320, 321), (310, 321, 311), (311, 321, 322), (311, 322, 312), (312, 322, 323), (312, 323, 313), (313, 323, 324), (313, 324, 314), (314, 324, 325), (314, 325, 315), (315, 325, 326), (315, 326, 316), (316, 326, 327), (316, 327, 317), (317, 327, 328), (317, 328, 318), (318, 328, 329), (318, 329, 319), (319, 329, 320), (319, 320, 310), (320, 330, 331), (320, 331, 321), (321, 331, 332), (321, 332, 322), (322, 332, 333), (322, 333, 323), (323, 333, 334), (323, 334, 324), (324, 334, 335), (324, 335, 325), (325, 335, 336), (325, 336, 326), (326, 336, 337), (326, 337, 327), (327, 337, 338), (327, 338, 328), (328, 338, 339), (328, 339, 329), (329, 339, 330), (329, 330, 320), (330, 340, 341), (330, 341, 331), (331, 341, 342), (331, 342, 332), (332, 342, 343), (332, 343, 333), (333, 343, 344), (333, 344, 334), (334, 344, 345), (334, 345, 335), (335, 345, 346), (335, 346, 336), (336, 346, 347), (336, 347, 337), (337, 347, 348), (337, 348, 338), (338, 348, 349), (338, 349, 339), (339, 349, 340), (339, 340, 330), (340, 350, 351), (340, 351, 341), (341, 351, 352), (341, 352, 342), (342, 352, 353), (342, 353, 343), (343, 353, 354), (343, 354, 344), (344, 354, 355), (344, 355, 345), (345, 355, 356), (345, 356, 346), (346, 356, 357), (346, 357, 347), (347, 357, 358), (347, 358, 348), (348, 358, 359), (348, 359, 349), (349, 359, 350), (349, 350, 340), (350, 360, 361), (350, 361, 351), (351, 361, 362), (351, 362, 352), (352, 362, 363), (352, 363, 353), (353, 363, 364), (353, 364, 354), (354, 364, 365), (354, 365, 355), (355, 365, 366), (355, 366, 356), (356, 366, 367), (356, 367, 357), (357, 367, 368), (357, 368, 358), (358, 368, 369), (358, 369, 359), (359, 369, 360), (359, 360, 350), (360, 370, 371), (360, 371, 361), (361, 371, 372), (361, 372, 362), (362, 372, 373), (362, 373, 363), (363, 373, 374), (363, 374, 364), (364, 374, 375), (364, 375, 365), (365, 375, 376), (365, 376, 366), (366, 376, 377), (366, 377, 367), (367, 377, 378), (367, 378, 368), (368, 378, 379), (368, 379, 369), (369, 379, 370), (369, 370, 360), (370, 380, 381), (370, 381, 371), (371, 381, 382), (371, 382, 372), (372, 382, 383), (372, 383, 373), (373, 383, 384), (373, 384, 374), (374, 384, 385), (374, 385, 375), (375, 385, 386), (375, 386, 376), (376, 386, 387), (376, 387, 377), (377, 387, 388), (377, 388, 378), (378, 388, 389), (378, 389, 379), (379, 389, 380), (379, 380, 370), (380, 390, 391), (380, 391, 381), (381, 391, 392), (381, 392, 382), (382, 392, 393), (382, 393, 383), (383, 393, 394), (383, 394, 384), (384, 394, 395), (384, 395, 385), (385, 395, 396), (385, 396, 386), (386, 396, 397), (386, 397, 387), (387, 397, 398), (387, 398, 388), (388, 398, 399), (388, 399, 389), (389, 399, 390), (389, 390, 380), (390, 5, 6), (390, 6, 391), (391, 6, 7), (391, 7, 392), (392, 7, 8), (392, 8, 393), (393, 8, 9), (393, 9, 394), (394, 9, 0), (394, 0, 395), (395, 0, 1), (395, 1, 396), (396, 1, 2), (396, 2, 397), (397, 2, 3), (397, 3, 398), (398, 3, 4), (398, 4, 399), (399, 4, 5), (399, 5, 390)]
+
+    # --- APERTURE, TOP FACE ----------------------------------------------
+    # The triangle star of vertex 102 (station 10, perimeter 2),
+    # listed as six ids: 182 183 184 203 204 205. Removing them also removes vertex 102
+    # itself - it has no other user - so there is no
+    # `delete_vertex index=102` line here, and adding one is a
+    # compile error.
+    delete_triangle index=182
+    delete_triangle index=183
+    delete_triangle index=184
+    delete_triangle index=203
+    delete_triangle index=204
+    delete_triangle index=205
+
+    # --- APERTURE, BOTTOM FACE -------------------------------------------
+    # The same cut, one line. Vertex 107 is station 10, perimeter 7
+    # - the point interior to the matching patch on the b = -3
+    # face - and its star is the six triangles 192 193 194 213 214 215.
+    delete_vertex index=107
+
+    # --- SHAPE THE TWO OPENINGS ------------------------------------------
+    # Six rim vertices per face, moved off the sheared grid hexagon
+    # onto a symmetric one 60 long x 32 wide. `du` is arc offset
+    # from station 10 along the centreline, `a` is offset across
+    # the band. Both faces land on the SAME (du, a) hexagon, which
+    # is what makes the bore below a straight prism. Top rim ids run
+    # 112 113 103 92 91 101 round the loop; the bottom rim is
+    # 117 118 108 97 96 106, and it walks the hexagon in the opposite
+    # direction - see the header.
+    set_vertex_position index=112 position=(-29.481, 175.247, 1.937)   # top rim -> hexagon 0  du=+30 a=+0
+    set_vertex_position index=113 position=(-15.701, 187.97, 13.806)   # top rim -> hexagon 1  du=+15 a=+16
+    set_vertex_position index=103 position=(15.794, 189.086, 13.04)   # top rim -> hexagon 2  du=-15 a=+16
+    set_vertex_position index=92 position=(29.54, 175.595, 2.291)   # top rim -> hexagon 3  du=-30 a=+0
+    set_vertex_position index=91 position=(13.833, 165.617, -8.625)   # top rim -> hexagon 4  du=-15 a=-16
+    set_vertex_position index=101 position=(-13.897, 166.38, -9.744)   # top rim -> hexagon 5  du=+15 a=-16
+    set_vertex_position index=117 position=(-30.241, 179.765, -1.937)   # bottom rim -> hexagon 0  du=+30 a=+0
+    set_vertex_position index=118 position=(-14.265, 170.781, -13.806)   # bottom rim -> hexagon 5  du=+15 a=-16
+    set_vertex_position index=108 position=(14.172, 169.665, -13.04)   # bottom rim -> hexagon 4  du=-15 a=-16
+    set_vertex_position index=97 position=(30.183, 179.416, -2.291)   # bottom rim -> hexagon 3  du=-30 a=+0
+    set_vertex_position index=96 position=(16.132, 193.134, 8.625)   # bottom rim -> hexagon 2  du=-15 a=+16
+    set_vertex_position index=106 position=(-16.068, 192.371, 9.744)   # bottom rim -> hexagon 1  du=+15 a=+16
+
+    # --- BORE WALL -------------------------------------------------------
+    # Six quads, twelve triangles, top rim to bottom rim. Positions,
+    # not ids: these 36 coordinates are copies of the 12 rim
+    # positions written above and must stay copies. Wound so the
+    # wall is visible from inside the slot. These twelve lines
+    # raise no diagnostic at all - see the header.
+    append_triangle v0=(-29.481, 175.247, 1.937) v1=(-15.701, 187.97, 13.806) v2=(-16.068, 192.371, 9.744)
+    append_triangle v0=(-29.481, 175.247, 1.937) v1=(-16.068, 192.371, 9.744) v2=(-30.241, 179.765, -1.937)
+    append_triangle v0=(-15.701, 187.97, 13.806) v1=(15.794, 189.086, 13.04) v2=(16.132, 193.134, 8.625)
+    append_triangle v0=(-15.701, 187.97, 13.806) v1=(16.132, 193.134, 8.625) v2=(-16.068, 192.371, 9.744)
+    append_triangle v0=(15.794, 189.086, 13.04) v1=(29.54, 175.595, 2.291) v2=(30.183, 179.416, -2.291)
+    append_triangle v0=(15.794, 189.086, 13.04) v1=(30.183, 179.416, -2.291) v2=(16.132, 193.134, 8.625)
+    append_triangle v0=(29.54, 175.595, 2.291) v1=(13.833, 165.617, -8.625) v2=(14.172, 169.665, -13.04)
+    append_triangle v0=(29.54, 175.595, 2.291) v1=(14.172, 169.665, -13.04) v2=(30.183, 179.416, -2.291)
+    append_triangle v0=(13.833, 165.617, -8.625) v1=(-13.897, 166.38, -9.744) v2=(-14.265, 170.781, -13.806)
+    append_triangle v0=(13.833, 165.617, -8.625) v1=(-14.265, 170.781, -13.806) v2=(14.172, 169.665, -13.04)
+    append_triangle v0=(-13.897, 166.38, -9.744) v1=(-29.481, 175.247, 1.937) v2=(-30.241, 179.765, -1.937)
+    append_triangle v0=(-13.897, 166.38, -9.744) v1=(-30.241, 179.765, -1.937) v2=(-14.265, 170.781, -13.806)
+
+    # `append_triangle` left 36 duplicate vertices sitting on the
+    # two rims; this stitches them. The default tolerance (0.0001)
+    # is enough because the wall's coordinates are the same
+    # 3-decimal text as the rim's and parse to the same doubles -
+    # not because they are merely close.
+    weld_vertices
+
+    # 40 degrees keeps the ring smooth (9 degrees between stations)
+    # while the four corner rails and both bore rims (90 degrees)
+    # stay hard.
+    split_normals split_angle=40
+
+    # Cast bronze. One value for the whole band - see the
+    # materials block.
+    set_vertex_color set_all=true color=(0.45, 0.33, 0.20, 1)
+
+    # Runs LAST, over the appended triangles too. See the header on
+    # why the buffer above deliberately ships with no `uvs=`.
+    uv channel=0 mode=cylindrical
+}
+
+collision {
+    complexity = simple_and_complex
+
+    hull {
+        procedural_mesh
+        append_vertex position=(126, 0, 3)
+        append_vertex position=(234, 0, 3)
+        append_vertex position=(234, 0, -3)
+        append_vertex position=(126, 0, -3)
+        append_vertex position=(120.019, 38.997, -5.484)
+        append_vertex position=(221.469, 71.96, 11.411)
+        append_vertex position=(222.361, 72.25, 5.484)
+        append_vertex position=(120.912, 39.287, -11.411)
+        append_vertex position=(103.324, 75.07, -13.834)
+        append_vertex position=(186.422, 135.443, 19.54)
+        append_vertex position=(187.922, 136.533, 13.834)
+        append_vertex position=(104.824, 76.159, -19.54)
+    }
+    convex points=[(103.324, 75.07, -13.834), (186.422, 135.443, 19.54), (187.922, 136.533, 13.834), (104.824, 76.159, -19.54), (76.72, 105.596, -21.842), (133.282, 183.447, 27.189), (134.883, 185.65, 21.842), (78.321, 107.8, -27.189), (41.578, 127.964, -29.313), (68.578, 211.062, 34.167), (69.668, 214.416, 29.313), (42.668, 131.318, -34.167)]
+    convex points=[(41.578, 127.964, -29.313), (68.578, 211.062, 34.167), (69.668, 214.416, 29.313), (42.668, 131.318, -34.167), (0, 139.695, -36.062), (0, 216.062, 40.305), (0, 220.305, 36.062), (0, 143.938, -40.305), (-45.065, 138.695, -41.924), (-64.681, 199.069, 45.45), (-66.181, 203.685, 41.924), (-46.565, 143.312, -45.45)]
+    convex points=[(-45.065, 138.695, -41.924), (-64.681, 199.069, 45.45), (-66.181, 203.685, 41.924), (-46.565, 143.312, -45.45), (-89.82, 123.627, -46.752), (-118.64, 163.294, 49.476), (-121.782, 167.619, 46.752), (-92.963, 127.952, -49.476), (-129.815, 94.316, -50.43), (-156.815, 113.933, 52.284), (-161.431, 117.287, 50.43), (-134.431, 97.67, -52.284)]
+    convex points=[(-129.815, 94.316, -50.43), (-156.815, 113.933, 52.284), (-161.431, 117.287, 50.43), (-134.431, 97.67, -52.284), (-160.338, 52.097, -52.866), (-176.406, 57.318, 53.804), (-182.042, 59.149, 52.866), (-165.974, 53.928, -53.804), (-177, 0, -54), (-177, 0, 54), (-183, 0, 54), (-183, 0, -54)]
+    convex points=[(-177, 0, -54), (-177, 0, 54), (-183, 0, 54), (-183, 0, -54), (-176.406, -57.318, -53.804), (-160.338, -52.097, 52.866), (-165.974, -53.928, 53.804), (-182.042, -59.149, -52.866), (-156.815, -113.933, -52.284), (-129.815, -94.316, 50.43), (-134.431, -97.67, 52.284), (-161.431, -117.287, -50.43)]
+    convex points=[(-156.815, -113.933, -52.284), (-129.815, -94.316, 50.43), (-134.431, -97.67, 52.284), (-161.431, -117.287, -50.43), (-118.64, -163.294, -49.476), (-89.82, -123.627, 46.752), (-92.963, -127.952, 49.476), (-121.782, -167.619, -46.752), (-64.681, -199.069, -45.45), (-45.065, -138.695, 41.924), (-46.565, -143.312, 45.45), (-66.181, -203.685, -41.924)]
+    convex points=[(-64.681, -199.069, -45.45), (-45.065, -138.695, 41.924), (-46.565, -143.312, 45.45), (-66.181, -203.685, -41.924), (0, -216.062, -40.305), (0, -139.695, 36.062), (0, -143.938, 40.305), (0, -220.305, -36.062), (68.578, -211.062, -34.167), (41.578, -127.964, 29.313), (42.668, -131.318, 34.167), (69.668, -214.416, -29.313)]
+    convex points=[(68.578, -211.062, -34.167), (41.578, -127.964, 29.313), (42.668, -131.318, 34.167), (69.668, -214.416, -29.313), (133.282, -183.447, -27.189), (76.72, -105.596, 21.842), (78.321, -107.8, 27.189), (134.883, -185.65, -21.842), (186.422, -135.443, -19.54), (103.324, -75.07, 13.834), (104.824, -76.159, 19.54), (187.922, -136.533, -13.834)]
+    convex points=[(186.422, -135.443, -19.54), (103.324, -75.07, 13.834), (104.824, -76.159, 19.54), (187.922, -136.533, -13.834), (221.469, -71.96, -11.411), (120.019, -38.997, 5.484), (120.912, -39.287, 11.411), (222.361, -72.25, -5.484), (234, 0, -3), (126, 0, -3), (126, 0, 3), (234, 0, 3)]
+}

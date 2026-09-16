@@ -1,0 +1,40 @@
+# M_PwReview_Neutral - the material you judge geometry under.
+#
+# WHY THIS FILE EXISTS. Every default material the engine hands an unbound mesh
+# slot carries a grid TEXTURE: WorldGridMaterial, DefaultMaterial and M_Grid all
+# do, and all three project it in WORLD space, so the pattern is fixed to the
+# world and slides across the surface as the mesh moves. Over one session that
+# texture was filed as a geometry defect twice - as "normal-interpolation
+# faceting" on mobius_band (a computed 5.4 degree crease angle was quoted) and as
+# a "corrugation from remesh_uniform, then from twist" on driftwood, which four
+# successive authors chased through a six-column op probe that came back clean on
+# every column. This material has no texture in it at all, so nothing it draws
+# can be mistaken for something the mesh is doing.
+#
+# HOW TO INSTALL IT.
+#
+#   call("material.compile_mgir", { text: <this file>, save: true })
+#   call("material.authoring.compile_material",
+#        { assetPath: "/Game/PinWrightExamples/Materials/M_PwReview_Neutral" })
+#
+# WHY MID GREY AND NOT WHITE. 0.18 linear is the standard 18% grey card. White
+# clips against any key light bright enough to model form, and a clipped surface
+# hides exactly the shading gradient a review is reading. Everything is a
+# parameter so one master serves the prop, the ground plane and any darker or
+# lighter variant through material instances - do not compile a second master.
+#
+# ROUGHNESS 0.55, NOT 0.9. A fully matte surface has no specular gradient, and
+# the specular gradient is what makes a curvature error visible. 0.55 keeps a
+# broad highlight that rolls across a curve without turning into a mirror.
+
+entry material `/Game/PinWrightExamples/Materials/M_PwReview_Neutral` {
+    %base = call `/Script/Engine.MaterialExpressionVectorParameter`(ParameterName: "BaseColor", Group: "Review", SortPriority: 0, DefaultValue: [0.18, 0.18, 0.18, 1.0]) @(-600, -100)
+    %roughness = call `/Script/Engine.MaterialExpressionScalarParameter`(ParameterName: "Roughness", Group: "Review", SortPriority: 16, DefaultValue: 0.55) @(-600, 120)
+    %metallic = call `/Script/Engine.MaterialExpressionScalarParameter`(ParameterName: "Metallic", Group: "Review", SortPriority: 32, DefaultValue: 0.0) @(-600, 260)
+    %specular = call `/Script/Engine.MaterialExpressionScalarParameter`(ParameterName: "Specular", Group: "Review", SortPriority: 48, DefaultValue: 0.5) @(-600, 400)
+
+    output BaseColor: %base
+    output Roughness: %roughness
+    output Metallic: %metallic
+    output Specular: %specular
+}

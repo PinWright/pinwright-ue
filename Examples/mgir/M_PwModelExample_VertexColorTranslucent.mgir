@@ -1,0 +1,59 @@
+# M_PwModelExample_VertexColorTranslucent - the glass/quartz half of the pair.
+#
+# Same graph as M_PwModelExample_VertexColor.mgir plus an Opacity chain:
+# Opacity = VertexColor.A * OpacityFloor. A .pwmodel `color=` defaults its alpha
+# to 1, so an author who never touches alpha still gets OpacityFloor; an author
+# who writes color=(r,g,b,0.5) gets half of it.
+#
+# A SECOND MASTER EXISTS ONLY BECAUSE BLEND MODE IS NOT A PARAMETER. Blend mode,
+# two-sided and translucency lighting mode are material-level properties, not
+# expressions, so a material instance cannot override them through any verb in
+# material.authoring (set_blend_mode refuses a UMaterialInstanceConstant with
+# ASSET_NOT_FOUND: "Could not load Material"). Glass therefore needs its own
+# master rather than another instance of the opaque one.
+#
+# ###########################################################################
+# MGIR DOES NOT CARRY THOSE PROPERTIES EITHER. Compiling this text gives you an
+# OPAQUE, single-sided material with an Opacity pin the renderer ignores, and
+# every response reports success. Measured: material.decompile_mgir on the built
+# asset emits no blend mode at all, and material.compile_mgir of this document
+# to a scratch path answered blendMode "Opaque", twoSided false against the
+# original's "Translucent" / true. THE FOLLOW-UP CALLS BELOW ARE MANDATORY:
+#
+#   call("material.compile_mgir", { text: <this file>, save: true })
+#   call("material.authoring.set_blend_mode",
+#        { assetPath: "/Game/PinWrightExamples/Materials/M_PwModelExample_VertexColorTranslucent",
+#          blendMode: "Translucent" })
+#   call("material.authoring.set_two_sided",
+#        { assetPath: "/Game/PinWrightExamples/Materials/M_PwModelExample_VertexColorTranslucent",
+#          twoSided: true })
+#   call("property.set",
+#        { objectPath: "/Game/PinWrightExamples/Materials/M_PwModelExample_VertexColorTranslucent.M_PwModelExample_VertexColorTranslucent",
+#          propertyName: "TranslucencyLightingMode",
+#          value: "TLM_SurfacePerPixelLighting" })
+#   call("material.authoring.compile_material",
+#        { assetPath: "/Game/PinWrightExamples/Materials/M_PwModelExample_VertexColorTranslucent" })
+#
+# TranslucencyLightingMode is the one that decides whether the tint survives:
+# the engine default (TLM_VolumetricNonDirectional) reads the translucency
+# volume, which in a level with no ambient is black.
+# ###########################################################################
+
+entry material `/Game/PinWrightExamples/Materials/M_PwModelExample_VertexColorTranslucent` {
+    %vertexColor = call `/Script/Engine.MaterialExpressionVertexColor`() @(-600, -100)
+    %roughness = call `/Script/Engine.MaterialExpressionScalarParameter`(ParameterName: "Roughness", Group: "Surface", SortPriority: 32, DefaultValue: 0.05) @(-600, 120)
+    %metallic = call `/Script/Engine.MaterialExpressionScalarParameter`(ParameterName: "Metallic", Group: "Surface", SortPriority: 32, DefaultValue: 0.0) @(-600, 260)
+    %specular = call `/Script/Engine.MaterialExpressionScalarParameter`(ParameterName: "Specular", Group: "Surface", SortPriority: 32, DefaultValue: 0.9) @(-600, 400)
+    %opacityFloor = call `/Script/Engine.MaterialExpressionScalarParameter`(ParameterName: "OpacityFloor", Group: "Surface", SortPriority: 32, DefaultValue: 0.35) @(-600, 540)
+
+    # %vertexColor[4] is the VertexColor node's ALPHA output. Its five output
+    # pins all report the name "None" from material.graph.list_expression_types,
+    # so they are only reachable by index: 0 RGB, 1 R, 2 G, 3 B, 4 A.
+    %opacity = call `/Script/Engine.MaterialExpressionMultiply`(A: %vertexColor[4], B: %opacityFloor) @(-320, 520)
+
+    output BaseColor: %vertexColor
+    output Roughness: %roughness
+    output Metallic: %metallic
+    output Specular: %specular
+    output Opacity: %opacity
+}

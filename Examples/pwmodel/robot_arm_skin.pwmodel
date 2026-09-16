@@ -1,0 +1,23 @@
+pwmodel 0
+
+use skeleton from "/Game/Examples/SK_RobotArm"
+
+part base bone="base" at=(0, 0, 10) {
+    cylinder radius=12 height=20 segments=16
+}
+
+part upper_arm bone="upper_arm" at=(0, 0, 35) {
+    cylinder radius=8 height=55 segments=16
+}
+
+part forearm bone="forearm" at=(0, 0, 40) {
+    cylinder radius=6 height=60 segments=16
+}
+
+part gripper at=(0, 0, 30) {
+    box size=(24, 16, 12)
+}
+
+skin {
+    smooth max_influences=4 stiffness=0.5 method=direct_distance voxel_resolution=256
+}

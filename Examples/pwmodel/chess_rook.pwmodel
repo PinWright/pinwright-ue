@@ -1,0 +1,171 @@
+# Chess rook, Staunton pattern - a turned piece with a battlemented crown.
+#
+# Modelled ten times life size: 48 uu tall against a 48 mm tournament rook,
+# so every number below reads directly as a millimetre of the real piece.
+# Scale the actor by 0.1 to put it on a board.
+#
+# A rook lives or dies on four ratios:
+#
+#   base      0.5 -> 8.8    17% of the height, 33.6 across - the widest thing
+#   shaft     8.8 -> 25      34%, 16.4 across: just under half the base
+#   collar    25  -> 30      the bead that stops the crown sliding down
+#   crown     30  -> 48      37%, 26.8 across: 0.81 of the base
+#
+# The one that carries the piece is shaft-to-base. Above about 0.55 the rook
+# reads as a tin can; below about 0.45 it reads as a pawn wearing a hat.
+# The second is the base's edge: 3.2 of dead-straight wall from 2.2 to 5.4,
+# then a chamfer, and only then does the profile turn in. Curve it away
+# sooner and the base stops being a plinth and reads as a bell - which is
+# what the first pass of this file did, and it made the whole piece soft. The
+# wall runs to 5.4 rather than 4.6 because at 4.6 a three-quarter view looks
+# down onto it and the straight run disappears behind its own top edge.
+
+pwmodel 0
+
+materials {
+    # Rebind to your own boxwood and baize - nothing else changes.
+    #
+    # TWO SLOTS, TWO BEHAVIOURS. A tournament piece is french-polished, so Boxwood
+    # is satin: the specular roll round the turned shaft is most of what says
+    # LATHE rather than extrusion, and a matte binding throws it away. Felt is the
+    # opposite surface in every respect - a napped cloth with almost no specular
+    # at all - which is the entire justification for the second slot, and why a
+    # tint alone could not have carried it.
+    Boxwood = "/Game/PinWrightExamples/Materials/MI_PwModelExample_SatinDielectric"
+    Felt    = "/Game/PinWrightExamples/Materials/MI_PwModelExample_Cloth"
+}
+
+part body {
+    # Base, scotia, shaft and collar, in one turning.
+    #
+    # The profile starts at Z=0.5, not 0: the underside is recessed by half a
+    # millimetre so the baize pad has somewhere to sit, which is how a real
+    # piece is finished and why the pad is not simply stuck on the bottom.
+    #
+    # The shaft narrows by 0.2 over its length. A dead-parallel shaft reads
+    # machined; the taper is small enough that nobody sees it and large enough
+    # that the piece stops looking extruded.
+    #
+    # It ends at 12.9 and runs straight for the last 0.8, half a millimetre
+    # UNDER the crown's 13.4. That half millimetre is deliberate and it is the
+    # whole reason this line was rewritten: an earlier pass ended the profile at
+    # 13.4 to match the crown exactly, reasoning that two coincident radii leave
+    # no step where a mismatch shows a ring. They leave no step and they
+    # Z-FIGHT - two cylindrical surfaces at the same radius over 1 of shared
+    # height, which rendered as a jagged sawtooth ridge round the shaft and as
+    # speckle seen through the crenellation slots. Coincident surfaces are never
+    # the answer; a small honest step is. Here the step reads as the turned
+    # shoulder a crown sits on.
+    revolve steps=48 material="Boxwood" profile=[(0, 0.5), (15.0, 0.5), (16.6, 1.4), (16.8, 2.2), (16.8, 5.4), (16.0, 6.4), (14.0, 7.6), (11.6, 8.8), (9.8, 10.2), (8.8, 12.0), (8.4, 14.5), (8.2, 20.0), (8.2, 25.0), (8.6, 25.8), (10.6, 27.2), (10.6, 28.0), (9.5, 29.0), (9.5, 30.2), (11.2, 32.0), (12.4, 33.8), (12.9, 35.2), (12.9, 36.0), (0, 36.0)] color=(0.80, 0.64, 0.38, 1)
+
+    recalculate_normals
+    uv channel=0 mode=cylindrical scale=(1, 1) split_angle=45
+    uv channel=1 mode=patch_builder auto_pack=false
+}
+
+part crown {
+    # The battlement drum.
+    #
+    # A cylinder rather than a revolve. It was originally a bevel decision -
+    # revolve hands back a polygroup per quad, so bevel, which walks polygroup
+    # edges, grooved every one of the 48 columns and every profile ring and the
+    # piece came back as a bundle of splinters, while a cylinder's three
+    # polygroups (side and two caps) let a bevel knock back the two rim circles
+    # and nothing else. THE BEVEL IS GONE (see below) and the cylinder stays
+    # anyway: three polygroups is also what keeps the crenellation booleans
+    # cutting clean seams instead of 48 fragmentary ones.
+    # It starts at Z=33, three below where the body's flare ends, so the two
+    # solids overlap through a band where the body is strictly the narrower of
+    # the pair. An overlap of 1 with equal radii is what produced the sawtooth;
+    # an overlap of 3 with a 0.5 clearance produces nothing at all.
+    cylinder radius=13.4 height=15 segments=48 at=(0, 0, 40.5) material="Boxwood" color=(0.80, 0.64, 0.38, 1)
+
+    # NO BEVEL ON THE RIMS, and the reason is colour, not shape. `bevel` chamfer
+    # faces carry NO vertex colour and no later op can paint them - measured, a
+    # `set_vertex_color set_all=true` after the bevel leaves them white - so
+    # `bevel distance=0.5 segments=2` here rendered two WHITE RINGS round an
+    # otherwise boxwood crown: one at the top rim and one at the bottom rim,
+    # which the old note claimed was "never seen" and which is in fact in the
+    # frame from every three-quarter view. A sharp arris reads as untouched CAD;
+    # a white ring reads as a broken asset, and that is the worse of the two.
+    # Same reason `oil_lamp` dropped its collar bevel. See model.vertex-color.
+    #
+    # The dished top. A sphere of radius 20 whose centre sits at Z=66.5 dips
+    # to 46.5 on the axis and clears Z=48 by radius 7.6, so it scoops a 1.5
+    # deep saucer and never touches the rim. A flat-topped rook looks stamped;
+    # the dish is what a gouge leaves, and it catches a highlight exactly
+    # where the crenellations frame it.
+    subtract {
+        sphere radius=20 subdivisions=32 at=(0, 0, 66.5) color=(0.80, 0.64, 0.38, 1)
+    }
+
+    # Crenellations. One slot is cut, then arrayed - the array is inside the
+    # boolean block, so six tool boxes are built and the whole set is removed
+    # by one subtract rather than six.
+    #
+    # Six, not the Staunton four: a physical rook is seen from across a board,
+    # where four notches always show two, but a mesh gets orbited, and at four
+    # a quarter turn puts a blank merlon face straight at the camera.
+    #
+    # The tool runs from X=5.5 out to X=20, so it clears the 13.4 rim outside
+    # and breaks into the dished top inside - the slot is a through-cut, not a
+    # dent. 6.6 wide at radius 13 is a 29 degree slot against a 31 degree
+    # merlon: near enough equal that neither reads as the other's leftover.
+    #
+    # `color=` ON THE TOOL, and it is not decoration. Faces a boolean CREATES
+    # take the default white unless the tool that cut them carries a colour, so
+    # without this the six slot floors and walls - the most-looked-at surfaces
+    # on the piece - rendered white inside a boxwood crown.
+    #
+    # The tool used to be bevelled before it was arrayed, to round the two
+    # bottom corners of every slot. That bevel is gone for the same reason as
+    # the rim bevel above: a chamfer takes no colour, so the rounds came back
+    # white while the flat slot walls took the tool's tint. A square-cornered
+    # slot in the right wood beats a radiused one in the wrong colour.
+    subtract {
+        box size=(14.5, 6.6, 12) at=(12.75, 0, 48) color=(0.80, 0.64, 0.38, 1)
+        array_radial count=6 axis=z center=(0, 0, 0) angle=360
+    }
+
+    recalculate_normals
+    uv channel=0 mode=cylindrical scale=(1, 1) split_angle=45
+    uv channel=1 mode=patch_builder auto_pack=false
+}
+
+part felt {
+    # The baize pad, filling the recess turned into the underside. 14.8
+    # against the 15.0 recess leaves the 0.2 gap a glued pad actually has.
+    #
+    # 0.7 tall for a 0.5 recess, sunk to Z=0: the extra 0.2 buries the pad's
+    # top face inside the wood instead of laying it exactly on the recess
+    # floor, where two coincident faces would z-fight.
+    #
+    # This is the whole reason for a second material slot: the pad is the one
+    # surface on the piece that is not wood.
+    cylinder radius=14.8 height=0.7 segments=48 at=(0, 0, 0.35) material="Felt" color=(0.08, 0.22, 0.13, 1)
+
+    uv channel=0 mode=box scale=(1, 1)
+    uv channel=1 mode=patch_builder auto_pack=false
+}
+
+uv_layout channel=1 texture_resolution=64
+
+# 64 rather than the UStaticMesh default of 4. `lightmap channel=1` on its own
+# compiles with a warning and then bakes the authored UVs into a 4x4 lightmap.
+# The model-level layout above packs every part's islands into one atlas instead
+# of independently packing three overlapping unit squares.
+lightmap channel=1 resolution=64
+
+collision {
+    complexity = simple_and_complex
+
+    # Two hulls rather than one: a single hull over the whole piece would
+    # bridge the scotia and hand back a cone, losing the waist that is the
+    # only interesting thing about a rook's collision.
+    hull {
+        cylinder radius=16.5 height=8.2 at=(0, 0, 4.1)
+    }
+    hull {
+        cone base_radius=8.8 top_radius=13.4 height=40 at=(0, 0, 28)
+    }
+}

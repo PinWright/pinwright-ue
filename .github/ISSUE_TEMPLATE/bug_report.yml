@@ -1,0 +1,83 @@
+name: Bug report
+description: Report a bug or a critical gap in an existing feature of the PinWright plugin.
+labels: ["type/bug", "status/needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For **new or extra feature ideas**, open a blank issue instead. This form is for bugs
+        and critical gaps in features that already exist.
+
+        If the plugin does not load or install at all on your engine version, use the
+        [compatibility report](https://github.com/PinWright/pinwright-ue/issues/new?template=compatibility_report.yml)
+        form instead.
+
+        Reports usually get a first response within two business days. That is a target rather than
+        a guarantee — replies can take longer around holidays and engine releases.
+  - type: dropdown
+    id: type
+    attributes:
+      label: Type
+      options:
+        - Bug — something works incorrectly
+        - Critical gap — an existing feature is missing something it needs to be usable
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: The smallest sequence of steps or call() invocations (method + args) that triggers it. Use a real reproduction you actually ran, not a hypothetical one.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Plugin version
+      description: From the plugin's .uplugin VersionName (e.g. 0.8.0).
+    validations:
+      required: true
+  - type: input
+    id: engine
+    attributes:
+      label: Unreal Engine version
+      description: >-
+        Supported range is UE 5.3 through 5.8, on Windows or Linux. Include the patch version if
+        you know it — engine hotfixes move APIs around. On an engine outside that range? Report it
+        anyway and say which version; we will tell you whether it is in scope.
+      placeholder: "5.6.2"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: "Windows 11, or Ubuntu 22.04"
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs (optional)
+      render: shell
+    validations:
+      required: false
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else? (optional)
+    validations:
+      required: false
