@@ -2,8 +2,6 @@
 
 **PinWright is an MCP server that runs inside the Unreal Editor.** Connect the AI coding agent you already use (Claude Code, Cursor, Codex and others), describe the change, and the agent makes it in the live editor while you review: it reads the project as text and authors assets in place.
 
-Website: https://pinwright.com | Fab listing: https://www.fab.com/listings/d9caf916-e5cf-435e-ab0e-a74cb8dcb253
-
 ## What you can ask for
 
 Talk to your agent about the game, and it works in the editor you have open:
