@@ -11,10 +11,10 @@
     <text x="56" y="142" font-size="54" font-weight="700" letter-spacing="-1">
       <tspan fill="#e6edf3">Pin</tspan><tspan fill="#4c9aff">Wright</tspan>
     </text>
-    <text x="56" y="196" font-size="25" fill="#e6edf3">Your AI coding assistant, working</text>
-    <text x="56" y="230" font-size="25" fill="#e6edf3">inside the live Unreal Editor.</text>
-    <text x="56" y="276" font-size="20" fill="#8b97a5">It reads the project as text, authors</text>
-    <text x="56" y="302" font-size="20" fill="#8b97a5">assets, and you review every change.</text>
+    <text x="56" y="196" font-size="25" fill="#e6edf3">An MCP server inside the live</text>
+    <text x="56" y="230" font-size="25" fill="#e6edf3">Unreal Editor, for AI coding agents.</text>
+    <text x="56" y="276" font-size="20" fill="#8b97a5">Your agent reads the project as text,</text>
+    <text x="56" y="302" font-size="20" fill="#8b97a5">authors assets, and you review every change.</text>
   </g>
 
   <g id="call-surface">

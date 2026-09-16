@@ -1,14 +1,12 @@
-<p align="center"><img src="./assets/readme/hero.svg" width="100%" alt="PinWright, an MCP plugin for the Unreal Editor: one tool named call, where call() returns the namespace index, call with a method name returns that operation's wiki page, and call with method plus arguments runs it in the editor"></p>
+<p align="center"><img src="./assets/readme/hero.svg" width="100%" alt="PinWright, an MCP server inside the Unreal Editor for AI coding agents: one tool named call, where call() returns the namespace index, call with a method name returns that operation's wiki page, and call with method plus arguments runs it in the editor"></p>
 
 <p align="center"><a href="LICENSE"><img alt="License MIT" src="https://img.shields.io/badge/license-MIT-4c9aff"></a> <img alt="Unreal Engine 5.3 to 5.8" src="https://img.shields.io/badge/Unreal%20Engine-5.3%E2%80%935.8-4c9aff"> <a href="https://github.com/PinWright/pinwright-ue/releases"><img alt="Latest release v0.8.0" src="https://img.shields.io/badge/release-v0.8.0-3fb950"></a> <a href="https://pinwright.com"><img alt="pinwright.com" src="https://img.shields.io/badge/web-pinwright.com-8b97a5"></a></p>
 
-**Describe the change; the AI coding assistant you already use makes it in the live Unreal Editor while you watch.** PinWright runs a local MCP server inside the editor process, so that assistant can read your project as text and author assets in it.
+**PinWright is an MCP server that runs inside the Unreal Editor.** Connect the AI coding agent you already use (Claude Code, Cursor, Codex and others), describe the change, and the agent makes it in the live editor while you review: it reads the project as text and authors assets in place.
 
-## Proof
+Website: https://pinwright.com | Fab listing: https://www.fab.com/listings/d9caf916-e5cf-435e-ab0e-a74cb8dcb253
 
-The plugin's entire UI is one screen: the resolved local endpoint, a listening server, and an **Install** button per agent that writes that agent's MCP config for you.
-
-<p align="center"><img src="./assets/readme/setup-screen.png" width="100%" alt="The PinWright Setup tab in the Unreal Editor: server listening on a loopback endpoint, Install buttons for Claude Code, Codex CLI, Cursor, Gemini CLI and VS Code Copilot, and a copyable agent setup prompt"></p>
+## Example: a Blueprint from four lines of text
 
 Graphs have a text form, so the agent writes text instead of clicking nodes. This is BPIR, the Blueprint IR, and the capture underneath is the graph `blueprint.compile_bpir` built from exactly these four lines. Decompiling returns the text, so that graph can be searched, reviewed and diffed in any git tool.
 
@@ -50,7 +48,7 @@ Your client posts an MCP request to the editor, PinWright runs it on the game th
 
 ## Quick start
 
-1. **Get the plugin.** Install from Fab through the Epic Launcher, a paid convenience install, or clone this repository, which is the same code under MIT:
+1. **Get the plugin.** Install [from Fab](https://www.fab.com/listings/d9caf916-e5cf-435e-ab0e-a74cb8dcb253) through the Epic Launcher (a paid convenience install), or clone this repository, which is the same code under MIT:
 
    ```
    git clone https://github.com/PinWright/pinwright-ue.git <Project>/Plugins/PinWright
@@ -61,6 +59,8 @@ Your client posts an MCP request to the editor, PinWright runs it on the game th
 2. **Build and open.** Regenerate project files if your project is a C++ source checkout, build the editor target if Unreal asks for a rebuild, then open the editor and confirm the plugin under **Editor Preferences -> Plugins -> PinWright**.
 
 3. **Click Install for your agent.** The **PinWright Setup** screen opens on startup (**Tools -> PinWright Setup** reopens it). One click writes that agent's project-local MCP config with the endpoint and token already filled in, so there is no file to edit and no port to look up.
+
+   <p align="center"><img src="./assets/readme/setup-screen.png" width="100%" alt="The PinWright Setup tab in the Unreal Editor: server listening on a loopback endpoint, Install buttons for Claude Code, Codex CLI, Cursor, Gemini CLI and VS Code Copilot, and a copyable agent setup prompt"></p>
 
 4. **Ask for something small.** For example: *"Dump /Game/UI to text, then tell me which widget bindings point at variables that no longer exist."*
 
