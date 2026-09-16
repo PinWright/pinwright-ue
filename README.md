@@ -1,4 +1,4 @@
-<p align="center"><img src="./assets/readme/hero.svg" width="100%" alt="PinWright, an MCP server inside the Unreal Editor for AI coding agents. Things you can ask your agent to do: build the settings menu from this mockup; make a forest level with a river and a cabin; why did the HUD go blank in the last playtest"></p>
+<p align="center"><img src="./assets/readme/hero-requests.svg" width="100%" alt="PinWright, an MCP server inside the Unreal Editor for AI coding agents. Things you can ask your agent to do: build the settings menu from this mockup; make a forest level with a river and a cabin; why did the HUD go blank in the last playtest"></p>
 
 <p align="center"><a href="LICENSE"><img alt="License MIT" src="https://img.shields.io/badge/license-MIT-4c9aff"></a> <img alt="Unreal Engine 5.3 to 5.8" src="https://img.shields.io/badge/Unreal%20Engine-5.3%E2%80%935.8-4c9aff"> <a href="https://github.com/PinWright/pinwright-ue/releases"><img alt="Latest release v0.8.0" src="https://img.shields.io/badge/release-v0.8.0-3fb950"></a> <a href="https://pinwright.com"><img alt="pinwright.com" src="https://img.shields.io/badge/web-pinwright.com-8b97a5"></a></p>
 
