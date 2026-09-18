@@ -86,6 +86,11 @@ struct FAsyncFolderDumpState
     int32 ReleaseGcBaseline = 0;
     double ReleaseGcRequestedSeconds = 0.0;
     uint64 ReleaseWorkingSetBeforeBytes = 0;
+    // Working set measured AFTER the last release collect (seeded from the first tick
+    // that could release, so the first interval is bounded too). The growth trigger
+    // measures against this, not against the pre-collect figure: growth is what the
+    // sweep has accumulated since the last time memory was actually returned.
+    uint64 ReleaseWorkingSetBaselineBytes = 0;
     // Packages already dirty when the dump started; anything dirtied by the dump
     // itself is cleared each tick so the editor never prompts to save mid-sweep.
     TSet<FName>     BaselineDirty;

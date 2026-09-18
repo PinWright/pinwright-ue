@@ -1693,7 +1693,8 @@ namespace
         return static_cast<double>(Bytes) / (1024.0 * 1024.0 * 1024.0);
     }
 
-    void RunFolderDumpReleaseStep(FAsyncFolderDumpState& State)
+    void RunFolderDumpReleaseStep(FAsyncFolderDumpState& State,
+        AssetDumpHandler::EDumpReleaseTrigger Trigger)
     {
         BeginAsyncDumpPhase(State, TEXT("releasing_memory"));
         UpdateAsyncDumpNotification(State);
@@ -1801,13 +1802,16 @@ namespace
         }
 
         UE_LOG(LogPinWrightSubsystem, Log,
-            TEXT("asset.dump_folder: release step %d requested: tracked=%d released=%d ")
-            TEXT("retained=%d workingSetBefore=%.2f GiB"),
+            TEXT("asset.dump_folder: release step %d requested (trigger=%s): tracked=%d ")
+            TEXT("released=%d retained=%d workingSetBefore=%.2f GiB (grew %.2f GiB since ")
+            TEXT("the last release)"),
             State.ReleaseStepCount,
+            AssetDumpHandler::DumpReleaseTriggerName(Trigger),
             TrackedCount,
             PackagesToReset.Num(),
             TrackedCount - PackagesToReset.Num(),
-            BytesToGiB(BeforeBytes));
+            BytesToGiB(BeforeBytes),
+            BytesToGiB(BeforeBytes) - BytesToGiB(State.ReleaseWorkingSetBaselineBytes));
 
         BeginAsyncDumpPhase(State, TEXT("waiting_for_release_gc"));
         State.CurrentPhaseStartedSeconds = State.ReleaseGcRequestedSeconds;
@@ -1842,6 +1846,11 @@ namespace
             EndDumpReleaseGcWatch();
 
             const uint64 AfterBytes = FPlatformMemory::GetStats().UsedPhysical;
+            // Growth is measured from here, not from the pre-collect figure: whatever the
+            // collect could not reclaim is this interval's starting point. Advancing it on
+            // a timed-out collect too is deliberate — a collect that returned nothing must
+            // not leave the sweep permanently over the limit, firing a release per floor.
+            State.ReleaseWorkingSetBaselineBytes = AfterBytes;
             UE_LOG(LogPinWrightSubsystem, Log,
                 TEXT("asset.dump_folder: release step %d %s after %.1fs: workingSet ")
                 TEXT("%.2f -> %.2f GiB (delta %.2f GiB)"),
@@ -1861,24 +1870,36 @@ namespace
             return false;
         }
 
+        const FPlatformMemoryStats MemoryStats = FPlatformMemory::GetStats();
+        if (State.ReleaseWorkingSetBaselineBytes == 0)
+        {
+            // First tick of the sweep that could release anything: this is the working
+            // set the first interval's growth is measured against.
+            State.ReleaseWorkingSetBaselineBytes = MemoryStats.UsedPhysical;
+        }
+
         // The sweep's last asset is done: release before finalizing so a completed sweep
         // does not leave its whole working set resident behind it.
+        AssetDumpHandler::EDumpReleaseTrigger Trigger =
+            AssetDumpHandler::EDumpReleaseTrigger::Final;
         if (State.PendingAssets.Num() > 0)
         {
             const UPinWrightSettings* Settings = GetDefault<UPinWrightSettings>();
-            const FPlatformMemoryStats MemoryStats = FPlatformMemory::GetStats();
-            if (!AssetDumpHandler::ShouldRunDumpReleaseStep(
-                    State.AssetsSinceRelease,
-                    Settings ? Settings->AssetDumpReleaseIntervalAssets : 0,
-                    MemoryStats.UsedPhysical,
-                    MemoryStats.TotalPhysical,
-                    Settings ? Settings->AssetDumpReleaseMemoryWatermark : 0.0f))
+            Trigger = AssetDumpHandler::DecideDumpReleaseTrigger(
+                State.AssetsSinceRelease,
+                Settings ? Settings->AssetDumpReleaseIntervalAssets : 0,
+                MemoryStats.UsedPhysical,
+                MemoryStats.TotalPhysical,
+                Settings ? Settings->AssetDumpReleaseMemoryWatermark : 0.0f,
+                State.ReleaseWorkingSetBaselineBytes,
+                Settings ? Settings->AssetDumpReleaseGrowthGiB : 0.0f);
+            if (Trigger == AssetDumpHandler::EDumpReleaseTrigger::None)
             {
                 return false;
             }
         }
 
-        RunFolderDumpReleaseStep(State);
+        RunFolderDumpReleaseStep(State, Trigger);
         return true;
     }
 
@@ -2313,28 +2334,66 @@ namespace AssetDumpHandler
         return TrackedPackages.Difference(Deferred);
     }
 
-    bool ShouldRunDumpReleaseStep(
+    const TCHAR* DumpReleaseTriggerName(EDumpReleaseTrigger Trigger)
+    {
+        switch (Trigger)
+        {
+        case EDumpReleaseTrigger::Count:     return TEXT("count");
+        case EDumpReleaseTrigger::Watermark: return TEXT("watermark");
+        case EDumpReleaseTrigger::Growth:    return TEXT("growth");
+        case EDumpReleaseTrigger::Final:     return TEXT("final");
+        default:                             return TEXT("none");
+        }
+    }
+
+    EDumpReleaseTrigger DecideDumpReleaseTrigger(
         int32 AssetsSinceRelease,
         int32 IntervalAssets,
         uint64 WorkingSetBytes,
         uint64 TotalPhysicalBytes,
-        float WatermarkFraction)
+        float WatermarkFraction,
+        uint64 BaselineWorkingSetBytes,
+        float GrowthLimitGiB)
     {
         if (AssetsSinceRelease <= 0)
         {
-            return false;
+            return EDumpReleaseTrigger::None;
         }
 
         if (IntervalAssets > 0 && AssetsSinceRelease >= IntervalAssets)
         {
-            return true;
+            return EDumpReleaseTrigger::Count;
         }
 
-        return WatermarkFraction > 0.0f
+        // Both byte-based triggers share the same floor: a release step costs a full
+        // compilation drain and a full-purge collect, so neither may turn into one
+        // release per asset when the sweep cannot get back under the limit.
+        if (AssetsSinceRelease < DumpReleaseMinAssetsBetweenSteps)
+        {
+            return EDumpReleaseTrigger::None;
+        }
+
+        if (WatermarkFraction > 0.0f
             && TotalPhysicalBytes > 0
-            && AssetsSinceRelease >= DumpReleaseMinAssetsBetweenSteps
             && static_cast<double>(WorkingSetBytes)
-                >= static_cast<double>(TotalPhysicalBytes) * static_cast<double>(WatermarkFraction);
+                >= static_cast<double>(TotalPhysicalBytes) * static_cast<double>(WatermarkFraction))
+        {
+            return EDumpReleaseTrigger::Watermark;
+        }
+
+        if (GrowthLimitGiB > 0.0f
+            && BaselineWorkingSetBytes > 0
+            && WorkingSetBytes > BaselineWorkingSetBytes)
+        {
+            const double GrownGiB = static_cast<double>(WorkingSetBytes - BaselineWorkingSetBytes)
+                / (1024.0 * 1024.0 * 1024.0);
+            if (GrownGiB >= static_cast<double>(GrowthLimitGiB))
+            {
+                return EDumpReleaseTrigger::Growth;
+            }
+        }
+
+        return EDumpReleaseTrigger::None;
     }
 
     FString BlueprintTypeToStatusString(const UBlueprint* BP)

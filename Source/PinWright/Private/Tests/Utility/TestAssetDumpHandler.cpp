@@ -2298,6 +2298,72 @@ bool FAssetDumpHandlerReleaseStepTriggerTest::RunTest(const FString& Parameters)
     return true;
 }
 
+// ============================================================================
+// AssetDumpHandler.AsyncFolderDump.ReleaseStepGrowthTrigger
+// The bytes-since-last-release trigger, and which trigger the decision reports.
+// Neither the count nor the watermark bounds what ONE interval costs: a measured
+// sweep over ~200 heavy meshes grew the working set 11.9 -> 52.6 GiB between two
+// release steps on a host that never reached the watermark fraction.
+// Board: B-dump-folder-release-cadence-unbounded-by-bytes.
+// ============================================================================
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpHandlerReleaseStepGrowthTriggerTest,
+    "PinWright.asset.dump.AsyncFolderDump.ReleaseStepGrowthTrigger",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetDumpHandlerReleaseStepGrowthTriggerTest::RunTest(const FString& Parameters)
+{
+    constexpr uint64 GiB = 1024ull * 1024 * 1024;
+    constexpr uint64 TotalPhysical = 128ull * GiB;
+    constexpr uint64 Baseline = 12ull * GiB;
+    constexpr int32  Floor = AssetDumpHandler::DumpReleaseMinAssetsBetweenSteps;
+
+    // Compared by name rather than by enum value: a mismatch then prints which trigger
+    // fired instead of two integers.
+    auto Decide = [](int32 AssetsSinceRelease, uint64 WorkingSet, float Watermark,
+                     uint64 BaselineBytes, float GrowthGiB)
+    {
+        return FString(AssetDumpHandler::DumpReleaseTriggerName(
+            AssetDumpHandler::DecideDumpReleaseTrigger(AssetsSinceRelease, 200, WorkingSet,
+                TotalPhysical, Watermark, BaselineBytes, GrowthGiB)));
+    };
+
+    // Grown past the limit, with the count nowhere near due and the working set far
+    // below the watermark: this is the case the other two triggers miss entirely.
+    TestEqual(TEXT("growth past the limit releases"),
+        Decide(Floor, Baseline + 9 * GiB, 0.5f, Baseline, 8.0f), TEXT("growth"));
+
+    // Failure direction: growth below the limit must not release.
+    TestEqual(TEXT("growth below the limit waits"),
+        Decide(Floor, Baseline + 7 * GiB, 0.5f, Baseline, 8.0f), TEXT("none"));
+
+    // Failure direction: 0 disables the growth trigger outright.
+    TestEqual(TEXT("growth limit 0 disables the growth trigger"),
+        Decide(Floor, Baseline + 40 * GiB, 0.5f, Baseline, 0.0f), TEXT("none"));
+
+    // No baseline measured yet (the sweep has not released once and the seed has not
+    // run): there is no growth to compare against, so the trigger stays quiet.
+    TestEqual(TEXT("no baseline disables the growth trigger"),
+        Decide(Floor, Baseline + 40 * GiB, 0.5f, 0, 8.0f), TEXT("none"));
+
+    // A working set BELOW the baseline is shrinkage, not growth.
+    TestEqual(TEXT("a shrinking working set never triggers growth"),
+        Decide(Floor, Baseline - 1 * GiB, 0.5f, Baseline, 8.0f), TEXT("none"));
+
+    // The floor applies to growth too: a sweep that cannot get back under the limit
+    // must not pay a drain-and-collect per asset.
+    TestEqual(TEXT("growth respects the minimum asset floor"),
+        Decide(Floor - 1, Baseline + 40 * GiB, 0.5f, Baseline, 8.0f), TEXT("none"));
+
+    // Precedence, which is what the log line reports.
+    TestEqual(TEXT("the count trigger is reported when it is due"),
+        Decide(200, Baseline + 40 * GiB, 0.5f, Baseline, 8.0f), TEXT("count"));
+    TestEqual(TEXT("the watermark outranks growth when both apply"),
+        Decide(Floor, 100 * GiB, 0.5f, Baseline, 8.0f), TEXT("watermark"));
+
+    return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpHandlerCancellationPreservesMirrorTest,
     "PinWright.asset.dump.AsyncFolderDump.CancelPreservesMirror",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)

@@ -172,6 +172,15 @@ public:
                 ClampMin = "0.0", ClampMax = "0.95"))
     float AssetDumpReleaseMemoryWatermark;
 
+    /** Working-set growth (in GiB) a folder sweep may accumulate since the last release step
+     *  before one is forced, regardless of how few assets have been processed. 0 disables the
+     *  growth trigger. This is the trigger that bounds a sweep over assets far heavier than
+     *  the count trigger assumes, on a machine with enough RAM that the watermark never fires. */
+    UPROPERTY(EditAnywhere, Config, Category = "Jobs",
+        meta = (DisplayName = "Asset dump release working-set growth (GiB)",
+                ClampMin = "0.0", ClampMax = "1024.0"))
+    float AssetDumpReleaseGrowthGiB;
+
     // The three settings below drive the automation suite's periodic maintenance reset
     // (PinWrightSuiteMaintenance). They share the "Jobs" category with the sweep knobs above
     // because the plugin publishes no test-only settings category; they are deliberately a

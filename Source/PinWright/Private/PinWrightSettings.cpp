@@ -67,6 +67,17 @@ UPinWrightSettings::UPinWrightSettings()
     AssetDumpReleaseIntervalAssets = 200;
     AssetDumpReleaseMemoryWatermark = 0.5f;
 
+    // Neither of the two triggers above is expressed in BYTES, so neither bounds what one
+    // interval costs: measured on a sweep of ~200 Nanite/Megascans meshes, the gap between
+    // two release steps ran 4.8 minutes and took the working set from 11.9 to 52.6 GiB
+    // (77 GiB at one sample) before the count trigger came due — on a host with enough RAM
+    // that 0.5 of physical was never crossed either. 8 GiB is the growth a release step is
+    // worth paying for: small enough that a heavy region cannot accumulate tens of GiB
+    // between steps, large enough that an ordinary sweep still releases on the count.
+    // Re-measure for content much heavier or lighter than that; this is one host's number,
+    // not a universal one.
+    AssetDumpReleaseGrowthGiB = 8.0f;
+
     // Automation suite maintenance. 25 tests is the interval the suite has run at since the
     // force-delete removal (the reset is what reclaims detached fixtures). 0.55 sits below the
     // 0.60 external Job Object cap scripts/Run-SuiteCapped.ps1 applies, so the in-process

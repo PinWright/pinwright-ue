@@ -159,18 +159,52 @@ namespace AssetDumpHandler
     // must not turn into one release per asset.
     inline constexpr int32 DumpReleaseMinAssetsBetweenSteps = 25;
 
+    // Which trigger brought a release step due. Reported in the release-step log line:
+    // the three have very different diagnoses, and a bare "release step N" hides which.
+    enum class EDumpReleaseTrigger : uint8
+    {
+        None,
+        Count,      // IntervalAssets assets processed since the last release
+        Watermark,  // working set reached WatermarkFraction of physical RAM
+        Growth,     // working set grew GrowthLimitGiB since the last release collect
+        Final,      // no assets left: the end-of-sweep release, which no trigger gates
+    };
+
     // Pure decision for the folder sweep's release step, evaluated once per tick.
     // Fires when IntervalAssets > 0 and that many assets have been processed since the
-    // last release, or when WatermarkFraction > 0 and the process working set has
-    // reached that fraction of physical RAM with at least
-    // DumpReleaseMinAssetsBetweenSteps assets processed. Zero for either knob disables
-    // that trigger; zero for both disables the release step entirely.
-    PINWRIGHT_API bool ShouldRunDumpReleaseStep(
+    // last release; when WatermarkFraction > 0 and the process working set has reached
+    // that fraction of physical RAM; or when GrowthLimitGiB > 0 and the working set has
+    // grown by more than that since BaselineWorkingSetBytes (the working set measured
+    // AFTER the last release collect, or at sweep start). The last two additionally
+    // require DumpReleaseMinAssetsBetweenSteps assets processed. Zero for a knob
+    // disables that trigger; zero for all three disables the release step entirely.
+    //
+    // The growth trigger is the only one expressed in bytes-since-last-release, so it is
+    // the one that bounds a sweep whose assets are far heavier than the count trigger
+    // assumes on a host with more RAM than the watermark ever reaches.
+    PINWRIGHT_API EDumpReleaseTrigger DecideDumpReleaseTrigger(
         int32 AssetsSinceRelease,
         int32 IntervalAssets,
         uint64 WorkingSetBytes,
         uint64 TotalPhysicalBytes,
-        float WatermarkFraction);
+        float WatermarkFraction,
+        uint64 BaselineWorkingSetBytes,
+        float GrowthLimitGiB);
+
+    PINWRIGHT_API const TCHAR* DumpReleaseTriggerName(EDumpReleaseTrigger Trigger);
+
+    // Count/watermark-only form, for callers with no sweep baseline to measure growth
+    // against (the automation suite's maintenance reset).
+    inline bool ShouldRunDumpReleaseStep(
+        int32 AssetsSinceRelease,
+        int32 IntervalAssets,
+        uint64 WorkingSetBytes,
+        uint64 TotalPhysicalBytes,
+        float WatermarkFraction)
+    {
+        return DecideDumpReleaseTrigger(AssetsSinceRelease, IntervalAssets, WorkingSetBytes,
+            TotalPhysicalBytes, WatermarkFraction, 0, 0.0f) != EDumpReleaseTrigger::None;
+    }
 
     PINWRIGHT_API TArray<FString> ReconcileMirrorSubtree(const FString& SweptRoot,
                                                                            const TSet<FString>& LiveDirs);
