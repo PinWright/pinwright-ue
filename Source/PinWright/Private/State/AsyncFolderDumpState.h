@@ -64,6 +64,10 @@ struct FAsyncFolderDumpState
     // The ticker requeues these assets instead of synchronously forcing compilation.
     TMap<FString, double> CompileWaitStartedSeconds;
     TMap<FString, double> CompileWaitLastProgressSeconds;
+    // Last observed FAssetCompilingManager backlog. A drop means something finished
+    // compiling, which restarts every pending wait: the timeout is a no-progress cap,
+    // not a deadline an asset can hit just because the sweep is long.
+    int32 LastRemainingCompileCount = 0;
     TSet<FString>   LiveDumpDirs;
     // Packages this sweep brought into memory itself (absent from memory when the
     // sweep reached them). The release step unloads only these, so packages the user,

@@ -80,7 +80,7 @@ Schema v9 (July 2026) separates authored mirrors from live diagnostics and makes
 - Rapid-iteration parameters byte-identical to persisted module-source defaults are omitted; authored overrides and unresolved entries remain.
 - `properties.json` omits transient, duplicate-transient, deprecated, skip-serialization, and exact known derived-cache fields. Set values and SoundCue concurrency paths are deterministically sorted.
 - Dump writes compare exact UTF-8/binary bytes, preserve unchanged mtimes, stage changes transactionally, retain `.dumpcache.json`, and prune stale sidecars only after successful commit.
-- Texture reads refuse temporary async-compilation stand-ins. Direct calls return `ASSET_COMPILING`; folder jobs defer and retry, then report `ASSET_COMPILE_TIMEOUT` after 120 seconds while preserving the prior dump.
+- Texture reads refuse temporary async-compilation stand-ins. Direct calls return `ASSET_COMPILING`; folder jobs defer and retry a few dozen entries later, then report `ASSET_COMPILE_TIMEOUT` after 120 seconds with no compilation progress anywhere, preserving a prior dump when one exists.
 
 ## Blueprint meta synthesis when GeneratedClass is null
 

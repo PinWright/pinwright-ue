@@ -122,11 +122,36 @@ namespace AssetDumpHandler
     // reverse lexical order to produce ascending, deterministic work order.
     PINWRIGHT_API void SortPendingAssetsForProcessing(TArray<FPendingDumpEntry>& PendingAssets);
 
+    // No-progress cap, not a per-asset deadline: the wait start of every pending
+    // deferral is pushed forward whenever anything anywhere finishes compiling, so
+    // reaching it means compilation stalled outright, not that the sweep is long.
     inline constexpr double AsyncCompilationTimeoutSeconds = 120.0;
     PINWRIGHT_API bool HasAsyncCompilationTimedOut(
         double WaitStartedSeconds,
         double NowSeconds,
         double TimeoutSeconds = AsyncCompilationTimeoutSeconds);
+
+    // How far from the pop end a still-compiling asset is requeued. Small enough that
+    // the retry happens within seconds instead of at the end of the sweep; large enough
+    // that the sweep keeps finding other work. Once the top Backlog entries are all
+    // deferred the loop stops popping new work, which is the intended backpressure and
+    // bounds the resident deferred set to roughly this many packages.
+    inline constexpr int32 DeferredRequeueBacklog = 32;
+
+    // Index at which to re-insert a deferred entry into PendingAssets (consumed with
+    // Pop(), so the end of the array is the front of the queue).
+    PINWRIGHT_API int32 ComputeDeferredRequeueIndex(
+        int32 PendingCount,
+        int32 Backlog = DeferredRequeueBacklog);
+
+    // Tracked sweep packages minus the ones still waiting on compilation. The release
+    // step unloads only the result: unloading a deferred package throws away the
+    // in-flight compile and the reloaded copy reports compiling again from scratch.
+    // TrackedPackages holds package names; DeferredObjectPaths holds full object paths
+    // ("/Game/Pkg.Asset"), the key CompileWaitStartedSeconds is stored under.
+    PINWRIGHT_API TSet<FName> FilterReleasablePackages(
+        const TSet<FName>& TrackedPackages,
+        const TArray<FString>& DeferredObjectPaths);
 
     // Floor on the watermark trigger. A release step costs a full compilation drain
     // and a full-purge collect, so a watermark the sweep cannot get back under (the

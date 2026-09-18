@@ -1722,14 +1722,23 @@ namespace
 
         // 3. Release only what this sweep loaded, and only what nothing else has claimed
         //    since. Dirty packages, packages the user already had dirty, packages with an
-        //    asset editor open, the editor world and anything rooted are all left alone.
+        //    asset editor open, the editor world and anything rooted are all left alone,
+        //    as is anything still waiting on compilation: unloading a deferred package
+        //    discards the in-flight build, and its retry would reload and defer again.
         const TSet<FName> OpenInAssetEditors = CollectPackagesOpenInAssetEditors();
         const FName EditorWorldPackage = GetEditorWorldPackageName();
 
+        TArray<FString> DeferredObjectPaths;
+        State.CompileWaitStartedSeconds.GetKeys(DeferredObjectPaths);
+        const TSet<FName> ReleasablePackages = AssetDumpHandler::FilterReleasablePackages(
+            State.SweepLoadedPackages, DeferredObjectPaths);
+        // Deferred packages stay tracked so a later release step can still free them.
+        TSet<FName> RetainedPackages = State.SweepLoadedPackages.Difference(ReleasablePackages);
+
         TArray<UObject*> PackagesToReset;
         TArray<UObject*> ObjectsInPackage;
-        PackagesToReset.Reserve(TrackedCount);
-        for (const FName& PackageName : State.SweepLoadedPackages)
+        PackagesToReset.Reserve(ReleasablePackages.Num());
+        for (const FName& PackageName : ReleasablePackages)
         {
             UPackage* Package = FindPackage(nullptr, *PackageName.ToString());
             if (!Package
@@ -1769,7 +1778,7 @@ namespace
             ResetLoaders(PackagesToReset);
         }
 
-        State.SweepLoadedPackages.Reset();
+        State.SweepLoadedPackages = MoveTemp(RetainedPackages);
         State.AssetsSinceRelease = 0;
         ++State.ReleaseStepCount;
         State.ReleasedPackageCount += PackagesToReset.Num();
@@ -1901,6 +1910,26 @@ namespace
             TickFolderDumpPreflight(State, TickStart, BudgetSec);
         }
 
+        // The timeout is a no-progress cap, so every pending wait restarts whenever the
+        // compiling manager's backlog shrinks: something, somewhere, finished. Timing out
+        // then means compilation stalled outright rather than that this sweep is long.
+        const int32 RemainingCompiles = FAssetCompilingManager::Get().GetNumRemainingAssets();
+        if (RemainingCompiles < State.LastRemainingCompileCount)
+        {
+            const double NowSeconds = FPlatformTime::Seconds();
+            for (TPair<FString, double>& Wait : State.CompileWaitStartedSeconds)
+            {
+                Wait.Value = NowSeconds;
+            }
+        }
+        State.LastRemainingCompileCount = RemainingCompiles;
+
+        // Deferred entries are requeued close to the pop end, so the loop can hand the
+        // same entry back within one tick. Retrying it a second time in the same tick
+        // cannot help - nothing compiles while this ticker runs - and would burn the
+        // whole budget spinning over the deferred backlog.
+        TSet<FString> DeferredThisTick;
+
         while (!bReleaseConsumedTick
                && !State.bPreflightPending
                && State.PendingAssets.Num() > 0
@@ -1980,8 +2009,11 @@ namespace
                     }
 
                     const bool bOtherWorkRemains = State.PendingAssets.Num() > 0;
-                    State.PendingAssets.Insert(Entry, 0);
-                    if (!bOtherWorkRemains || State.bCancelRequested)
+                    bool bSeenThisTick = false;
+                    DeferredThisTick.Add(Entry.ObjectPath, &bSeenThisTick);
+                    State.PendingAssets.Insert(Entry,
+                        AssetDumpHandler::ComputeDeferredRequeueIndex(State.PendingAssets.Num()));
+                    if (!bOtherWorkRemains || State.bCancelRequested || bSeenThisTick)
                     {
                         break;
                     }
@@ -1993,9 +2025,17 @@ namespace
                 ++State.AssetsSinceRelease;
                 ++State.CompileTimeoutCount;
                 ++State.SkipCount;
+                // No skip stub or cache record is written for a compile timeout, so the
+                // only thing left behind is whatever an earlier dump wrote. Say which of
+                // the two it is rather than promising a baseline that may not exist.
+                const FString ExistingDumpDir = AssetDumpWriter::ResolveDumpDir(
+                    Entry.PackageName, State.OutRoot);
+                const bool bHasPriorDump =
+                    IFileManager::Get().DirectoryExists(*ExistingDumpDir);
                 const FString TimeoutMessage = FString::Printf(
-                    TEXT("Async compilation did not finish within %.0f seconds; prior dump preserved."),
-                    AssetDumpHandler::AsyncCompilationTimeoutSeconds);
+                    TEXT("Async compilation did not finish within %.0f seconds; %s."),
+                    AssetDumpHandler::AsyncCompilationTimeoutSeconds,
+                    bHasPriorDump ? TEXT("prior dump preserved") : TEXT("no dump exists for this asset"));
                 State.AssetSkips.Add({
                     Entry.ObjectPath,
                     AssetDumpErrorCodes::AssetCompileTimeout,
@@ -2016,10 +2056,7 @@ namespace
                 }
 
                 // Preserve an earlier baseline during final reconciliation.
-                // No skip stub or cache record is written for a compile timeout.
-                const FString ExistingDumpDir = AssetDumpWriter::ResolveDumpDir(
-                    Entry.PackageName, State.OutRoot);
-                if (IFileManager::Get().DirectoryExists(*ExistingDumpDir))
+                if (bHasPriorDump)
                 {
                     State.LiveDumpDirs.Add(FPaths::ConvertRelativePathToFull(ExistingDumpDir));
                 }
@@ -2252,6 +2289,28 @@ namespace AssetDumpHandler
     {
         return WaitStartedSeconds > 0.0
             && NowSeconds - WaitStartedSeconds >= TimeoutSeconds;
+    }
+
+    int32 ComputeDeferredRequeueIndex(int32 PendingCount, int32 Backlog)
+    {
+        return FMath::Max(0, PendingCount - FMath::Max(1, Backlog));
+    }
+
+    TSet<FName> FilterReleasablePackages(
+        const TSet<FName>& TrackedPackages,
+        const TArray<FString>& DeferredObjectPaths)
+    {
+        TSet<FName> Deferred;
+        Deferred.Reserve(DeferredObjectPaths.Num());
+        for (const FString& ObjectPath : DeferredObjectPaths)
+        {
+            const FString PackageName = FPackageName::ObjectPathToPackageName(ObjectPath);
+            if (!PackageName.IsEmpty())
+            {
+                Deferred.Add(FName(*PackageName));
+            }
+        }
+        return TrackedPackages.Difference(Deferred);
     }
 
     bool ShouldRunDumpReleaseStep(

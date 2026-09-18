@@ -2154,6 +2154,91 @@ bool FAssetDumpHandlerCompileWaitBoundaryTest::RunTest(const FString& Parameters
 }
 
 // ============================================================================
+// AssetDumpHandler.AsyncFolderDump.DeferredRequeueIndex / ReleaseSkipsDeferred
+// A still-compiling asset used to be requeued at index 0 - the far end of a
+// Pop()-consumed queue - so its single retry landed at the end of the sweep, by
+// which time the release step had unloaded it and its wait had expired.
+// Board: B-dump-folder-deferred-assets-time-out-en-masse.
+// ============================================================================
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpHandlerDeferredRequeueIndexTest,
+    "PinWright.asset.dump.AsyncFolderDump.DeferredRequeueIndex",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetDumpHandlerDeferredRequeueIndexTest::RunTest(const FString& Parameters)
+{
+    // The retry must come back within Backlog pops, never at the far end of the queue.
+    TestEqual(TEXT("long queue requeues Backlog entries from the pop end"),
+        AssetDumpHandler::ComputeDeferredRequeueIndex(1000, 32), 968);
+    TestEqual(TEXT("queue shorter than the backlog requeues at the front of the array"),
+        AssetDumpHandler::ComputeDeferredRequeueIndex(10, 32), 0);
+    TestEqual(TEXT("empty queue requeues at 0"),
+        AssetDumpHandler::ComputeDeferredRequeueIndex(0, 32), 0);
+    // Failure direction: index 0 on a long queue is the old end-of-sweep behaviour.
+    TestTrue(TEXT("long queue never requeues at index 0"),
+        AssetDumpHandler::ComputeDeferredRequeueIndex(1000) > 0);
+    // Insert() rejects an index past Num(), and a backlog of 0 would re-pop the same
+    // entry forever.
+    TestEqual(TEXT("backlog clamps to at least one intervening entry"),
+        AssetDumpHandler::ComputeDeferredRequeueIndex(5, 0), 4);
+
+    // Applied to a real queue: the deferred entry comes back after Backlog others,
+    // so Backlog assets are in flight at once.
+    TArray<int32> Queue;
+    for (int32 i = 0; i < 100; ++i)
+    {
+        Queue.Add(i);
+    }
+    const int32 Deferred = Queue.Pop(EAllowShrinking::No);
+    Queue.Insert(Deferred, AssetDumpHandler::ComputeDeferredRequeueIndex(Queue.Num(), 4));
+    TestEqual(TEXT("4 other entries pop before the retry"), Queue.Pop(), 98);
+    TestEqual(TEXT("4 other entries pop before the retry"), Queue.Pop(), 97);
+    TestEqual(TEXT("4 other entries pop before the retry"), Queue.Pop(), 96);
+    TestEqual(TEXT("4 other entries pop before the retry"), Queue.Pop(), 95);
+    TestEqual(TEXT("deferred entry is retried next"), Queue.Pop(), Deferred);
+
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpHandlerReleaseSkipsDeferredPackagesTest,
+    "PinWright.asset.dump.AsyncFolderDump.ReleaseSkipsDeferredPackages",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetDumpHandlerReleaseSkipsDeferredPackagesTest::RunTest(const FString& Parameters)
+{
+    TSet<FName> Tracked;
+    Tracked.Add(FName(TEXT("/Game/A")));
+    Tracked.Add(FName(TEXT("/Game/B")));
+    Tracked.Add(FName(TEXT("/Game/C")));
+
+    // Deferrals are keyed by object path; tracking is by package name.
+    const TArray<FString> Deferred = {TEXT("/Game/B.B")};
+    const TSet<FName> Releasable =
+        AssetDumpHandler::FilterReleasablePackages(Tracked, Deferred);
+
+    TestEqual(TEXT("one deferral holds back exactly one package"), Releasable.Num(), 2);
+    TestTrue(TEXT("undeferred package is releasable"), Releasable.Contains(FName(TEXT("/Game/A"))));
+    TestTrue(TEXT("undeferred package is releasable"), Releasable.Contains(FName(TEXT("/Game/C"))));
+    // Failure direction: releasing this one is the defect - the reloaded copy reports
+    // compiling again and the retry skips it instantly.
+    TestFalse(TEXT("deferred package is never released"),
+        Releasable.Contains(FName(TEXT("/Game/B"))));
+
+    // Inner-object paths ("/Game/Pkg.Pkg:SubObject") and bare package names both resolve.
+    const TSet<FName> FromInnerPath = AssetDumpHandler::FilterReleasablePackages(
+        Tracked, {TEXT("/Game/A.A:Inner"), TEXT("/Game/C")});
+    TestEqual(TEXT("inner-object and bare-package keys both hold back their package"),
+        FromInnerPath.Num(), 1);
+    TestTrue(TEXT("only the undeferred package remains releasable"),
+        FromInnerPath.Contains(FName(TEXT("/Game/B"))));
+
+    TestEqual(TEXT("no deferrals releases everything"),
+        AssetDumpHandler::FilterReleasablePackages(Tracked, {}).Num(), 3);
+
+    return true;
+}
+
+// ============================================================================
 // AssetDumpHandler.AsyncFolderDump.ReleaseStepTrigger
 // The pure count/watermark decision behind the folder sweep's release step.
 // Board: B-dump-folder-sweep-never-gcs-ooms-editor.
