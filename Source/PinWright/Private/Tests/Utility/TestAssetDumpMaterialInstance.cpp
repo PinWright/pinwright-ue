@@ -45,7 +45,7 @@ bool FAssetDumpMaterialInstanceSidecarTest::RunTest(const FString& Parameters)
     const FString Suffix      = FGuid::NewGuid().ToString(EGuidFormats::Digits);
     const FString ParentPath  = FString::Printf(TEXT("/Engine/Transient/M_TestParent_MIC_%s"), *Suffix);
     const FString InstancePath = FString::Printf(TEXT("/Engine/Transient/MI_TestChild_MIC_%s"), *Suffix);
-    const FString ScratchRoot = FPaths::ProjectIntermediateDir()
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
         / TEXT("AssetDumpTest_MIC") / Suffix;
     // Both fixtures are RF_Standalone and are published with FAssetRegistryModule::AssetCreated
     // below; without the matching AssetDeleted + detach they survive the periodic suite GC and

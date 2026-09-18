@@ -569,7 +569,7 @@ bool FMSIRDualSurfaceZeroDivergence::RunTest(const FString& Parameters)
     const bool bSaved = PersistMSIRPatchToDisk(Patch);
     TestTrue(TEXT("MetaSoundPatch package saves to disk"), bSaved);
 
-    const FString ScratchRoot = FPaths::ProjectIntermediateDir()
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
         / TEXT("MSIRDecompilerTests") / FGuid::NewGuid().ToString(EGuidFormats::Digits);
 
     const AssetDumpHandler::FDumpSingleResult DumpResult =

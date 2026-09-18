@@ -48,7 +48,7 @@ bool FAssetDumpDataTableRowsTest::RunTest(const FString& Parameters)
 {
     const FString Suffix     = FGuid::NewGuid().ToString(EGuidFormats::Digits);
     const FString AssetPath  = FString::Printf(TEXT("/Engine/Transient/AssetDumpDataTable_%s"), *Suffix);
-    const FString ScratchRoot = FPaths::ProjectIntermediateDir()
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
         / TEXT("AssetDumpDataTable") / Suffix;
     // The fixture is RF_Standalone, so the periodic suite GC keeps it alive; detach it so it
     // cannot answer a later /Engine/Transient asset-registry rescan.

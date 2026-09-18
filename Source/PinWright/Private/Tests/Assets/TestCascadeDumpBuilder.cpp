@@ -183,7 +183,7 @@ bool FCascadeAssetDumpWritesCascadeAspectFileTest::RunTest(const FString& Parame
         return false;
     }
 
-    const FString ScratchRoot = FPaths::ProjectIntermediateDir()
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
         / TEXT("CascadeDumpBuilderTests") / FGuid::NewGuid().ToString(EGuidFormats::Digits);
 
     const AssetDumpHandler::FDumpSingleResult Result =

@@ -42,7 +42,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpHandlerBadPathTest,
 
 bool FAssetDumpHandlerBadPathTest::RunTest(const FString& Parameters)
 {
-    FString TestRoot = FPaths::ProjectIntermediateDir() / TEXT("AssetDumpHandlerTests") / FGuid::NewGuid().ToString();
+    FString TestRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir()) / TEXT("AssetDumpHandlerTests") / FGuid::NewGuid().ToString();
 
     AssetDumpHandler::FDumpSingleResult Result =
         AssetDumpHandler::DumpSingleAsset(TEXT("/Game/NotReal/DoesNotExist"), TestRoot);
@@ -70,7 +70,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpHandlerGenericUObjectTest,
 
 bool FAssetDumpHandlerGenericUObjectTest::RunTest(const FString& Parameters)
 {
-    FString TestRoot = FPaths::ProjectIntermediateDir() / TEXT("AssetDumpHandlerTests") / FGuid::NewGuid().ToString();
+    FString TestRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir()) / TEXT("AssetDumpHandlerTests") / FGuid::NewGuid().ToString();
 
     // Use /Engine/EngineMaterials/WorldGridMaterial — reliably loadable on all UE installs.
     const FString AssetPath = TEXT("/Engine/EngineMaterials/WorldGridMaterial.WorldGridMaterial");
@@ -124,7 +124,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpHandlerOverwriteReplacesStaleFilesTes
 
 bool FAssetDumpHandlerOverwriteReplacesStaleFilesTest::RunTest(const FString& Parameters)
 {
-    FString TestRoot = FPaths::ProjectIntermediateDir() / TEXT("AssetDumpHandlerTests") / FGuid::NewGuid().ToString();
+    FString TestRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir()) / TEXT("AssetDumpHandlerTests") / FGuid::NewGuid().ToString();
 
     const FString AssetPath = TEXT("/Engine/EngineMaterials/WorldGridMaterial.WorldGridMaterial");
 
@@ -217,7 +217,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpHandlerFolderReconcileDeletesOrphanTe
 
 bool FAssetDumpHandlerFolderReconcileDeletesOrphanTest::RunTest(const FString& Parameters)
 {
-    FString TestRoot = FPaths::ProjectIntermediateDir() / TEXT("AssetDumpHandlerTests") / FGuid::NewGuid().ToString();
+    FString TestRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir()) / TEXT("AssetDumpHandlerTests") / FGuid::NewGuid().ToString();
     FString SweptRoot = FPaths::ConvertRelativePathToFull(TestRoot / TEXT("Game/Swept"));
 
     FString OrphanDir = FPaths::ConvertRelativePathToFull(SweptRoot / TEXT("Obsolete/DoesNotExist"));
@@ -259,7 +259,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpHandlerFolderReconcileScopeBoundaryTe
 
 bool FAssetDumpHandlerFolderReconcileScopeBoundaryTest::RunTest(const FString& Parameters)
 {
-    FString TestRoot = FPaths::ProjectIntermediateDir() / TEXT("AssetDumpHandlerTests") / FGuid::NewGuid().ToString();
+    FString TestRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir()) / TEXT("AssetDumpHandlerTests") / FGuid::NewGuid().ToString();
     FString SweptRoot     = FPaths::ConvertRelativePathToFull(TestRoot / TEXT("Game/Swept"));
     FString OutOfScope    = FPaths::ConvertRelativePathToFull(TestRoot / TEXT("Game/OtherArea"));
 
@@ -375,7 +375,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpHandlerLoadFailureSkipsViaSingleHelpe
 
 bool FAssetDumpHandlerLoadFailureSkipsViaSingleHelperTest::RunTest(const FString& Parameters)
 {
-    FString ScratchRoot = FPaths::ProjectIntermediateDir() / TEXT("AssetDumpHandlerTests") / FGuid::NewGuid().ToString();
+    FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir()) / TEXT("AssetDumpHandlerTests") / FGuid::NewGuid().ToString();
 
     AssetDumpHandler::FDumpSingleResult Result =
         AssetDumpHandler::DumpSingleAsset(TEXT("/Game/DefinitelyNotReal/NoAssetHere"), ScratchRoot);
@@ -407,7 +407,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpHandlerFolderReconcileIgnoresUserFile
 
 bool FAssetDumpHandlerFolderReconcileIgnoresUserFilesTest::RunTest(const FString& Parameters)
 {
-    FString TestRoot  = FPaths::ProjectIntermediateDir() / TEXT("AssetDumpHandlerTests") / FGuid::NewGuid().ToString();
+    FString TestRoot  = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir()) / TEXT("AssetDumpHandlerTests") / FGuid::NewGuid().ToString();
     FString SweptRoot = FPaths::ConvertRelativePathToFull(TestRoot / TEXT("Game"));
     FString UserDir   = FPaths::ConvertRelativePathToFull(SweptRoot / TEXT("UserDir"));
 
@@ -440,7 +440,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpHandlerFolderReconcilePrunesEmptyDirs
 
 bool FAssetDumpHandlerFolderReconcilePrunesEmptyDirsTest::RunTest(const FString& Parameters)
 {
-    FString TestRoot  = FPaths::ProjectIntermediateDir() / TEXT("AssetDumpHandlerTests") / FGuid::NewGuid().ToString();
+    FString TestRoot  = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir()) / TEXT("AssetDumpHandlerTests") / FGuid::NewGuid().ToString();
     FString SweptRoot = FPaths::ConvertRelativePathToFull(TestRoot / TEXT("Game"));
     FString EmptyDir  = FPaths::ConvertRelativePathToFull(SweptRoot / TEXT("Empty"));
     FString NestedDir = FPaths::ConvertRelativePathToFull(EmptyDir / TEXT("Nested"));
@@ -490,7 +490,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpHandlerDiffModeNoBaselineErrorsTest,
 
 bool FAssetDumpHandlerDiffModeNoBaselineErrorsTest::RunTest(const FString& Parameters)
 {
-    FString ScratchRoot = FPaths::ProjectIntermediateDir() / TEXT("AssetDumpHandlerTests") / FGuid::NewGuid().ToString();
+    FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir()) / TEXT("AssetDumpHandlerTests") / FGuid::NewGuid().ToString();
 
     const FString AssetPath = TEXT("/Engine/EngineMaterials/WorldGridMaterial.WorldGridMaterial");
 
@@ -561,7 +561,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpHandlerWritesMaterialMGIRAspectTest,
 bool FAssetDumpHandlerWritesMaterialMGIRAspectTest::RunTest(const FString& Parameters)
 {
     const FString Suffix = FGuid::NewGuid().ToString(EGuidFormats::Digits);
-    const FString ScratchRoot = FPaths::ProjectIntermediateDir()
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
         / TEXT("AssetDumpHandlerTests") / Suffix;
     const FString MaterialPath = FString::Printf(
         TEXT("/Engine/Transient/M_AssetDumpMGIR_%s"), *Suffix);
@@ -641,7 +641,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpHandlerDiffModeIdenticalYieldsNoNewFi
 
 bool FAssetDumpHandlerDiffModeIdenticalYieldsNoNewFilesTest::RunTest(const FString& Parameters)
 {
-    FString ScratchRoot = FPaths::ProjectIntermediateDir() / TEXT("AssetDumpHandlerTests") / FGuid::NewGuid().ToString();
+    FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir()) / TEXT("AssetDumpHandlerTests") / FGuid::NewGuid().ToString();
 
     const FString AssetPath = TEXT("/Engine/EngineMaterials/WorldGridMaterial.WorldGridMaterial");
 
@@ -725,7 +725,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpHandlerDiffModeChangedBaselineProduce
 
 bool FAssetDumpHandlerDiffModeChangedBaselineProducesDiffTest::RunTest(const FString& Parameters)
 {
-    FString ScratchRoot = FPaths::ProjectIntermediateDir() / TEXT("AssetDumpHandlerTests") / FGuid::NewGuid().ToString();
+    FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir()) / TEXT("AssetDumpHandlerTests") / FGuid::NewGuid().ToString();
 
     const FString AssetPath = TEXT("/Engine/EngineMaterials/WorldGridMaterial.WorldGridMaterial");
 
@@ -805,7 +805,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpHandlerNormalModeCleansUpDiffArtifact
 
 bool FAssetDumpHandlerNormalModeCleansUpDiffArtifactsTest::RunTest(const FString& Parameters)
 {
-    FString ScratchRoot = FPaths::ProjectIntermediateDir() / TEXT("AssetDumpHandlerTests") / FGuid::NewGuid().ToString();
+    FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir()) / TEXT("AssetDumpHandlerTests") / FGuid::NewGuid().ToString();
 
     const FString AssetPath = TEXT("/Engine/EngineMaterials/WorldGridMaterial.WorldGridMaterial");
 
@@ -888,7 +888,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpHandlerWorldWritesActorFilesTest,
 
 bool FAssetDumpHandlerWorldWritesActorFilesTest::RunTest(const FString& Parameters)
 {
-    const FString ScratchRoot = FPaths::ProjectIntermediateDir()
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
         / TEXT("AssetDumpHandlerTests") / FGuid::NewGuid().ToString();
     const FString AssetPath = TEXT("/Engine/Maps/Entry.Entry");
 
@@ -983,7 +983,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpHandlerWorldActorManifestDiffTest,
 
 bool FAssetDumpHandlerWorldActorManifestDiffTest::RunTest(const FString& Parameters)
 {
-    const FString ScratchRoot = FPaths::ProjectIntermediateDir()
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
         / TEXT("AssetDumpHandlerTests") / FGuid::NewGuid().ToString();
     const FString AssetPath = TEXT("/Engine/Maps/Entry.Entry");
 
@@ -1194,7 +1194,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpHandlerAsyncFolderDumpCacheWritesAndH
 
 bool FAssetDumpHandlerAsyncFolderDumpCacheWritesAndHitsTest::RunTest(const FString& Parameters)
 {
-    const FString ScratchRoot = FPaths::ProjectIntermediateDir()
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
         / TEXT("AssetDumpHandlerTests") / FGuid::NewGuid().ToString();
 
     const AssetDumpHandler::FFolderDumpStart First =
@@ -1281,7 +1281,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpHandlerAsyncFolderDumpForceRequeuesFr
 
 bool FAssetDumpHandlerAsyncFolderDumpForceRequeuesFreshCacheTest::RunTest(const FString& Parameters)
 {
-    const FString ScratchRoot = FPaths::ProjectIntermediateDir()
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
         / TEXT("AssetDumpHandlerTests") / FGuid::NewGuid().ToString();
 
     const AssetDumpHandler::FFolderDumpStart Seed =
@@ -1337,7 +1337,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpHandlerAsyncFolderDumpCacheVersionInv
 
 bool FAssetDumpHandlerAsyncFolderDumpCacheVersionInvalidationTest::RunTest(const FString& Parameters)
 {
-    const FString ScratchRoot = FPaths::ProjectIntermediateDir()
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
         / TEXT("AssetDumpHandlerTests") / FGuid::NewGuid().ToString();
 
     const AssetDumpHandler::FFolderDumpStart Seed =
@@ -1461,7 +1461,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpHandlerAsyncFolderDumpDirtyPackageInv
 
 bool FAssetDumpHandlerAsyncFolderDumpDirtyPackageInvalidatesCacheTest::RunTest(const FString& Parameters)
 {
-    const FString ScratchRoot = FPaths::ProjectIntermediateDir()
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
         / TEXT("AssetDumpHandlerTests") / FGuid::NewGuid().ToString();
 
     const AssetDumpHandler::FFolderDumpStart Seed =
@@ -1598,7 +1598,7 @@ bool FAssetDumpHandlerCacheWriteBaselineAwareEligibilityTest::RunTest(const FStr
         return true;
     }
 
-    const FString ScratchDir = FPaths::ProjectIntermediateDir()
+    const FString ScratchDir = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
         / TEXT("AssetDumpHandlerTests") / FGuid::NewGuid().ToString();
     IFileManager::Get().MakeDirectory(*ScratchDir, /*Tree=*/true);
     FFileHelper::SaveStringToFile(TEXT("{}"), *(ScratchDir / DumpFileNames::Meta),
@@ -1659,7 +1659,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpHandlerAsyncFolderDumpMidSweepDirtySt
 
 bool FAssetDumpHandlerAsyncFolderDumpMidSweepDirtyStillWritesCacheTest::RunTest(const FString& Parameters)
 {
-    const FString SeedRoot = FPaths::ProjectIntermediateDir()
+    const FString SeedRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
         / TEXT("AssetDumpHandlerTests") / FGuid::NewGuid().ToString();
 
     // Seed sweep: learns the target package name and leaves it loaded.
@@ -1697,7 +1697,7 @@ bool FAssetDumpHandlerAsyncFolderDumpMidSweepDirtyStillWritesCacheTest::RunTest(
     // Clean before start so the package is NOT captured in BaselineDirty.
     Package->SetDirtyFlag(false);
 
-    const FString FreshRoot = FPaths::ProjectIntermediateDir()
+    const FString FreshRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
         / TEXT("AssetDumpHandlerTests") / FGuid::NewGuid().ToString();
     const AssetDumpHandler::FFolderDumpStart Start =
         AssetDumpHandler::StartAsyncFolderDump(AsyncDumpTestFolder, /*bRecursive=*/false, FreshRoot);
@@ -1762,7 +1762,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpHandlerAsyncFolderDumpBaselineDirtySk
 
 bool FAssetDumpHandlerAsyncFolderDumpBaselineDirtySkipsCacheWriteTest::RunTest(const FString& Parameters)
 {
-    const FString SeedRoot = FPaths::ProjectIntermediateDir()
+    const FString SeedRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
         / TEXT("AssetDumpHandlerTests") / FGuid::NewGuid().ToString();
 
     const AssetDumpHandler::FFolderDumpStart Seed =
@@ -1799,7 +1799,7 @@ bool FAssetDumpHandlerAsyncFolderDumpBaselineDirtySkipsCacheWriteTest::RunTest(c
     // Dirty BEFORE start: captured in BaselineDirty as user dirt.
     Package->SetDirtyFlag(true);
 
-    const FString FreshRoot = FPaths::ProjectIntermediateDir()
+    const FString FreshRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
         / TEXT("AssetDumpHandlerTests") / FGuid::NewGuid().ToString();
     const AssetDumpHandler::FFolderDumpStart Start =
         AssetDumpHandler::StartAsyncFolderDump(AsyncDumpTestFolder, /*bRecursive=*/false, FreshRoot);
@@ -1869,7 +1869,7 @@ bool FAssetDumpHandlerAsyncFolderDumpMismatchedInnerNameDumpsTest::RunTest(const
         return true;
     }
 
-    const FString ScratchRoot = FPaths::ProjectIntermediateDir()
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
         / TEXT("AssetDumpHandlerTests") / FGuid::NewGuid().ToString();
 
     const AssetDumpHandler::FFolderDumpStart Start =
@@ -1935,7 +1935,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpHandlerDirectDumpIgnoresFreshFolderCa
 
 bool FAssetDumpHandlerDirectDumpIgnoresFreshFolderCacheTest::RunTest(const FString& Parameters)
 {
-    const FString ScratchRoot = FPaths::ProjectIntermediateDir()
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
         / TEXT("AssetDumpHandlerTests") / FGuid::NewGuid().ToString();
 
     const AssetDumpHandler::FFolderDumpStart Seed =
@@ -2003,7 +2003,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpHandlerDiffDumpLeavesCacheUntouchedTe
 
 bool FAssetDumpHandlerDiffDumpLeavesCacheUntouchedTest::RunTest(const FString& Parameters)
 {
-    const FString ScratchRoot = FPaths::ProjectIntermediateDir()
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
         / TEXT("AssetDumpHandlerTests") / FGuid::NewGuid().ToString();
 
     const AssetDumpHandler::FFolderDumpStart Seed =
@@ -2062,7 +2062,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpHandlerAsyncFolderDumpWorldPackagesSt
 
 bool FAssetDumpHandlerAsyncFolderDumpWorldPackagesStayQueuedTest::RunTest(const FString& Parameters)
 {
-    const FString ScratchRoot = FPaths::ProjectIntermediateDir()
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
         / TEXT("AssetDumpHandlerTests") / FGuid::NewGuid().ToString();
 
     const AssetDumpHandler::FFolderDumpStart First =
@@ -2304,7 +2304,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpHandlerCancellationPreservesMirrorTes
 
 bool FAssetDumpHandlerCancellationPreservesMirrorTest::RunTest(const FString& Parameters)
 {
-    const FString ScratchRoot = FPaths::ProjectIntermediateDir()
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
         / TEXT("AssetDumpHandlerTests") / FGuid::NewGuid().ToString();
     const AssetDumpHandler::FFolderDumpStart Start =
         AssetDumpHandler::StartAsyncFolderDump(
@@ -2359,7 +2359,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpHandlerAsyncSingleWorldDumpKickoffRun
 
 bool FAssetDumpHandlerAsyncSingleWorldDumpKickoffRunsAndCompletesTest::RunTest(const FString& Parameters)
 {
-    const FString ScratchRoot = FPaths::ProjectIntermediateDir()
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
         / TEXT("AssetDumpHandlerTests") / FGuid::NewGuid().ToString();
     const FString AssetPath = TEXT("/Engine/Maps/Entry");
 
@@ -2399,7 +2399,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpHandlerAsyncSingleWorldDumpRejectsCon
 
 bool FAssetDumpHandlerAsyncSingleWorldDumpRejectsConcurrentTest::RunTest(const FString& Parameters)
 {
-    const FString ScratchRoot = FPaths::ProjectIntermediateDir()
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
         / TEXT("AssetDumpHandlerTests") / FGuid::NewGuid().ToString();
     const FString AssetPath = TEXT("/Engine/Maps/Entry");
 
@@ -2452,7 +2452,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpHandlerAsyncFolderDumpKickoffRunsAndC
 bool FAssetDumpHandlerAsyncFolderDumpKickoffRunsAndCompletesTest::RunTest(const FString& Parameters)
 {
     // Scratch outRoot so we never touch the canonical dump tree.
-    const FString ScratchRoot = FPaths::ProjectIntermediateDir()
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
         / TEXT("AssetDumpHandlerTests") / FGuid::NewGuid().ToString();
 
     // Non-recursive sweep of a tiny single-asset engine folder so the async
@@ -2502,7 +2502,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpHandlerAsyncFolderDumpRejectsConcurre
 
 bool FAssetDumpHandlerAsyncFolderDumpRejectsConcurrentTest::RunTest(const FString& Parameters)
 {
-    const FString ScratchRoot = FPaths::ProjectIntermediateDir()
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
         / TEXT("AssetDumpHandlerTests") / FGuid::NewGuid().ToString();
 
     // Non-recursive sweep of a tiny single-asset engine folder. The first call
@@ -2837,7 +2837,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpHandlerAsyncFolderDumpLevelsExcludedB
 
 bool FAssetDumpHandlerAsyncFolderDumpLevelsExcludedByDefaultTest::RunTest(const FString& Parameters)
 {
-    const FString ScratchRoot = FPaths::ProjectIntermediateDir()
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
         / TEXT("AssetDumpHandlerTests") / FGuid::NewGuid().ToString();
 
     // Default: bIncludeLevels=false. The UWorld entry is filtered out, but the
@@ -2900,7 +2900,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpHandlerAsyncFolderDumpDeduplicatesByP
 
 bool FAssetDumpHandlerAsyncFolderDumpDeduplicatesByPackagePathTest::RunTest(const FString& Parameters)
 {
-    const FString ScratchRoot = FPaths::ProjectIntermediateDir()
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
         / TEXT("AssetDumpHandlerTests") / FGuid::NewGuid().ToString();
 
     const AssetDumpHandler::FFolderDumpStart R =
@@ -2990,7 +2990,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpHandlerSkipStubTest,
 
 bool FAssetDumpHandlerSkipStubTest::RunTest(const FString& Parameters)
 {
-    const FString ScratchRoot = FPaths::ProjectIntermediateDir()
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
         / TEXT("AssetDumpHandlerTests") / FGuid::NewGuid().ToString();
 
     // Kick off a real folder dump so RootDir and the ticker are wired.
@@ -3149,7 +3149,7 @@ bool FAssetDumpHandlerSkipStubCacheRecordTest::RunTest(const FString& Parameters
         return true;
     }
 
-    const FString ScratchRoot = FPaths::ProjectIntermediateDir()
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
         / TEXT("AssetDumpHandlerTests") / FGuid::NewGuid().ToString();
 
     const AssetDumpHandler::FFolderDumpStart Start =

@@ -761,7 +761,7 @@ bool FAssetDumpInheritanceScsTxtSidecarEmittedTest::RunTest(const FString& Param
     const FString FixturePath = Fixture.ChildObjectPath();
 
     const FString OutRoot = FPaths::Combine(
-        FPaths::ProjectIntermediateDir(),
+        FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir()),
         TEXT("PinWrightTests"),
         TEXT("ScsTxtSidecar"),
         FGuid::NewGuid().ToString(EGuidFormats::Digits));

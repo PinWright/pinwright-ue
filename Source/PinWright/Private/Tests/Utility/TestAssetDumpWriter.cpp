@@ -82,6 +82,56 @@ bool FAssetDumpWriterResolveDumpDirTest::RunTest(const FString& Parameters)
 }
 
 // ============================================================================
+// AssetDumpWriter.ResolveDumpRoot
+// The relative-root rule is the documented contract: a relative outRoot is
+// PROJECT-relative. What must not depend on anything else is where the join
+// starts from — ProjectDir() is a "../../../.." path relative to the executable
+// on hosts whose project sits outside the engine tree, so the join base is made
+// absolute first and the result is always absolute.
+// ============================================================================
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpWriterResolveDumpRootTest,
+    "PinWright.utils.asset_dump_writer.ResolveDumpRoot",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetDumpWriterResolveDumpRootTest::RunTest(const FString& Parameters)
+{
+    FString AbsProjectDir = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
+    FPaths::NormalizeDirectoryName(AbsProjectDir);
+
+    // Relative root: resolves under the ABSOLUTE project dir.
+    {
+        const FString Result = AssetDumpWriter::ResolveDumpRoot(TEXT("asset-dumps"));
+        TestEqual(TEXT("Relative root resolves under the absolute project dir"),
+            Result, AbsProjectDir / TEXT("asset-dumps"));
+        TestFalse(TEXT("Relative root resolves to an absolute path"),
+            FPaths::IsRelative(Result));
+    }
+
+    // Absolute root: passed through unchanged (normalization aside).
+    {
+        const FString Absolute = AbsProjectDir / TEXT("Intermediate/ResolveDumpRootTest");
+        const FString Result = AssetDumpWriter::ResolveDumpRoot(Absolute);
+        TestEqual(TEXT("Absolute root is untouched"), Result, Absolute);
+    }
+
+    // Failure direction: a root that walks UP must keep its segments and must not
+    // collapse toward the filesystem root. A second project-dir prefix on an
+    // already-BaseDir-relative root is exactly what produced "/src/..." instead of
+    // "<mount>/src/..." on Linux hosts.
+    {
+        const FString Result = AssetDumpWriter::ResolveDumpRoot(TEXT("../sibling-dumps"));
+        FString ExpectedParent = FPaths::GetPath(AbsProjectDir);
+        TestEqual(TEXT("'../' root resolves beside the project, not at the filesystem root"),
+            Result, ExpectedParent / TEXT("sibling-dumps"));
+        TestTrue(TEXT("'../' root keeps the path segments above the project"),
+            Result.StartsWith(ExpectedParent + TEXT("/")) && ExpectedParent.Len() > 1);
+    }
+
+    return true;
+}
+
+// ============================================================================
 // AssetDumpWriter.ResolveDiffDir
 // Diff output lives under <ProjectSavedDir>/PinWright/asset-dump-diffs and is
 // independent of the mirror root override.
@@ -150,7 +200,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpWriterPurgeAndWriteTest,
 bool FAssetDumpWriterPurgeAndWriteTest::RunTest(const FString& Parameters)
 {
     // Create a unique temp dir under ProjectIntermediateDir so tests don't collide.
-    FString TestRoot = FPaths::ProjectIntermediateDir() / TEXT("AssetDumpTests");
+    FString TestRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir()) / TEXT("AssetDumpTests");
     FString Guid = FGuid::NewGuid().ToString();
     FString DumpDir = TestRoot / Guid / TEXT("MyAsset");
 
@@ -256,7 +306,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpWriterBinaryUnchangedMtimeTest,
 
 bool FAssetDumpWriterBinaryUnchangedMtimeTest::RunTest(const FString& Parameters)
 {
-    const FString TestRoot = FPaths::ProjectIntermediateDir() / TEXT("AssetDumpTests");
+    const FString TestRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir()) / TEXT("AssetDumpTests");
     const FString Guid = FGuid::NewGuid().ToString();
     const FString DumpRoot = TestRoot / Guid;
     const FString DumpDir = DumpRoot / TEXT("MyAsset");
@@ -297,7 +347,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpWriterCommitFailureRollsBackTest,
 
 bool FAssetDumpWriterCommitFailureRollsBackTest::RunTest(const FString& Parameters)
 {
-    const FString TestRoot = FPaths::ProjectIntermediateDir() / TEXT("AssetDumpTests");
+    const FString TestRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir()) / TEXT("AssetDumpTests");
     const FString Guid = FGuid::NewGuid().ToString();
     const FString DumpRoot = TestRoot / Guid;
     const FString DumpDir = DumpRoot / TEXT("MyAsset");
@@ -352,7 +402,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpWriterRejectsPathCollisionsTest,
 
 bool FAssetDumpWriterRejectsPathCollisionsTest::RunTest(const FString& Parameters)
 {
-    const FString TestRoot = FPaths::ProjectIntermediateDir() / TEXT("AssetDumpTests");
+    const FString TestRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir()) / TEXT("AssetDumpTests");
     const FString Guid = FGuid::NewGuid().ToString();
     const FString DumpRoot = TestRoot / Guid;
     const FString DumpDir = DumpRoot / TEXT("MyAsset");
@@ -397,7 +447,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpWriterSanityCheckRejectsPurgingRootTe
 
 bool FAssetDumpWriterSanityCheckRejectsPurgingRootTest::RunTest(const FString& Parameters)
 {
-    FString TestRoot = FPaths::ProjectIntermediateDir() / TEXT("AssetDumpTests");
+    FString TestRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir()) / TEXT("AssetDumpTests");
     FString Guid = FGuid::NewGuid().ToString();
     FString SentinelRoot = TestRoot / Guid;
 
@@ -441,7 +491,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWriteAssetDumpDiffIdenticalNoWritesTest,
 
 bool FWriteAssetDumpDiffIdenticalNoWritesTest::RunTest(const FString& Parameters)
 {
-    FString TestRoot = FPaths::ProjectIntermediateDir() / TEXT("AssetDumpTests");
+    FString TestRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir()) / TEXT("AssetDumpTests");
     FString Guid = FGuid::NewGuid().ToString();
     FString DumpDir = TestRoot / Guid / TEXT("MyAsset");
     FString DumpRoot = TestRoot / Guid;
@@ -481,7 +531,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWriteAssetDumpDiffAspectAddedTest,
 
 bool FWriteAssetDumpDiffAspectAddedTest::RunTest(const FString& Parameters)
 {
-    FString TestRoot = FPaths::ProjectIntermediateDir() / TEXT("AssetDumpTests");
+    FString TestRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir()) / TEXT("AssetDumpTests");
     FString Guid = FGuid::NewGuid().ToString();
     FString DumpDir = TestRoot / Guid / TEXT("MyAsset");
     FString DumpRoot = TestRoot / Guid;
@@ -521,7 +571,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWriteAssetDumpDiffRejectsEscapingAspectPathTes
 
 bool FWriteAssetDumpDiffRejectsEscapingAspectPathTest::RunTest(const FString& Parameters)
 {
-    FString TestRoot = FPaths::ProjectIntermediateDir() / TEXT("AssetDumpTests");
+    FString TestRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir()) / TEXT("AssetDumpTests");
     FString Guid = FGuid::NewGuid().ToString();
     FString DumpDir = TestRoot / Guid / TEXT("MyAsset");
     FString DumpRoot = TestRoot / Guid;
@@ -555,7 +605,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWriteAssetDumpDiffAspectRemovedTest,
 
 bool FWriteAssetDumpDiffAspectRemovedTest::RunTest(const FString& Parameters)
 {
-    FString TestRoot = FPaths::ProjectIntermediateDir() / TEXT("AssetDumpTests");
+    FString TestRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir()) / TEXT("AssetDumpTests");
     FString Guid = FGuid::NewGuid().ToString();
     FString DumpDir = TestRoot / Guid / TEXT("MyAsset");
     FString DumpRoot = TestRoot / Guid;
@@ -597,7 +647,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWriteAssetDumpDiffWipesPreviousArtifactsTest,
 
 bool FWriteAssetDumpDiffWipesPreviousArtifactsTest::RunTest(const FString& Parameters)
 {
-    FString TestRoot = FPaths::ProjectIntermediateDir() / TEXT("AssetDumpTests");
+    FString TestRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir()) / TEXT("AssetDumpTests");
     FString Guid = FGuid::NewGuid().ToString();
     FString DumpDir = TestRoot / Guid / TEXT("MyAsset");
     FString DumpRoot = TestRoot / Guid;
@@ -636,7 +686,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWriteAssetDumpDiffOverwritesMetaJsonTest,
 
 bool FWriteAssetDumpDiffOverwritesMetaJsonTest::RunTest(const FString& Parameters)
 {
-    FString TestRoot = FPaths::ProjectIntermediateDir() / TEXT("AssetDumpTests");
+    FString TestRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir()) / TEXT("AssetDumpTests");
     FString Guid = FGuid::NewGuid().ToString();
     FString DumpDir = TestRoot / Guid / TEXT("MyAsset");
     FString DumpRoot = TestRoot / Guid;
@@ -674,7 +724,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWriteAssetDumpDiffRejectsPurgingRootTest,
 
 bool FWriteAssetDumpDiffRejectsPurgingRootTest::RunTest(const FString& Parameters)
 {
-    FString TestRoot = FPaths::ProjectIntermediateDir() / TEXT("AssetDumpTests");
+    FString TestRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir()) / TEXT("AssetDumpTests");
     FString Guid = FGuid::NewGuid().ToString();
     FString SentinelRoot = TestRoot / Guid;
 
@@ -711,7 +761,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpWriterEnsureDumpRootScaffoldTest,
 
 bool FAssetDumpWriterEnsureDumpRootScaffoldTest::RunTest(const FString& Parameters)
 {
-    FString TestRoot = FPaths::ProjectIntermediateDir() / TEXT("AssetDumpTests");
+    FString TestRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir()) / TEXT("AssetDumpTests");
     FString Guid = FGuid::NewGuid().ToString();
     FString DumpRoot = TestRoot / Guid;
 

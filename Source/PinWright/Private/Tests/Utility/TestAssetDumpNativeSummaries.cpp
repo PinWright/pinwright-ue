@@ -46,7 +46,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpStaticMeshSummaryTest,
 bool FAssetDumpStaticMeshSummaryTest::RunTest(const FString& Parameters)
 {
     const FString Suffix      = FGuid::NewGuid().ToString(EGuidFormats::Digits);
-    const FString ScratchRoot = FPaths::ProjectIntermediateDir()
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
         / TEXT("AssetDumpStaticMesh") / Suffix;
 
     const FString FixturePath = TEXT("/Engine/EditorMeshes/EditorCube.EditorCube");
@@ -143,7 +143,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpTexture2DSummaryTest,
 bool FAssetDumpTexture2DSummaryTest::RunTest(const FString& Parameters)
 {
     const FString Suffix      = FGuid::NewGuid().ToString(EGuidFormats::Digits);
-    const FString ScratchRoot = FPaths::ProjectIntermediateDir()
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
         / TEXT("AssetDumpTexture2D") / Suffix;
 
     const FString FixturePath = TEXT("/Engine/EngineResources/DefaultTexture.DefaultTexture");
@@ -199,7 +199,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpGenericTextureSummaryCoversNonTexture
 bool FAssetDumpGenericTextureSummaryCoversNonTexture2DTest::RunTest(const FString& Parameters)
 {
     const FString Suffix      = FGuid::NewGuid().ToString(EGuidFormats::Digits);
-    const FString ScratchRoot = FPaths::ProjectIntermediateDir()
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
         / TEXT("AssetDumpGenericTexture") / Suffix;
 
     const FString PackagePath = FString::Printf(TEXT("/Engine/Transient/AssetDumpTextureCube_%s"), *Suffix);
@@ -293,7 +293,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpSoundWaveSummaryTest,
 bool FAssetDumpSoundWaveSummaryTest::RunTest(const FString& Parameters)
 {
     const FString Suffix      = FGuid::NewGuid().ToString(EGuidFormats::Digits);
-    const FString ScratchRoot = FPaths::ProjectIntermediateDir()
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
         / TEXT("AssetDumpSoundWave") / Suffix;
 
     // Build a transient SoundWave so the test does not depend on engine-content audio fixtures
@@ -370,7 +370,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpLevelSequenceSummaryTest,
 bool FAssetDumpLevelSequenceSummaryTest::RunTest(const FString& Parameters)
 {
     const FString Suffix      = FGuid::NewGuid().ToString(EGuidFormats::Digits);
-    const FString ScratchRoot = FPaths::ProjectIntermediateDir()
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
         / TEXT("AssetDumpLevelSequence") / Suffix;
 
     // Build a transient LevelSequence so the test does not depend on engine-content fixtures.

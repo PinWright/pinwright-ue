@@ -110,7 +110,7 @@ bool FAnimSequenceAssetDumpWritesAnimSequenceAspectFileTest::RunTest(const FStri
         return false;
     }
 
-    const FString ScratchRoot = FPaths::ProjectIntermediateDir()
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
         / TEXT("AnimSequenceDumpBuilderTests") / FGuid::NewGuid().ToString(EGuidFormats::Digits);
 
     const AssetDumpHandler::FDumpSingleResult Result =
@@ -272,7 +272,7 @@ bool FAnimSequenceDumpSyncMarkerDiffTest::RunTest(const FString& Parameters)
         SequencePackagePath, FPackageName::GetAssetPackageExtension()));
     AssetRegistry.ScanFilesSynchronous(SavedPackageFiles, /*bForceRescan=*/true);
 
-    const FString ScratchRoot = FPaths::ProjectIntermediateDir()
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
         / TEXT("AnimSequenceSyncMarkerDiffTests") / FGuid::NewGuid().ToString(EGuidFormats::Digits);
     const AssetDumpHandler::FDumpSingleResult Baseline =
         AssetDumpHandler::DumpSingleAsset(ObjectPath, ScratchRoot, /*bDiff=*/false);

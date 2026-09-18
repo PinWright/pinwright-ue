@@ -193,7 +193,7 @@ bool FEnvQueryAssetDumpWritesEnvQueryAspectFileTest::RunTest(const FString& Para
         return false;
     }
 
-    const FString ScratchRoot = FPaths::ProjectIntermediateDir()
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
         / TEXT("EnvQueryDumpBuilderTests") / FGuid::NewGuid().ToString(EGuidFormats::Digits);
 
     const AssetDumpHandler::FDumpSingleResult Result =

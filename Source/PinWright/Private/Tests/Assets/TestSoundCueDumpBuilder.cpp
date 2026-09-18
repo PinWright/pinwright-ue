@@ -302,7 +302,7 @@ bool FSoundCueAssetDumpWritesSoundCueAspectFileTest::RunTest(const FString& Para
         return false;
     }
 
-    const FString ScratchRoot = FPaths::ProjectIntermediateDir()
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
         / TEXT("SoundCueDumpBuilderTests") / FGuid::NewGuid().ToString(EGuidFormats::Digits);
 
     const AssetDumpHandler::FDumpSingleResult Result =
@@ -464,7 +464,7 @@ bool FSoundCueAssetDumpWritesSCIRSidecarTest::RunTest(const FString& Parameters)
         return false;
     }
 
-    const FString ScratchRoot = FPaths::ProjectIntermediateDir()
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
         / TEXT("SoundCueSCIRDumpTests") / FGuid::NewGuid().ToString(EGuidFormats::Digits);
 
     const AssetDumpHandler::FDumpSingleResult Result =

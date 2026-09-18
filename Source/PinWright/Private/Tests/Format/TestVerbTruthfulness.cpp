@@ -360,7 +360,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpWriterTrailingWhitespaceTest,
 
 bool FAssetDumpWriterTrailingWhitespaceTest::RunTest(const FString& Parameters)
 {
-    const FString Root = FPaths::ProjectIntermediateDir() / TEXT("AssetDumpTests")
+    const FString Root = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir()) / TEXT("AssetDumpTests")
         / FGuid::NewGuid().ToString(EGuidFormats::Digits);
     const FString DumpDir = Root / TEXT("Fixture");
     TArray<AssetDumpWriter::FDumpFile> Files;

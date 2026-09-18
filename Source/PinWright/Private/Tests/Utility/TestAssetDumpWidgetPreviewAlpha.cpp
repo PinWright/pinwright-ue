@@ -47,7 +47,7 @@ namespace
 {
     FString PWAdwpaMakeScratchRoot()
     {
-        return FPaths::ProjectIntermediateDir()
+        return FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
             / TEXT("AssetDumpWidgetPreviewAlpha")
             / FGuid::NewGuid().ToString(EGuidFormats::Digits);
     }

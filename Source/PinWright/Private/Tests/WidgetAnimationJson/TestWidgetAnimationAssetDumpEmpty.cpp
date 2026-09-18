@@ -54,7 +54,7 @@ bool FAssetDumpWidgetAnimationAspectEmptyTest::RunTest(const FString& Parameters
         return false;
     }
 
-    const FString ScratchRoot = FPaths::ProjectIntermediateDir()
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
         / TEXT("WidgetAnimationAssetDumpTests") / FGuid::NewGuid().ToString(EGuidFormats::Digits);
 
     const AssetDumpHandler::FDumpSingleResult Result =

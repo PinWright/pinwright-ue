@@ -27,7 +27,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpHandlerAnimBlueprintTest,
 
 bool FAssetDumpHandlerAnimBlueprintTest::RunTest(const FString& Parameters)
 {
-    const FString TestRoot = FPaths::ProjectIntermediateDir()
+    const FString TestRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
         / TEXT("AssetDumpHandlerTests")
         / FGuid::NewGuid().ToString();
 

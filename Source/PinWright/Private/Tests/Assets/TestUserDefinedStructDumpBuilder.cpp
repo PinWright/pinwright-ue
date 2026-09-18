@@ -169,7 +169,7 @@ bool FUserDefinedStructAssetDumpWritesUDSAspectFileTest::RunTest(const FString& 
         return false;
     }
 
-    const FString ScratchRoot = FPaths::ProjectIntermediateDir()
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
         / TEXT("UserDefinedStructDumpBuilderTests") / FGuid::NewGuid().ToString(EGuidFormats::Digits);
 
     const AssetDumpHandler::FDumpSingleResult Result =

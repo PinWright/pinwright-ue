@@ -97,7 +97,7 @@ bool FAssetDumpNativeDataAssetInstanceValuesTest::RunTest(const FString& Paramet
 {
     const FString Suffix = FGuid::NewGuid().ToString(EGuidFormats::Digits);
     const FString AssetPath = FString::Printf(TEXT("/Engine/Transient/AssetDumpGeneric_%s"), *Suffix);
-    const FString ScratchRoot = FPaths::ProjectIntermediateDir()
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
         / TEXT("AssetDumpDataAssets") / Suffix;
 
     UMcpGenericDataAsset* Asset = NewTestAsset<UMcpGenericDataAsset>(AssetPath);
@@ -161,7 +161,7 @@ bool FAssetDumpNativePrimaryDataAssetInstanceValuesTest::RunTest(const FString& 
 {
     const FString Suffix = FGuid::NewGuid().ToString(EGuidFormats::Digits);
     const FString AssetPath = FString::Printf(TEXT("/Engine/Transient/AssetDumpPrimary_%s"), *Suffix);
-    const FString ScratchRoot = FPaths::ProjectIntermediateDir()
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
         / TEXT("AssetDumpDataAssets") / Suffix;
 
     UTestAssetDumpPrimaryDataAsset* Asset =

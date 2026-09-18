@@ -30,8 +30,12 @@ FString ResolveDumpRoot(const FString& OutRoot)
         // Relative roots — explicit outRoot or the project setting — resolve
         // against the project dir, never the process CWD: the editor's CWD is
         // the engine Binaries folder, so CWD-relative roots silently dump into
-        // the engine installation.
-        Root = FPaths::ProjectDir() / Root;
+        // the engine installation. The project dir is made absolute BEFORE the
+        // join: where the project lives outside the engine tree, ProjectDir()
+        // is itself a "../../../.." path relative to the executable's BaseDir,
+        // and joining onto that form makes the resolved root depend on where
+        // the process was started from.
+        Root = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir()) / Root;
     }
     FPaths::NormalizeDirectoryName(Root);
     return FPaths::ConvertRelativePathToFull(Root);

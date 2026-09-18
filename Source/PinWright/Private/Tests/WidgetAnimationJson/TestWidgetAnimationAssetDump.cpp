@@ -202,7 +202,7 @@ bool FAssetDumpWidgetAnimationAspectTrackStartTimerTest::RunTest(const FString& 
     }
 
     const FString AssetPath = WidgetBlueprint->GetPathName();
-    const FString ScratchRoot = FPaths::ProjectIntermediateDir()
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
         / TEXT("WidgetAnimationAssetDumpTests") / FGuid::NewGuid().ToString(EGuidFormats::Digits);
 
     const AssetDumpHandler::FDumpSingleResult Result =

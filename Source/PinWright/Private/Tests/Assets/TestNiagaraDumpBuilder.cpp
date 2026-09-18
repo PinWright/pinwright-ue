@@ -422,7 +422,7 @@ bool FNiagaraDumpBuilderAssetDumpWritesNiagaraAspectFilesTest::RunTest(const FSt
 
     PopulateRepresentativeSystemFixture(System);
 
-    const FString ScratchRoot = FPaths::ProjectIntermediateDir()
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
         / TEXT("NiagaraDumpBuilderTests") / FGuid::NewGuid().ToString(EGuidFormats::Digits);
 
     const AssetDumpHandler::FDumpSingleResult Result =
@@ -463,7 +463,7 @@ bool FAssetDumpStandaloneEmitterScopedNiagaraFilesTest::RunTest(const FString& P
         return false;
     }
 
-    const FString ScratchRoot = FPaths::ProjectIntermediateDir()
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
         / TEXT("NiagaraDumpBuilderTests") / FGuid::NewGuid().ToString(EGuidFormats::Digits);
 
     const AssetDumpHandler::FDumpSingleResult Result =
@@ -535,7 +535,7 @@ bool FAssetDumpStandaloneNiagaraScriptWritesGraphAndCompileSidecarsTest::RunTest
 
     AttachRepresentativeScriptSource(Script);
 
-    const FString ScratchRoot = FPaths::ProjectIntermediateDir()
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
         / TEXT("NiagaraDumpBuilderTests") / FGuid::NewGuid().ToString(EGuidFormats::Digits);
 
     const AssetDumpHandler::FDumpSingleResult Result =

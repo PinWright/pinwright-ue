@@ -14,7 +14,7 @@ namespace
 {
     FString MakeSortedJsonTestDir(const FString& Name)
     {
-        FString Dir = FPaths::ProjectIntermediateDir()
+        FString Dir = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
             / TEXT("PinWrightTests")
             / TEXT("AssetDumpCacheSortedJson")
             / Name;

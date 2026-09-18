@@ -43,7 +43,7 @@ namespace
 {
     FString PWAdpavMakeDir()
     {
-        FString Dir = FPaths::ProjectIntermediateDir()
+        FString Dir = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
             / TEXT("PinWrightTests")
             / TEXT("AssetDumpPreviewAspectVersion")
             / FGuid::NewGuid().ToString(EGuidFormats::Digits);

@@ -326,7 +326,7 @@ bool FBehaviorTreeBtirRpcAndDumpParityTest::RunTest(const FString& Parameters)
         TestTrue(TEXT("response contains warnings array"), Capture.Result->TryGetArrayField(TEXT("warnings"), Warnings));
     }
 
-    const FString ScratchRoot = FPaths::ProjectIntermediateDir()
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
         / TEXT("BTIRDumpTests") / FGuid::NewGuid().ToString(EGuidFormats::Digits);
     const AssetDumpHandler::FDumpSingleResult DumpResult =
         AssetDumpHandler::DumpSingleAsset(ObjectPath, ScratchRoot, /*bDiff=*/false);
@@ -370,7 +370,7 @@ bool FBlackboardBtirStandaloneDumpTest::RunTest(const FString& Parameters)
         return false;
     }
 
-    const FString ScratchRoot = FPaths::ProjectIntermediateDir()
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
         / TEXT("BTIRBlackboardDumpTests") / FGuid::NewGuid().ToString(EGuidFormats::Digits);
     const AssetDumpHandler::FDumpSingleResult DumpResult =
         AssetDumpHandler::DumpSingleAsset(ObjectPath, ScratchRoot, /*bDiff=*/false);

@@ -43,7 +43,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpStaticMeshTextSidecarTest,
 bool FAssetDumpStaticMeshTextSidecarTest::RunTest(const FString& Parameters)
 {
     const FString Suffix = FGuid::NewGuid().ToString(EGuidFormats::Digits);
-    const FString ScratchRoot = FPaths::ProjectIntermediateDir()
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
         / TEXT("AssetDumpStaticMeshText") / Suffix;
 
     const FString FixturePath = TEXT("/Engine/EditorMeshes/EditorCube.EditorCube");
@@ -146,7 +146,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpTextureTextSidecarTest,
 bool FAssetDumpTextureTextSidecarTest::RunTest(const FString& Parameters)
 {
     const FString Suffix = FGuid::NewGuid().ToString(EGuidFormats::Digits);
-    const FString ScratchRoot = FPaths::ProjectIntermediateDir()
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
         / TEXT("AssetDumpTextureText") / Suffix;
 
     const FString FixturePath = TEXT("/Engine/EngineResources/DefaultTexture.DefaultTexture");
@@ -210,7 +210,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpRenderTargetTextureTextSidecarTest,
 bool FAssetDumpRenderTargetTextureTextSidecarTest::RunTest(const FString& Parameters)
 {
     const FString Suffix = FGuid::NewGuid().ToString(EGuidFormats::Digits);
-    const FString ScratchRoot = FPaths::ProjectIntermediateDir()
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
         / TEXT("AssetDumpRenderTargetTextureText") / Suffix;
 
     const FString PackagePath = FString::Printf(TEXT("/Engine/Transient/AssetDumpTextureTextCube_%s"), *Suffix);

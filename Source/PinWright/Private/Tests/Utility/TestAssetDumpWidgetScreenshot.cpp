@@ -116,7 +116,7 @@ bool FAssetDumpWidgetScreenshotOptInProducesPngTest::RunTest(const FString& Para
     FKismetEditorUtilities::CompileBlueprint(WBP);
 
     const FString Suffix = FGuid::NewGuid().ToString(EGuidFormats::Digits);
-    const FString ScratchRoot = FPaths::ProjectIntermediateDir()
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
         / TEXT("AssetDumpWidgetScreenshot") / Suffix;
 
     ON_SCOPE_EXIT
@@ -167,7 +167,7 @@ bool FAssetDumpWidgetScreenshotDefaultOmitsPngTest::RunTest(const FString& Param
     FKismetEditorUtilities::CompileBlueprint(WBP);
 
     const FString Suffix = FGuid::NewGuid().ToString(EGuidFormats::Digits);
-    const FString ScratchRoot = FPaths::ProjectIntermediateDir()
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
         / TEXT("AssetDumpWidgetScreenshot") / Suffix;
 
     ON_SCOPE_EXIT
@@ -223,7 +223,7 @@ bool FAssetDumpWidgetScreenshotFailureRecordsDiagnosticTest::RunTest(const FStri
     WidgetTestFixtures::PreemptWidgetBlueprintEditorWithGenericEditor(WBP);
 
     const FString Suffix = FGuid::NewGuid().ToString(EGuidFormats::Digits);
-    const FString ScratchRoot = FPaths::ProjectIntermediateDir()
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
         / TEXT("AssetDumpWidgetScreenshot") / Suffix;
 
     ON_SCOPE_EXIT

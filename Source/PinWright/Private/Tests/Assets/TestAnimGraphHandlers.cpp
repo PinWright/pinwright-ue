@@ -368,7 +368,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAGIRDumpAspectIntegrationTest,
 
 bool FAGIRDumpAspectIntegrationTest::RunTest(const FString& Parameters)
 {
-    const FString TestRoot = FPaths::ProjectIntermediateDir()
+    const FString TestRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
         / TEXT("AssetDumpAGIRTests")
         / FGuid::NewGuid().ToString();
 

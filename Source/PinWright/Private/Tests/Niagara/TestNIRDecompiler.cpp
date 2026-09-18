@@ -869,7 +869,7 @@ bool FNiagaraNirRpcAndDumpParityTest::RunTest(const FString& Parameters)
         RpcIr = Capture.Result->GetStringField(TEXT("ir"));
     }
 
-    const FString ScratchRoot = FPaths::ProjectIntermediateDir()
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
         / TEXT("NIRDumpTests") / FGuid::NewGuid().ToString(EGuidFormats::Digits);
     const AssetDumpHandler::FDumpSingleResult DumpResult =
         AssetDumpHandler::DumpSingleAsset(ObjectPath, ScratchRoot, /*bDiff=*/false);
