@@ -10,6 +10,7 @@ Talk to your agent about the game, and it works in the editor you have open:
 - "Make a forest level with a river and a cabin." Landscape, foliage, sky and props, placed by measurement rather than guessed coordinates. The video below is one such level.
 - "Create a jump pad Blueprint that launches the character upward on overlap." Gameplay logic from a sentence, compiled and ready to place.
 - "Find every Blueprint that still reads the old Health variable and fix them." It dumps the project to text, greps it, edits the graphs and compiles them.
+- "The door in the lobby does not open when the player walks up to it. Find out why and fix it." The agent starts Play-In-Editor, sends input to reproduce the bug, reads live game state and logs, fixes the Blueprint or C++, rebuilds, and plays again to confirm the fix.
 - "Why did the HUD go blank in the last playtest?" It queries the recorded Play-In-Editor session (gameplay data needs instrumentation in your project).
 - "Model a spur gear and a chess rook for the workshop scene." Both become Static Mesh assets from short text recipes; the same recipes ship as examples.
 - "Set up sunset lighting: directional light, sky atmosphere, height fog, warm color grading." Placed and tuned in the open level.
@@ -51,7 +52,7 @@ An editor-only Unreal Engine plugin that speaks MCP (Model Context Protocol) on 
 | Blueprints and data assets | Create and edit classes, variables, functions, events and graphs; compile and decompile; author Data Tables and other data assets | Core |
 | Widgets (UMG) | Author the widget tree, styles, bindings and animations; export and import as XML | Core |
 | Actors, levels and system operations | Spawn actors, edit transforms, manage levels, inspect world state, read logs, run editor commands and build or test helpers | Core |
-| Playtesting | Start Play-In-Editor, send input, and read live game state while it runs | Core |
+| Playtesting and bug fixing | Start Play-In-Editor, send input, read live game state and logs; an agent can reproduce a bug, fix it, rebuild, and play again to verify the fix | Core |
 | Session recorder | Record a Play-In-Editor session and query it to debug what happened (needs small documented C++ hooks in your game for gameplay values) | Core |
 | Model generation | `.pwmodel` text recipes of geometry operations compile into Static Mesh assets, with materials, collision and UVs; live modeling helpers on placed meshes (`geometry`, `model`) | Experimental |
 | Skeleton and animation generation | `.pwskel` defines skeletons, skin weights, sockets and physics assets; `.pwanim` compiles animation clips; helpers for montages, blend spaces, IK and retargeting (`skeleton`, `animation`, `anim`) | Experimental |
@@ -68,7 +69,7 @@ Unreal Engine 5.3-5.8 editor build with C++ plugin support, on Windows or Linux.
 
 Your client posts an MCP request to the editor, PinWright runs it on the game thread, and the result comes back as text, or as a job ticket for long work. Nothing leaves your machine.
 
-Under the hood, graphs are text. This is BPIR, the Blueprint IR, and the capture underneath is the graph `blueprint.compile_bpir` built from exactly these four lines. Decompiling returns the text, so the graph can be diffed and reviewed in git.
+Under the hood, graphs are text. This is BPIR, the Blueprint IR, and the capture underneath is the graph `blueprint.compile_bpir` built from exactly these four lines. Decompiling returns the text, so you can compare two versions of a graph line by line.
 
 ```text
 entry custom_event AddPoints(int Points) {
@@ -90,7 +91,7 @@ call("asset.dump_folder", { folderPath: "/Game/UI", recursive: true })
 
 ## Why it is different
 
-- Graphs round-trip through text. Blueprints (BPIR), materials (MGIR), animation Blueprints (AGIR) and Control Rig (CRIR) compile from text and decompile back to it; behavior trees, sound cues, MetaSounds, Niagara and PCG decompile to text for reading. The agent edits a graph the way it edits code.
+- Graphs have a text form. The agent builds new Blueprints, materials, animation Blueprints and Control Rigs from text, changes existing ones through editor commands, and decompiles any of them to text to check the result. Behavior trees, sound cues, MetaSounds, Niagara and PCG decompile to text for reading.
 - Whole assets and folders dump to text. `asset.dump` and `asset.dump_folder` mirror packages into per-asset sidecars (`meta.json`, `properties.json`, `bpir.txt`, `tree.xml`, `mgir.txt` and more), so the agent knows your structure, classes and naming before it changes anything. That context is why new assets come out matching your project's conventions.
 - Play-In-Editor sessions are recorded and can be queried. The agent asks what happened in a session rather than reading a log tail. Capturing gameplay data needs instrumentation in the host project.
 - There is nothing to teach it. PinWright documents itself: the assistant discovers every operation and looks up its usage over the same MCP connection (`call()` lists the namespaces, `call("<namespace.method>")` returns that operation's page). You never paste documentation or install skill packs, and the reference always matches the version you run.
