@@ -27,7 +27,7 @@ An editor-only Unreal Engine plugin that speaks MCP (Model Context Protocol) on 
 
 ## Quick start
 
-1. **Get the plugin.** Install [from Fab](https://www.fab.com/listings/d9caf916-e5cf-435e-ab0e-a74cb8dcb253) through the Epic Launcher (a paid convenience install), or clone this repository, which is the same code under MIT:
+1. **Get the plugin.** Download the prebuilt zip for your engine version from [Releases](https://github.com/PinWright/pinwright-ue/releases) (Windows), install [from Fab](https://www.fab.com/listings/d9caf916-e5cf-435e-ab0e-a74cb8dcb253) through the Epic Launcher, or clone this repository and build it (Windows and Linux). All three are the same code under MIT:
 
    ```
    git clone https://github.com/PinWright/pinwright-ue.git <Project>/Plugins/PinWright
@@ -67,7 +67,7 @@ Unreal Engine 5.3-5.8 editor build with C++ plugin support, on Windows or Linux.
 
 <p align="center"><img src="./assets/readme/how-it-connects.svg" width="100%" alt="Your MCP client, such as Claude Code, Codex CLI, Cursor, Gemini CLI or VS Code Copilot, connects over one loopback MCP link with a bearer token to the Unreal Editor, where PinWright runs in process; the project comes back as text: BPIR, widget XML, MGIR and asset dumps"></p>
 
-Your client posts an MCP request to the editor, PinWright runs it on the game thread, and the result comes back as text, or as a job ticket for long work. Nothing leaves your machine.
+Your client posts an MCP request to the editor, PinWright runs it on the game thread, and the result comes back as text, or as a job ticket for long work. The plugin itself makes no network calls; what reaches a model provider is up to the assistant and model you choose, which can be local.
 
 Under the hood, graphs are text. This is BPIR, the Blueprint IR, and the capture underneath is the graph `blueprint.compile_bpir` built from exactly these four lines. Decompiling returns the text, so you can compare two versions of a graph line by line.
 
@@ -150,7 +150,7 @@ tool_timeout_sec = 300.0
 
 This is editor automation with asset-mutation privileges: a request can create, edit, save, delete and compile project assets. Treat it as a local developer tool.
 
-- Everything runs on your machine. The plugin makes no network calls of its own and the listener binds to `127.0.0.1`. Do not expose the port to a LAN, VPN, container bridge or the internet, and do not put a reverse proxy in front of it.
+- The plugin runs inside your editor, makes no network calls of its own, and the listener binds to `127.0.0.1`. Your assistant sends project content to whatever model it uses, as it already does with your code. Do not expose the port to a LAN, VPN, container bridge or the internet, and do not put a reverse proxy in front of it.
 - A bearer token is required by default: 64 hex characters, generated on editor start at `Saved/PinWright/gateway-token`. It stops browser drive-by requests and other OS users; it is not a defense against code already running as you.
 - Direct-HTTP agent configs embed the literal token, so keep them machine-local and never commit them; the stdio-proxy config carries only the token file path.
 - Use trusted clients only, keep the project in source control, and review generated changes before committing.
