@@ -143,16 +143,22 @@ TSharedPtr<FGenericWindow> FDriveInput::ResolveNativeWindowUnder(FSlateApplicati
 {
     // GetActiveTopLevelWindow() is null when the editor is unfocused, so resolve
     // the window from the point itself over the interactive top-level windows.
-    FWidgetPath WidgetsUnderCursor = SlateApp.LocateWindowUnderMouse(
-        ScreenPos, SlateApp.GetInteractiveTopLevelWindows());
-    if (WidgetsUnderCursor.IsValid())
+    const TSharedPtr<SWindow> Window = WindowUnderPoint(ScreenPos);
+    return Window.IsValid() ? Window->GetNativeWindow() : nullptr;
+}
+
+TSharedPtr<SWindow> FDriveInput::WindowUnderPoint(const FVector2D& ScreenPos)
+{
+    if (!FSlateApplication::IsInitialized())
     {
-        if (TSharedPtr<SWindow> Window = WidgetsUnderCursor.GetWindow())
-        {
-            return Window->GetNativeWindow();
-        }
+        return nullptr;
     }
-    return nullptr;
+
+    FSlateApplication& SlateApp = FSlateApplication::Get();
+    const FWidgetPath WidgetsUnderCursor = SlateApp.LocateWindowUnderMouse(
+        ScreenPos, SlateApp.GetInteractiveTopLevelWindows(), /*bIgnoreEnabledStatus=*/false,
+        SlateApp.GetUserIndexForMouse());
+    return WidgetsUnderCursor.IsValid() ? TSharedPtr<SWindow>(WidgetsUnderCursor.GetWindow()) : nullptr;
 }
 
 FModifierKeysState FDriveInput::MakeModifierState(EDriveModifierKeys Modifiers)

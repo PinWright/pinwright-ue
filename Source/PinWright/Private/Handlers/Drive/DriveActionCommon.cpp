@@ -5,13 +5,18 @@
 #include "Handlers/Drive/DriveConditionEval.h"
 #include "Handlers/Drive/DriveFingerprint.h"
 #include "Handlers/Drive/DriveHandlerCommon.h"
+#include "Handlers/Drive/DriveInput.h"
 #include "Handlers/Drive/DriveJson.h"
 #include "Handlers/Drive/DriveLiveResolver.h"
 #include "Handlers/Drive/DriveSettleDriver.h"
 #include "Handlers/HandlerContext.h"
 #include "Handlers/ErrorCodes.h"
 
+#include "Containers/Ticker.h"
 #include "Dom/JsonObject.h"
+#include "Framework/Application/SlateApplication.h"
+#include "HAL/PlatformTime.h"
+#include "Widgets/SWindow.h"
 
 // File-local helpers live in a uniquely-named namespace (not anonymous): the
 // plugin's Unity build merges translation units, and a distinct namespace keeps
@@ -25,6 +30,35 @@ namespace DriveActionCommonLocal
     {
         const int32 Raw = Ctx.GetInt(TEXT("journal_since"), 0);
         return Raw > 0 ? static_cast<uint64>(Raw) : 0;
+    }
+
+    // How long a pointer action waits for Slate to route the target's center to the target's own
+    // window before refusing. On Linux the platform's window-under-cursor follows a warp only once
+    // SDL's enter/leave event is pumped, one or two frames later; a window still owning the point
+    // after this is really stacked over the target.
+    constexpr double PointerRouteWaitSeconds = 0.3;
+
+    void SendOccluded(const FAsyncResponseToken& Token, const FString& Handle, const FVector2D& Point,
+        const TSharedPtr<SWindow>& Under)
+    {
+        const FString Title = Under.IsValid() ? Under->GetTitle().ToString() : FString();
+        TSharedPtr<FJsonObject> Details = MakeShared<FJsonObject>();
+        Details->SetStringField(TEXT("handle"), Handle);
+        Details->SetNumberField(TEXT("x"), Point.X);
+        Details->SetNumberField(TEXT("y"), Point.Y);
+        if (Under.IsValid())
+        {
+            Details->SetStringField(TEXT("occluding_window"), Title);
+        }
+        Token.SendError(ErrorCodes::ERR_TARGET_OCCLUDED,
+            Under.IsValid()
+                ? FString::Printf(
+                    TEXT("Element '%s' is covered at (%.0f, %.0f) by window '%s', which would receive the input instead. Close or move that window (drive.list_windows lists it), then retry."),
+                    *Handle, Point.X, Point.Y, *Title)
+                : FString::Printf(
+                    TEXT("No window accepts pointer input at element '%s''s center (%.0f, %.0f), so the input would land nowhere."),
+                    *Handle, Point.X, Point.Y),
+            Details);
     }
 }
 
@@ -196,6 +230,8 @@ void FDriveActionCommon::RunAction(FHandlerContext& Ctx, const FString& Handle, 
     const bool bFullDiff = Ctx.GetBool(TEXT("full_diff"), false);
 
     FVector2D TargetCenter = FVector2D::ZeroVector;
+    // The target's own top-level window; pointer input must be routed there to reach it.
+    TSharedPtr<SWindow> TargetWindow;
 
     // Stale-state guard: re-resolve the target NOW (only when an action targets a
     // handle; drive.key without a handle acts on the focused widget). The resolve is
@@ -239,6 +275,10 @@ void FDriveActionCommon::RunAction(FHandlerContext& Ctx, const FString& Handle, 
         }
 
         TargetCenter = Resolved.Element.AbsolutePosition + Resolved.Element.AbsoluteSize * 0.5;
+        if (Resolved.Widget.IsValid() && FSlateApplication::IsInitialized())
+        {
+            TargetWindow = FSlateApplication::Get().FindWidgetWindow(Resolved.Widget.ToSharedRef());
+        }
     }
 
     // Pre-action baseline for the diff. For a target-less action this sample is
@@ -261,62 +301,126 @@ void FDriveActionCommon::RunAction(FHandlerContext& Ctx, const FString& Handle, 
         }
     }
 
-    // Inject the input. A failure here (Slate down mid-flight) is a clean error.
-    if (!Inject(TargetCenter))
+    // Everything after a successful injection: run the settle loop and resolve the request
+    // through Token once it reaches a terminal outcome.
+    const auto StartSettle =
+        [Config, Surface, Selector, WindowSelector, PreElements, ObserveMode, MarkCap, bIncludeJournal, JournalSince, bFullDiff, InputPathLabel]
+        (const TSharedRef<FAsyncResponseToken>& Token)
     {
-        Ctx.SendError(ErrorCodes::ERR_INPUT_FAILED,
-            TEXT("Synthetic input injection failed (Slate not initialized or no window under the point)."));
+        FDriveSettleDriver::FIsWaitForMet IsWaitForMet = nullptr;
+        if (Config.WaitFor.IsSet())
+        {
+            IsWaitForMet = MakeIsWaitForMet(Surface, Selector, Config.WaitFor.GetValue(), WindowSelector);
+        }
+
+        FDriveSettleDriver::FOnComplete OnComplete =
+            [Token, Surface, Selector, WindowSelector, PreElements, ObserveMode, MarkCap, bIncludeJournal, JournalSince, bFullDiff, InputPathLabel]
+            (const FDriveSettleResult& Result, const TArray<FDriveElement>& FinalElements)
+            {
+                TSharedPtr<FJsonObject> Resp = MakeShared<FJsonObject>();
+                Resp->SetStringField(TEXT("outcome"), SettleOutcomeToString(Result.Outcome));
+                if (!InputPathLabel.IsEmpty())
+                {
+                    Resp->SetStringField(TEXT("input_path"), InputPathLabel);
+                }
+                Resp->SetBoolField(TEXT("changed"), Result.bChanged);
+                Resp->SetBoolField(TEXT("settled"), Result.bSettled);
+                Resp->SetBoolField(TEXT("condition_met"), Result.bConditionMet);
+                Resp->SetNumberField(TEXT("elapsed_ms"), Result.ElapsedMs);
+                Resp->SetNumberField(TEXT("ticks"), Result.Ticks);
+
+                // Compact summary by default; full handle lists only when full_diff was set.
+                const FDriveDiff Diff = FDriveChangeDetector::Diff(PreElements, FinalElements);
+                Resp->SetObjectField(TEXT("diff"),
+                    bFullDiff ? FDriveJson::WriteDiffFull(Diff) : FDriveJson::WriteDiffSummary(Diff));
+
+                if (TSharedPtr<FJsonObject> Observation =
+                        BuildObservationField(Surface, Selector, ObserveMode, MarkCap, WindowSelector))
+                {
+                    Resp->SetObjectField(TEXT("observation"), Observation);
+                }
+
+                MaybeAttachJournal(Resp, bIncludeJournal, JournalSince);
+
+                Token->SendSuccess(Resp);
+            };
+
+        // The ticker started by Start() holds the only owning reference to the driver;
+        // it lives exactly until Tick() reaches a terminal outcome and fires OnComplete,
+        // so we deliberately drop the returned ref here.
+        FDriveSettleDriver::Start(
+            Config,
+            MakeGetElements(Surface, Selector, WindowSelector),
+            MoveTemp(IsWaitForMet),
+            MoveTemp(OnComplete));
+    };
+
+    const TCHAR* InjectFailedMessage =
+        TEXT("Synthetic input injection failed (Slate not initialized or no window under the point).");
+
+    // Slate routes pointer input to whichever top-level window LocateWindowUnderMouse names for
+    // the point, which need not be the target's own: a window stacked over it (the editor opens a
+    // Message Log on PIE start) takes the click, and on Linux the platform's window-under-cursor
+    // still names the window the pointer was over before the warp until SDL's enter event is
+    // pumped, so the first click into another window is hit-tested in the old one and lands on
+    // nothing. Either way the widget never sees it and the settle loop reports a benign
+    // no_change_within_budget. So move the pointer first and inject only once the routing names
+    // the target's window. os_input is left alone: it never warps the Slate cursor, and the X
+    // server routes its events itself. A retainer's virtual window never appears in that routing.
+    const bool bGatePointer = TargetWindow.IsValid() && !TargetWindow->IsVirtualWindow()
+        && InputPathLabel != TEXT("os_x11");
+    if (bGatePointer)
+    {
+        FDriveInput::MoveTo(TargetCenter);
+    }
+
+    if (!bGatePointer || FDriveInput::WindowUnderPoint(TargetCenter) == TargetWindow)
+    {
+        // Inject the input. A failure here (Slate down mid-flight) is a clean error.
+        if (!Inject(TargetCenter))
+        {
+            Ctx.SendError(ErrorCodes::ERR_INPUT_FAILED, InjectFailedMessage);
+            return;
+        }
+        // From here the request resolves asynchronously: open it now so the transport
+        // keeps it alive until OnComplete fires on the game thread.
+        StartSettle(Ctx.MakeAsyncToken());
         return;
     }
 
-    // From here the request resolves asynchronously: open it now so the transport
-    // keeps it alive until OnComplete fires on the game thread.
+    // Routed elsewhere: give the platform a few frames to catch up with the warp, then refuse
+    // rather than inject into the wrong window.
     TSharedRef<FAsyncResponseToken> Token = Ctx.MakeAsyncToken();
-
-    FDriveSettleDriver::FIsWaitForMet IsWaitForMet = nullptr;
-    if (Config.WaitFor.IsSet())
-    {
-        IsWaitForMet = MakeIsWaitForMet(Surface, Selector, Config.WaitFor.GetValue(), WindowSelector);
-    }
-
-    FDriveSettleDriver::FOnComplete OnComplete =
-        [Token, Surface, Selector, WindowSelector, PreElements, ObserveMode, MarkCap, bIncludeJournal, JournalSince, bFullDiff, InputPathLabel]
-        (const FDriveSettleResult& Result, const TArray<FDriveElement>& FinalElements)
+    const double Deadline = FPlatformTime::Seconds() + PointerRouteWaitSeconds;
+    const TWeakPtr<SWindow> WeakTargetWindow = TargetWindow;
+    FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda(
+        [Token, WeakTargetWindow, TargetCenter, Deadline, Inject, StartSettle, Handle, InjectFailedMessage](float) -> bool
         {
-            TSharedPtr<FJsonObject> Resp = MakeShared<FJsonObject>();
-            Resp->SetStringField(TEXT("outcome"), SettleOutcomeToString(Result.Outcome));
-            if (!InputPathLabel.IsEmpty())
+            const TSharedPtr<SWindow> Target = WeakTargetWindow.Pin();
+            if (!Target.IsValid())
             {
-                Resp->SetStringField(TEXT("input_path"), InputPathLabel);
+                Token->SendError(ErrorCodes::ERR_TARGET_CHANGED,
+                    FString::Printf(TEXT("The window holding element '%s' closed before the input could be delivered."), *Handle));
+                return false;
             }
-            Resp->SetBoolField(TEXT("changed"), Result.bChanged);
-            Resp->SetBoolField(TEXT("settled"), Result.bSettled);
-            Resp->SetBoolField(TEXT("condition_met"), Result.bConditionMet);
-            Resp->SetNumberField(TEXT("elapsed_ms"), Result.ElapsedMs);
-            Resp->SetNumberField(TEXT("ticks"), Result.Ticks);
-
-            // Compact summary by default; full handle lists only when full_diff was set.
-            const FDriveDiff Diff = FDriveChangeDetector::Diff(PreElements, FinalElements);
-            Resp->SetObjectField(TEXT("diff"),
-                bFullDiff ? FDriveJson::WriteDiffFull(Diff) : FDriveJson::WriteDiffSummary(Diff));
-
-            if (TSharedPtr<FJsonObject> Observation =
-                    BuildObservationField(Surface, Selector, ObserveMode, MarkCap, WindowSelector))
+            const TSharedPtr<SWindow> Under = FDriveInput::WindowUnderPoint(TargetCenter);
+            if (Under == Target)
             {
-                Resp->SetObjectField(TEXT("observation"), Observation);
+                if (Inject(TargetCenter))
+                {
+                    StartSettle(Token);
+                }
+                else
+                {
+                    Token->SendError(ErrorCodes::ERR_INPUT_FAILED, InjectFailedMessage);
+                }
+                return false;
             }
-
-            MaybeAttachJournal(Resp, bIncludeJournal, JournalSince);
-
-            Token->SendSuccess(Resp);
-        };
-
-    // The ticker started by Start() holds the only owning reference to the driver;
-    // it lives exactly until Tick() reaches a terminal outcome and fires OnComplete,
-    // so we deliberately drop the returned ref here.
-    FDriveSettleDriver::Start(
-        Config,
-        MakeGetElements(Surface, Selector, WindowSelector),
-        MoveTemp(IsWaitForMet),
-        MoveTemp(OnComplete));
+            if (FPlatformTime::Seconds() < Deadline)
+            {
+                return true;
+            }
+            SendOccluded(*Token, Handle, TargetCenter, Under);
+            return false;
+        }));
 }

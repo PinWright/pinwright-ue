@@ -23,6 +23,7 @@
 class FSlateApplication;
 class FGenericWindow;
 class FModifierKeysState;
+class SWindow;
 
 // Mouse button to inject.
 enum class EDriveMouseButton : uint8
@@ -113,6 +114,14 @@ public:
     // Type Text one character at a time (key down, character event, key up per
     // char), holding Shift for characters that need it on a US layout.
     static bool TypeString(const FString& Text);
+
+    // The top-level window a pointer event at ScreenPos is routed to right now: the same
+    // FSlateApplication::LocateWindowUnderMouse call ProcessMouseButtonDownEvent, the mouse-move
+    // and the wheel paths make, so it predicts where an injection lands. That call trusts the
+    // platform's window-under-cursor first, and on Linux that cache follows a cursor warp only
+    // once SDL's enter/leave event is pumped on a later frame, so right after a warp into another
+    // window it can still name the previous one. Null when no window takes input at the point.
+    static TSharedPtr<SWindow> WindowUnderPoint(const FVector2D& ScreenPos);
 
     // ---- Pure helpers (no Slate dependency; unit-tested) ----
 
