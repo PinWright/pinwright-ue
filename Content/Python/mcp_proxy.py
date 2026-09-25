@@ -125,6 +125,13 @@ def _render_mcp_instructions(uproject, port_file, script_path):
 # (a streamed call may legitimately outlive call_timeout).
 STREAM_READ_TIMEOUT = 120.0
 
+# Overall ceiling on one streamed relay. Progress frames and heartbeats keep a
+# stream alive forever, so a job that never turns terminal would otherwise hold
+# its call open indefinitely. Past this the proxy stops relaying and returns the
+# job's ticket_id for system.job_status polling; closing the stream does not
+# cancel the job. Other calls never wait on it (serve_stdio relays concurrently).
+STREAM_MAX_SECONDS = 1800.0
+
 # Cold-start fallback for tools/list (the gateway exposes a single generic `call`
 # tool). Mirrors BuildCallToolDescriptor() in McpRequestCore.cpp. Overwritten by the
 # editor's real tools/list once it is reachable.
@@ -1667,6 +1674,7 @@ class Proxy:
         self.editor_exe = editor_exe  # explicit override for editor_start; None => auto-detect
         self.uproject = uproject  # explicit override; None => port-file/script resolution
         self.start_timeout = start_timeout  # wait=ready ceiling for editor_start
+        self.stream_max_seconds = STREAM_MAX_SECONDS  # overall ceiling per streamed relay
         self._token_warned = False
         self._port_warned = False
         self._owned_child = None
@@ -2706,10 +2714,24 @@ class Proxy:
         frames to stdout in between. A broken stream (socket error / EOF before
         the terminal frame) degrades to the same graceful in-band tool error the
         buffered path uses, pointing at system.job_status so the still-running
-        job can be polled."""
+        job can be polled. So does a stream still open after stream_max_seconds,
+        or one outliving the client (EOF on stdin)."""
         ticket_id = None
+        deadline = time.monotonic() + self.stream_max_seconds
+        abandoned = []
+
+        def bounded_readline():
+            # Heartbeats arrive every ~15s, so this is checked at least that often.
+            if self.shutdown_requested():
+                abandoned.append("the client disconnected")
+            elif time.monotonic() > deadline:
+                abandoned.append("no final response within %g s" % self.stream_max_seconds)
+            if abandoned:
+                return b""  # read as EOF: stop relaying, fall through to the ticket result
+            return readline_fn()
+
         try:
-            for event in iter_sse_events(readline_fn):
+            for event in iter_sse_events(bounded_readline):
                 if not isinstance(event, dict):
                     log("skipping non-object SSE frame")
                     continue
@@ -2724,6 +2746,9 @@ class Proxy:
                     log("ignoring SSE frame with no id and unknown method: %.200s"
                         % json.dumps(event))
             detail = "stream closed before the final response"
+            if abandoned:
+                detail = "%s, so the proxy stopped relaying" % abandoned[0]
+                log("stream id=%s abandoned: %s (ticket %s)" % (msg_id, abandoned[0], ticket_id))
         except Exception as exc:
             detail = "stream read failed: %s" % exc
         ticket_hint = (" The job's ticket_id is %s." % ticket_id) if ticket_id else ""
@@ -2798,8 +2823,8 @@ class Proxy:
         # tools/call and any other request -> forward to the editor. Resolve the
         # target fresh (the editor may have rebound since the last call), then
         # probe first: a hung editor accepts TCP but never responds, which would
-        # block this single-threaded loop for the full call_timeout and queue
-        # every later request behind it - the probe bounds that to probe_timeout.
+        # hold this call for the full call_timeout - the probe bounds that to
+        # probe_timeout.
         url = self._resolve_url()
         if url is None:
             if method == "tools/call":
@@ -2890,9 +2915,15 @@ def _error(msg_id, code, message):
     return {"jsonrpc": "2.0", "id": msg_id, "error": {"code": code, "message": message}}
 
 
+_WRITE_LOCK = threading.Lock()
+
+
 def _write(stream, obj):
-    stream.write(json.dumps(obj) + "\n")
-    stream.flush()
+    # Responses and relayed progress frames come from several threads; one frame per line.
+    line = json.dumps(obj) + "\n"
+    with _WRITE_LOCK:
+        stream.write(line)
+        stream.flush()
 
 
 def _build_argument_parser():
@@ -2922,12 +2953,29 @@ def _build_argument_parser():
     return parser
 
 
-def serve_stdio(proxy, input_stream, output_stream):
-    """Serve one request at a time while a reader thread observes client disconnect.
+_LOCAL_TOOL_NAMES = (
+    EDITOR_START_TOOL["name"], EDITOR_RESTART_TOOL["name"], EDITOR_PREPARE_TESTS_TOOL["name"]
+)
 
-    Only this calling thread parses requests, invokes handlers, and writes responses.
-    The reader thread does no request work; on EOF it only marks shutdown and cleans
-    the proxy's currently owned direct child so an unbounded child wait can return.
+
+def _forwards_concurrently(msg):
+    """A tools/call forwarded to the editor may block (a streamed job relays until
+    it is terminal), so it gets its own thread; one never-ending stream must not
+    queue every later call behind it. Everything else, including the proxy-local
+    lifecycle tools, stays serial on the serving thread."""
+    params = msg.get("params")
+    return (msg.get("method") == "tools/call" and "id" in msg
+            and not (isinstance(params, dict) and params.get("name") in _LOCAL_TOOL_NAMES))
+
+
+def serve_stdio(proxy, input_stream, output_stream):
+    """Serve requests while a reader thread observes client disconnect.
+
+    This calling thread parses requests and serves them in order, except forwarded
+    tools/call requests, which each run on a daemon thread (_forwards_concurrently)
+    and write their own response. The reader thread does no request work; on EOF
+    it only marks shutdown and cleans the proxy's currently owned direct child so
+    an unbounded child wait can return.
     """
     eof = object()
     input_lines = queue.Queue()
@@ -2943,6 +2991,15 @@ def serve_stdio(proxy, input_stream, output_stream):
                 proxy.request_shutdown()
             finally:
                 input_lines.put(eof)
+
+    def respond(msg):
+        try:
+            response = proxy.handle(msg)
+        except Exception as exc:  # never crash the bridge
+            log("handler error: %s" % exc)
+            response = _error(msg.get("id"), -32603, "Proxy error: %s" % exc)
+        if response is not None and not proxy.shutdown_requested():
+            _write(output_stream, response)
 
     reader = threading.Thread(
         target=read_input, name="pinwright-mcp-stdin", daemon=True
@@ -2963,13 +3020,12 @@ def serve_stdio(proxy, input_stream, output_stream):
             except Exception as exc:
                 _write(output_stream, _error(None, -32700, "Parse error: %s" % exc))
                 continue
-            try:
-                response = proxy.handle(msg)
-            except Exception as exc:  # never crash the bridge
-                log("handler error: %s" % exc)
-                response = _error(msg.get("id"), -32603, "Proxy error: %s" % exc)
-            if response is not None and not proxy.shutdown_requested():
-                _write(output_stream, response)
+            if isinstance(msg, dict) and _forwards_concurrently(msg):
+                # ponytail: one thread per in-flight call; the client bounds concurrency.
+                threading.Thread(target=respond, args=(msg,), daemon=True,
+                                 name="pinwright-mcp-call-%s" % msg.get("id")).start()
+            else:
+                respond(msg)
     finally:
         proxy.request_shutdown()
 

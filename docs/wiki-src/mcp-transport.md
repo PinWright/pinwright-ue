@@ -202,7 +202,7 @@ A streaming response is `Content-Type: text/event-stream` with frames of the for
 - **The final frame** is the normal JSON-RPC response, exactly what the plain-JSON path would have returned; it terminates the stream.
 - **Heartbeats** are SSE comment frames (`: ping`) sent every `SseHeartbeatSeconds` (default 15) to keep idle proxies and client timeouts from killing a quiet stream.
 
-Bearer auth is checked once when the POST opens (same 401 semantics as [Authentication](#authentication)), and the `Origin` header is validated as loopback-only. The bundled stdio proxy participates: when a forwarded call streams, it forwards progress notifications to its stdout as they arrive, and it remains the primary client path (it survives editor restarts).
+Bearer auth is checked once when the POST opens (same 401 semantics as [Authentication](#authentication)), and the `Origin` header is validated as loopback-only. The bundled stdio proxy participates: when a forwarded call streams, it forwards progress notifications to its stdout as they arrive, and it remains the primary client path (it survives editor restarts). It serves forwarded calls concurrently, so a long stream never blocks other calls, and it stops relaying a stream after 30 minutes without a final frame, returning an error that names the `ticket_id` to poll with `system.job_status` (the job keeps running).
 
 ## Oversized responses
 
