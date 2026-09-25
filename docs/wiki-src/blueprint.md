@@ -313,17 +313,18 @@ Applies arbitrary key-value metadata to a Blueprint variable via the `metadata` 
 
 Writes a property value directly onto a Blueprint's Class Default Object (CDO), then compiles and saves the Blueprint. Distinct from `property.set` (which operates on any live UObject) — `blueprint.set_default` specifically targets the CDO and always triggers a recompile. For non-CDO live objects, or for `DataAsset` fields, prefer `call("property.set")`. To read CDO defaults back, `call("property.list")` and `call("property.get")` auto-resolve `/Game/...` Blueprint paths to the CDO.
 
-#### TSoftClassPtr path auto-resolution
+#### TSoftClassPtr path resolution
 
-When the target property is a `TSoftClassPtr<>`, `blueprint.set_default` automatically converts `/Game/` Blueprint asset paths to generated class paths by appending `_C`:
+When the target property is a `TSoftClassPtr<>`, the value is resolved to the `UClass` it names before it is stored, on any mount point (`/Game/`, a plugin content root such as `/MyPlugin/`, `/Engine/`, `/Script/`). A Blueprint asset resolves to its generated class:
 
 ```
-/Game/UI/W_Foo          ->  /Game/UI/W_Foo.W_Foo_C
-/Game/UI/W_Foo.W_Foo    ->  /Game/UI/W_Foo.W_Foo_C   (if not already _C)
-/Script/Engine.Actor    ->  /Script/Engine.Actor       (native paths pass through unchanged)
+/MyPlugin/UI/W_Foo              ->  /MyPlugin/UI/W_Foo.W_Foo_C
+/MyPlugin/UI/W_Foo.W_Foo        ->  /MyPlugin/UI/W_Foo.W_Foo_C
+/MyPlugin/UI/W_Foo.W_Foo_C      ->  /MyPlugin/UI/W_Foo.W_Foo_C
+/Script/Engine.Actor            ->  /Script/Engine.Actor
 ```
 
-Pass the short Blueprint asset path (no `.AssetName` suffix, no `_C`) and the handler resolves it. If the path already contains a dot and ends with `_C`, it is used as-is. For `property.set` or direct CDO manipulation in C++, the generated class path (`/Game/UI/W_Foo.W_Foo_C`) is required — only `blueprint.set_default` does the auto-append.
+The asset is found in memory or loaded, not guessed from the path. A value that names no class (missing asset, a non-Blueprint asset) or a class outside the property's meta-class is refused with `CONVERSION_FAILED` and nothing is written. The resolution lives in the shared JSON-to-property importer, so `property.set` and the other property-writing verbs resolve soft-class values the same way.
 
 #### Post-compile CDO readback
 

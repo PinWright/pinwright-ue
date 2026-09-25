@@ -7,7 +7,9 @@
 #include "Utils/PropertyInspection.h"
 
 #include "Compat/EngineVersionCompat.h"
+#include "Engine/Blueprint.h"
 #include "Internationalization/Text.h"
+#include "Utils/GuardedLoad.h"
 #include "JsonObjectConverter.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
@@ -90,6 +92,43 @@ namespace
         return Trimmed.IsEmpty()
             || Trimmed.Equals(TEXT("None"), ESearchCase::IgnoreCase)
             || Trimmed.Equals(TEXT("null"), ESearchCase::IgnoreCase);
+    }
+
+    // Resolves a TSoftClassPtr value to the UClass it names, on any mount point: a class path
+    // (/Script/Engine.Actor, /Root/Dir/BP_X.BP_X_C), a Blueprint object path (/Root/Dir/BP_X.BP_X)
+    // or a bare Blueprint package path (/Root/Dir/BP_X); a Blueprint yields its GeneratedClass.
+    // The object is found or loaded rather than guessed from a path prefix (the old rule appended
+    // _C only under /Game/ and sat behind the FSoftObjectProperty branch, so every soft-class
+    // value was stored verbatim, unresolvable or not, and reported as success -
+    // B-set-default-softclass-missing-c-suffix). Null + OutError on a miss.
+    UClass* ResolveSoftClassValue(const FString& Path, FString& OutError)
+    {
+        if (!IsPlausibleObjectPathForLoad(Path))
+        {
+            OutError = FString::Printf(
+                TEXT("Soft class property value is not a valid path (length=%d, contains struct-text punctuation or exceeds FName limit)"),
+                Path.Len());
+            return nullptr;
+        }
+        const FString ObjectPath = Path.Contains(TEXT("."))
+            ? Path
+            : FString::Printf(TEXT("%s.%s"), *Path, *FPackageName::GetShortName(Path));
+        FString Refusal;
+        UObject* Obj = PinWrightGuardedLoad::LoadObjectChecked<UObject>(
+            ObjectPath, &Refusal, LOAD_NoWarn | LOAD_Quiet);
+        UClass* Class = Cast<UClass>(Obj);
+        if (const UBlueprint* Blueprint = Cast<UBlueprint>(Obj))
+        {
+            Class = Blueprint->GeneratedClass;
+        }
+        if (!Class)
+        {
+            OutError = !Refusal.IsEmpty() ? Refusal
+                : Obj ? FString::Printf(TEXT("Soft class value '%s' names a %s, not a class or Blueprint"),
+                        *Path, *Obj->GetClass()->GetName())
+                : FString::Printf(TEXT("Failed to resolve class at path: %s"), *Path);
+        }
+        return Class;
     }
 
     bool IsJsonScalarPropertyImpl(const FProperty* Property)
@@ -932,6 +971,57 @@ bool ApplyJsonValueToProperty(void* TargetContainer, FProperty* Property,
         return false;
     }
 
+    // Soft class references — must come BEFORE FSoftObjectProperty since
+    // FSoftClassProperty inherits from it (otherwise the value is stored unvalidated).
+    if (FSoftClassProperty* SCP = CastField<FSoftClassProperty>(Property))
+    {
+        if (ValueField->Type == EJson::String)
+        {
+            const FString Path = ValueField->AsString();
+            void* ValuePtr = SCP->ContainerPtrToValuePtr<void>(TargetContainer);
+            FSoftObjectPtr* SoftClassPtr = static_cast<FSoftObjectPtr*>(ValuePtr);
+            if (SoftClassPtr)
+            {
+                // {"", "None", "null"} clear the reference; without this guard
+                // "None" was silently stored as the literal FSoftObjectPath("None").
+                if (IsNullObjectSentinel(Path))
+                {
+                    *SoftClassPtr = FSoftObjectPtr();
+                }
+                else
+                {
+                    UClass* ClassObj = ResolveSoftClassValue(Path, OutError);
+                    if (!ClassObj)
+                    {
+                        return false;
+                    }
+                    if (SCP->MetaClass && !ClassObj->IsChildOf(SCP->MetaClass))
+                    {
+                        OutError = FString::Printf(TEXT("Class '%s' is not a child of '%s'"),
+                            *ClassObj->GetName(), *SCP->MetaClass->GetName());
+                        return false;
+                    }
+                    *SoftClassPtr = FSoftObjectPath(ClassObj);
+                }
+                return true;
+            }
+            OutError = TEXT("Failed to access soft class property");
+            return false;
+        }
+        else if (ValueField->Type == EJson::Null)
+        {
+            void* ValuePtr = SCP->ContainerPtrToValuePtr<void>(TargetContainer);
+            FSoftObjectPtr* SoftClassPtr = static_cast<FSoftObjectPtr*>(ValuePtr);
+            if (SoftClassPtr)
+            {
+                *SoftClassPtr = FSoftObjectPtr();
+                return true;
+            }
+        }
+        OutError = TEXT("Soft class property requires string path or null");
+        return false;
+    }
+
     // Soft object references
     if (FSoftObjectProperty* SOP = CastField<FSoftObjectProperty>(Property))
     {
@@ -968,67 +1058,6 @@ bool ApplyJsonValueToProperty(void* TargetContainer, FProperty* Property,
             }
         }
         OutError = TEXT("Soft object property requires string path or null");
-        return false;
-    }
-
-    // Soft class references
-    if (FSoftClassProperty* SCP = CastField<FSoftClassProperty>(Property))
-    {
-        if (ValueField->Type == EJson::String)
-        {
-            const FString Path = ValueField->AsString();
-            void* ValuePtr = SCP->ContainerPtrToValuePtr<void>(TargetContainer);
-            FSoftObjectPtr* SoftClassPtr = static_cast<FSoftObjectPtr*>(ValuePtr);
-            if (SoftClassPtr)
-            {
-                // {"", "None", "null"} clear the reference; without this guard
-                // "None" was silently stored as the literal FSoftObjectPath("None").
-                if (IsNullObjectSentinel(Path))
-                {
-                    *SoftClassPtr = FSoftObjectPtr();
-                }
-                else
-                {
-                    FString ResolvedPath = Path;
-
-                    // For /Game/ paths (Blueprint assets), resolve to generated class path (_C suffix)
-                    // /Script/ paths are native classes and should pass through unchanged
-                    if (ResolvedPath.StartsWith(TEXT("/Game/")))
-                    {
-                        if (!ResolvedPath.Contains(TEXT(".")))
-                        {
-                            // No sub-object specified: /Game/UI/W_Foo -> /Game/UI/W_Foo.W_Foo_C
-                            const FString AssetName = FPackageName::GetShortName(ResolvedPath);
-                            ResolvedPath = FString::Printf(TEXT("%s.%s_C"), *ResolvedPath, *AssetName);
-                        }
-                        else if (!ResolvedPath.EndsWith(TEXT("_C")))
-                        {
-                            // Has sub-object but no _C: try as-is first, append _C if unresolvable
-                            if (!FSoftObjectPath(ResolvedPath).ResolveObject())
-                            {
-                                ResolvedPath = ResolvedPath + TEXT("_C");
-                            }
-                        }
-                    }
-
-                    *SoftClassPtr = FSoftObjectPath(ResolvedPath);
-                }
-                return true;
-            }
-            OutError = TEXT("Failed to access soft class property");
-            return false;
-        }
-        else if (ValueField->Type == EJson::Null)
-        {
-            void* ValuePtr = SCP->ContainerPtrToValuePtr<void>(TargetContainer);
-            FSoftObjectPtr* SoftClassPtr = static_cast<FSoftObjectPtr*>(ValuePtr);
-            if (SoftClassPtr)
-            {
-                *SoftClassPtr = FSoftObjectPtr();
-                return true;
-            }
-        }
-        OutError = TEXT("Soft class property requires string path or null");
         return false;
     }
 
