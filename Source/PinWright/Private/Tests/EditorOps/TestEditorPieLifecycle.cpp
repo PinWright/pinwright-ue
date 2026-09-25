@@ -5,6 +5,7 @@
 #include "Containers/Ticker.h"
 #include "CoreGlobals.h"
 #include "Dispatch/RpcDispatcher.h"
+#include "Dispatch/ScopedUnattendedRpc.h"
 #include "Editor.h"
 #include "Handlers/ErrorCodes.h"
 #include "Handlers/HandlerRegistration.h"
@@ -277,6 +278,85 @@ bool FEditorPiePlayWaitAbandonsWhenDispatcherEndsTest::RunTest(
         Capture->CallCount, ResponseCountAfterTeardown);
     TestTrue(TEXT("the abandoned wait ticker stays invalid after a ticker pass"),
         WaitControl.IsValid() && !WaitControl->IsTickerValid());
+    return true;
+}
+
+// B-compile-error-bp-wedges-next-play. The engine consumes editor.play's queued request on a
+// later editor tick, outside the dispatcher's per-handler unattended scope, and that tick raises
+// the "Blueprint Asset Compilation Error" modal for any Blueprint in BS_Error. editor.play must
+// keep the automation-mode interval open across the deferred start and close it when the wait
+// ends. Counterfactual: without the interval, IsActive() is false once the handler returns and
+// the first assertion fails (a visible editor then wedges on the modal).
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEditorPiePlayHoldsModalSuppressionAcrossDeferredStartTest,
+    "PinWright.editor.pie.PlayHoldsModalSuppressionAcrossDeferredStart",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FEditorPiePlayHoldsModalSuppressionAcrossDeferredStartTest::RunTest(
+    const FString& Parameters)
+{
+    if (!GEditor || GEditor->PlayWorld || GEditor->IsPlaySessionInProgress() ||
+        PinWrightAutomationMode::IsActive() ||
+        !GetDefault<UPinWrightSettings>()->bSuppressModalDialogsDuringRpc)
+    {
+        PinWrightTestSkip::SkipAssertions(*this, TEXT("editor-state-unavailable"),
+            TEXT("Skipped: needs no PIE session, no open automation-mode interval, and modal suppression enabled."));
+        return true;
+    }
+
+    FRpcHandlerFunc PlayHandler = nullptr;
+    for (const FHandlerRegistration& Registration :
+         FAutoRegisterHandler::GetPendingRegistrations())
+    {
+        if (Registration.MethodName == TEXT("editor.play"))
+        {
+            PlayHandler = Registration.Func;
+            break;
+        }
+    }
+    TestTrue(TEXT("production editor.play handler is registered"), PlayHandler != nullptr);
+    if (!PlayHandler)
+    {
+        return false;
+    }
+
+    ON_SCOPE_EXIT
+    {
+        CancelAnyQueuedPlaySession();
+        PinWrightAutomationMode::ResetForTests();
+    };
+
+    const TSharedRef<FTestResponseCapture> Capture = MakeShared<FTestResponseCapture>();
+    TUniquePtr<FRpcDispatcher> Dispatcher = MakeUnique<FRpcDispatcher>();
+    FRpcDispatcher* DispatcherForContext = Dispatcher.Get();
+    Dispatcher->RegisterHandler(TEXT("editor.play"),
+        [PlayHandler, Capture, DispatcherForContext](
+            const FString& RequestId,
+            const FString& Method,
+            const TSharedPtr<FJsonObject>& Payload) -> bool
+        {
+            FHandlerContext Ctx = FHandlerContext::MakeTestContextWithSharedCapture(
+                RequestId, Method, Payload, Capture);
+            Ctx.SetDispatcherForTesting(DispatcherForContext);
+            return PlayHandler(Ctx);
+        });
+
+    Dispatcher->ProcessRequest(
+        TEXT("play-modal-scope-id"), TEXT("editor.play"), MakeShared<FJsonObject>());
+
+    TestEqual(TEXT("editor.play is still waiting for PlayWorld"), Capture->CallCount, 0);
+    TestFalse(TEXT("the dispatcher's own handler scope has closed"),
+        Dispatcher->IsProcessingRequestForTesting());
+    TestTrue(TEXT("modal suppression stays open while the engine has the start request queued"),
+        PinWrightAutomationMode::IsActive());
+    TestTrue(TEXT("GIsRunningUnattendedScript is set for the tick that consumes the request"),
+        GIsRunningUnattendedScript);
+
+    CancelAnyQueuedPlaySession();
+    Dispatcher.Reset();
+
+    TestEqual(TEXT("dispatcher teardown answers the play call"), Capture->CallCount, 1);
+    TestFalse(TEXT("modal suppression closes when the play wait ends"),
+        PinWrightAutomationMode::IsActive());
     return true;
 }
 

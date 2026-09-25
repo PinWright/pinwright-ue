@@ -146,6 +146,9 @@ inline void ResetForTests()
 //   asset.import             DeferRequestToSafePoint (AssetManageHandler.cpp) -
 //       DeferToSafePoint reopens this scope around import, rename, verification,
 //       and response while the dispatcher retains the active request.
+//   editor.play              the engine consumes the queued PIE request on a later
+//       tick (StartQueuedPlaySessionRequest), which raises the "Blueprint Asset
+//       Compilation Error" modal. PIEHandler.cpp holds a scope until the wait ends.
 //
 // Remaining user-controlled escape:
 //

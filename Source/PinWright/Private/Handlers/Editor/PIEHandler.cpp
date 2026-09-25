@@ -18,9 +18,12 @@
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "Handlers/Editor/PieWorldSelector.h"
+#include "Dispatch/ScopedUnattendedRpc.h"
 
 #include "Editor.h"
+#include "Engine/Blueprint.h"
 #include "Engine/World.h"
+#include "UObject/UObjectIterator.h"
 #include "GameFramework/GameStateBase.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/Pawn.h"
@@ -130,6 +133,23 @@ void AddPieStopActionFields(
   Response->SetBoolField(TEXT("endPlayRequested"), bEndPlayRequested);
 }
 
+// Blueprints loaded in BS_Error. PIE starts with their last good (or stale) generated class; the
+// editor's own Play button would have asked about them first (see editor.play's modal scope).
+TArray<TSharedPtr<FJsonValue>> CollectBlueprintsWithErrors()
+{
+  TArray<TSharedPtr<FJsonValue>> Paths;
+  for (TObjectIterator<UBlueprint> It; It; ++It)
+  {
+    const UBlueprint* Blueprint = *It;
+    if (IsValid(Blueprint) && Blueprint->Status == BS_Error &&
+        !Blueprint->GetPackage()->HasAnyPackageFlags(PKG_ForDiffing))
+    {
+      Paths.Add(MakeShared<FJsonValueString>(Blueprint->GetPathName()));
+    }
+  }
+  return Paths;
+}
+
 void ReleaseDispatcherLifetime(
     const TSharedPtr<FAsyncRequestLifetimeLease>& LifetimeLease)
 {
@@ -229,7 +249,7 @@ void StartPieTimeoutCleanupWatcher(
 }
 
 // ---- editor.play ----
-REGISTER_RPC_HANDLER("editor.play", "editor", "Start a Play-In-Editor (PIE) session for the current level and answer only after the PIE world exists (or a bounded startup timeout). Idempotent: returns alreadyPlaying=true if a PIE session is already active. Uses the level editor's first active viewport as the destination if available. Optional numClients/netMode start a multi-instance networked session (netMode 'listen' + numClients N spawns N auto-connected PIE clients under one process) via a transient copy of the play settings - the user's saved Editor Preferences are never modified. PIE network emulation is FORCE-DISABLED for the session unless the optional networkEmulation param explicitly enables it (the saved 'Enable Network Emulation' editor preference is never inherited, so test sessions get a deterministic wire by default); the state in effect is echoed in the response and readable per-session via editor.pie_status.",
+REGISTER_RPC_HANDLER("editor.play", "editor", "Start a Play-In-Editor (PIE) session for the current level and answer only after the PIE world exists (or a bounded startup timeout). Idempotent: returns alreadyPlaying=true if a PIE session is already active. Uses the level editor's first active viewport as the destination if available. Optional numClients/netMode start a multi-instance networked session (netMode 'listen' + numClients N spawns N auto-connected PIE clients under one process) via a transient copy of the play settings - the user's saved Editor Preferences are never modified. PIE network emulation is FORCE-DISABLED for the session unless the optional networkEmulation param explicitly enables it (the saved 'Enable Network Emulation' editor preference is never inherited, so test sessions get a deterministic wire by default); the state in effect is echoed in the response and readable per-session via editor.pie_status. PIE-start dialogs never block the call: the editor's 'Blueprint Asset Compilation Error' prompt is auto-answered to play, and a started session lists every loaded Blueprint in BS_Error in blueprintsWithErrors (their generated classes may be stale).",
     RPC_PARAMS(
         RPC_PARAM_OPT("numClients", "number", "Number of PIE player instances to start (>=1). Omit to use the saved play settings."),
         RPC_PARAM_OPT("netMode", "string", "PIE net mode for this session: 'standalone', 'listen' (listen server, clients auto-connect), or 'client'. Omit to use the saved play settings."),
@@ -353,6 +373,7 @@ REGISTER_RPC_HANDLER("editor.play", "editor", "Start a Play-In-Editor (PIE) sess
       Response->SetStringField(TEXT("netMode"), NetModeStr.ToLower());
     }
     // These fields describe a session only after PlayWorld proves that one started.
+    Response->SetArrayField(TEXT("blueprintsWithErrors"), CollectBlueprintsWithErrors());
     TSharedPtr<FJsonObject> EmulationResp = MakeShared<FJsonObject>();
     EmulationResp->SetBoolField(TEXT("enabled"), EmulationSpec.bEnabled);
     if (EmulationSpec.bEnabled) {
@@ -378,13 +399,25 @@ REGISTER_RPC_HANDLER("editor.play", "editor", "Start a Play-In-Editor (PIE) sess
     return true;
   }
 
+  // The engine consumes the queued request on a later editor tick
+  // (UEditorEngine::Tick -> StartQueuedPlaySessionRequest), outside the dispatcher's per-handler
+  // unattended scope. That tick raises the "Blueprint Asset Compilation Error" modal for any
+  // Blueprint in BS_Error (PlayLevel.cpp ShowCompilationErrorsDialog) and can raise the pre-play
+  // recompile prompt; either would own the game thread with this call still open. Hold the
+  // automation-mode interval until the wait resolves so they auto-answer and PIE starts; the
+  // errored Blueprints are reported in blueprintsWithErrors instead.
+  const TSharedRef<TOptional<FScopedUnattendedRpc>> ModalScope =
+      MakeShared<TOptional<FScopedUnattendedRpc>>();
+  ModalScope->Emplace();
+
   const TSharedRef<FAsyncResponseToken> Token = Ctx.MakeAsyncToken();
   const TSharedRef<FPieDispatcherWaitState> WaitState =
       MakeShared<FPieDispatcherWaitState>();
   const TSharedPtr<FAsyncRequestLifetimeLease> LifetimeLease =
       Ctx.RetainAsyncRequestLifetime(
-          [Operation, WaitState, Token, Resp]()
+          [Operation, WaitState, Token, Resp, ModalScope]()
           {
+            ModalScope->Reset();
             AbandonPieLifecycleWait(
                 Operation,
                 WaitState,
@@ -397,9 +430,10 @@ REGISTER_RPC_HANDLER("editor.play", "editor", "Start a Play-In-Editor (PIE) sess
   WaitState->WaitControl = PinWrightPieState::WaitForPieLifecycleState(
       PinWrightPieState::EPieLifecycleWaitTarget::PlayWorldActive,
       GPieLifecycleTimeoutSeconds,
-      [Token, Resp, AddAppliedSessionSettings, Operation, WaitState, LifetimeLease](
+      [Token, Resp, AddAppliedSessionSettings, Operation, WaitState, LifetimeLease, ModalScope](
           const PinWrightPieState::FPieLifecycleWaitResult& Outcome)
       {
+        ModalScope->Reset();
         Resp->SetBoolField(TEXT("pieActive"), Outcome.bPieActive);
         Resp->SetBoolField(TEXT("sessionInProgress"), Outcome.bSessionInProgress);
         Resp->SetBoolField(TEXT("startRequestQueued"), Outcome.bStartRequestQueued);
