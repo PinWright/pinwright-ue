@@ -16,10 +16,12 @@ import io
 import json
 import os
 import queue
+import shutil
 import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from unittest import mock
 
@@ -965,6 +967,56 @@ class LinuxLaunchTest(unittest.TestCase):
         display.assert_not_called()
         self.assertNotIn("env", popen.call_args.kwargs)
         self.assertIn("-RenderOffScreen", popen.call_args.args[0])
+
+
+def _proc_state(pid):
+    """The /proc State letter of pid ('Z' for a zombie), or None once it is gone (reaped)."""
+    try:
+        with open("/proc/%d/status" % pid, encoding="utf-8") as fh:
+            for line in fh:
+                if line.startswith("State:"):
+                    return line.split()[1]
+    except FileNotFoundError:
+        return None
+    return None
+
+
+@unittest.skipUnless(os.path.isdir("/proc/self"), "needs /proc to observe zombies")
+class ReapSpawnedChildTest(unittest.TestCase):
+    """A real child spawned by editor_start and left running when the verb returns must not stay
+    <defunct> under the long-lived proxy once it exits (board B-editor-quit-leaves-zombie-editor-child),
+    and must not be killed by the proxy's shutdown either."""
+
+    def test_child_left_running_survives_shutdown_and_is_reaped_on_exit(self):
+        temp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, temp, True)
+        release = os.path.join(temp, "release")
+        self.addCleanup(lambda: open(release, "w").close())  # never leak the child
+        child = [sys.executable, "-c",
+                 "import os, time\nwhile not os.path.exists(%r): time.sleep(0.05)" % release]
+        project = os.path.join(temp, "Host.uproject")
+        with open(project, "w", encoding="utf-8") as fh:
+            fh.write('{"EngineAssociation": "5.8"}')
+        proxy = Proxy(None, 0.1, 0.1, 0.1, None, None, start_timeout=5.0, uproject=project)
+        probes = iter([("not_running", "refused"), ("alive", None)])
+        with mock.patch("mcp_proxy._association_open_supported", return_value=False), \
+                mock.patch.object(proxy, "_probe_state", side_effect=lambda _url: next(probes)), \
+                mock.patch.object(proxy, "_resolve_url", return_value="http://x/mcp"), \
+                mock.patch("mcp_proxy.resolve_editor", return_value=("root", sys.executable)), \
+                mock.patch("mcp_proxy.build_editor_command", return_value=child):
+            result = proxy._editor_start({"visible": False})
+        self.assertFalse(result["isError"], result)
+        pid = result["structuredContent"]["pid"]
+
+        # Left alone: still running after the verb returned and after the proxy shut down.
+        proxy.request_shutdown()
+        self.assertIn(_proc_state(pid), ("S", "R", "D"))
+
+        open(release, "w").close()
+        deadline = time.monotonic() + 10.0
+        while _proc_state(pid) is not None and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertIsNone(_proc_state(pid), "child exited but was not reaped (zombie)")
 
 
 class BorrowSessionDisplayTest(unittest.TestCase):

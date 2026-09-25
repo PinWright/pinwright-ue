@@ -733,7 +733,17 @@ def _open_uproject(uproject):
         os.startfile(uproject, "open")
         return
     command = ["open", uproject] if sys.platform == "darwin" else ["xdg-open", uproject]
-    subprocess.Popen(command, start_new_session=True)
+    _reap_on_exit(subprocess.Popen(command, start_new_session=True))
+
+
+def _reap_on_exit(proc):
+    """Collect the exit status of a child this proxy leaves running, from a daemon thread, so it
+    does not stay <defunct> under the long-lived proxy. An unreaped editor keeps its PID, so UBT
+    treats its Engine/Intermediate/EditorRuns/<pid> marker as live (and crashes on its empty exe
+    path) and the next editor writes <Project>_2.log. Daemon, and the child has its own session:
+    the proxy never blocks on it and can exit or restart without taking the editor down."""
+    if proc.poll() is None:
+        threading.Thread(target=proc.wait, name="reap-%d" % proc.pid, daemon=True).start()
 
 
 def _editor_cmd_from_editor(editor_exe):
@@ -2134,6 +2144,7 @@ class Proxy:
         else:
             result = self._wait_for_ready(proc, cmdline, extra_args)
         self._release_owned_child(proc)
+        _reap_on_exit(proc)
         return result
 
     def _editor_restart(self, args):
