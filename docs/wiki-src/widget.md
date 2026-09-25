@@ -752,6 +752,13 @@ Per-track-type schema under `bindings[].tracks[]`:
 `brushPropertyNamePath`, and nests keys inside per-parameter entries. Asset-dump
 `widget_animations.json` uses the same shape through `WidgetAnimationJsonSerializer`.
 
+Section `range` and animation `playbackRange` objects hold `startFrame` (inclusive) and `endFrame`
+(exclusive) in tick-resolution frames. An open side is written as `startBounded: false` /
+`endBounded: false` instead of a frame; UMG creates every new section as `(-inf, +inf)`, which
+exports as `{"startBounded": false, "endBounded": false}`. On import an omitted side keeps the
+default: open for a section, the current bound for `playbackRange`. The pre-marker dump shape
+`"range": {}` therefore still imports as an unbounded section.
+
 Asset dumps write `widget_animations.json` for every WBP from `UWidgetBlueprint::Animations`. No
 authored animations intentionally emit `animations: []`; non-empty entries emit supported tracks and
 optional event metadata through the same serializer.

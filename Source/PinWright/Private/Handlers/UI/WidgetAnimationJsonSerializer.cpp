@@ -139,13 +139,23 @@ namespace
     TSharedPtr<FJsonObject> MakeRangeObject(const TRange<FFrameNumber>& Range)
     {
         TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
+        // An open side is written as an explicit `xBounded: false` so it cannot be mistaken
+        // for an omitted field (UMG creates every widget animation section as (-inf, +inf)).
         if (Range.HasLowerBound())
         {
             Obj->SetNumberField(TEXT("startFrame"), Range.GetLowerBoundValue().Value);
         }
+        else
+        {
+            Obj->SetBoolField(TEXT("startBounded"), false);
+        }
         if (Range.HasUpperBound())
         {
             Obj->SetNumberField(TEXT("endFrame"), Range.GetUpperBoundValue().Value);
+        }
+        else
+        {
+            Obj->SetBoolField(TEXT("endBounded"), false);
         }
         return Obj;
     }
@@ -161,13 +171,29 @@ namespace
             return DefaultRange;
         }
 
-        double StartFrame = DefaultRange.HasLowerBound() ? DefaultRange.GetLowerBoundValue().Value : 0;
-        double EndFrame = DefaultRange.HasUpperBound() ? DefaultRange.GetUpperBoundValue().Value : StartFrame;
-        (*RangeObj)->TryGetNumberField(TEXT("startFrame"), StartFrame);
-        (*RangeObj)->TryGetNumberField(TEXT("endFrame"), EndFrame);
+        // Each side resolves independently: `xBounded: false` is open, a frame number is
+        // [start, end), and an omitted side keeps DefaultRange's bound (open for sections).
+        const auto ReadBound = [&RangeObj](const TCHAR* BoundedField, const TCHAR* FrameField, bool bLower,
+            const TRangeBound<FFrameNumber>& DefaultBound)
+        {
+            bool bBounded = true;
+            if ((*RangeObj)->TryGetBoolField(BoundedField, bBounded) && !bBounded)
+            {
+                return TRangeBound<FFrameNumber>::Open();
+            }
+            double Frame = 0.0;
+            if (!(*RangeObj)->TryGetNumberField(FrameField, Frame))
+            {
+                return DefaultBound;
+            }
+            const FFrameNumber FrameNumber(FMath::RoundToInt32(Frame));
+            return bLower
+                ? TRangeBound<FFrameNumber>::Inclusive(FrameNumber)
+                : TRangeBound<FFrameNumber>::Exclusive(FrameNumber);
+        };
         return TRange<FFrameNumber>(
-            FFrameNumber(FMath::RoundToInt32(StartFrame)),
-            FFrameNumber(FMath::RoundToInt32(EndFrame)));
+            ReadBound(TEXT("startBounded"), TEXT("startFrame"), true, DefaultRange.GetLowerBound()),
+            ReadBound(TEXT("endBounded"), TEXT("endFrame"), false, DefaultRange.GetUpperBound()));
     }
 
     TSharedPtr<FJsonObject> MakeTangentObject(const FMovieSceneTangentData& Tangent)

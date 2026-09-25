@@ -590,6 +590,109 @@ bool FWidgetAnimationJsonImportRoundTripTest::RunTest(const FString& Parameters)
     return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWidgetAnimationJsonUnboundedSectionRangeRoundTripTest,
+    "PinWright.widget.animation_json.UnboundedSectionRangeRoundTrip",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FWidgetAnimationJsonUnboundedSectionRangeRoundTripTest::RunTest(const FString& Parameters)
+{
+    using namespace WidgetAnimationJsonTestUtils;
+
+    const FWidgetAnimationFixture Source = CreateFloatAnimationFixture(TEXT("WBP_WidgetAnimationJsonOpenRangeSource"));
+    UWidgetBlueprint* Target = CreateTransientWidgetBlueprint(MakeWidgetAnimationJsonTestAssetPath(TEXT("WBP_WidgetAnimationJsonOpenRangeTarget")));
+    AddNamedTextBlock(Target, TEXT("AnimatedLabel"));
+    if (!Source.FloatSection || !Target)
+    {
+        AddError(TEXT("fixture creation failed"));
+        return false;
+    }
+
+    // Fetches animations[0].bindings[0].tracks[0].sections[0].range from an exported document.
+    const auto FindSectionRange = [](const TSharedPtr<FJsonObject>& Document) -> TSharedPtr<FJsonObject>
+    {
+        TSharedPtr<FJsonObject> Obj = Document;
+        for (const TCHAR* ArrayField : { TEXT("animations"), TEXT("bindings"), TEXT("tracks"), TEXT("sections") })
+        {
+            const TArray<TSharedPtr<FJsonValue>>* Array = nullptr;
+            if (!Obj.IsValid() || !Obj->TryGetArrayField(ArrayField, Array) || Array->Num() == 0)
+            {
+                return nullptr;
+            }
+            Obj = (*Array)[0]->AsObject();
+        }
+        const TSharedPtr<FJsonObject>* Range = nullptr;
+        return Obj.IsValid() && Obj->TryGetObjectField(TEXT("range"), Range) ? *Range : nullptr;
+    };
+
+    struct FCase
+    {
+        const TCHAR* Name;
+        TRange<FFrameNumber> Range;
+        bool bStripBoundedMarkers; // import the pre-fix `"range": {}` shape
+    };
+    const FCase Cases[] = {
+        { TEXT("unbounded"), TRange<FFrameNumber>::All(), false },
+        { TEXT("lower-bounded"), TRange<FFrameNumber>::AtLeast(FFrameNumber(10)), false },
+        { TEXT("upper-bounded"), TRange<FFrameNumber>(TRangeBound<FFrameNumber>::Open(), TRangeBound<FFrameNumber>::Exclusive(FFrameNumber(20))), false },
+        { TEXT("legacy empty object"), TRange<FFrameNumber>::All(), true },
+    };
+
+    for (const FCase& Case : Cases)
+    {
+        Source.FloatSection->SetRange(Case.Range);
+
+        FTestResponseCapture ExportCapture;
+        InvokeHandlerWithCapture(TEXT("widget.export_animations_json"), MakePayloadWithWidgetPath(Source.WidgetPath), ExportCapture);
+        const TSharedPtr<FJsonObject> Document = GetExportedJsonDocument(ExportCapture);
+        const TSharedPtr<FJsonObject> RangeObj = FindSectionRange(Document);
+        if (!TestTrue(FString::Printf(TEXT("%s: exported section range"), Case.Name), ExportCapture.bSuccess && RangeObj.IsValid()))
+        {
+            return false;
+        }
+
+        bool bStartBounded = true;
+        bool bEndBounded = true;
+        RangeObj->TryGetBoolField(TEXT("startBounded"), bStartBounded);
+        RangeObj->TryGetBoolField(TEXT("endBounded"), bEndBounded);
+        TestEqual(FString::Printf(TEXT("%s: startBounded marker"), Case.Name), bStartBounded, Case.Range.HasLowerBound());
+        TestEqual(FString::Printf(TEXT("%s: endBounded marker"), Case.Name), bEndBounded, Case.Range.HasUpperBound());
+        if (Case.bStripBoundedMarkers)
+        {
+            RangeObj->RemoveField(TEXT("startBounded"));
+            RangeObj->RemoveField(TEXT("endBounded"));
+            TestEqual(TEXT("legacy range object is empty"), RangeObj->Values.Num(), 0);
+        }
+
+        TSharedPtr<FJsonObject> ImportPayload = MakePayloadWithWidgetPath(Target->GetOutermost()->GetName());
+        ImportPayload->SetObjectField(TEXT("json"), Document);
+        ImportPayload->SetStringField(TEXT("mode"), TEXT("replace"));
+        FTestResponseCapture ImportCapture;
+        InvokeHandlerWithCapture(TEXT("widget.import_animations_json"), ImportPayload, ImportCapture);
+        TestTrue(FString::Printf(TEXT("%s: import succeeds"), Case.Name), ImportCapture.bSuccess);
+
+        const UMovieScene* ImportedScene = Target->Animations.Num() == 1 && Target->Animations[0]
+            ? Target->Animations[0]->GetMovieScene()
+            : nullptr;
+        const FMovieSceneBinding* Binding = ImportedScene && ImportedScene->GetBindings().Num() == 1
+            ? &ImportedScene->GetBindings()[0]
+            : nullptr;
+        const UMovieSceneSection* ImportedSection = Binding && Binding->GetTracks().Num() == 1 && Binding->GetTracks()[0]->GetAllSections().Num() == 1
+            ? Binding->GetTracks()[0]->GetAllSections()[0]
+            : nullptr;
+        if (!TestNotNull(FString::Printf(TEXT("%s: imported section"), Case.Name), ImportedSection))
+        {
+            return false;
+        }
+        const TRange<FFrameNumber> Imported = ImportedSection->GetRange();
+        TestTrue(FString::Printf(TEXT("%s: imported range equals exported range (lower %s, upper %s)"), Case.Name,
+                Imported.HasLowerBound() ? *LexToString(Imported.GetLowerBoundValue().Value) : TEXT("open"),
+                Imported.HasUpperBound() ? *LexToString(Imported.GetUpperBoundValue().Value) : TEXT("open")),
+            Imported == Case.Range);
+        TestFalse(FString::Printf(TEXT("%s: imported range is not empty"), Case.Name), Imported.IsEmpty());
+    }
+
+    return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWidgetAnimationJsonRoundTripsCoreUmgTracksTest,
     "PinWright.widget.animation_json.RoundTripsCoreUmgTracks",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)

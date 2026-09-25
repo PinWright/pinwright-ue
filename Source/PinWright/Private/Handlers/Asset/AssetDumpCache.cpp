@@ -715,7 +715,9 @@ int32 GetAspectVersion(const FString& RelativeFile)
     // See plugin CLAUDE.md "Aspect Version Bumping" for the discipline.
     static const TMap<FString, int32> Versions = {
         { TEXT("tree.xml"),                 3 },
-        { TEXT("widget_animations.json"),   2 },
+        // 3: an open section/playback range side is written as startBounded/endBounded:false
+        //    instead of being omitted (was `"range": {}` for default UMG sections).
+        { TEXT("widget_animations.json"),   3 },
         // 5: component-template properties go through the shared exporter, so a template
         //    holding an undecodable member (FNavAgentProperties, TObjectPtr<UThumbnailInfo>)
         //    now carries the rest of its fields instead of one whole-value marker.
