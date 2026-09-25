@@ -437,6 +437,10 @@ namespace ErrorCodes
     // a refusal that names only one side does not tell the caller which editor answered.
     // See Transport/EditorIdentity.h.
     inline constexpr TCHAR ERR_EDITOR_IDENTITY_MISMATCH[]                   = TEXT("EDITOR_IDENTITY_MISMATCH");
+    // Terminal error of a job that was still running when editor.quit committed to
+    // exiting and had no cancel hook: the process is going away, so the ticket (and any
+    // client streaming it) gets a terminal state instead of waiting on a dead editor.
+    inline constexpr TCHAR ERR_EDITOR_EXITING[]                             = TEXT("EDITOR_EXITING");
     // editor.quit only: another client has driven this editor within the in-use
     // window (EditorQuitPolicy::InUseWindowSeconds), so exiting would end a
     // session that is still in use. Sits beside UNSAVED_CHANGES as the second

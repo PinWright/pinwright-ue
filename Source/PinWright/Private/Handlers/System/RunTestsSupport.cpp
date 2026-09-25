@@ -131,6 +131,26 @@ namespace PinWrightRunTests
             : EIsolatedChildPollResult::Running;
     }
 
+    EFilterRunPollResult PollFilterRun(
+        bool bControllerRunning,
+        bool& bInOutSawRunning,
+        double ElapsedSeconds,
+        double StartTimeoutSeconds)
+    {
+        if (bControllerRunning)
+        {
+            bInOutSawRunning = true;
+            return EFilterRunPollResult::Waiting;
+        }
+        if (bInOutSawRunning)
+        {
+            return EFilterRunPollResult::Drained;
+        }
+        return ElapsedSeconds >= StartTimeoutSeconds
+            ? EFilterRunPollResult::NeverStarted
+            : EFilterRunPollResult::Waiting;
+    }
+
     void NoteControllerDelegateBound()
     {
         FScopeLock Lock(&ControllerDelegateStatsMutex);

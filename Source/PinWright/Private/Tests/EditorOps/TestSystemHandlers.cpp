@@ -285,6 +285,92 @@ bool FSystemRunTestsConcurrentJobLeaseTest::RunTest(const FString& Parameters)
     return true;
 }
 
+// A filter job completed only on OnTestsComplete and stayed "running" forever after
+// its queue drained. The job now polls the controller state; the poll must report
+// Drained once a run it saw start has stopped, and must not wait forever on a run
+// that never starts (a filter that matches nothing never calls RunTests).
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSystemRunTestsFilterRunPollTest,
+    "PinWright.system.run_tests.FilterRunPollReachesTerminal",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FSystemRunTestsFilterRunPollTest::RunTest(const FString& Parameters)
+{
+    using PinWrightRunTests::EFilterRunPollResult;
+    using PinWrightRunTests::PollFilterRun;
+    constexpr double Timeout = 90.0;
+
+    bool bSawRunning = false;
+    TestTrue(TEXT("idle before the run starts keeps waiting"),
+        PollFilterRun(false, bSawRunning, 1.0, Timeout) == EFilterRunPollResult::Waiting);
+    TestTrue(TEXT("running keeps waiting"),
+        PollFilterRun(true, bSawRunning, 2.0, Timeout) == EFilterRunPollResult::Waiting);
+    TestTrue(TEXT("running is remembered"), bSawRunning);
+    TestTrue(TEXT("a long run past the start timeout keeps waiting"),
+        PollFilterRun(true, bSawRunning, 5000.0, Timeout) == EFilterRunPollResult::Waiting);
+    TestTrue(TEXT("controller leaving Running after a run is a drain"),
+        PollFilterRun(false, bSawRunning, 5001.0, Timeout) == EFilterRunPollResult::Drained);
+
+    bool bNeverRan = false;
+    TestTrue(TEXT("a run that never starts is terminal at the timeout"),
+        PollFilterRun(false, bNeverRan, Timeout, Timeout) == EFilterRunPollResult::NeverStarted);
+    return true;
+}
+
+// The filter job's OnTestsComplete lambda held the only reference to the job, and
+// Finish() removes that binding mid-broadcast. Pins the engine behaviour that made it a
+// use-after-free (removal destroys the executing lambda's captures at once) and the
+// stack keep-alive the job now takes. Observed only through state outside the object,
+// so the test itself never touches freed memory.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSystemRunTestsCompletionKeepAliveTest,
+    "PinWright.system.run_tests.CompletionLambdaKeepsJobAlive",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FSystemRunTestsCompletionKeepAliveTest::RunTest(const FString& Parameters)
+{
+    struct FJobProbe
+    {
+        FSimpleMulticastDelegate* Delegate = nullptr;
+        FDelegateHandle Handle;
+        void Finish() { Delegate->Remove(Handle); }
+    };
+
+    for (const bool bKeepAlive : {false, true})
+    {
+        FSimpleMulticastDelegate Delegate;
+        TWeakPtr<FJobProbe> Weak;
+        bool bAliveAfterRemove = false;
+        {
+            TSharedRef<FJobProbe> Self = MakeShared<FJobProbe>();
+            Self->Delegate = &Delegate;
+            Weak = Self;
+            Self->Handle = Delegate.AddLambda(
+                [Self, bKeepAlive, &Weak, &bAliveAfterRemove]()
+                {
+                    // Copied before the call, as the job does; the no-keep-alive leg
+                    // drops it so only the capture holds the object.
+                    TSharedPtr<FJobProbe> KeepAlive = Self;
+                    FJobProbe* Raw = KeepAlive.Get();
+                    if (!bKeepAlive)
+                    {
+                        KeepAlive.Reset();
+                    }
+                    // The closure dies inside Finish(); read its captures first.
+                    TWeakPtr<FJobProbe>* WeakOut = &Weak;
+                    bool* AliveOut = &bAliveAfterRemove;
+                    Raw->Finish();
+                    *AliveOut = WeakOut->IsValid();
+                });
+        }
+        Delegate.Broadcast();
+        TestEqual(bKeepAlive
+                ? TEXT("with a stack keep-alive the job survives removing its own binding")
+                : TEXT("without one, removing the binding mid-broadcast frees the job"),
+            bAliveAfterRemove, bKeepAlive);
+        TestFalse(TEXT("the job is released once the broadcast returns"), Weak.IsValid());
+    }
+    return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSystemRunTestsIsolatedGroupCommandLinesTest,
     "PinWright.system.run_tests.IsolatedGroupCommandLines",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)

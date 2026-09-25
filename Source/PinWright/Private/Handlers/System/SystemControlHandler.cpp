@@ -468,10 +468,16 @@ namespace
                 return;
             }
 
+            // Finish() removes this binding while it is being broadcast, which destroys
+            // the lambda and its captured Self. Without the stack copy that was the last
+            // reference: the job was freed mid-Finish, the completion never reached the
+            // registry (ticket stuck "running", lease never released) and Finish went on
+            // writing to freed heap.
             TestsCompleteHandle = Controller->OnTestsComplete().AddLambda(
                 [Self]()
                 {
-                    Self->HandleTestsComplete();
+                    const TSharedRef<FRunAutomationTestsByFilterJob> KeepAlive = Self;
+                    KeepAlive->HandleTestsComplete();
                 });
             PinWrightRunTests::NoteControllerDelegateBound();
 
@@ -495,9 +501,48 @@ namespace
                 return;
             }
             GEngine->Exec(nullptr, *Command);
+
+            // A filter that matches nothing never calls RunTests, so OnTestsComplete
+            // never fires; poll the controller state as well (PollFilterRun).
+            TickerHandle = FTSTicker::GetCoreTicker().AddTicker(
+                FTickerDelegate::CreateLambda(
+                    [Self](float DeltaTime)
+                    {
+                        return Self->Tick(DeltaTime);
+                    }));
         }
 
     private:
+        bool Tick(float DeltaTime)
+        {
+            if (bComplete)
+            {
+                return false;
+            }
+            ElapsedSeconds += DeltaTime;
+            const PinWrightRunTests::EFilterRunPollResult Poll = PinWrightRunTests::PollFilterRun(
+                Controller->GetTestState() == EAutomationControllerModuleState::Running,
+                bSawRunning,
+                ElapsedSeconds,
+                RunTestsReadyTimeoutSeconds + RunTestsDiscoveryTimeoutSeconds);
+            if (Poll == PinWrightRunTests::EFilterRunPollResult::Drained)
+            {
+                HandleTestsComplete();
+                return false;
+            }
+            if (Poll == PinWrightRunTests::EFilterRunPollResult::NeverStarted)
+            {
+                auto Result = MakeShared<FJsonObject>();
+                Result->SetBoolField(TEXT("has_errors"), true);
+                Result->SetStringField(TEXT("reason"),
+                    TEXT("The automation controller never started running: the filter matched no tests, ")
+                    TEXT("or worker discovery failed. See LogAutomationCommandLine in the editor log."));
+                Finish(false, Result, TEXT("NO_TESTS_MATCHED"));
+                return false;
+            }
+            return true;
+        }
+
         void HandleTestsComplete()
         {
             if (bComplete)
@@ -530,6 +575,11 @@ namespace
                 TestsCompleteHandle.Reset();
                 PinWrightRunTests::NoteControllerDelegateUnbound();
             }
+            if (TickerHandle.IsValid())
+            {
+                FTSTicker::GetCoreTicker().RemoveTicker(TickerHandle);
+                TickerHandle.Reset();
+            }
 
             FJobOnComplete Completion = MoveTemp(OnComplete);
             Completion(bSuccess, Result, Error);
@@ -541,6 +591,9 @@ namespace
         FJobOnComplete OnComplete;
         IAutomationControllerManagerPtr Controller;
         FDelegateHandle TestsCompleteHandle;
+        FTSTicker::FDelegateHandle TickerHandle;
+        double ElapsedSeconds = 0.0;
+        bool bSawRunning = false;
         bool bComplete = false;
     };
 

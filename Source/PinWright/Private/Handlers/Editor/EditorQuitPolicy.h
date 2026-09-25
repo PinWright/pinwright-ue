@@ -16,6 +16,9 @@
 // GEditor->GetEditorSubsystem<UAssetEditorSubsystem>().
 #include "Editor.h"
 #include "Subsystems/AssetEditorSubsystem.h"
+#include "Handlers/ErrorCodes.h"
+#include "PinWrightSubsystem.h"
+#include "State/JobRegistry.h"
 
 namespace EditorQuitPolicy
 {
@@ -102,6 +105,34 @@ inline FAssetEditorCloseResult CloseOpenAssetEditors()
         Result.RemainingCount = Subsystem->GetAllEditedAssets().Num();
     }
     return Result;
+}
+
+// Ends every job still "running" when quit commits to exiting, and returns their
+// ticket ids. A job with a cancel hook is cancelled (its work is stopped, e.g. an
+// isolated run_tests child process tree); one without is failed with
+// EDITOR_EXITING. Either way the ticket turns terminal and fires its job event
+// while the transport is still up, so a client streaming it gets a final answer
+// instead of blocking on an editor that is gone. Each ticket is logged so a crash
+// later in teardown can be read against what was still live.
+inline TArray<FString> TerminateRunningJobs(FJobRegistry& Registry)
+{
+    TArray<FString> Terminated;
+    for (const FJobTicket& Ticket : Registry.List())
+    {
+        if (Ticket.Status != TEXT("running"))
+        {
+            continue;
+        }
+        UE_LOG(LogPinWrightSubsystem, Warning,
+            TEXT("editor.quit: job %s (%s) still running at exit, terminating it"),
+            *Ticket.TicketId, *Ticket.Method);
+        if (Registry.Cancel(Ticket.TicketId) == EJobCancelResult::Unsupported)
+        {
+            Registry.Complete(Ticket.TicketId, false, nullptr, ErrorCodes::ERR_EDITOR_EXITING);
+        }
+        Terminated.Add(Ticket.TicketId);
+    }
+    return Terminated;
 }
 
 }

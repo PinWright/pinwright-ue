@@ -38,6 +38,7 @@
 #include "Handlers/ErrorCodes.h"
 #include "Handlers/Editor/EditorQuitPolicy.h"
 #include "State/ClientActivity.h"
+#include "State/PluginState.h"
 #include "Dom/JsonObject.h"
 
 #include "CoreGlobals.h"
@@ -69,6 +70,18 @@ static void EditorQuit_ScheduleDeferredExit(const FString& Reason)
         return false;
       }),
       1.0f);
+}
+
+// Terminates the jobs still running at exit (EditorQuitPolicy::TerminateRunningJobs)
+// and reports their tickets as jobsTerminated.
+static void EditorQuit_TerminateRunningJobs(FJsonObject& Resp)
+{
+  TArray<TSharedPtr<FJsonValue>> Ids;
+  for (const FString& Id : EditorQuitPolicy::TerminateRunningJobs(FPluginState::Get().GetJobRegistry()))
+  {
+    Ids.Add(MakeShared<FJsonValueString>(Id));
+  }
+  Resp.SetArrayField(TEXT("jobsTerminated"), Ids);
 }
 
 // Poll cadence and budget for the pre-exit PIE teardown. Ending PIE is asynchronous:
@@ -116,6 +129,7 @@ static void EditorQuit_WaitForPieStopThenExit(const TSharedRef<FAsyncResponseTok
             EditorQuitPolicy::CloseOpenAssetEditors();
         Resp->SetNumberField(TEXT("assetEditorsClosed"), Closed.OpenCount);
         Resp->SetNumberField(TEXT("assetEditorsRemaining"), Closed.RemainingCount);
+        EditorQuit_TerminateRunningJobs(*Resp);
         Token->SendSuccess(Resp);
         EditorQuit_ScheduleDeferredExit(Reason);
         return false;
@@ -125,7 +139,7 @@ static void EditorQuit_WaitForPieStopThenExit(const TSharedRef<FAsyncResponseTok
 
 // ---- editor.quit ----
 REGISTER_RPC_HANDLER("editor.quit", "editor",
-    "Gracefully request the editor to exit. This editor is shared: if another client has driven it within the last 5 minutes, refuses with EDITOR_IN_USE naming that client's last method and how long ago, unless force:true is passed - an editor nobody is driving falls silent, so a genuinely abandoned one stops refusing once the window elapses. If user content/map packages are dirty, refuses with UNSAVED_CHANGES unless save:true (save first) or discard:true (exit without saving) is passed. An active Play-In-Editor session is ended first and waited out (exiting with PIE live crashes the editor during Slate shutdown); the response is held until the session is gone and reports pieWasActive/pieStopped, or fails with PIE_STOP_FAILED (no exit) if PIE will not stop within 15s. Every open asset editor is then closed (one left open crashes the editor in its own destructor during Slate shutdown) and counted as assetEditorsClosed/assetEditorsRemaining. Acks once clear, then exits ~1s later so the async response flushes before the engine tears down.",
+    "Gracefully request the editor to exit. This editor is shared: if another client has driven it within the last 5 minutes, refuses with EDITOR_IN_USE naming that client's last method and how long ago, unless force:true is passed - an editor nobody is driving falls silent, so a genuinely abandoned one stops refusing once the window elapses. If user content/map packages are dirty, refuses with UNSAVED_CHANGES unless save:true (save first) or discard:true (exit without saving) is passed. An active Play-In-Editor session is ended first and waited out (exiting with PIE live crashes the editor during Slate shutdown); the response is held until the session is gone and reports pieWasActive/pieStopped, or fails with PIE_STOP_FAILED (no exit) if PIE will not stop within 15s. Every open asset editor is then closed (one left open crashes the editor in its own destructor during Slate shutdown) and counted as assetEditorsClosed/assetEditorsRemaining. Every job still running is then ended - cancelled if it has a cancel hook, otherwise failed with EDITOR_EXITING - so streaming clients get a terminal event before the process goes, and its tickets are listed as jobsTerminated. Acks once clear, then exits ~1s later so the async response flushes before the engine tears down.",
     RPC_PARAMS(
         RPC_PARAM_OPT("reason", "string", "Optional reason string recorded in the exit log."),
         RPC_PARAM_OPT("save", "boolean", "If true, save all dirty content/map packages (unattended, no prompt) before exiting."),
@@ -300,6 +314,7 @@ REGISTER_RPC_HANDLER("editor.quit", "editor",
       EditorQuitPolicy::CloseOpenAssetEditors();
   Resp->SetNumberField(TEXT("assetEditorsClosed"), Closed.OpenCount);
   Resp->SetNumberField(TEXT("assetEditorsRemaining"), Closed.RemainingCount);
+  EditorQuit_TerminateRunningJobs(*Resp);
   Ctx.SendSuccess(Resp);
 
   EditorQuit_ScheduleDeferredExit(Reason);

@@ -229,3 +229,23 @@ bool FJobRegistryRunningTicketSurvivesEvictionTest::RunTest(const FString& Param
     TestEqual(TEXT("and is still running"), Ticket.Status, FString(TEXT("running")));
     return true;
 }
+
+// Ticket ids used the GUID's leading 8 hex digits, which on Linux (UUIDv7) are
+// timestamp bits: every job started in the same second got the same id, and the
+// later Start overwrote the earlier ticket in the map.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FJobRegistrySameSecondIdsAreDistinctTest,
+    "PinWright.state.job_registry.SameSecondIdsAreDistinct",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FJobRegistrySameSecondIdsAreDistinctTest::RunTest(const FString& Parameters)
+{
+    FJobRegistry Reg(3600, 0, nullptr);
+    TSet<FString> Ids;
+    for (int32 Index = 0; Index < 16; ++Index)
+    {
+        Ids.Add(Reg.Start(TEXT("system.run_tests"), MakeShared<FJsonObject>()));
+    }
+    TestEqual(TEXT("16 back-to-back starts get 16 distinct ids"), Ids.Num(), 16);
+    TestEqual(TEXT("and 16 tickets"), Reg.List().Num(), 16);
+    return true;
+}

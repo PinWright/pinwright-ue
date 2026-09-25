@@ -41,6 +41,26 @@ namespace PinWrightRunTests
         double NowSeconds,
         bool bHasExited);
 
+    // Filter/RunAll completion. The job issues `Automation RunTests|RunAll` and
+    // FAutomationExecCmd drives the controller. OnTestsComplete fires only when a
+    // run the controller started drains; a filter that matches nothing never calls
+    // RunTests, so it never broadcasts. The job therefore also polls the controller
+    // state FAutomationExecCmd polls for its "Test Queue Empty" marker: Drained once
+    // the controller has been Running and no longer is, NeverStarted if it has not
+    // entered Running within StartTimeoutSeconds.
+    enum class EFilterRunPollResult : uint8
+    {
+        Waiting,
+        Drained,
+        NeverStarted
+    };
+
+    EFilterRunPollResult PollFilterRun(
+        bool bControllerRunning,
+        bool& bInOutSawRunning,
+        double ElapsedSeconds,
+        double StartTimeoutSeconds);
+
     struct FControllerDelegateStats
     {
         int32 Bound = 0;

@@ -330,3 +330,40 @@ bool FEditorQuitContractTest::RunTest(const FString& Parameters)
     return true;
 }
 
+
+// A system.run_tests filter job sat "running" for hours when editor.quit ended the
+// process, and a client streaming that ticket had no way to learn the job was gone.
+// Quit must leave no ticket running: a cancellable one is cancelled (its hook runs),
+// an uncancellable one is failed with EDITOR_EXITING, terminal ones are untouched.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEditorQuitTerminatesRunningJobsTest,
+    "PinWright.editor.quit.TerminatesRunningJobs",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FEditorQuitTerminatesRunningJobsTest::RunTest(const FString& Parameters)
+{
+    FJobRegistry Registry(/*TtlSeconds=*/3600, /*ProgressMinIntervalMs=*/0, /*MonitorLog=*/nullptr);
+    const FString Stuck = Registry.Start(TEXT("system.run_tests"), MakeShared<FJsonObject>());
+    const FString Cancellable = Registry.Start(TEXT("asset.dump_folder"), MakeShared<FJsonObject>());
+    bool bCancelHookRan = false;
+    Registry.SetCancelCallback(Cancellable, [&bCancelHookRan]() { bCancelHookRan = true; });
+    const FString Done = Registry.Start(TEXT("system.run_ubt"), MakeShared<FJsonObject>());
+    Registry.Complete(Done, true, nullptr, FString());
+
+    const TArray<FString> Terminated = EditorQuitPolicy::TerminateRunningJobs(Registry);
+
+    TestEqual(TEXT("both running jobs are reported"), Terminated.Num(), 2);
+    TestTrue(TEXT("stuck job reported"), Terminated.Contains(Stuck));
+    TestTrue(TEXT("cancellable job reported"), Terminated.Contains(Cancellable));
+    TestFalse(TEXT("terminal job not reported"), Terminated.Contains(Done));
+
+    FJobTicket Ticket;
+    TestTrue(TEXT("stuck ticket present"), Registry.Get(Stuck, Ticket));
+    TestEqual(TEXT("uncancellable job is failed"), Ticket.Status, FString(TEXT("failed")));
+    TestEqual(TEXT("with EDITOR_EXITING"), Ticket.Error, FString(ErrorCodes::ERR_EDITOR_EXITING));
+    TestTrue(TEXT("cancellable ticket present"), Registry.Get(Cancellable, Ticket));
+    TestEqual(TEXT("cancellable job is cancelled"), Ticket.Status, FString(TEXT("cancelled")));
+    TestTrue(TEXT("its cancel hook ran"), bCancelHookRan);
+    TestTrue(TEXT("terminal ticket present"), Registry.Get(Done, Ticket));
+    TestEqual(TEXT("terminal job keeps its outcome"), Ticket.Status, FString(TEXT("completed")));
+    return true;
+}

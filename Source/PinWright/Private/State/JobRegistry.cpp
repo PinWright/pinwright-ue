@@ -39,7 +39,10 @@ FJobRegistry::FJobRegistry(int32 InTtlSeconds, int32 InProgressMinIntervalMs, FJ
 FString FJobRegistry::AllocateId(const FString& /*Method*/)
 {
     const FString Stamp = FDateTime::UtcNow().ToString(TEXT("%Y%m%dT%H%M%S"));
-    const FString Hex = FGuid::NewGuid().ToString(EGuidFormats::DigitsLower).Left(8);
+    // Right, not Left: on Linux FGuid is a UUIDv7 whose leading 32 bits are the
+    // millisecond timestamp >> 16, so Left(8) repeats for ~65 s and two jobs started in
+    // the same second shared one ticket (the later Start silently replaced the first).
+    const FString Hex = FGuid::NewGuid().ToString(EGuidFormats::DigitsLower).Right(8);
     return FString::Printf(TEXT("j_%s_%s"), *Stamp, *Hex);
 }
 

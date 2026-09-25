@@ -84,7 +84,7 @@ only, so cross-session lines would reference dangling IDs; every session starts 
 
 | Method | Bound to |
 |---|---|
-| `system.run_tests` | `IAutomationControllerManager::OnTestsComplete`, or a bounded child process per isolated group |
+| `system.run_tests` | `IAutomationControllerManager::OnTestsComplete` (exact names); filter mode also polls the controller state; or a bounded child process per isolated group |
 | `system.run_ubt` | poll proc handle |
 | `level.build_lighting` | `FEditorDelegates::OnLightingBuildSucceeded/Failed/Kept` |
 | `lighting.build_lighting` | same lighting delegates |
@@ -228,6 +228,13 @@ Run UE automation tests as a long-running job. Use one selection mode:
 `filter` is mutually exclusive with `test` and `tests`. Exact-name runs return `requestedTests`,
 `resolvedTests`, and `missingTests`; if none resolve, the job fails deterministically instead of
 waiting for UE's completion delegate.
+
+A `filter` (or no-selector RunAll) job ends on `OnTestsComplete`, or when UE's automation
+controller leaves its running state after the run started (the condition behind the console path's
+`Automation Test Queue Empty <N> tests performed` line); `has_errors` comes from the controller's
+reports. A filter that matches nothing never starts a run and never fires `OnTestsComplete`, so a
+run that has not started within 90 s (no match, or worker discovery failed) fails with
+`NO_TESTS_MATCHED` instead of staying `running`.
 
 Only one `system.run_tests` job may own the process-wide UE automation controller at a time. A
 second request is refused with `AUTOMATION_RUN_IN_PROGRESS` until the current ticket is terminal;
