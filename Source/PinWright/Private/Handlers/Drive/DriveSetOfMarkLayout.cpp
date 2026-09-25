@@ -7,13 +7,14 @@
 
 FDriveMarkLayout FDriveSetOfMarkLayout::BuildLayout(
     const TArray<FDriveElement>& Elements,
+    const FVector2D& FrameOrigin,
     int32 FrameWidth,
     int32 FrameHeight,
     int32 MarkCap)
 {
     FDriveMarkLayout Result;
 
-    // Frame bounds in absolute screen space: [0,0] - [Width,Height].
+    // Frame bounds in frame pixels: [0,0] - [Width,Height].
     const double FrameMaxX = static_cast<double>(FrameWidth);
     const double FrameMaxY = static_cast<double>(FrameHeight);
 
@@ -30,8 +31,9 @@ FDriveMarkLayout FDriveSetOfMarkLayout::BuildLayout(
             continue;
         }
 
-        const FVector2D ElemMin = Element.AbsolutePosition;
-        const FVector2D ElemMax = Element.AbsolutePosition + Element.AbsoluteSize;
+        // Desktop -> frame pixels.
+        const FVector2D ElemMin = Element.AbsolutePosition - FrameOrigin;
+        const FVector2D ElemMax = ElemMin + Element.AbsoluteSize;
 
         // Fully offscreen: no positive-area overlap with the frame. Strict
         // inequalities drop rects that merely touch an edge with zero overlap.

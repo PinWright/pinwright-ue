@@ -563,11 +563,13 @@ bool FDriveEditorChrome::CaptureWindow(
     TArray<FColor>& OutPixels,
     int32& OutWidth,
     int32& OutHeight,
+    FVector2D& OutDesktopOrigin,
     FString& OutErrorCode)
 {
     OutPixels.Reset();
     OutWidth = 0;
     OutHeight = 0;
+    OutDesktopOrigin = FVector2D::ZeroVector;
     OutErrorCode.Reset();
 
     TSharedPtr<SWindow> Window;
@@ -597,5 +599,7 @@ bool FDriveEditorChrome::CaptureWindow(
     OutPixels = MoveTemp(Bitmap);
     OutWidth = SizeVec.X;
     OutHeight = SizeVec.Y;
+    // TakeScreenshot rooted at the window reads from the window's client top-left.
+    OutDesktopOrigin = FVector2D(Window->GetPositionInScreen());
     return true;
 }

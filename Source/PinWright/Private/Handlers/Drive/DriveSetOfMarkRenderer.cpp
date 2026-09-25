@@ -7,6 +7,7 @@
 #include "Utils/ScreenshotUtils.h"
 #include "Engine/Engine.h"
 #include "Engine/GameViewportClient.h"
+#include "Framework/Application/SlateApplication.h"
 #include "IImageWrapper.h"
 #include "IImageWrapperModule.h"
 #include "ImageUtils.h"
@@ -15,6 +16,7 @@
 #include "Misc/FileHelper.h"
 #include "Modules/ModuleManager.h"
 #include "UnrealClient.h"
+#include "Widgets/SViewport.h"
 
 // Uniquely-named namespace (not anonymous) so Unity-build TU merges can't ODR-clash
 // these constants with same-named symbols elsewhere. The pixel/rect/box/font primitives
@@ -88,28 +90,29 @@ bool FDriveSetOfMarkRenderer::CaptureAnnotated(const TArray<FDriveElement>& Elem
     int32 MarkCap, FDriveScreenshot& OutScreenshot, FString& OutErrorCode,
     EDriveSurface Surface, const FDriveWindowSelector& WindowSelector, bool bWriteToFile)
 {
-    // 1) Live capture into a raw FColor bitmap. The source depends on the surface: the
-    // editor-chrome path captures the selected top-level window (FSlateApplication::
-    // TakeScreenshot); the game AND web paths read the active game/PIE viewport (the same
-    // ReadPixels approach as PinWrightScreenshotUtils::CaptureGameViewportToPngFile) - the
-    // CEF/WebUI HUD composites into that viewport via OSR, so the web surface reuses the game
-    // capture and only its marks come from the web elements' screen rects. Both kept in-memory
-    // (no disk write) so we can paint marks before encoding.
+    // 1) Live capture into a raw FColor bitmap, plus the desktop position of its (0,0) pixel
+    // (element geometry is desktop space; see FDriveSetOfMarkLayout::BuildLayout). The source
+    // depends on the surface: the editor-chrome path captures the selected top-level window; the
+    // game AND web paths capture the game/PIE viewport widget's rect of its window back buffer -
+    // the composited frame (scene, post-process, and the Slate/UMG game layers, including the
+    // CEF/WebUI HUD), the same pixels editor.screenshot reports as captureMode:nativeBackBuffer.
+    // Both kept in-memory (no disk write) so we can paint marks before encoding.
     TArray<FColor> Bitmap;
     int32 Width = 0;
     int32 Height = 0;
+    FVector2D FrameOrigin = FVector2D::ZeroVector;
 
     if (Surface == EDriveSurface::EditorChrome)
     {
         // CaptureWindow sets OutErrorCode (window-resolution codes / CAPTURE_FAILED) on failure.
-        if (!FDriveEditorChrome::CaptureWindow(WindowSelector, Bitmap, Width, Height, OutErrorCode))
+        if (!FDriveEditorChrome::CaptureWindow(WindowSelector, Bitmap, Width, Height, FrameOrigin, OutErrorCode))
         {
             return false;
         }
     }
     else
     {
-        // Game and Web: read the active game/PIE viewport.
+        // Game and Web: the game/PIE viewport.
         if (!GEngine || !GEngine->GameViewport)
         {
             OutErrorCode = TEXT("NO_VIEWPORT");
@@ -122,15 +125,44 @@ bool FDriveSetOfMarkRenderer::CaptureAnnotated(const TArray<FDriveElement>& Elem
             return false;
         }
 
-        if (!Viewport->ReadPixels(Bitmap) || Bitmap.Num() == 0)
+        const TSharedPtr<SViewport> ViewportWidget = GEngine->GameViewport->GetGameViewportWidget();
+        if (ViewportWidget.IsValid())
         {
-            OutErrorCode = TEXT("CAPTURE_FAILED");
-            return false;
+            // Both the back-buffer rect and the scene render target start at the viewport
+            // widget's desktop position - read from the same cached geometry the element walk uses.
+            FrameOrigin = ViewportWidget->GetCachedGeometry().GetAbsolutePosition();
+            if (FSlateApplication::IsInitialized())
+            {
+                // Never FSlateApplication::TakeScreenshot directly; contract in ScreenshotUtils.h.
+                FIntVector ImageSize(0, 0, 0);
+                if (PinWrightScreenshotUtils::TakeSlateScreenshot(
+                        StaticCastSharedRef<SWidget>(ViewportWidget.ToSharedRef()), Bitmap, ImageSize)
+                    && ImageSize.X > 0 && ImageSize.Y > 0)
+                {
+                    Width = ImageSize.X;
+                    Height = ImageSize.Y;
+                }
+                else
+                {
+                    Bitmap.Reset();
+                }
+            }
         }
 
-        const FIntPoint Size = Viewport->GetSizeXY();
-        Width = Size.X;
-        Height = Size.Y;
+        // Fallback: scene-only render target (no UMG, no post-process UI blur), for when the back
+        // buffer is unavailable (headless / -RenderOffScreen) - the same fallback
+        // CaptureGameViewportToPngFile takes.
+        if (Bitmap.Num() == 0)
+        {
+            if (!Viewport->ReadPixels(Bitmap) || Bitmap.Num() == 0)
+            {
+                OutErrorCode = TEXT("CAPTURE_FAILED");
+                return false;
+            }
+            const FIntPoint Size = Viewport->GetSizeXY();
+            Width = Size.X;
+            Height = Size.Y;
+        }
     }
 
     if (Width <= 0 || Height <= 0 || Bitmap.Num() < Width * Height)
@@ -171,7 +203,7 @@ bool FDriveSetOfMarkRenderer::CaptureAnnotated(const TArray<FDriveElement>& Elem
 
     const int32 EffectiveCap = MarkCap > 0 ? MarkCap : DefaultMarkCap;
     const FDriveMarkLayout Layout =
-        FDriveSetOfMarkLayout::BuildLayout(Interactables, Width, Height, EffectiveCap);
+        FDriveSetOfMarkLayout::BuildLayout(Interactables, FrameOrigin, Width, Height, EffectiveCap);
 
     DrawMarks(Bitmap, Width, Height, Layout);
 

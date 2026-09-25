@@ -35,7 +35,7 @@ bool FDriveSetOfMarkInBoundsTest::RunTest(const FString& Parameters)
     Elements.Add(MakeMarkElement(TEXT("b"), 200.0, 50.0, 80.0, 30.0));
     Elements.Add(MakeMarkElement(TEXT("c"), 400.0, 300.0, 120.0, 60.0));
 
-    const FDriveMarkLayout Layout = FDriveSetOfMarkLayout::BuildLayout(Elements, 800, 600, 10);
+    const FDriveMarkLayout Layout = FDriveSetOfMarkLayout::BuildLayout(Elements, FVector2D::ZeroVector, 800, 600, 10);
 
     TestEqual(TEXT("three marks"), Layout.Marks.Num(), 3);
     TestEqual(TEXT("nothing omitted"), Layout.Omitted.Num(), 0);
@@ -78,7 +78,7 @@ bool FDriveSetOfMarkClampTest::RunTest(const FString& Parameters)
     TArray<FDriveElement> Elements;
     Elements.Add(MakeMarkElement(TEXT("edge"), -20.0, -10.0, 100.0, 50.0));
 
-    const FDriveMarkLayout Layout = FDriveSetOfMarkLayout::BuildLayout(Elements, 800, 600, 10);
+    const FDriveMarkLayout Layout = FDriveSetOfMarkLayout::BuildLayout(Elements, FVector2D::ZeroVector, 800, 600, 10);
 
     TestEqual(TEXT("one mark"), Layout.Marks.Num(), 1);
     TestEqual(TEXT("nothing omitted"), Layout.OmittedCount, 0);
@@ -114,7 +114,7 @@ bool FDriveSetOfMarkOffscreenTest::RunTest(const FString& Parameters)
     TArray<FDriveElement> Elements;
     Elements.Add(MakeMarkElement(TEXT("gone"), 900.0, 100.0, 50.0, 50.0));
 
-    const FDriveMarkLayout Layout = FDriveSetOfMarkLayout::BuildLayout(Elements, 800, 600, 10);
+    const FDriveMarkLayout Layout = FDriveSetOfMarkLayout::BuildLayout(Elements, FVector2D::ZeroVector, 800, 600, 10);
 
     TestEqual(TEXT("no marks"), Layout.Marks.Num(), 0);
     TestEqual(TEXT("one omitted"), Layout.Omitted.Num(), 1);
@@ -140,7 +140,7 @@ bool FDriveSetOfMarkTooSmallTest::RunTest(const FString& Parameters)
     TArray<FDriveElement> Elements;
     Elements.Add(MakeMarkElement(TEXT("tiny"), 5.0, 5.0, 2.0, 2.0));
 
-    const FDriveMarkLayout Layout = FDriveSetOfMarkLayout::BuildLayout(Elements, 800, 600, 10);
+    const FDriveMarkLayout Layout = FDriveSetOfMarkLayout::BuildLayout(Elements, FVector2D::ZeroVector, 800, 600, 10);
 
     TestEqual(TEXT("no marks"), Layout.Marks.Num(), 0);
     TestEqual(TEXT("omitted count one"), Layout.OmittedCount, 1);
@@ -169,7 +169,7 @@ bool FDriveSetOfMarkCapTest::RunTest(const FString& Parameters)
             10.0 + I * 100.0, 20.0, 80.0, 40.0));
     }
 
-    const FDriveMarkLayout Layout = FDriveSetOfMarkLayout::BuildLayout(Elements, 800, 600, 3);
+    const FDriveMarkLayout Layout = FDriveSetOfMarkLayout::BuildLayout(Elements, FVector2D::ZeroVector, 800, 600, 3);
 
     TestEqual(TEXT("three marks"), Layout.Marks.Num(), 3);
     TestEqual(TEXT("two omitted"), Layout.Omitted.Num(), 2);
@@ -199,11 +199,53 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveSetOfMarkEmptyTest,
 bool FDriveSetOfMarkEmptyTest::RunTest(const FString& Parameters)
 {
     const TArray<FDriveElement> Elements;
-    const FDriveMarkLayout Layout = FDriveSetOfMarkLayout::BuildLayout(Elements, 800, 600, 10);
+    const FDriveMarkLayout Layout = FDriveSetOfMarkLayout::BuildLayout(Elements, FVector2D::ZeroVector, 800, 600, 10);
 
     TestEqual(TEXT("no marks"), Layout.Marks.Num(), 0);
     TestEqual(TEXT("no omitted"), Layout.Omitted.Num(), 0);
     TestEqual(TEXT("omitted count zero"), Layout.OmittedCount, 0);
 
+    return true;
+}
+
+// ============================================================================
+// Test: desktop-space rects are shifted by the frame origin
+// (B-set-of-mark-layout-ignores-surface-origin)
+// ============================================================================
+
+// A captured bitmap's (0,0) is the captured viewport/window's desktop position, while element
+// rects are desktop space. The live repro was PIE in the level viewport with the viewport at
+// desktop (74,160) and a 1982x1243 frame. Counterfactual: a layout that ignores the origin boxes
+// "near" 74 px right / 160 px low of its widget, drops "farEdge" (desktop x 1983 > frame width)
+// into Omitted though it is on screen, and marks "leftOfFrame" though it is not in the frame.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveSetOfMarkFrameOriginTest,
+    "PinWright.drive.setofmark.FrameOriginShiftsDesktopRects",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FDriveSetOfMarkFrameOriginTest::RunTest(const FString& Parameters)
+{
+    TArray<FDriveElement> Elements;
+    Elements.Add(MakeMarkElement(TEXT("near"), 212.0, 413.0, 491.0, 77.0));
+    Elements.Add(MakeMarkElement(TEXT("farEdge"), 1983.0, 203.0, 58.0, 58.0));
+    Elements.Add(MakeMarkElement(TEXT("leftOfFrame"), 10.0, 300.0, 50.0, 50.0));
+
+    const FDriveMarkLayout Layout = FDriveSetOfMarkLayout::BuildLayout(
+        Elements, FVector2D(74.0, 160.0), 1982, 1243, 10);
+
+    TestEqual(TEXT("two marks"), Layout.Marks.Num(), 2);
+    TestEqual(TEXT("one omitted"), Layout.Omitted.Num(), 1);
+    if (Layout.Marks.Num() == 2)
+    {
+        TestEqual(TEXT("near box min x"), Layout.Marks[0].Box.Min.X, 138.0);
+        TestEqual(TEXT("near box min y"), Layout.Marks[0].Box.Min.Y, 253.0);
+        TestEqual(TEXT("near box max x"), Layout.Marks[0].Box.Max.X, 629.0);
+        TestEqual(TEXT("near anchor y"), Layout.Marks[0].LabelAnchor.Y, 253.0);
+        TestEqual(TEXT("farEdge is mark 2"), Layout.Marks[1].Number, 2);
+        TestEqual(TEXT("farEdge box min x"), Layout.Marks[1].Box.Min.X, 1909.0);
+        TestEqual(TEXT("farEdge box min y"), Layout.Marks[1].Box.Min.Y, 43.0);
+    }
+    if (Layout.Omitted.Num() == 1)
+    {
+        TestEqual(TEXT("leftOfFrame omitted"), Layout.Omitted[0], 3);
+    }
     return true;
 }

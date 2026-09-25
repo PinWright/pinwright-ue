@@ -15,7 +15,8 @@ struct FDriveMark
 {
     // 1-based mark number; equals the element's position in the input array.
     int32 Number = 0;
-    // Element rect clamped to the frame bounds [0,0]-[Width,Height].
+    // Element rect in frame pixels (desktop rect minus the frame origin), clamped to the
+    // frame bounds [0,0]-[Width,Height].
     FBox2D Box = FBox2D(ForceInit);
     // Frame-space point where the number label is anchored (top-left corner of
     // Box, guaranteed inside the frame so the label stays visible).
@@ -47,12 +48,16 @@ public:
     // visible mark; anything smaller is omitted as too small.
     static constexpr double MinVisibleSizePx = 8.0;
 
-    // Lays out marks for `Elements` over a `FrameWidth` x `FrameHeight` frame.
+    // Lays out marks for `Elements` over a `FrameWidth` x `FrameHeight` frame whose
+    // top-left pixel sits at `FrameOrigin`. Element rects are desktop space, and a captured
+    // bitmap's (0,0) is the captured viewport's / window's desktop position, not the desktop
+    // origin, so each rect is shifted by -FrameOrigin before the overlap test and the clamp.
     // Mark numbers are the 1-based input positions. Only the first `MarkCap`
     // input elements are eligible for a visible mark; the rest are omitted with
     // no silent truncation. Performs no randomness and no drawing.
     static FDriveMarkLayout BuildLayout(
         const TArray<FDriveElement>& Elements,
+        const FVector2D& FrameOrigin,
         int32 FrameWidth,
         int32 FrameHeight,
         int32 MarkCap);

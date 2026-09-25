@@ -14,8 +14,10 @@
 // FDriveScreenshot. The drawing step (DrawMarks) is a pure function over a raw FColor
 // buffer with no engine I/O, so it is unit-testable on a synthetic bitmap. The capture
 // source is chosen by the surface argument: EditorChrome captures the selected window;
-// Game and Web both read the game/PIE viewport (the CEF HUD composites into it via OSR, so
-// the web surface reuses the game ReadPixels path and only the marks come from web rects).
+// Game and Web both capture the game/PIE viewport widget's rect of the window back buffer, so
+// the frame carries the Slate/UMG layers (and the OSR-composited CEF HUD) that the element list
+// describes; only the marks differ (web rects vs UMG rects). Marks are shifted from desktop space
+// by the captured surface's desktop origin before they are laid out.
 class FDriveSetOfMarkRenderer
 {
 public:
@@ -23,8 +25,9 @@ public:
     // rest are reported omitted rather than silently dropped.
     static constexpr int32 DefaultMarkCap = 50;
 
-    // Captures the live frame for `Surface` (Game and Web: the active game/PIE viewport -
-    // the CEF HUD composites into it via OSR, so Web reuses the game capture; EditorChrome:
+    // Captures the live frame for `Surface` (Game and Web: the active game/PIE viewport's
+    // composited back buffer, falling back to the scene-only render target when no back buffer
+    // can be read; EditorChrome:
     // the window picked by `WindowSelector` via FDriveEditorChrome::
     // CaptureWindow), overlays Set-of-Mark badges for the interactable subset of
     // `Elements`, and fills `OutScreenshot` (Mime image/png, Width/Height, MarksDrawn,

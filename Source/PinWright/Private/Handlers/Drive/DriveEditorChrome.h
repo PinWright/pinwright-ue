@@ -99,12 +99,14 @@ public:
     // Capture the selected window into a row-major FColor bitmap via
     // FSlateApplication::TakeScreenshot rooted at the window widget (alpha forced opaque), for
     // the later Set-of-Mark rendering of editor windows. Returns false with OutErrorCode set
-    // (the window-resolution codes, or CAPTURE_FAILED) on failure.
+    // (the window-resolution codes, or CAPTURE_FAILED) on failure. OutDesktopOrigin is the
+    // window's desktop position, i.e. where the bitmap's (0,0) sits in element-geometry space.
     static bool CaptureWindow(
         const FDriveWindowSelector& Selector,
         TArray<FColor>& OutPixels,
         int32& OutWidth,
         int32& OutHeight,
+        FVector2D& OutDesktopOrigin,
         FString& OutErrorCode);
 
     // Ordering rule for the minimized-tolerant candidate list, factored out of the resolver so
