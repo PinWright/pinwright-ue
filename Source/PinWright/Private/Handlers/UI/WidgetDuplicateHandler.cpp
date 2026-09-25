@@ -206,7 +206,7 @@ REGISTER_RPC_HANDLER("widget.duplicate", "widget", "Duplicate a widget-tree chil
         RPC_PARAM_OPT("placement", "object", "Placement object: {index}, {after}, or {before}. Defaults to after source when duplicating under the same parent."),
         RPC_PARAM_OPT("duplicateChildren", "boolean", "Whether to recursively duplicate panel children. Defaults true."),
         RPC_PARAM_OPT("copyProperties", "boolean", "Whether to copy safe editable widget properties. Defaults true."),
-        RPC_PARAM_OPT("copySlot", "integer", "Whether to copy compatible slot properties. Defaults true.")
+        RPC_PARAM_OPT("copySlot", "boolean", "Whether to copy compatible slot properties. Defaults true.")
     ))
 {
     FString WidgetPath;

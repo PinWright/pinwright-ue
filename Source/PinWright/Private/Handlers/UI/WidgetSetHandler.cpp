@@ -119,7 +119,7 @@ REGISTER_RPC_HANDLER("widget.set", "widget",
         RPC_PARAM_OPT("widget_name", "string", "Alias for widgetName"),
         RPC_PARAM_OPT("targetName", "string", "Alias for widgetName"),
         RPC_PARAM_OPT("properties", "object", "Key-value pairs of widget property names to values"),
-        RPC_PARAM_OPT("slot", "integer", "Key-value pairs of slot property names to values")
+        RPC_PARAM_OPT("slot", "object", "Key-value pairs of slot property names to values")
     ))
 {
     FString WidgetPath;
@@ -137,6 +137,16 @@ REGISTER_RPC_HANDLER("widget.set", "widget",
     }
 
     TSharedPtr<FJsonObject> Payload = Ctx.GetRawPayload();
+    // The `object` gate also admits arrays; GetObjectField would drop one and answer success.
+    for (const TCHAR* Field : {TEXT("properties"), TEXT("slot")})
+    {
+        if (Payload.IsValid() && Payload->HasField(Field) && !Payload->HasTypedField<EJson::Object>(Field))
+        {
+            Ctx.SendError(TEXT("INVALID_PARAMETER"),
+                FString::Printf(TEXT("'%s' must be a JSON object of property names to values"), Field));
+            return true;
+        }
+    }
     TSharedPtr<FJsonObject> Properties = GetObjectField(Payload, TEXT("properties"));
     TSharedPtr<FJsonObject> SlotObj = GetObjectField(Payload, TEXT("slot"));
     const bool bHasProperties = Properties.IsValid() && Properties->Values.Num() > 0;

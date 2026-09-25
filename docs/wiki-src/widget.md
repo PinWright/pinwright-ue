@@ -496,19 +496,23 @@ semantics, parameters, and errors.
 
 ### widget.set
 
-Sets `properties` and/or `slotProperties` on a named widget. Struct values accept three JSON shapes:
+Sets `properties` (widget UPROPERTYs) and/or `slot` (properties of the widget's panel slot, e.g.
+`CanvasPanelSlot.LayoutData`, `bAutoSize`, `Padding`) on a named widget. Both are JSON objects; any
+other shape is refused (`PARAM_TYPE_MISMATCH` at the gate, or `INVALID_PARAMETER` for an array).
+Dotted `properties` keys such as `"Slot.LayoutData"` reach the slot too. Struct values accept three
+JSON shapes:
 
 1. **Nested object** (preferred for readability; produces per-field error aggregation):
    ```json
-   { "properties": { "LayoutData": { "Offsets": { "Left": 10, "Top": 20, "Right": 10, "Bottom": 20 } } } }
+   { "slot": { "LayoutData": { "Offsets": { "Left": 10, "Top": 20, "Right": 10, "Bottom": 20 } } } }
    ```
 2. **ExportText string literal** (single UE-format string, falls through to `ImportTextToProperty`):
    ```json
-   { "properties": { "LayoutData": "(Offsets=(Left=10,Top=20,Right=10,Bottom=20))" } }
+   { "slot": { "LayoutData": "(Offsets=(Left=10,Top=20,Right=10,Bottom=20))" } }
    ```
 3. **JSON-string-of-JSON** (legacy form, still supported):
    ```json
-   { "properties": { "LayoutData": "{\"Offsets\":{\"Left\":10}}" } }
+   { "slot": { "LayoutData": "{\"Offsets\":{\"Left\":10}}" } }
    ```
 
 Prefer nested objects: errors identify exact paths such as `LayoutData.Offsets.Left`; string forms

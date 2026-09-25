@@ -62,7 +62,7 @@ REGISTER_RPC_HANDLER("widget.export_xml", "widget",
             "When capture_source=live, select the Nth live UMG root (0-based, in collection order). "
             "Alternative to instance_name for disambiguating AMBIGUOUS_LIVE_ROOT."),
         RPC_PARAM_OPT("rootIndex", "integer", "Alias for root_index"),
-        RPC_PARAM_OPT("omit_slot_chain", "integer",
+        RPC_PARAM_OPT("omit_slot_chain", "boolean",
             "Drop the Slot.Parent/Slot.Content sibling-chain expansion that causes O(N^2) blow-up on panel-heavy widgets (default false)"),
         RPC_PARAM_OPT("compact", "boolean",
             "Alias for omit_slot_chain")
