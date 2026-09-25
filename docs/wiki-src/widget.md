@@ -418,6 +418,10 @@ real Slate layout pass, not slot-anchor arithmetic. It is **off by default**; pa
 3. **Offscreen** — always available; instantiates a transient `UUserWidget` in an `SVirtualWindow`
    of `viewport_size`, runs `SlatePrepass` and recursive `ArrangeChildren` (as in
    `SDesignerView::PopulateWidgetGeometryCache_Loop`), reads `FGeometry`, then tears down.
+   The instance is **design-time**, like the Designer preview: a C++ parent's
+   `NativeOnInitialized` / `NativePreConstruct` / `NativeConstruct` never run, so a widget whose
+   runtime construct needs a game (a subsystem, a local player) is measured safely. The layout
+   is therefore the Designer's, not whatever runtime code would have set in `NativeConstruct`.
 
 **Coordinates** are **post-DPI Slate absolute units**, matching Widget Reflector and UMG Designer
 rulers. Root `dpi_scale` lets callers recover logical pixels.

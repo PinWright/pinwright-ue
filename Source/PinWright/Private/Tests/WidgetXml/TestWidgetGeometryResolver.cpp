@@ -19,8 +19,15 @@
 #include "UObject/Package.h"
 
 #include "Blueprint/WidgetTree.h"
+#include "Blueprint/WidgetBlueprintGeneratedClass.h"
 #include "Components/CanvasPanel.h"
 #include "Components/TextBlock.h"
+#include "Kismet2/KismetEditorUtilities.h"
+#include "Misc/Guid.h"
+#include "Misc/ScopeExit.h"
+#include "Tests/TestAssetTeardown.h"
+#include "Tests/TestSkipReporting.h"
+#include "Tests/WidgetXml/TestWidgetConstructProbeFixture.h"
 
 // UUIExtensionPointWidget lives in the UIExtension plugin, which is not part of a stock
 // UE 5.4-5.7 install (it ships with Lyra-style sample projects). The production resolver
@@ -187,3 +194,85 @@ bool FWidgetGeometryResolverExtensionPointDetectionNestedTest::RunTest(const FSt
 }
 
 #endif // MCP_UI_EXTENSION_AVAILABLE
+
+// ============================================================================
+// 7. Offscreen tier builds a DESIGN-TIME instance: no runtime lifecycle hooks
+// ============================================================================
+//
+// B-geometry-offscreen-runs-native-construct: the offscreen tier used CreateWidget, a runtime
+// instance with no game instance behind it, so TakeWidget ran the C++ parent's NativeConstruct
+// and a project widget reaching UGameplayMessageSubsystem::Get there asserted and killed the
+// editor. The fixture parent counts the hooks instead of asserting.
+//
+// Counterfactual: restore `CreateWidget<UUserWidget>(World, GenClass)` in ResolveViaOffscreen
+// and NativeConstructCalls reads 1 (OnWidgetRebuilt calls it whenever !IsDesignTime()), failing
+// the "NativeConstruct never ran" assertion; drop the SetDesignerFlags calls and it reads 1 too.
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWidgetGeometryResolverOffscreenSkipsNativeConstructTest,
+    "PinWright.widget_geometry.offscreen.DoesNotRunNativeConstruct",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FWidgetGeometryResolverOffscreenSkipsNativeConstructTest::RunTest(const FString& Parameters)
+{
+    const FString AssetName = FString::Printf(TEXT("WBP_OffscreenConstructProbe_%s"),
+        *FGuid::NewGuid().ToString(EGuidFormats::Digits));
+    UPackage* Package = CreatePackage(*(FString(TEXT("/Game/PinWrightTests/")) + AssetName));
+    if (!TestNotNull(TEXT("package created"), Package))
+    {
+        return false;
+    }
+    Package->SetFlags(RF_Transient);
+
+    UWidgetBlueprint* WBP = Cast<UWidgetBlueprint>(FKismetEditorUtilities::CreateBlueprint(
+        UTestWidgetConstructProbe::StaticClass(), Package, *AssetName, BPTYPE_Normal,
+        UWidgetBlueprint::StaticClass(), UWidgetBlueprintGeneratedClass::StaticClass()));
+    ON_SCOPE_EXIT
+    {
+        PwTestAssetTeardown::DiscardLoadedAssetNoGc(WBP);
+    };
+    if (!WBP || !WBP->WidgetTree)
+    {
+        PinWrightTestSkip::SkipAssertions(*this, TEXT("probe-blueprint-unavailable"),
+            TEXT("SKIPPED: OffscreenSkipsNativeConstruct; CreateBlueprint returned no widget blueprint, so the offscreen tier was NOT exercised."));
+        return true;
+    }
+    UTextBlock* Label = WBP->WidgetTree->ConstructWidget<UTextBlock>(
+        UTextBlock::StaticClass(), TEXT("ProbeLabel"));
+    WBP->WidgetTree->RootWidget = Label;
+    FKismetEditorUtilities::CompileBlueprint(WBP);
+    if (!TestNotNull(TEXT("fixture compiled"), WBP->GeneratedClass.Get()))
+    {
+        return false;
+    }
+
+    // Never opened in a Designer and never added to a viewport, so the waterfall reaches the
+    // offscreen tier - asserted below rather than assumed.
+    UTestWidgetConstructProbe::ResetCounters();
+    FWidgetGeometryRequest Request;
+    Request.Blueprint = WBP;
+    FWidgetGeometryResult Result = FWidgetGeometryResolver::Resolve(Request);
+
+    TestEqual(TEXT("no top-level error"), Result.TopLevelError, FString());
+    TestTrue(TEXT("served by the offscreen tier"),
+        Result.ServedBy == EWidgetGeometrySource::Offscreen);
+    TestEqual(TEXT("NativeConstruct never ran on the transient instance"),
+        UTestWidgetConstructProbe::NativeConstructCalls, 0);
+    TestEqual(TEXT("NativeOnInitialized never ran on the transient instance"),
+        UTestWidgetConstructProbe::NativeOnInitializedCalls, 0);
+
+    UUserWidget* Root = Result.GetLiveRoot();
+    if (TestNotNull(TEXT("offscreen root kept alive on the result"), Root))
+    {
+        TestTrue(TEXT("offscreen root is a design-time instance"), Root->IsDesignTime());
+        TMap<FName, UWidget*> NameIndex;
+        FWidgetGeometryResolver::BuildNameIndex(Root, NameIndex);
+        UWidget* const* LiveLabel = NameIndex.Find(TEXT("ProbeLabel"));
+        const FResolvedGeometry* LabelGeo = LiveLabel
+            ? Result.ByWidget.Find(FObjectKey(*LiveLabel)) : nullptr;
+        if (TestNotNull(TEXT("child widget measured"), LabelGeo))
+        {
+            // Still a real measurement: design-time must not cost the layout pass.
+            TestTrue(TEXT("child geometry ok"), LabelGeo->Status == FResolvedGeometry::EStatus::Ok);
+        }
+    }
+    return true;
+}

@@ -1,7 +1,7 @@
 ---
 type: system
 summary: "FWidgetGeometryResolver: tiered UMG widget geometry measurement (Designer → Live → Offscreen), public API, SVirtualWindow offscreen pattern, consumers widget.describe and widget.export_xml, coordinate system, BuildNameIndex O(1) lookup."
-date: 2026-04-21
+date: 2026-09-24
 tags: [widget, geometry, umg, slate, offscreen, fgeometry, widget-describe, widget-export-xml]
 ---
 
@@ -31,7 +31,7 @@ A widget is accepted as a candidate only when `IsInViewport() && GetCachedWidget
 
 The offscreen tier is always available. It:
 
-1. Constructs a transient `UUserWidget` via `CreateWidget<>` in the editor world.
+1. Constructs a transient **design-time** `UUserWidget` in the editor world, the way the UMG Designer builds its preview: `NewObject` + `SetDesignerFlags(EWidgetDesignFlags::Designing)` before and after `Initialize()`. `IsDesignTime()` makes `Initialize` skip `NativeOnInitialized` and `OnWidgetRebuilt` skip `NativePreConstruct`/`NativeConstruct`, so a C++ parent's runtime lifecycle never runs without a game instance. It used `CreateWidget<>` (a runtime instance) until `B-geometry-offscreen-runs-native-construct`: a project parent's `NativeConstruct` reached `UGameplayMessageSubsystem::Get`, which asserts with no router, and killed the editor. Abstract / deprecated / superseded generated classes return `CREATE_WIDGET_FAILED`, as `CreateWidget` did. Pinned by `PinWright.widget_geometry.offscreen.DoesNotRunNativeConstruct`.
 2. Calls `UUserWidget::TakeWidget()` to obtain the root `SWidget`.
 3. Creates an `SVirtualWindow` sized to `Request.ViewportSize` (default 1920×1080) and sets it as the window's content.
 4. Calls `VirtualWindow->SlatePrepass(1.0f)` to run the desired-size pass.

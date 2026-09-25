@@ -618,14 +618,33 @@ static FWidgetGeometryResult ResolveViaOffscreen(const FWidgetGeometryRequest& R
         return Result;
     }
 
-    // 4. Create the widget. TStrongObjectPtr keeps it alive until we drop it.
-    TStrongObjectPtr<UUserWidget> StrongRoot(CreateWidget<UUserWidget>(World, GenClass));
+    // 4. Create the widget AS A DESIGN-TIME INSTANCE, the way the UMG Designer builds its preview
+    //    (FWidgetBlueprintEditorUtils::CreateUserWidgetFromBlueprint: designer flags before
+    //    Initialize, then again so the freshly built tree inherits them). IsDesignTime() makes
+    //    UUserWidget::Initialize skip NativeOnInitialized and OnWidgetRebuilt (run by TakeWidget
+    //    below) skip NativePreConstruct/NativeConstruct. CreateWidget built a RUNTIME instance
+    //    with no game instance behind it, so a C++ parent's NativeConstruct ran here and any
+    //    game-instance subsystem it reached (UGameplayMessageSubsystem::Get asserts with no
+    //    router) killed the editor: B-geometry-offscreen-runs-native-construct. The measurement
+    //    is layout, not behaviour, and the Designer tier already measures a design-time preview.
+    //    NewObject asserts on the class flags CreateWidget refused with a null, so refuse them
+    //    here the same way. TStrongObjectPtr keeps the widget alive until we drop it.
+    if (GenClass->HasAnyClassFlags(CLASS_Abstract | CLASS_NewerVersionExists | CLASS_Deprecated))
+    {
+        Result.TopLevelError = TEXT("CREATE_WIDGET_FAILED");
+        return Result;
+    }
+    TStrongObjectPtr<UUserWidget> StrongRoot(
+        NewObject<UUserWidget>(World, GenClass, NAME_None, RF_Transient));
     UUserWidget* Root = StrongRoot.Get();
     if (!Root)
     {
         Result.TopLevelError = TEXT("CREATE_WIDGET_FAILED");
         return Result;
     }
+    Root->SetDesignerFlags(EWidgetDesignFlags::Designing);
+    Root->Initialize();
+    Root->SetDesignerFlags(EWidgetDesignFlags::Designing);
 
     // 5a. Guard: if the tree contains a UUIExtensionPointWidget, skip the offscreen
     //     render entirely. That widget's RebuildWidget dereferences UCommonLocalPlayer
