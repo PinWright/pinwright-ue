@@ -19,6 +19,8 @@
 #include "Tests/TestUtils.h"
 #include "Tests/Utility/AssetDumpMismatchedNameFixture.h"
 #include "Tests/TestSkipReporting.h"
+#include "Tests/AutomationSuiteMaintenance.h"
+#include "Misc/ScopeExit.h"
 
 
 #include "Misc/PackageName.h"
@@ -423,6 +425,51 @@ bool FAssetDumpHandlerFolderReconcileIgnoresUserFilesTest::RunTest(const FString
     TestTrue(TEXT("UserDir itself survives"),
         IFileManager::Get().DirectoryExists(*UserDir));
     TestEqual(TEXT("Nothing deleted"), Deleted.Num(), 0);
+
+    IFileManager::Get().DeleteDirectory(*TestRoot, false, true);
+    return true;
+}
+
+// ============================================================================
+// AssetDumpHandler.FolderReconcileKeepsLiveDumpDirNestedInDeadParent
+// Asset /P/X and a sibling folder /P/X/ share one mirror dir. When X is gone but
+// the folder's assets are live, reconcile removes X's own files and must keep the
+// live dump dirs nested inside it (board B-asset-dump-dir-nested-inside-sibling-asset-dir).
+// ============================================================================
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpHandlerFolderReconcileKeepsNestedLiveDirTest,
+    "PinWright.asset.dump.FolderReconcileKeepsLiveDumpDirNestedInDeadParent",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetDumpHandlerFolderReconcileKeepsNestedLiveDirTest::RunTest(const FString& Parameters)
+{
+    const FString TestRoot  = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir()) / TEXT("AssetDumpHandlerTests") / FGuid::NewGuid().ToString();
+    const FString SweptRoot = FPaths::ConvertRelativePathToFull(TestRoot / TEXT("Game"));
+    const FString DeadDir   = FPaths::ConvertRelativePathToFull(SweptRoot / TEXT("X"));
+    const FString LiveDir   = FPaths::ConvertRelativePathToFull(DeadDir / TEXT("X_Regular"));
+
+    IFileManager::Get().MakeDirectory(*LiveDir, /*Tree=*/true);
+    for (const FString& Path : {DeadDir / DumpFileNames::Meta, DeadDir / DumpFileNames::Properties,
+                                DeadDir / FString(AssetDumpCache::DumpCacheFileName),
+                                LiveDir / DumpFileNames::Meta, LiveDir / DumpFileNames::Properties})
+    {
+        FFileHelper::SaveStringToFile(TEXT("{}"), *Path, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
+    }
+
+    TSet<FString> LiveDirs;
+    LiveDirs.Add(LiveDir);
+    AssetDumpHandler::ReconcileMirrorSubtree(SweptRoot, LiveDirs);
+
+    TestTrue(TEXT("Nested live meta.json survives the dead parent's prune"),
+        IFileManager::Get().FileExists(*(LiveDir / DumpFileNames::Meta)));
+    TestTrue(TEXT("Nested live properties.json survives the dead parent's prune"),
+        IFileManager::Get().FileExists(*(LiveDir / DumpFileNames::Properties)));
+    TestFalse(TEXT("Dead parent's meta.json is deleted"),
+        IFileManager::Get().FileExists(*(DeadDir / DumpFileNames::Meta)));
+    TestFalse(TEXT("Dead parent's properties.json is deleted"),
+        IFileManager::Get().FileExists(*(DeadDir / DumpFileNames::Properties)));
+    TestFalse(TEXT("Dead parent's .dumpcache.json is deleted"),
+        IFileManager::Get().FileExists(*(DeadDir / AssetDumpCache::DumpCacheFileName)));
 
     IFileManager::Get().DeleteDirectory(*TestRoot, false, true);
     return true;
@@ -1926,6 +1973,100 @@ bool FAssetDumpHandlerAsyncFolderDumpMismatchedInnerNameDumpsTest::RunTest(const
 
     AssetDumpMismatchedNameFixture::Cleanup(Fixture);
     IFileManager::Get().DeleteDirectory(*ScratchRoot, /*RequireExists=*/false, /*Tree=*/true);
+    return true;
+}
+
+// ============================================================================
+// End-to-end regression for B-asset-dump-dir-nested-inside-sibling-asset-dir:
+// asset <F>/Nested beside a folder <F>/Nested/ holding asset Nested_Child (the
+// shape a font import produces). The child's dump dir sits inside the parent's.
+// A second sweep must report both unchanged, and neither sweep nor a direct
+// re-dump of the parent may delete the child's sidecars.
+// ============================================================================
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpHandlerAsyncFolderDumpAssetBesideSameNamedFolderTest,
+    "PinWright.asset.dump.AsyncFolderDump.AssetBesideSameNamedFolderIsIdempotent",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetDumpHandlerAsyncFolderDumpAssetBesideSameNamedFolderTest::RunTest(const FString& Parameters)
+{
+    const FString FolderPath = FString::Printf(TEXT("%s/PW_NestedDump_%s"),
+        PinWrightSuiteMaintenance::ScratchRootPackagePath(), *FGuid::NewGuid().ToString(EGuidFormats::Digits));
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
+        / TEXT("AssetDumpHandlerTests") / FGuid::NewGuid().ToString();
+
+    // Reuses the MIC fixture's save + rescan; the inner name matches the package tail here.
+    auto MakeAsset = [](const FString& PackagePath, AssetDumpMismatchedNameFixture::FMismatchedNameAsset& Out, FString& OutError)
+    {
+        Out.PackagePath = PackagePath;
+        Out.InnerName = FPackageName::GetShortName(PackagePath);
+        Out.ObjectPath = PackagePath + TEXT(".") + Out.InnerName;
+        if (!FPackageName::TryConvertLongPackageNameToFilename(
+                PackagePath, Out.PackageFilename, FPackageName::GetAssetPackageExtension()))
+        {
+            OutError = FString::Printf(TEXT("could not resolve filename for %s"), *PackagePath);
+            return false;
+        }
+        Out.Instance = NewObject<UMaterialInstanceConstant>(
+            CreatePackage(*PackagePath), FName(*Out.InnerName), RF_Public | RF_Standalone);
+        return AssetDumpMismatchedNameFixture::SaveAndRescan(Out, OutError);
+    };
+
+    AssetDumpMismatchedNameFixture::FMismatchedNameAsset Parent;
+    AssetDumpMismatchedNameFixture::FMismatchedNameAsset Child;
+    Parent.FolderPath = FolderPath; // Cleanup(Parent) removes the whole fixture folder.
+    ON_SCOPE_EXIT
+    {
+        AssetDumpMismatchedNameFixture::Cleanup(Child);
+        AssetDumpMismatchedNameFixture::Cleanup(Parent);
+        IFileManager::Get().DeleteDirectory(*ScratchRoot, /*RequireExists=*/false, /*Tree=*/true);
+    };
+
+    FString FixtureError;
+    if (!MakeAsset(FolderPath / TEXT("Nested"), Parent, FixtureError)
+        || !MakeAsset(FolderPath / TEXT("Nested/Nested_Child"), Child, FixtureError))
+    {
+        AddError(FString::Printf(TEXT("Nested-dir fixture creation failed: %s"), *FixtureError));
+        return true;
+    }
+
+    const FString ParentDumpDir = AssetDumpWriter::ResolveDumpDir(Parent.PackagePath, ScratchRoot);
+    const FString ChildDumpDir = AssetDumpWriter::ResolveDumpDir(Child.PackagePath, ScratchRoot);
+    TestTrue(TEXT("Fixture shape: the child's dump dir is nested inside the parent's"),
+        ChildDumpDir.StartsWith(ParentDumpDir + TEXT("/")));
+
+    auto ChildSidecarsPresent = [&ChildDumpDir]()
+    {
+        return IFileManager::Get().FileExists(*(ChildDumpDir / DumpFileNames::Meta))
+            && IFileManager::Get().FileExists(*(ChildDumpDir / DumpFileNames::Properties));
+    };
+
+    const AssetDumpHandler::FFolderDumpStart First =
+        AssetDumpHandler::StartAsyncFolderDump(FolderPath, /*bRecursive=*/true, ScratchRoot);
+    TestTrue(TEXT("First sweep start must succeed"), First.ErrorCode.IsEmpty());
+    TestEqual(TEXT("First sweep sees both assets"), First.AssetCount, 2);
+    if (!First.ErrorCode.IsEmpty())
+    {
+        return true;
+    }
+    FJobTicket FirstTicket;
+    TestTrue(TEXT("First sweep completes"), CompleteCurrentFolderDump(FirstTicket));
+    TestTrue(TEXT("Child sidecars exist after the first sweep"), ChildSidecarsPresent());
+
+    const AssetDumpHandler::FFolderDumpStart Second =
+        AssetDumpHandler::StartAsyncFolderDump(FolderPath, /*bRecursive=*/true, ScratchRoot);
+    TestTrue(TEXT("Second sweep start must succeed"), Second.ErrorCode.IsEmpty());
+    TestEqual(TEXT("Second sweep queues nothing (parent not stale on child files)"), Second.QueuedCount, 0);
+    TestEqual(TEXT("Second sweep reports both assets unchanged"), Second.UnchangedCount, 2);
+    FJobTicket SecondTicket;
+    TestTrue(TEXT("Second sweep completes"), CompleteCurrentFolderDump(SecondTicket));
+    TestTrue(TEXT("Child sidecars survive the second sweep"), ChildSidecarsPresent());
+
+    const AssetDumpHandler::FDumpSingleResult Redump =
+        AssetDumpHandler::DumpSingleAsset(Parent.PackagePath, ScratchRoot);
+    TestTrue(FString::Printf(TEXT("Direct parent re-dump succeeds (%s)"), *Redump.ErrorMessage),
+        Redump.ErrorCode.IsEmpty());
+    TestTrue(TEXT("Child sidecars survive a direct re-dump of the parent"), ChildSidecarsPresent());
     return true;
 }
 

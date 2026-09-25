@@ -298,6 +298,42 @@ bool FAssetDumpCacheFileValidationTest::RunTest(const FString& Parameters)
     return true;
 }
 
+// Asset /P/X and a sibling folder /P/X/ share one mirror dir, so the folder's assets
+// dump INSIDE X's dump dir. Their files are not X's unlisted output: X must read fresh
+// (board B-asset-dump-dir-nested-inside-sibling-asset-dir). A subdirectory with no
+// dump marker is still X's own and still makes it stale.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpCacheNestedAssetDumpDirIsNotUnlistedTest,
+    "PinWright.AssetDumpCache.NestedAssetDumpDirIsNotUnlisted",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetDumpCacheNestedAssetDumpDirIsNotUnlistedTest::RunTest(const FString& Parameters)
+{
+    const FString Dir = MakeCacheTestDir(TEXT("NestedAssetDumpDir"));
+    const TArray<FString> WrittenFiles{TEXT("meta.json"), TEXT("properties.json")};
+    for (const FString& RelativeFile : WrittenFiles)
+    {
+        TestTrue(FString::Printf(TEXT("write %s"), *RelativeFile), WriteTestFile(Dir / RelativeFile));
+    }
+    TestTrue(TEXT("write child meta"), WriteTestFile(Dir / TEXT("X_Regular/meta.json")));
+    TestTrue(TEXT("write child properties"), WriteTestFile(Dir / TEXT("X_Regular/properties.json")));
+    TestTrue(TEXT("write child cache"), WriteTestFile(Dir / TEXT("X_Regular") / AssetDumpCache::DumpCacheFileName));
+    TestTrue(TEXT("write marker-only child"), WriteTestFile(Dir / TEXT("X_Bold") / AssetDumpCache::DumpCacheFileName));
+
+    const AssetDumpCache::FAssetDumpSourceFingerprint Source = MakeSavedHashSource();
+    const AssetDumpCache::FAssetDumpCacheRecord Record = MakeRecord(Source, WrittenFiles);
+    const AssetDumpCache::FAssetDumpFreshnessResult Nested = AssetDumpCache::IsCacheFresh(
+        Dir, TEXT("/Game/Test/Foo"), Source, Record.Dumper, Record.Options, Record);
+    TestTrue(FString::Printf(TEXT("nested asset dump dirs keep the parent fresh (reason: %s)"), *Nested.Reason),
+        Nested.bFresh);
+
+    TestTrue(TEXT("write unmarked subdir file"), WriteTestFile(Dir / TEXT("stray/extra.json")));
+    const AssetDumpCache::FAssetDumpFreshnessResult Stray = AssetDumpCache::IsCacheFresh(
+        Dir, TEXT("/Game/Test/Foo"), Source, Record.Dumper, Record.Options, Record);
+    TestFalse(TEXT("file in an unmarked subdir is still unlisted"), Stray.bFresh);
+    TestTrue(TEXT("reason names the unmarked subdir file"), Stray.Reason.Contains(TEXT("stray/extra.json")));
+    return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpCacheSourceFallbackTest,
     "PinWright.AssetDumpCache.SourceFallbacks",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)

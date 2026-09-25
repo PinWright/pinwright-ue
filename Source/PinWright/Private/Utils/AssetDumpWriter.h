@@ -15,6 +15,14 @@ namespace AssetDumpWriter
     PINWRIGHT_API FString ResolveDiffDir(const FString& PackagePath);
     PINWRIGHT_API bool CheckPathLength(const FString& AbsDir, FString& OutError);
 
+    // Files under DumpDir that belong to DumpDir's own asset, as absolute normalized
+    // paths. A dump dir is NOT a leaf: asset /P/X and a sibling folder /P/X/ map to the
+    // same mirror dir, so the folder's assets dump into subdirectories of X's dump dir.
+    // Any subdirectory holding a meta.json or .dumpcache.json is another asset's dump
+    // dir and is not descended into. Every walk that treats a dump dir's contents as one
+    // asset's (freshness, prune, reconcile) must enumerate through this.
+    PINWRIGHT_API void FindOwnDumpFiles(const FString& DumpDir, TArray<FString>& OutFiles);
+
     // Seeds .gitignore / .gitattributes / CLAUDE.md into the dump root so a future
     // `git init` of the dump tree is clean (.dumpcache.json carries volatile fields
     // and must never be committed) and agents reading the tree get usage guidance.

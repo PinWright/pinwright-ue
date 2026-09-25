@@ -2857,7 +2857,16 @@ namespace AssetDumpHandler
 
             if (!LiveDirs.Contains(DirPath))
             {
-                IFileManager::Get().DeleteDirectory(*DirPath, /*RequireExists=*/false, /*Tree=*/true);
+                // Delete this asset's own files, not the tree: a live asset's dump dir can
+                // sit inside a dead one (asset /P/X beside folder /P/X/). Emptied
+                // subdirectories go in the post-order pass below.
+                TArray<FString> OwnFiles;
+                AssetDumpWriter::FindOwnDumpFiles(DirPath, OwnFiles);
+                for (const FString& File : OwnFiles)
+                {
+                    IFileManager::Get().Delete(*File, /*RequireExists=*/false);
+                }
+                IFileManager::Get().DeleteDirectory(*DirPath, /*RequireExists=*/false, /*Tree=*/false);
                 DeletedPaths.Add(DirPath);
             }
         }

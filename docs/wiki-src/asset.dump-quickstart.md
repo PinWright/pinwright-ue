@@ -31,6 +31,8 @@ Folder sweep:
 
 The default output root is `<ProjectSavedDir>/PinWright/asset-dumps/` (configurable in Project Settings → Plugins → PinWright (Project)) and mirrors package paths: `/Game/UI/WBP_HUD` writes under `Saved/PinWright/asset-dumps/Game/UI/WBP_HUD/`.
 
+A dump dir is not always a leaf. An asset and a sibling folder with the same name (`/Game/Fonts/X` beside `/Game/Fonts/X/`, the shape a font import produces) map to the same directory, so the folder's assets dump into subdirectories of `X/`. Any subdirectory holding its own `meta.json` or `.dumpcache.json` belongs to that other asset: freshness checks, the writer's stale-sidecar prune and mirror reconciliation all stop at it, so re-dumping, sweeping or deleting `X` never touches the nested dumps. The layout itself is unchanged, so no migration is needed. A mirror written by a build without this rule may hold nested dirs whose `meta.json` / `properties.json` were pruned while `.dumpcache.json` survived; the next `asset.dump_folder` re-dumps those once and then reports both levels `unchanged`.
+
 Direct `asset.dump` always force-refreshes the requested asset and never returns a folder-cache hit. `asset.dump_folder` is incremental by default and skips unchanged assets when the private `.dumpcache.json` beside the asset dump still matches the saved package and expected sidecars.
 
 `asset.dump_folder` and UWorld / `.umap` `asset.dump` use jobs. Streaming MCP calls block by default and stream progress to the final result; `wait:false` returns an immediate `ticket_id` to poll with `system.job_status` or read from `Saved/PinWright/jobs.jsonl`. Non-streaming clients receive the ticket normally. An all-cache-hit folder sweep still creates a job when `wait:false` is used.

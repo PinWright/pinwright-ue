@@ -300,6 +300,68 @@ bool FAssetDumpWriterPurgeAndWriteTest::RunTest(const FString& Parameters)
     return true;
 }
 
+// ============================================================================
+// AssetDumpWriter.PruneSkipsNestedAssetDumpDirs
+// Asset /P/X and a sibling folder /P/X/ share one mirror dir, so the folder's
+// assets dump INSIDE X's dump dir. X's prune must leave those nested dump dirs
+// alone (board B-asset-dump-dir-nested-inside-sibling-asset-dir), while a
+// subdirectory with no dump marker is still X's own stale output and is pruned.
+// ============================================================================
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpWriterPruneSkipsNestedAssetDumpDirsTest,
+    "PinWright.utils.asset_dump_writer.PruneSkipsNestedAssetDumpDirs",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetDumpWriterPruneSkipsNestedAssetDumpDirsTest::RunTest(const FString& Parameters)
+{
+    const FString DumpRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
+        / TEXT("AssetDumpTests") / FGuid::NewGuid().ToString();
+    const FString DumpDir = DumpRoot / TEXT("Game/Fonts/X");
+    const FString ChildDir = DumpDir / TEXT("X_Regular");
+    const FString MarkerOnlyChildDir = DumpDir / TEXT("X_Bold");
+    const FString StaleSubDir = DumpDir / TEXT("stale_aspect");
+
+    auto Write = [](const FString& Path)
+    {
+        FFileHelper::SaveStringToFile(TEXT("{}"), *Path, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
+    };
+    IFileManager& FM = IFileManager::Get();
+    FM.MakeDirectory(*ChildDir, /*Tree=*/true);
+    FM.MakeDirectory(*MarkerOnlyChildDir, /*Tree=*/true);
+    FM.MakeDirectory(*StaleSubDir, /*Tree=*/true);
+    Write(DumpDir / TEXT("old.json"));
+    Write(StaleSubDir / TEXT("old.json"));
+    Write(ChildDir / TEXT("meta.json"));
+    Write(ChildDir / TEXT("properties.json"));
+    Write(ChildDir / TEXT(".dumpcache.json"));
+    // A child whose sidecars are gone but whose cache record survives (the state the
+    // pre-fix prune left behind) is still another asset's dir.
+    Write(MarkerOnlyChildDir / TEXT(".dumpcache.json"));
+
+    TArray<AssetDumpWriter::FDumpFile> Files;
+    Files.Add({TEXT("meta.json"), TEXT("A")});
+    Files.Add({TEXT("properties.json"), TEXT("B")});
+    FString OutError;
+    AssetDumpWriter::WriteAssetDump(DumpDir, DumpRoot, Files, OutError);
+
+    TestTrue(TEXT("No error"), OutError.IsEmpty());
+    TestTrue(TEXT("Nested child meta.json survives the parent's prune"),
+        FM.FileExists(*(ChildDir / TEXT("meta.json"))));
+    TestTrue(TEXT("Nested child properties.json survives the parent's prune"),
+        FM.FileExists(*(ChildDir / TEXT("properties.json"))));
+    TestTrue(TEXT("Nested child .dumpcache.json survives"),
+        FM.FileExists(*(ChildDir / TEXT(".dumpcache.json"))));
+    TestTrue(TEXT("Marker-only nested child dir survives"),
+        FM.FileExists(*(MarkerOnlyChildDir / TEXT(".dumpcache.json"))));
+    TestFalse(TEXT("Parent's own stale top-level file is pruned"),
+        FM.FileExists(*(DumpDir / TEXT("old.json"))));
+    TestFalse(TEXT("Parent's own stale file in an unmarked subdir is pruned"),
+        FM.FileExists(*(StaleSubDir / TEXT("old.json"))));
+
+    FM.DeleteDirectory(*DumpRoot, /*RequireExists=*/false, /*Tree=*/true);
+    return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpWriterBinaryUnchangedMtimeTest,
     "PinWright.utils.asset_dump_writer.BinaryUnchangedMtime",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)

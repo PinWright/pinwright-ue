@@ -76,6 +76,33 @@ FString ResolveDiffDir(const FString& PackagePath)
     return FPaths::ConvertRelativePathToFull(Combined);
 }
 
+void FindOwnDumpFiles(const FString& DumpDir, TArray<FString>& OutFiles)
+{
+    IFileManager& FM = IFileManager::Get();
+    FString Root = FPaths::ConvertRelativePathToFull(DumpDir);
+    FPaths::NormalizeDirectoryName(Root);
+    TArray<FString> PendingDirs{Root};
+    while (PendingDirs.Num() > 0)
+    {
+        const FString Dir = PendingDirs.Pop();
+        FM.IterateDirectory(*Dir, [&](const TCHAR* Path, bool bIsDirectory)
+        {
+            FString FullPath = FPaths::ConvertRelativePathToFull(Path);
+            FPaths::NormalizeFilename(FullPath);
+            if (!bIsDirectory)
+            {
+                OutFiles.Add(MoveTemp(FullPath));
+            }
+            else if (!FM.FileExists(*(FullPath / TEXT("meta.json")))
+                && !FM.FileExists(*(FullPath / TEXT(".dumpcache.json"))))
+            {
+                PendingDirs.Add(MoveTemp(FullPath));
+            }
+            return true;
+        });
+    }
+}
+
 bool CheckPathLength(const FString& AbsDir, FString& OutError)
 {
     if (AbsDir.Len() > 260)
@@ -576,9 +603,10 @@ FWriteResult WriteAssetDump(
         IntendedPathKeys.Add(MakeDumpPathKey(Entry.FinalPath));
     }
 
+    // Only this asset's files: a nested dump dir belongs to another asset (asset /P/X
+    // beside folder /P/X/) and its sidecars must survive this prune.
     TArray<FString> ExistingFiles;
-    FM.FindFilesRecursive(ExistingFiles, *AbsDir, TEXT("*"), /*Files=*/true,
-        /*Directories=*/false, /*bClearFileNames=*/true);
+    FindOwnDumpFiles(AbsDir, ExistingFiles);
     ExistingFiles.Sort();
     for (const FString& ExistingPath : ExistingFiles)
     {

@@ -533,14 +533,9 @@ namespace
         }
         AllowedFiles.Add(AssetDumpCache::DumpCacheFileName);
 
+        // Nested dump dirs of other assets (asset /P/X beside folder /P/X/) are not ours.
         TArray<FString> Files;
-        IFileManager::Get().FindFilesRecursive(
-            Files,
-            *DumpDir,
-            TEXT("*"),
-            /*Files=*/true,
-            /*Directories=*/false,
-            /*bClearFileNames=*/true);
+        AssetDumpWriter::FindOwnDumpFiles(DumpDir, Files);
 
         const FString AbsDir = MakeDirectoryRelativeBase(DumpDir);
 
