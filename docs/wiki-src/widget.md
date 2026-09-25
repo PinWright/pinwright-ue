@@ -251,8 +251,12 @@ chained `widget.add` calls and easier to review as a diff. See [`widget.xml-mark
 **Modes:**
 
 - `replace` (no `targetName`): clears the tree and builds XML, including the root class.
-- `replace` + `targetName`: replaces that subtree and preserves its parent slot.
-- `add` + `targetName`: appends XML under the named parent panel.
+- `replace` + `targetName`: replaces that subtree at the same child index of the same parent.
+- `add` + `targetName`: appends every top-level XML element under the named parent panel, in
+  document order.
+
+`replace` takes exactly one top-level element; more is refused with `INVALID_ARGUMENT`. The response
+lists the top-level widgets it built in `rootWidgets`.
 
 **Caveats:**
 
@@ -261,8 +265,9 @@ chained `widget.add` calls and easier to review as a diff. See [`widget.xml-mark
    Recompile (`requiresCompile: true` signals this).
 2. **Only XML properties are written.** Unspecified values reset to defaults, including designer
    fonts/styles. For subtree rewrites, export with `include_defaults=true`, edit, and reimport.
-3. **The new subtree owns internal slot data.** `targetName` preserves the replaced widget's parent
-   slot, but internal slots must be fully specified.
+3. **The new subtree owns all its slot data.** `targetName` keeps the replaced widget's position in
+   its parent, but its slot is rebuilt: slot values (including the root's `Slot.*`) come only from
+   the XML.
 4. **New XML names replace old names.** Keep names stable when BP graphs reference them.
 5. **Unknown types can become empty Overlays.** Verify with `widget.export_xml`.
 

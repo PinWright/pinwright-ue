@@ -282,7 +282,8 @@ bool ProcessXmlNode(const FXmlNode* Node, UWidgetBlueprint* WidgetBP,
     UPanelWidget* Parent, TSet<FString>& UsedNames,
     TArray<FPendingBinding>& PendingBindings,
     int32& WidgetCount, FString& OutError,
-    TArray<FString>& OutVariableWidgets)
+    TArray<FString>& OutVariableWidgets,
+    int32 InsertIndex = INDEX_NONE)
 {
     if (!Node)
     {
@@ -342,7 +343,9 @@ bool ProcessXmlNode(const FXmlNode* Node, UWidgetBlueprint* WidgetBP,
     {
         Parent->SetFlags(RF_Transactional);
         Parent->Modify();
-        UPanelSlot* Slot = Parent->AddChild(Widget);
+        UPanelSlot* Slot = InsertIndex == INDEX_NONE
+            ? Parent->AddChild(Widget)
+            : Parent->InsertChildAt(InsertIndex, Widget);
         if (!Slot)
         {
             DiscardConstructedWidgetForAuthoring(WidgetBP, Widget);
@@ -593,7 +596,12 @@ REGISTER_RPC_HANDLER("widget.import_xml", "widget",
     }
 
     // ---- 3. Parse XML ----
-    FXmlFile XmlFile(XmlString, EConstructMethod::ConstructFromBuffer);
+    // FXmlFile keeps only the first top-level element and silently drops any sibling after it,
+    // so parse the payload inside a synthetic root and treat that root's children as the
+    // top-level elements. The wrapper tags sit on their own lines so FXmlFile's line-based
+    // <?xml / <!DOCTYPE cull still sees a declaration at the start of a line.
+    FXmlFile XmlFile(TEXT("<PinWrightImportRoot>\n") + XmlString + TEXT("\n</PinWrightImportRoot>"),
+        EConstructMethod::ConstructFromBuffer);
     if (!XmlFile.IsValid())
     {
         Ctx.SendError(TEXT("INVALID_XML"), FString::Printf(
@@ -601,10 +609,17 @@ REGISTER_RPC_HANDLER("widget.import_xml", "widget",
         return true;
     }
 
-    const FXmlNode* RootXmlNode = XmlFile.GetRootNode();
-    if (!RootXmlNode)
+    const TArray<FXmlNode*>& TopLevelXmlNodes = XmlFile.GetRootNode()->GetChildrenNodes();
+    if (TopLevelXmlNodes.IsEmpty())
     {
         Ctx.SendError(TEXT("INVALID_XML"), TEXT("XML has no root node"));
+        return true;
+    }
+    if (TopLevelXmlNodes.Num() > 1 && Mode.Equals(TEXT("replace")))
+    {
+        Ctx.SendError(TEXT("INVALID_ARGUMENT"), FString::Printf(
+            TEXT("XML has %d top-level elements; 'replace' builds exactly one root. Wrap them in one panel, or use mode 'add' to append several siblings under a parent"),
+            TopLevelXmlNodes.Num()));
         return true;
     }
 
@@ -612,6 +627,7 @@ REGISTER_RPC_HANDLER("widget.import_xml", "widget",
     UPanelWidget* ParentPanel = nullptr;
     UWidget* TargetWidget = nullptr;
     UPanelWidget* TargetParent = nullptr;
+    int32 TargetIndex = INDEX_NONE;
 
     if (Mode.Equals(TEXT("replace")))
     {
@@ -626,6 +642,8 @@ REGISTER_RPC_HANDLER("widget.import_xml", "widget",
                 return true;
             }
             TargetParent = TargetWidget->GetParent();
+            // The rebuilt subtree goes back at this index: in box panels the index is the layout.
+            TargetIndex = TargetParent ? TargetParent->GetChildIndex(TargetWidget) : INDEX_NONE;
             // ParentPanel will be set after removal
         }
         // else: clear entire tree, parent = nullptr (root)
@@ -698,15 +716,19 @@ REGISTER_RPC_HANDLER("widget.import_xml", "widget",
     // ---- 6. VALIDATION PASS ----
     FString ValidationError;
     TSet<FString> ValidationUsedNames = UsedNames;
-    if (!ValidateXmlNode(RootXmlNode, WidgetBP, ValidationUsedNames, ValidationError))
+    for (const FXmlNode* TopLevelXmlNode : TopLevelXmlNodes)
     {
-        Ctx.SendError(TEXT("VALIDATION_FAILED"), ValidationError);
-        return true;
+        if (!ValidateXmlNode(TopLevelXmlNode, WidgetBP, ValidationUsedNames, ValidationError))
+        {
+            Ctx.SendError(TEXT("VALIDATION_FAILED"), ValidationError);
+            return true;
+        }
     }
 
     // ---- 7-11. Transaction scope — mutations happen here, recompile happens after ----
     TArray<FPendingBinding> PendingBindings;
     TArray<FString> VariableWidgets;
+    TArray<TSharedPtr<FJsonValue>> RootWidgetValues;
     int32 WidgetCount = 0;
     int32 BindingsCreated = 0;
 
@@ -731,34 +753,39 @@ REGISTER_RPC_HANDLER("widget.import_xml", "widget",
 
         // Save state for error rollback
         UWidget* PreviousRoot = WidgetBP->WidgetTree->RootWidget;
-        const int32 PreviousChildCount = ParentPanel ? ParentPanel->GetChildrenCount() : 0;
+        const TArray<UWidget*> PreviousChildren = ParentPanel ? ParentPanel->GetAllChildren() : TArray<UWidget*>();
 
-        // Rollback helper: find and remove the partially-created subtree
+        // Rollback helper: remove every imported top-level subtree, wherever it was inserted
         auto RollbackImportedWidgets = [&]()
         {
-            UWidget* ImportedRoot = nullptr;
             if (!ParentPanel)
             {
                 if (WidgetBP->WidgetTree->RootWidget && WidgetBP->WidgetTree->RootWidget != PreviousRoot)
-                    ImportedRoot = WidgetBP->WidgetTree->RootWidget;
+                    RemoveWidgetSubtree(WidgetBP, WidgetBP->WidgetTree->RootWidget);
+                return;
             }
-            else if (ParentPanel->GetChildrenCount() > PreviousChildCount)
+            for (int32 i = ParentPanel->GetChildrenCount() - 1; i >= 0; --i)
             {
-                ImportedRoot = ParentPanel->GetChildAt(PreviousChildCount);
+                UWidget* Child = ParentPanel->GetChildAt(i);
+                if (!PreviousChildren.Contains(Child))
+                    RemoveWidgetSubtree(WidgetBP, Child);
             }
-            if (ImportedRoot)
-                RemoveWidgetSubtree(WidgetBP, ImportedRoot);
         };
 
         // ---- 9. CONSTRUCTION PASS ----
         FString ConstructionError;
 
-        if (!ProcessXmlNode(RootXmlNode, WidgetBP, ParentPanel, UsedNames, PendingBindings, WidgetCount, ConstructionError, VariableWidgets))
+        // TargetIndex is only set for a targeted replace, which has exactly one top-level node.
+        for (const FXmlNode* TopLevelXmlNode : TopLevelXmlNodes)
         {
-            RollbackImportedWidgets();
-            Transaction.Cancel();
-            Ctx.SendError(TEXT("CONSTRUCTION_FAILED"), ConstructionError);
-            return true;
+            if (!ProcessXmlNode(TopLevelXmlNode, WidgetBP, ParentPanel, UsedNames, PendingBindings, WidgetCount, ConstructionError, VariableWidgets, TargetIndex))
+            {
+                RollbackImportedWidgets();
+                Transaction.Cancel();
+                Ctx.SendError(TEXT("CONSTRUCTION_FAILED"), ConstructionError);
+                return true;
+            }
+            RootWidgetValues.Add(MakeShared<FJsonValueString>(TopLevelXmlNode->GetAttribute(TEXT("name"))));
         }
 
         // ---- 10. Apply bindings ----
@@ -794,6 +821,7 @@ REGISTER_RPC_HANDLER("widget.import_xml", "widget",
     TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
     ResultObj->SetBoolField(TEXT("success"), true);
     ResultObj->SetNumberField(TEXT("widget_count"), WidgetCount);
+    ResultObj->SetArrayField(TEXT("rootWidgets"), RootWidgetValues);
     ResultObj->SetNumberField(TEXT("bindings_created"), BindingsCreated);
     ResultObj->SetNumberField(TEXT("variablesCreated"), VariableWidgets.Num());
     if (VariableWidgets.Num() > 0)
