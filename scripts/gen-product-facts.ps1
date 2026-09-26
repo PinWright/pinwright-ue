@@ -58,6 +58,63 @@ function Get-RoundedFloor {
     return $floored.ToString('N0', [System.Globalization.CultureInfo]::InvariantCulture) + '+'
 }
 
+function Get-ShortDescription {
+    # One README-sized line from a wiki description, never reworded: the first sentence with
+    # link and emphasis markup stripped. A sentence over 120 characters is cut, all within 110
+    # and outside brackets, at its first ':' ';' or ' - ' break, else at its last comma,
+    # else at a word boundary; a cut ends with a period.
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Text)
+
+    $t = [regex]::Replace($Text, '\[([^\]]*)\]\([^)]*\)', '$1').Replace('`', '').Replace('**', '')
+    $t = [regex]::Replace($t, "\s*[$([char]0x2013)$([char]0x2014)]\s*", ' - ')
+    $t = [regex]::Replace($t, '\*([A-Za-z][^*]*?[A-Za-z])\*', '$1')
+    $t = [regex]::Replace($t, '\s+', ' ').Trim()
+    # A sentence ends at . ! or ? before whitespace; ellipses and e.g./i.e. do not end one.
+    $sentence = [regex]::Match($t, '^.*?(?<!\.|\be\.g|\bi\.e|\bvs|\betc)[.!?](?!\.)(?=\s|$)')
+    if ($sentence.Success) { $t = $sentence.Value }
+    if ($t.Length -le 120) { return $t }
+
+    $head = $t.Substring(0, 110)
+    $breaks = @([regex]::Matches($head, '(?<!:):(?!:)|;| - ') | ForEach-Object { $_.Index })
+    $commas = @([regex]::Matches($head, ',') | ForEach-Object { $_.Index })
+    [array]::Reverse($commas)
+    foreach ($at in ($breaks + $commas)) {
+        $clause = $head.Substring(0, $at).TrimEnd()
+        $unclosed = ($clause -replace '[^({\[]', '').Length - ($clause -replace '[^)}\]]', '').Length
+        if ($clause.Length -ge 15 -and $unclosed -eq 0) { return $clause + '.' }
+    }
+    $cut = $head -replace '\s+\S*$', ''
+    if (($cut -replace '[^({\[]', '').Length -gt ($cut -replace '[^)}\]]', '').Length) { $cut = $cut.Substring(0, $cut.LastIndexOfAny([char[]]'({[')) }
+    $cut = $cut -replace '(\s+(a|an|and|or|the|to|of|for|from|with|in|on|at|by|as|into|over|through|via|than|that|which))+\s*$', ''
+    return $cut.TrimEnd(',', ';', ':', ' ', '-') + '.'
+}
+
+function Get-WikiOperations {
+    # Method rows ("- `name` - description") from the "## Methods" sections of <slug>.md and
+    # its sub-namespace pages <slug>.<sub>.md; method and guide pages carry no such section.
+    param(
+        [Parameter(Mandatory = $true)][string]$WikiDir,
+        [Parameter(Mandatory = $true)][string]$Slug
+    )
+    $ops = @{}
+    $pages = Get-ChildItem -LiteralPath $WikiDir -File -Filter "$Slug*.md" |
+        Where-Object { $_.BaseName -eq $Slug -or $_.BaseName.StartsWith("$Slug.") }
+    foreach ($page in $pages) {
+        $section = [regex]::Match((Read-TextFile $page.FullName), '(?ms)^## Methods\r?\n(.*?)(?=^## |\z)')
+        foreach ($row in [regex]::Matches($section.Groups[1].Value, ('(?m)^- `([^`]+)` ' + [char]0x2014 + ' (.*?)\r?$'))) {
+            if (-not $ops.ContainsKey($row.Groups[1].Value)) { $ops[$row.Groups[1].Value] = $row.Groups[2].Value }
+        }
+    }
+    return $ops
+}
+
+function Format-Cell {
+    # Table-cell / <summary> safe: angle brackets would parse as HTML, | splits the row,
+    # * would start emphasis (backticks are already stripped, so nothing protects them).
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Text)
+    return $Text.Replace('<', '&lt;').Replace('>', '&gt;').Replace('|', '\|').Replace('*', '\*')
+}
+
 function Get-AgentToolCount {
     # Members of `enum class EAgentTool` - the agents the in-editor setup screen can
     # configure one-click. The generated clientsOneClick list is asserted against this so a
@@ -252,6 +309,84 @@ automated tests run against every supported engine version.
 - Manual MCP client setup: $([string]::Join(', ', $clientsManual))
 "@
 Write-TextFile -Path $listingPath -Text ($listing + "`r`n")
+
+# --- README namespace list: regenerated between marker comments -------------------------
+# Area groups and their order mirror the website's src/_data/namespaces.js so README and site
+# read the same; a registered namespace missing here lands in "Other" with a warning.
+$readmeGroups = [ordered]@{
+    'Project & assets'      = @('asset', 'blueprint', 'data_table', 'chooser', 'input', 'texture', 'geometry', 'model')
+    'Inspect, debug & data' = @('property', 'container', 'object', 'static_mesh', 'recorder', 'insights', 'performance')
+    'Editor & system'       = @('editor', 'system', 'python', 'source_control', 'localization', 'misc', 'pipeline')
+    'UI & widgets'          = @('widget', 'ui', 'drive')
+    'Audio'                 = @('audio')
+    'Scene, level & world'  = @('actor', 'level', 'world_partition', 'volume', 'spline', 'foliage', 'landscape', 'water', 'environment', 'navigation', 'spatial')
+    'Rendering & look'      = @('material', 'niagara', 'lighting', 'post_process', 'rendering', 'render', 'image', 'camera', 'effect', 'mrq')
+    'Animation & rigging'   = @('animation', 'anim', 'controlrig', 'skeleton', 'pose_search', 'physics', 'sequencer')
+    'AI & gameplay'         = @('ai', 'behavior_tree', 'eqs', 'state_tree', 'gas', 'gameplay_tags', 'character', 'game_framework', 'game_features', 'interaction', 'session', 'networking', 'vehicle', 'pcg')
+}
+$listed = @($namespaces | Where-Object { $_.tier -ne 'internal' })
+$grouped = @($readmeGroups.Values | ForEach-Object { $_ })
+$other = @($listed | Where-Object { $grouped -notcontains $_.slug } | ForEach-Object { [string]$_.slug })
+if ($other.Count -gt 0) {
+    Write-Warning ("Not in the README/website area groups, listed under Other: " + [string]::Join(', ', $other))
+    $readmeGroups['Other'] = $other
+}
+
+$wikiDir = Split-Path -Parent $RegistryJson
+$listedOperations = 0
+$body = New-Object System.Collections.Generic.List[string]
+foreach ($group in $readmeGroups.Keys) {
+    $members = @($readmeGroups[$group] | ForEach-Object { $slug = $_; $listed | Where-Object { $_.slug -eq $slug } })
+    if ($members.Count -eq 0) { continue }
+    $body.Add("**$group**")
+    $body.Add('')
+    foreach ($namespace in $members) {
+        $slug = [string]$namespace.slug
+        $ops = Get-WikiOperations -WikiDir $wikiDir -Slug $slug
+        if ($ops.Count -ne [int]$namespace.methods) {
+            throw "Wiki lists $($ops.Count) method(s) for '$slug' but registry.json registers $($namespace.methods); the wiki in $wikiDir is stale. Relaunch the editor to regenerate it."
+        }
+        $listedOperations += $ops.Count
+        $page = Read-TextFile (Join-Path $wikiDir "$slug.md")
+        $lede = [regex]::Match($page, '(?ms)^Stability:[^\n]*\n\s*\n([^#\s].*?)(?:\r?\n\s*\r?\n|\z)').Groups[1].Value
+        $summary = (Get-ShortDescription $lede).TrimEnd('.').Replace('<', '&lt;').Replace('>', '&gt;')
+        if ($summary) { $summary = ": $summary" }
+        $noun = if ($ops.Count -eq 1) { 'operation' } else { 'operations' }
+        $maturity = if ($namespace.tier -eq 'core') { 'Core' } else { 'Experimental' }
+        $body.Add('<details>')
+        $body.Add("<summary><code>$slug</code>$summary ($($ops.Count) $noun, $maturity)</summary>")
+        $body.Add('')
+        $body.Add('| Operation | What it does |')
+        $body.Add('| --- | --- |')
+        $names = [string[]]@($ops.Keys)
+        [Array]::Sort($names, [StringComparer]::Ordinal)
+        foreach ($name in $names) {
+            $body.Add("| ``$name`` | $(Format-Cell (Get-ShortDescription $ops[$name])) |")
+        }
+        $body.Add('')
+        $body.Add('</details>')
+        $body.Add('')
+    }
+}
+
+$block = @(
+    '<!-- namespaces:begin -->'
+    '<details>'
+    "<summary><strong>All $($listed.Count) namespaces ($listedOperations operations)</strong></summary>"
+    ''
+    'Every operation is documented in the in-editor wiki; the agent reads `call("<namespace>")` for any of these.'
+    ''
+) + $body + @('</details>', '<!-- namespaces:end -->')
+
+$readmePath = Join-Path $pluginRootFull 'README.md'
+$readme = Read-TextFile $readmePath
+$begin = $readme.IndexOf('<!-- namespaces:begin -->')
+$end = $readme.IndexOf('<!-- namespaces:end -->')
+if ($begin -lt 0 -or $end -lt $begin) {
+    throw "README.md needs a '<!-- namespaces:begin -->' line followed by a '<!-- namespaces:end -->' line to hold the generated namespace list: $readmePath"
+}
+$end += '<!-- namespaces:end -->'.Length
+Write-TextFile -Path $readmePath -Text ($readme.Substring(0, $begin) + [string]::Join("`r`n", $block) + $readme.Substring($end))
 
 Write-Host "Registry: $RegistryJson"
 Write-Host "Version: $version   UE: $ueRange ($([string]::Join(', ', $ueVersions)))"

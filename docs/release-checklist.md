@@ -57,6 +57,8 @@ one source in the same release. Do all of these, in order:
 
 1. Regenerate the fact source against the live registry and commit it:
    `powershell -ExecutionPolicy Bypass -File scripts/gen-product-facts.ps1` → `product-facts.json`.
+   The same run rewrites the README namespace list between the `<!-- namespaces:begin -->` and
+   `<!-- namespaces:end -->` markers from the generated wiki; commit README.md with it.
 2. Copy it into the website repo (`PinWright/pinwright-website`) as `src\_data\facts.json`;
    commit and deploy there.
 3. Re-render the Fab gallery slides, then **open every exported PNG and look at it**. Count
