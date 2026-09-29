@@ -355,8 +355,8 @@
                            "methods":  4
                        }
                    ],
-    "tests":  5392,
-    "testsRounded":  "5,300+",
+    "tests":  5408,
+    "testsRounded":  "5,400+",
     "clientsOneClick":  [
                             "Claude Code",
                             "Codex CLI",

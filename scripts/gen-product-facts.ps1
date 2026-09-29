@@ -324,7 +324,10 @@ $readmeGroups = [ordered]@{
     'Animation & rigging'   = @('animation', 'anim', 'controlrig', 'skeleton', 'pose_search', 'physics', 'sequencer')
     'AI & gameplay'         = @('ai', 'behavior_tree', 'eqs', 'state_tree', 'gas', 'gameplay_tags', 'character', 'game_framework', 'game_features', 'interaction', 'session', 'networking', 'vehicle', 'pcg')
 }
+# Internal-tier namespaces (plumbing, not for direct use) are left out of the list but are
+# counted in product-facts.json, so the list names them to keep the two totals reconcilable.
 $listed = @($namespaces | Where-Object { $_.tier -ne 'internal' })
+$internal = @($namespaces | Where-Object { $_.tier -eq 'internal' })
 $grouped = @($readmeGroups.Values | ForEach-Object { $_ })
 $other = @($listed | Where-Object { $grouped -notcontains $_.slug } | ForEach-Object { [string]$_.slug })
 if ($other.Count -gt 0) {
@@ -372,11 +375,16 @@ foreach ($group in $readmeGroups.Keys) {
 $block = @(
     '<!-- namespaces:begin -->'
     '<details>'
-    "<summary><strong>All $($listed.Count) namespaces ($listedOperations operations)</strong></summary>"
+    "<summary><strong>All $($listed.Count) public namespaces ($listedOperations operations)</strong></summary>"
     ''
     'Every operation is documented in the in-editor wiki; the agent reads `call("<namespace>")` for any of these.'
     ''
-) + $body + @('</details>', '<!-- namespaces:end -->')
+)
+if ($internal.Count -gt 0) {
+    $internalNames = [string]::Join(', ', @($internal | ForEach-Object { "``$($_.slug)`` ($($_.methods) $(if ([int]$_.methods -eq 1) { 'operation' } else { 'operations' }))" }))
+    $block += @("Not listed: internal plumbing namespaces, not intended for direct use - $internalNames.", '')
+}
+$block = $block + $body + @('</details>', '<!-- namespaces:end -->')
 
 $readmePath = Join-Path $pluginRootFull 'README.md'
 $readme = Read-TextFile $readmePath
@@ -386,7 +394,18 @@ if ($begin -lt 0 -or $end -lt $begin) {
     throw "README.md needs a '<!-- namespaces:begin -->' line followed by a '<!-- namespaces:end -->' line to hold the generated namespace list: $readmePath"
 }
 $end += '<!-- namespaces:end -->'.Length
-Write-TextFile -Path $readmePath -Text ($readme.Substring(0, $begin) + [string]::Join("`r`n", $block) + $readme.Substring($end))
+$readme = $readme.Substring(0, $begin) + [string]::Join("`r`n", $block) + $readme.Substring($end)
+
+# The overview paragraph quotes the full totals; it was hand-typed and went stale, so it is
+# rewritten here and a reworded sentence fails the run rather than keeping an old figure.
+$inv = [System.Globalization.CultureInfo]::InvariantCulture
+$factsSentence = '[\d,]+ operations across \d+ namespaces, developed against [\d,]+ automated tests'
+if (-not [regex]::IsMatch($readme, $factsSentence)) {
+    throw "README.md no longer contains the overview sentence '<N> operations across <N> namespaces, developed against <N> automated tests'; update the pattern in this script to match its new wording: $readmePath"
+}
+$readme = [regex]::Replace($readme, $factsSentence,
+    "$($operations.ToString('N0', $inv)) operations across $namespaceCount namespaces, developed against $($tests.ToString('N0', $inv)) automated tests")
+Write-TextFile -Path $readmePath -Text $readme
 
 Write-Host "Registry: $RegistryJson"
 Write-Host "Version: $version   UE: $ueRange ($([string]::Join(', ', $ueVersions)))"
