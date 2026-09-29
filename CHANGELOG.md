@@ -1,5 +1,71 @@
 # Changelog
 
+## Unreleased
+
+- Removed `system.run_ubt`. Build the editor target from a shell with the editor closed
+  (`Build.bat`/`Build.sh ... -TargetType=Editor`), or use `system.live_coding_compile` to
+  hot-patch a running editor.
+- Added: Blueprint timeline tracks round-trip through BPIR decompile/compile.
+- Added: `editor.undo_history`, and `steps` on `editor.undo` / `editor.redo`.
+- Added: `blueprint.graph.connect_pins_batch`.
+- Added: `actors[]` batches on `actor.set_transform` / `actor.nudge`, and `lookAt` / `roll` on
+  `actor.set_transform`.
+- Added: `gameplay_tags.find_referencers`.
+- Added: `animation.authoring.get_curve_keys`, `set_curve_keys`, `remove_curve_key`,
+  `remove_curve` and `rename_curve`.
+- Added: `log_file` in `system.identity`.
+- Added: the `call` tool accepts `args` as a JSON string.
+- Added: editor background CPU throttling is disabled while an agent is active (project setting
+  `bDisableBackgroundThrottleWhileAgentActive`, default on); `performance.run_benchmark` reports
+  the throttle state it measured under (`backgroundThrottle`).
+- Added: console verbs refuse lines that bypass a typed verb; `force: true` overrides.
+- Changed: `niagara.add_module` refuses a module whose usage bitmask does not allow the target
+  stack with `INCOMPATIBLE_STACK_GROUP` (it used to add it anywhere); with `scriptUsage` omitted it
+  picks the only allowed stack when there is exactly one.
+- Changed: `editor.undo` / `editor.redo` with nothing to do return `NOTHING_TO_UNDO` /
+  `NOTHING_TO_REDO` errors instead of success with `success: false`.
+- Changed: `gameplay_tags.remove` returns `TAG_IN_USE` for a referenced tag and `REMOVE_FAILED`
+  when the engine refuses, instead of success with `removed: false`.
+- Changed: `actor.set_transform` / `actor.nudge` with no actor return `INVALID_ARGUMENT` instead of
+  `MISSING_REQUIRED_PARAM`.
+- Changed: `blueprint.graph.connect_pins` `PIN_NOT_FOUND` carries `sourcePinLookup` /
+  `targetPinLookup` in its error data.
+- Changed: the `bpir.txt` asset-dump format version is 10 (was 9), so cached BPIR dumps regenerate.
+- Added: proxy tool `editor_list`: every Unreal editor process on the machine (any checkout,
+  engine, commandlet or `-game` run) with its project, mode, log, gateway port and launch reason.
+- Added: proxy tools `editor_run_tests` (launches the suite detached and capped, returns once the
+  first test starts) and `editor_test_status` (non-blocking progress and `check_suite_log` verdict
+  by log path).
+- Added: proxy tools `editor_build` (builds this project's `<Project>Editor` Development target
+  detached and capped; refuses while an editor of this checkout runs) and `editor_build_status`
+  (non-blocking state, UBT result and compiler/linker error lines from the log).
+- Added: offscreen and headless editors, test runs and builds run under an internal capped,
+  detached supervisor (`Content/Python/pinwright_supervisor.py`, no command line of its own);
+  Linux caps through `systemd-run --user --scope` when available.
+- Added: `launch_reason` and `launched_by` in `system.identity`.
+- Changed: `editor_start` / `editor_restart` / `editor_run_tests` require `mode` (`visible`,
+  `offscreen` or `headless`; no default) and `reason`; the optional `visible` boolean is removed.
+  `headless` is new: `-NullRHI`, no window, no display needed. Every PinWright launch passes
+  `-PinWrightLaunchReason` / `-PinWrightLaunchedBy` to the editor.
+- Changed: `editor_start` always spawns the resolved editor directly and detached (the OS
+  `.uproject` association launch is gone); `offscreen` and `headless` editors run under the capped
+  supervisor.
+- Removed: proxy tool `editor_prepare_tests` (use `editor_run_tests`), and
+  `scripts/Run-Capped.ps1`, `scripts/Run-SuiteCapped.ps1`, `scripts/CappedJob.ps1` (use
+  `editor_build`, `editor_run_tests` and `editor_start`).
+- Fixed: `check_suite_log` (and `editor_test_status`) no longer classifies a run `CRASHED` on
+  another editor's crash report: a report counts only between the log's open time and its last
+  write, only when the `-Abslog` its command line records (if any) is this log, and only when its
+  process id matches the run's editor (`--pid`, or the capped supervisor's
+  `<log>.supervisor.log`), when both are known.
+- Fixed: on Windows the capped supervisor starts through WMI `Win32_Process.Create`, outside the
+  MCP client's process tree and job, so a test run, build or editor (visible ones included,
+  uncapped) survives the MCP client exiting. Results carry `detached`, `launchMechanism` and `detachNote`; a launch that
+  could not detach says `NOT DETACHED` in its text.
+- Added: an MCP server started before the plugin's Python changed now fails a supervised launch
+  with `SUPERVISOR_VERSION_MISMATCH` (restart the MCP server) instead of an unexplained
+  `exited without a handoff`.
+
 ## 0.8.0
 
 - First open-source release, under the MIT License.

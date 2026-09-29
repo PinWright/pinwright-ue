@@ -61,7 +61,7 @@ An editor-only Unreal Engine plugin that speaks MCP (Model Context Protocol) on 
 
 <!-- namespaces:begin -->
 <details>
-<summary><strong>All 67 namespaces (1262 operations)</strong></summary>
+<summary><strong>All 67 namespaces (1269 operations)</strong></summary>
 
 Every operation is documented in the in-editor wiki; the agent reads `call("<namespace>")` for any of these.
 
@@ -116,7 +116,7 @@ Every operation is documented in the in-editor wiki; the agent reads `call("<nam
 </details>
 
 <details>
-<summary><code>blueprint</code>: Author Blueprint classes (83 operations, Core)</summary>
+<summary><code>blueprint</code>: Author Blueprint classes (84 operations, Core)</summary>
 
 | Operation | What it does |
 | --- | --- |
@@ -145,6 +145,7 @@ Every operation is documented in the in-editor wiki; the agent reads `call("<nam
 | `blueprint.get_node_connections` | Get pin connections for a node (upstream and downstream) |
 | `blueprint.graph.break_pin_links` | Break all links on a pin |
 | `blueprint.graph.connect_pins` | Wire an output pin to an input pin between two existing graph nodes. |
+| `blueprint.graph.connect_pins_batch` | Wire many output-&gt;input pin pairs in one Blueprint graph in one call and one undo transaction. |
 | `blueprint.graph.create_node` | Spawn a single graph node in an existing UEdGraph and return its node id. |
 | `blueprint.graph.create_reroute_node` | Create a reroute (knot) node |
 | `blueprint.graph.delete_node` | Delete a node from a blueprint graph |
@@ -510,7 +511,7 @@ Every operation is documented in the in-editor wiki; the agent reads `call("<nam
 **Editor & system**
 
 <details>
-<summary><code>editor</code>: Drive the editor application itself (42 operations, Core)</summary>
+<summary><code>editor</code>: Drive the editor application itself (43 operations, Core)</summary>
 
 | Operation | What it does |
 | --- | --- |
@@ -535,7 +536,7 @@ Every operation is documented in the in-editor wiki; the agent reads `call("<nam
 | `editor.play` | Start a Play-In-Editor (PIE) session for the current level and answer only after the PIE world exists. |
 | `editor.possess` | Possess the named actor with the player controller during PIE. |
 | `editor.quit` | Gracefully request the editor to exit. |
-| `editor.redo` | Redo the most recently undone editor transaction (Ctrl+Y equivalent). |
+| `editor.redo` | Redo the most recently undone editor transaction(s) (Ctrl+Y equivalent). |
 | `editor.resize_window` | Resize a top-level editor window's CLIENT area (chrome excluded). |
 | `editor.resume` | Resume a paused Play-In-Editor session. |
 | `editor.run_utility_blueprint` | Execute UEditorUtilitySubsystem::TryRun on a UEditorUtilityBlueprint or UEditorUtilityWidgetBlueprint. |
@@ -555,12 +556,13 @@ Every operation is documented in the in-editor wiki; the agent reads `call("<nam
 | `editor.step_frame` | Advance the paused PIE session by exactly one frame of deltaSeconds and freeze again, world and UI together. |
 | `editor.stop` | Stop an active or pending Play-In-Editor session and answer only after Unreal reports that no PIE session. |
 | `editor.stop_recording` | Stop the active network demo recording via the 'DemoStop' console command. |
-| `editor.undo` | Undo the most recent editor transaction (Ctrl+Z equivalent). |
+| `editor.undo` | Undo the most recent editor transaction(s) (Ctrl+Z equivalent). |
+| `editor.undo_history` | Read-only: the editor transaction buffer. |
 
 </details>
 
 <details>
-<summary><code>system</code>: Process- and engine-level controls (28 operations, Core)</summary>
+<summary><code>system</code>: Process- and engine-level controls (27 operations, Core)</summary>
 
 | Operation | What it does |
 | --- | --- |
@@ -591,7 +593,6 @@ Every operation is documented in the in-editor wiki; the agent reads `call("<nam
 | `system.live_coding_compile` | Trigger the editor's own in-process Live Coding compile (Ctrl+Alt+F11 equivalent), wait for it. |
 | `system.live_coding_status` | Report in-process Live Coding availability. |
 | `system.run_tests` | Run UE automation tests and report pass/fail counts. |
-| `system.run_ubt` | Spawn Unreal Build Tool as a child process and capture stdout/stderr. |
 
 </details>
 
@@ -866,7 +867,7 @@ Every operation is documented in the in-editor wiki; the agent reads `call("<nam
 | `actor.set_folder` | Assign one or more actors to a World Outliner folder path via SetFolderPath. |
 | `actor.set_instance_transforms` | Write per-instance transforms on an ISM/HISM component, in one batch, and report what each instance WAS. |
 | `actor.set_label` | Rename a placed actor's DISPLAY LABEL - the name the World Outliner shows - via SetActorLabel. |
-| `actor.set_transform` | Set an actor's world transform (location, rotation, scale). |
+| `actor.set_transform` | Set an actor's world transform (location, rotation, scale), optionally aiming it with lookAt. |
 | `actor.set_visibility` | Toggle whether an actor is hidden in the level. |
 | `actor.spawn` | Spawn an actor in the editor world. |
 | `actor.spawn_batch` | Spawn or duplicate many actors in one call, one per entry in transforms[]. |
@@ -1362,7 +1363,7 @@ Every operation is documented in the in-editor wiki; the agent reads `call("<nam
 **Animation & rigging**
 
 <details>
-<summary><code>animation</code>: Skeletal animation convenience helpers for Animation Blueprints, AnimSequences, AnimMontages, Blend Spaces (72 operations, Experimental)</summary>
+<summary><code>animation</code>: Skeletal animation convenience helpers for Animation Blueprints, AnimSequences, AnimMontages, Blend Spaces (77 operations, Experimental)</summary>
 
 | Operation | What it does |
 | --- | --- |
@@ -1402,11 +1403,15 @@ Every operation is documented in the in-editor wiki; the agent reads `call("<nam
 | `animation.authoring.create_montage` | Create a new UAnimMontage asset bound to a Skeleton with one slot and an empty 'Default' section. |
 | `animation.authoring.create_pose_library` | Create a pose library (pose asset) |
 | `animation.authoring.get_animation_info` | Get detailed information about an animation asset |
+| `animation.authoring.get_curve_keys` | Read every key (time, frame, value, interpolation, tangents) of Float curves on an AnimSequence. |
 | `animation.authoring.link_sections` | Link two montage sections (set next section) |
 | `animation.authoring.list_curves` | List Float and Transform curves on an animation sequence |
 | `animation.authoring.list_notifies` | List anim notifies on an animation sequence or montage |
 | `animation.authoring.list_sync_markers` | List sync markers on an animation sequence |
+| `animation.authoring.remove_curve` | Remove whole Float or Transform curves from an AnimSequence as one undoable edit. |
+| `animation.authoring.remove_curve_key` | Remove keys, selected by frame or time, from one Float curve of an AnimSequence as one undoable edit. |
 | `animation.authoring.remove_sync_marker` | Remove every occurrence of a named sync marker from an animation sequence |
+| `animation.authoring.rename_curve` | Rename a Float or Transform curve on an AnimSequence, keeping its keys. |
 | `animation.authoring.set_additive_settings` | Configure additive animation settings on a sequence |
 | `animation.authoring.set_anim_graph_node_value` | Set a property value on an AnimGraph node by name |
 | `animation.authoring.set_anim_graph_pin_exposed` | Toggle 'Expose as Pin' on an AnimGraph node's optional property (ShowPinForProperties entry). |
@@ -1415,6 +1420,7 @@ Every operation is documented in the in-editor wiki; the agent reads `call("<nam
 | `animation.authoring.set_blend_out` | Set blend-out settings for a montage |
 | `animation.authoring.set_bone_track_keys` | Write dense local-space position, quaternion rotation, and scale keys to one AnimSequence bone track. |
 | `animation.authoring.set_curve_key` | Set a curve key value at a specific frame |
+| `animation.authoring.set_curve_keys` | Write many keys to one Float curve of an AnimSequence as one undoable edit. |
 | `animation.authoring.set_interpolation_settings` | Configure interpolation settings on a blend space |
 | `animation.authoring.set_layered_blend_layers` | Rewrite the LayerSetup / BlendMode / blend-mask asset on an existing UAnimGraphNode_LayeredBoneBlend |
 | `animation.authoring.set_notify_state_property` | Set a reflected property value on an anim notify-state instance |
@@ -1727,13 +1733,14 @@ Every operation is documented in the in-editor wiki; the agent reads `call("<nam
 </details>
 
 <details>
-<summary><code>gameplay_tags</code>: Authoring surface for the project's GameplayTagsManager registry and FGameplayTagQuery values on configured assets (5 operations, Experimental)</summary>
+<summary><code>gameplay_tags</code>: Authoring surface for the project's GameplayTagsManager registry and FGameplayTagQuery values on configured assets (6 operations, Experimental)</summary>
 
 | Operation | What it does |
 | --- | --- |
 | `gameplay_tags.add` | Add an explicit gameplay tag to an INI-backed tag source |
 | `gameplay_tags.add_source` | Add an INI gameplay tag source |
 | `gameplay_tags.build_query` | Build an FGameplayTagQuery from a recursive JSON expression tree and optionally write it into a target asset property |
+| `gameplay_tags.find_referencers` | List the saved packages that reference each gameplay tag (the check the engine runs before refusing a tag delete) |
 | `gameplay_tags.list` | List gameplay tags with source, comment, and explicitness metadata |
 | `gameplay_tags.remove` | Remove an explicit gameplay tag from an INI-backed tag source |
 

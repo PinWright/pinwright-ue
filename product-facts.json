@@ -9,7 +9,7 @@
                        "5.7",
                        "5.8"
                    ],
-    "operations":  1263,
+    "operations":  1270,
     "operationsRounded":  "1,200+",
     "namespaceCount":  68,
     "namespacesRounded":  "60+",
@@ -32,7 +32,7 @@
                        {
                            "slug":  "animation",
                            "tier":  "experimental",
-                           "methods":  72
+                           "methods":  77
                        },
                        {
                            "slug":  "asset",
@@ -52,7 +52,7 @@
                        {
                            "slug":  "blueprint",
                            "tier":  "core",
-                           "methods":  83
+                           "methods":  84
                        },
                        {
                            "slug":  "camera",
@@ -92,7 +92,7 @@
                        {
                            "slug":  "editor",
                            "tier":  "core",
-                           "methods":  42
+                           "methods":  43
                        },
                        {
                            "slug":  "effect",
@@ -127,7 +127,7 @@
                        {
                            "slug":  "gameplay_tags",
                            "tier":  "experimental",
-                           "methods":  5
+                           "methods":  6
                        },
                        {
                            "slug":  "gas",
@@ -317,7 +317,7 @@
                        {
                            "slug":  "system",
                            "tier":  "core",
-                           "methods":  28
+                           "methods":  27
                        },
                        {
                            "slug":  "texture",
@@ -355,7 +355,7 @@
                            "methods":  4
                        }
                    ],
-    "tests":  5349,
+    "tests":  5392,
     "testsRounded":  "5,300+",
     "clientsOneClick":  [
                             "Claude Code",
