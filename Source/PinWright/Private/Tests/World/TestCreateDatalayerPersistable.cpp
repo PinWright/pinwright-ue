@@ -20,22 +20,22 @@
 //     no data-layer knowledge, and the handler is never invoked. Reverting
 //     WorldPartitionHandler.cpp's NewObject outer to GetTransientPackage() leaves
 //     this test passing untouched - it pins the helper's behaviour, not the fix.
-//   - EchoesNonTransientPath does invoke the handler, but the handler short-circuits
-//     with NOT_PARTITIONED (WorldPartitionHandler.cpp:108) before it ever builds a
-//     package, and a headless automation world is not partitioned. The echo
-//     assertions therefore do not run in the environment the suite executes in.
-//
-// Observing the real contract requires a World Partition world fixture: only with
-// WorldPartition present does the handler reach ValidateAssetCreationPath +
-// CreatePackage + NewObject(AssetPackage, ...) and echo a path worth asserting on.
-// Until such a fixture exists, EchoesNonTransientPath at least fails on an
-// UNEXPECTED error and reports its non-coverage loudly rather than passing silently.
+//   - EchoesNonTransientPath invokes the handler, which short-circuits with
+//     NOT_PARTITIONED (WorldPartitionHandler.cpp:111) on a non-partitioned world, so
+//     it swaps in its own World Partition world fixture (GEditor->NewMap(true)) first.
+//     It asserts the echoed dataLayerAssetPath string, which the handler computes
+//     before NewObject, so it still does not observe the asset's actual outer.
 
 #include "Misc/AutomationTest.h"
 #include "Dom/JsonObject.h"
+#include "Editor.h"
+#include "Engine/World.h"
+#include "Misc/Guid.h"
 #include "Misc/PackageName.h"
 #include "Tests/TestSkipReporting.h"
 #include "Tests/TestUtils.h"
+#include "Tests/TestWorldUtils.h"
+#include "Utils/MapSwapDirtyWorldGuard.h"
 #include "Utils/PathUtils.h"
 
 // ============================================================================
@@ -76,16 +76,9 @@ bool FWorldCreateDatalayerBuildsPersistablePackagePathTest::RunTest(const FStrin
 }
 
 // ============================================================================
-// When the handler reaches its success path (a partitioned world is available),
-// the echoed dataLayerAssetPath must be a real /Game asset path, never a
-// transient one.
-//
-// A headless automation world is normally not partitioned, so the handler exits
-// early and the echo cannot be inspected. That skip is now EXPLICIT and its reason
-// is PINNED: only NO_WORLD / NOT_PARTITIONED count as "no partitioned world to test
-// against". Any other error - a renamed param, a broken package path, a failed
-// NewObject - is a real failure rather than a silent pass, which is what the
-// previous unconditional `if (Capture.bSuccess)` guard turned every error into.
+// On a partitioned world the echoed dataLayerAssetPath must be a real /Game asset
+// path, never a transient one. The test builds that world itself, so any error is a
+// real failure rather than a skip.
 // ============================================================================
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWorldCreateDatalayerEchoesNonTransientPathTest,
@@ -94,8 +87,44 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWorldCreateDatalayerEchoesNonTransientPathTest
 
 bool FWorldCreateDatalayerEchoesNonTransientPathTest::RunTest(const FString& Parameters)
 {
+    if (!GEditor)
+    {
+        PinWrightTestSkip::SkipAssertions(*this, TEXT("no-editor-world"),
+            TEXT("No GEditor; the partitioned fixture world cannot be created."));
+        return true;
+    }
+
+    // The suite runs on a blank non-partitioned world (aa_suite_start), where the handler exits
+    // NOT_PARTITIONED before it builds a package. Swap in a throwaway World Partition world behind
+    // the shared pre-swap probe; MapGuard rebuilds the blank world on scope exit.
+    FScopedEditorWorldMapGuard MapGuard;
+    const PinWrightMapSwapGuard::FWorldSurvivorProbeResult Probe =
+        PinWrightMapSwapGuard::ProbeResidentWorldSurvivors(
+            FString(), /*bTransactionBufferWillBeCleared=*/false);
+    if (Probe.bProbeUnavailable || Probe.IsBlocked())
+    {
+        const FString Reason = Probe.bProbeUnavailable
+            ? Probe.UnavailableReason
+            : PinWrightMapSwapGuard::DescribeSurvivorRefusal(Probe);
+        PinWrightTestSkip::SkipAssertions(*this, TEXT("map-swap-refused"),
+            FString::Printf(TEXT("The pre-swap guard would not clear a NewMap, so no partitioned "
+                "fixture world was created: %s"), *Reason));
+        return true;
+    }
+    UWorld* const PartitionedWorld = GEditor->NewMap(/*bIsPartitionedWorld=*/true);
+    if (!TestTrue(TEXT("a World Partition fixture world is the active editor world"),
+            PartitionedWorld && PartitionedWorld->IsPartitionedWorld()
+                && GEditor->GetEditorWorldContext().World() == PartitionedWorld))
+    {
+        return false;
+    }
+
+    // Under the scratch root, so the asset the verb creates never lands in host content.
+    const FString AssetFolder = FString::Printf(TEXT("/Game/PinWrightTests/DataLayers_%s"),
+        *FGuid::NewGuid().ToString(EGuidFormats::Digits));
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
     Payload->SetStringField(TEXT("dataLayerName"), TEXT("PersistenceProbeLayer"));
+    Payload->SetStringField(TEXT("dataLayerAssetPath"), AssetFolder);
 
     FTestResponseCapture Capture;
     const bool bFound = InvokeHandlerWithCapture(TEXT("world_partition.create_datalayer"), Payload, Capture);
@@ -106,39 +135,17 @@ bool FWorldCreateDatalayerEchoesNonTransientPathTest::RunTest(const FString& Par
         return false;
     }
 
-    // The only two errors that mean "this host has no partitioned world to test
-    // against". Anything else is a genuine defect in the verb.
-    if (!Capture.bSuccess)
+    // The active world is the partitioned fixture, so every refusal is a defect in the verb.
+    if (!TestTrue(*FString::Printf(TEXT("create_datalayer succeeded on a partitioned world (error %s: %s)"),
+            *Capture.ErrorCode, *Capture.Message), Capture.bSuccess))
     {
-        const bool bNoPartitionedWorld =
-            Capture.ErrorCode == TEXT("NOT_PARTITIONED") || Capture.ErrorCode == TEXT("NO_WORLD");
-        TestTrue(*FString::Printf(
-            TEXT("create_datalayer failed with an unexpected error: %s (%s)"),
-            *Capture.ErrorCode, *Capture.Message), bNoPartitionedWorld);
-        PinWrightTestSkip::SkipAssertions(*this, TEXT("no-partitioned-world"),
-            FString::Printf(
-                TEXT("No partitioned editor world (%s); skipping the "
-                     "create_datalayer.EchoesNonTransientPath echo assertions. The persistable-path "
-                     "contract is NOT covered on this host - see the COVERAGE LIMIT note at the top "
-                     "of this file."), *Capture.ErrorCode));
-        return true;
+        return false;
     }
 
-    // The handler also returns success WITHOUT creating anything when the layer already
-    // exists (WorldPartitionHandler.cpp, "already exists" branch) - that response carries
-    // a message and no result object, so there is no path to assert on. A previous run on
-    // this host leaves the layer behind, so this is reachable and must not be a failure.
-    if (Capture.Message.Contains(TEXT("already exists")))
-    {
-        PinWrightTestSkip::SkipAssertions(*this, TEXT("datalayer-already-exists"),
-            TEXT("Data layer already existed; skipping the echo assertions. "
-                 "Nothing was created, so there is no dataLayerAssetPath to inspect."));
-        return true;
-    }
-
-    // Reaching here means a partitioned world IS present and the layer was newly created,
-    // so the handler ran the package-building path the fix installed and the echo must
-    // be assertable.
+    // The fixture world is new, so the handler's "already exists" branch (success with no
+    // result object) cannot be legitimate here.
+    TestFalse(TEXT("a fresh partitioned world has no pre-existing data layer"),
+        Capture.Message.Contains(TEXT("already exists")));
     if (!TestTrue(TEXT("successful create_datalayer carries a result object"), Capture.Result.IsValid()))
     {
         return false;
@@ -154,8 +161,8 @@ bool FWorldCreateDatalayerEchoesNonTransientPathTest::RunTest(const FString& Par
 
     TestFalse(TEXT("echoed dataLayerAssetPath is NOT the transient package"),
         EchoedPath.StartsWith(TEXT("/Engine/Transient")));
-    TestTrue(TEXT("echoed dataLayerAssetPath is a real content asset path"),
-        EchoedPath.StartsWith(TEXT("/Game/")));
+    TestEqual(TEXT("the asset is created in the requested dataLayerAssetPath folder"),
+        EchoedPath, AssetFolder / TEXT("PersistenceProbeLayer"));
 
     // Clean up the asset this success path created so the disposable host
     // baseline stays clean.

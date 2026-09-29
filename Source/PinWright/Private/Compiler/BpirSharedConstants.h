@@ -20,6 +20,9 @@ namespace BpirSharedConstants
         inline const TCHAR* const While = TEXT("WhileLoop");
         inline const TCHAR* const ForEachLoop = TEXT("ForEachLoop");
         inline const TCHAR* const ForEachLoopWithBreak = TEXT("ForEachLoopWithBreak");
+        // Native UK2Node_MultiGate, spelled as a macro in BPIR; `outputs: N` carries its output count.
+        inline const TCHAR* const MultiGate = TEXT("MultiGate");
+        inline const TCHAR* const MultiGateOutputsArg = TEXT("outputs");
     }
     namespace FieldNotify
     {

@@ -10,6 +10,10 @@ Writing at the CVar's existing priority is accepted unconditionally (the guard i
 
 The consequence for a caller: **a `performance.*` write is not sticky.** Anything at an equal or higher priority — a device profile, a project setting, the user's Scalability panel, a console line — can still change it afterwards. If you need a value to survive a scalability change, set the scalability level first with `performance.set_scalability` and tune after.
 
+## No renderer (headless mode)
+
+`performance.run_benchmark` needs a GPU renderer. In an editor launched with `-NullRHI` (mode `headless`, or a commandlet) it refuses with `RENDERING_UNAVAILABLE` before reading any parameter; the error data carries `method` and `renderingModes: ["offscreen", "visible"]`. Relaunch in mode `offscreen` or `visible`. A frame time measured without rendering would not describe the scene.
+
 ## See also
 
 - [`performance-profiling`](performance-profiling.md) — the workflow these verbs serve: what to measure, in what order, and which of these numbers is allowed to conclude what. Read it before running an A/B; a non-interleaved before/after in a live editor measures machine drift, and a low percentile does not protect you.
@@ -28,6 +32,7 @@ The consequence for a caller: **a `performance.*` write is not sticky.** Anythin
   "frameTimeMs": { "min": 14.9, "p50": 16.1, "p95": 22.4, "max": 41.2, "mean": 16.07 },
   "avgFps": 62.2,
   "statFileCaptured": false,
+  "backgroundThrottle": { "throttledFrames": 0, "backgroundFrames": 312, "guardHeldFrames": 312, "throttleCPUWhenNotForegroundFrames": 0 },
   "warnings": ["No .uestats file: ..."]
 }
 ```
@@ -39,6 +44,8 @@ The consequence for a caller: **a `performance.*` write is not sticky.** Anythin
 **Percentiles are nearest-rank, no interpolation** — every number in `frameTimeMs` is the duration of a frame that was actually observed. Read `p50`/`p95` rather than `mean`: a stalling frame can only add time, so the mean hides exactly the spikes worth benchmarking for.
 
 **It never succeeds without numbers.** If no frame time could be observed the job **fails** with `FRAME_TIME_NOT_MEASURED`. It used to complete a successful job whose whole payload was `{captured:false}`; that shape is gone, and the regression test `PinWright.performance.run_benchmark.ReportsMeasurementOrFails` keeps it gone. A non-positive `duration` is refused up front with `INVALID_ARGUMENT`.
+
+**`backgroundThrottle` says whether the numbers measure the editor's background throttle.** Each field counts sampled frames: `throttledFrames` where the engine's own decision (`UEditorEngine::ShouldThrottleCPUUsage`) capped the editor at 3 FPS, `backgroundFrames` where the editor was neither foreground nor focused, `guardHeldFrames` where PinWright's agent-activity guard held the throttle off, and `throttleCPUWhenNotForegroundFrames` where the effective *Use Less CPU when in Background* flag was on. Any `throttledFrames` adds a `warnings` entry: those frame times are the 3 FPS cap, not scene cost. See `performance-profiling` > *Background Throttling While An Agent Is Active*.
 
 **The `.uestats` capture is a side artefact, not the measurement.** Where the engine still compiles the legacy stat-file capture in, one runs alongside and its path comes back as `statFilePath` with `statFileCaptured: true`. **UE 5.8 compiles it out** — `UE_ENABLE_STATS_FILE_DEPRECATED_IN_5_8` defaults to 0, so `stat startfile` no longer parses — and there `statFileCaptured` is `false` with a `warnings` entry saying so. The frame measurement is unaffected either way; for a full trace use `insights.start_session` / `insights.export_trace`.
 

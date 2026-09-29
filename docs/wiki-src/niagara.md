@@ -437,7 +437,7 @@ The per-script verdict is `compile.scripts[]`, whose entries carry `ownerKind` /
   systems that then returned `active: false` from `effect.activate_niagara`.
 - `scriptCompileCheck: "unverified"` — at least one script did not report a terminal status, i.e. all
   or part of the asset has not compiled in this session (the ordinary post-load state under
-  `fx.Niagara.OnDemandCompile`) or is `NCS_Dirty`. Known-good sibling scripts do not turn an unknown
+  `fx.Niagara.OnDemandCompileEnabled`) or is `NCS_Dirty`. Known-good sibling scripts do not turn an unknown
   or stale script into a pass.
   **Not a pass.** No separate issue is raised: the nested block already reports it as
   `COMPILE_STATE_UNINITIALIZED`. Run `niagara.compile` and validate again to get a verdict.
@@ -592,6 +592,11 @@ is absent on Niagara Emitter and Niagara Script assets: the walk is over a syste
 - Reading the input back from `niagara.inspect`'s `parameters` aspect is no longer a trap, but it is still not the whole picture: that aspect reports the value **stored on the script**, and an entry whose module input also carries an override pin is marked `overridden` with an `override` object naming that pin's mode and value. For the live override value read the `graphs` aspect's override pin (`defaultValue`) — and only a pin with no inbound link carries `defaultValue` at all. A linked pin reports `rawDefaultValue` plus a `defaultValueError` naming `MODULE_INPUT_OVERRIDE_LINKED` instead, because the link governs and the stored literal is never read; the effective value is the driving source, which `stack.modules[].moduleInputs[].valueMode` names.
 - **A correct write can still be dead code, and the response says so.** The result carries `reachable`; when it is `false` it also carries `gatedBy: { switch, value, requiredValue, branchTaken }`. That is the case where the input name is right, the override pin is the right one, and the value lands where it belongs — but the input's only consumer in the module script graph is a static-switch branch the switch does not take, so the compiler drops it. The write is kept (staging a value before flipping the switch is legitimate), so act on it with `niagara.set_static_switch` on the named switch. The same two fields appear on `niagara.inspect`'s `moduleInputs[]` entry, so a later readback cannot report the dead override as configuration either.
 - For graph-level diagnosis, `niagara.inspect {includeGraphs:true}` already distinguishes the two mechanisms: a rapid-iteration `UNiagaraNodeInput` reports `inputUsage: "RapidIterationParameter"`, while a module override is a pin on `NiagaraNodeParameterMapSet`. The graph serializer needs no extra marker; use those existing fields when checking whether a write reached a live override.
+
+### niagara.add_module
+
+- **The module's `ModuleUsageBitmask` must allow the target stack.** Otherwise the verb refuses `INCOMPATIBLE_STACK_GROUP` (the same check and code as `niagara.set_module_script`). The message names the module, the requested stack and the stacks the module allows. Example: `SpawnRate` allows only `EmitterSpawnScript` / `EmitterUpdateScript`, so a ParticleUpdate target is refused.
+- **Omitted `scriptUsage`:** when exactly one stack in the target graph is allowed by the bitmask, the module goes there. Otherwise the default is ParticleUpdate for an emitter target, and the check above refuses it when the module does not allow ParticleUpdate. A module is never placed in a stack it cannot run in. Pass `scriptUsage` whenever a module allows several stacks and ParticleUpdate is not the one you want.
 
 ### niagara.add_emitter
 

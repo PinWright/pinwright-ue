@@ -364,6 +364,9 @@ namespace ErrorCodes
     inline constexpr TCHAR ERR_CRIR_ASSET_NOT_FOUND[]                       = TEXT("CRIR_ASSET_NOT_FOUND");
     inline constexpr TCHAR ERR_CUE_NOT_FOUND[]                              = TEXT("CUE_NOT_FOUND");
     inline constexpr TCHAR ERR_CURVE_ASSET_NOT_FOUND[]                      = TEXT("CURVE_ASSET_NOT_FOUND");
+    // animation.authoring curve verbs: the AnimSequence has no Float or Transform curve with the
+    // named curveName. The error payload lists the curves that do exist.
+    inline constexpr TCHAR ERR_CURVE_NOT_FOUND[]                            = TEXT("CURVE_NOT_FOUND");
     inline constexpr TCHAR ERR_CVAR_NOT_FOUND[]                             = TEXT("CVAR_NOT_FOUND");
     inline constexpr TCHAR ERR_CYCLE_DETECTED[]                             = TEXT("CYCLE_DETECTED");
     inline constexpr TCHAR ERR_DATALAYER_ALREADY_ASSIGNED[]                 = TEXT("DATALAYER_ALREADY_ASSIGNED");
@@ -371,6 +374,12 @@ namespace ErrorCodes
     inline constexpr TCHAR ERR_DATA_INTERFACE_CLASS_NOT_FOUND[]             = TEXT("DATA_INTERFACE_CLASS_NOT_FOUND");
     inline constexpr TCHAR ERR_DATA_INTERFACE_EXISTS[]                      = TEXT("DATA_INTERFACE_EXISTS");
     inline constexpr TCHAR ERR_DATA_INTERFACE_NOT_FOUND[]                   = TEXT("DATA_INTERFACE_NOT_FOUND");
+    // system.console_command / editor.console_command: `DEBUG <sub>` engine fault-injection lines
+    // (UEngine::PerformError / PerformBlockingError), one code per effect so a caller need not
+    // parse the message. `force: true` runs the line anyway. See Handlers/ConsoleCommandGuard.h.
+    inline constexpr TCHAR ERR_DEBUG_COMMAND_CRASHES_PROCESS[]              = TEXT("DEBUG_COMMAND_CRASHES_PROCESS");
+    inline constexpr TCHAR ERR_DEBUG_COMMAND_EXHAUSTS_MEMORY[]              = TEXT("DEBUG_COMMAND_EXHAUSTS_MEMORY");
+    inline constexpr TCHAR ERR_DEBUG_COMMAND_HANGS_PROCESS[]                = TEXT("DEBUG_COMMAND_HANGS_PROCESS");
     inline constexpr TCHAR ERR_DECODE_FAILED[]                              = TEXT("DECODE_FAILED");
     inline constexpr TCHAR ERR_DECOMPILE_FAILED[]                           = TEXT("DECOMPILE_FAILED");
     inline constexpr TCHAR ERR_DEFAULT_PROPERTY_NOT_FOUND[]                 = TEXT("DEFAULT_PROPERTY_NOT_FOUND");
@@ -454,7 +463,11 @@ namespace ErrorCodes
     inline constexpr TCHAR ERR_EDITOR_NOT_OPEN[]                            = TEXT("EDITOR_NOT_OPEN");
     inline constexpr TCHAR ERR_EDITOR_NOT_READY[]                           = TEXT("EDITOR_NOT_READY");
     inline constexpr TCHAR ERR_EDITOR_OPEN[]                                = TEXT("EDITOR_OPEN");
-    inline constexpr TCHAR ERR_EDITOR_SUBSYSTEM_MISSING[]                   = TEXT("EDITOR_SUBSYSTEM_MISSING");
+    // system.console_command / editor.console_command: QUIT_EDITOR / CLOSE_SLATE_MAINFRAME skip
+    // editor.quit's in-use, unsaved-changes, asset-editor and job checks. Steers to editor.quit;
+    // `force: true` runs the line anyway. See Handlers/ConsoleCommandGuard.h.
+    inline constexpr TCHAR ERR_EDITOR_QUIT_USE_TYPED_VERB[]                 = TEXT("EDITOR_QUIT_USE_TYPED_VERB");
+    inline constexpr TCHAR ERR_EDITOR_SUBSYSTEM_MISSING[]                  = TEXT("EDITOR_SUBSYSTEM_MISSING");
     inline constexpr TCHAR ERR_EDITOR_WORLD_NOT_AVAILABLE[]                 = TEXT("EDITOR_WORLD_NOT_AVAILABLE");
     inline constexpr TCHAR ERR_EFFECT_CLASS_NOT_FOUND[]                     = TEXT("EFFECT_CLASS_NOT_FOUND");
     inline constexpr TCHAR ERR_EFFECT_NOT_ACTIVE[]                          = TEXT("EFFECT_NOT_ACTIVE");
@@ -493,7 +506,11 @@ namespace ErrorCodes
     inline constexpr TCHAR ERR_EVENT_HANDLER_INVALID_INDEX[]                = TEXT("EVENT_HANDLER_INVALID_INDEX");
     inline constexpr TCHAR ERR_EVENT_HANDLER_NOT_FOUND[]                    = TEXT("EVENT_HANDLER_NOT_FOUND");
     inline constexpr TCHAR ERR_EVENT_NOT_FOUND[]                            = TEXT("EVENT_NOT_FOUND");
-    inline constexpr TCHAR ERR_EXECUTION_ERROR[]                            = TEXT("EXECUTION_ERROR");
+    // system.console_command / editor.console_command: EXECFILE runs a file's lines through Exec
+    // past both console guards, which only see the outer line. Send the lines individually;
+    // `force: true` runs it anyway. See Handlers/ConsoleCommandGuard.h.
+    inline constexpr TCHAR ERR_EXECFILE_SEND_LINES_INDIVIDUALLY[]           = TEXT("EXECFILE_SEND_LINES_INDIVIDUALLY");
+    inline constexpr TCHAR ERR_EXECUTION_ERROR[]                           = TEXT("EXECUTION_ERROR");
     inline constexpr TCHAR ERR_EXECUTION_FAILED[]                           = TEXT("EXECUTION_FAILED");
     inline constexpr TCHAR ERR_EXEC_FAILED[]                                = TEXT("EXEC_FAILED");
     // A capture verb was asked to pin exposure and no finalized scene view observed the override.
@@ -818,6 +835,9 @@ namespace ErrorCodes
     inline constexpr TCHAR ERR_LEVEL_NOT_LOADED[]                           = TEXT("LEVEL_NOT_LOADED");
     inline constexpr TCHAR ERR_LEVEL_NOT_PERSISTED[]                        = TEXT("LEVEL_NOT_PERSISTED");
     inline constexpr TCHAR ERR_LINK_NOT_FOUND[]                             = TEXT("LINK_NOT_FOUND");
+    // blueprint.graph.connect_pins_batch per-entry: the link was made, then a later entry in the
+    // same batch replaced it on a single-link pin (exec output, data input). Measured on the final graph.
+    inline constexpr TCHAR ERR_LINK_SUPERSEDED[]                            = TEXT("LINK_SUPERSEDED");
     inline constexpr TCHAR ERR_LIVE_CODING_COMPILE_CANCELLED[]              = TEXT("LIVE_CODING_COMPILE_CANCELLED");
     inline constexpr TCHAR ERR_LIVE_CODING_COMPILE_FAILED[]                 = TEXT("LIVE_CODING_COMPILE_FAILED");
     inline constexpr TCHAR ERR_LIVE_CODING_COMPILE_IN_PROGRESS[]            = TEXT("LIVE_CODING_COMPILE_IN_PROGRESS");
@@ -1068,6 +1088,10 @@ namespace ErrorCodes
     // is an error rather than a zero-item success (rpc-design.md §3): otherwise a typo in the
     // overlay key produces a byte-identical copy of the input reported as an annotation.
     inline constexpr TCHAR ERR_NOTHING_TO_ANNOTATE[]                        = TEXT("NOTHING_TO_ANNOTATE");
+    // editor.undo / editor.redo applied zero steps: the engine's CanUndo/CanRedo refused (empty
+    // side of the buffer, undo barrier, transaction in progress) or the editor declined the call.
+    // The payload carries the engine's reason; editor.undo_history shows the buffer.
+    inline constexpr TCHAR ERR_NOTHING_TO_REDO[]                            = TEXT("NOTHING_TO_REDO");
     inline constexpr TCHAR ERR_NOTHING_TO_UNDO[]                            = TEXT("NOTHING_TO_UNDO");
     inline constexpr TCHAR ERR_NOTIFY_STATE_NOT_FOUND[]                     = TEXT("NOTIFY_STATE_NOT_FOUND");
     inline constexpr TCHAR ERR_NOT_AN_ARRAY[]                               = TEXT("NOT_AN_ARRAY");
@@ -1265,6 +1289,10 @@ namespace ErrorCodes
     inline constexpr TCHAR ERR_PYTHON_CALLBACK_TRACKING_UNAVAILABLE[]       = TEXT("PYTHON_CALLBACK_TRACKING_UNAVAILABLE");
     inline constexpr TCHAR ERR_PYTHON_INIT_FAILED[]                         = TEXT("PYTHON_INIT_FAILED");
     inline constexpr TCHAR ERR_PYTHON_NOT_AVAILABLE[]                       = TEXT("PYTHON_NOT_AVAILABLE");
+    // system.console_command / editor.console_command: console `PY` skips python.execute's
+    // scope restore, log capture, PIE warning and leaked-callback report. Steers to
+    // python.execute; `force: true` runs the line anyway. See Handlers/ConsoleCommandGuard.h.
+    inline constexpr TCHAR ERR_PYTHON_USE_TYPED_VERB[]                      = TEXT("PYTHON_USE_TYPED_VERB");
     inline constexpr TCHAR ERR_QUERY_FAILED[]                               = TEXT("QUERY_FAILED");
     inline constexpr TCHAR ERR_QUEUE_EMPTY[]                                = TEXT("QUEUE_EMPTY");
     inline constexpr TCHAR ERR_READ_PIXELS_FAILED[]                         = TEXT("READ_PIXELS_FAILED");
@@ -1272,6 +1300,11 @@ namespace ErrorCodes
     inline constexpr TCHAR ERR_RELOAD_FAILED[]                              = TEXT("RELOAD_FAILED");
     inline constexpr TCHAR ERR_REMOVE_FAILED[]                              = TEXT("REMOVE_FAILED");
     inline constexpr TCHAR ERR_RENAME_FAILED[]                              = TEXT("RENAME_FAILED");
+    // Every verb that needs a real renderer (captures, screenshots, thumbnails, benchmarks, movie
+    // renders) under -NullRHI (editor mode `headless`) or a commandlet. Sent by
+    // PinWrightRendering::RequireRenderer (Utils/RenderingAvailability.h) before any render work;
+    // the message names the modes that do render: offscreen, visible.
+    inline constexpr TCHAR ERR_RENDERING_UNAVAILABLE[]                      = TEXT("RENDERING_UNAVAILABLE");
     inline constexpr TCHAR ERR_RENDERER_CLASS_NOT_FOUND[]                   = TEXT("RENDERER_CLASS_NOT_FOUND");
     inline constexpr TCHAR ERR_RENDERER_CREATE_FAILED[]                     = TEXT("RENDERER_CREATE_FAILED");
     inline constexpr TCHAR ERR_RENDERER_INDEX_INVALID[]                     = TEXT("RENDERER_INDEX_INVALID");
@@ -1363,6 +1396,8 @@ namespace ErrorCodes
     inline constexpr TCHAR ERR_SKYLIGHT_NOT_FOUND[]                         = TEXT("SKYLIGHT_NOT_FOUND");
     inline constexpr TCHAR ERR_SLATE_NOT_INITIALIZED[]                      = TEXT("SLATE_NOT_INITIALIZED");
     inline constexpr TCHAR ERR_SM_NOT_FOUND[]                               = TEXT("SM_NOT_FOUND");
+    // insights.snapshot: FTraceAuxiliary::WriteSnapshot refused or failed to write the file.
+    inline constexpr TCHAR ERR_SNAPSHOT_FAILED[]                            = TEXT("SNAPSHOT_FAILED");
     inline constexpr TCHAR ERR_SNAPSHOT_NOT_FOUND[]                         = TEXT("SNAPSHOT_NOT_FOUND");
     inline constexpr TCHAR ERR_SOCKET_EXISTS[]                              = TEXT("SOCKET_EXISTS");
     inline constexpr TCHAR ERR_SOCKET_NOT_FOUND[]                           = TEXT("SOCKET_NOT_FOUND");
@@ -1425,7 +1460,11 @@ namespace ErrorCodes
     inline constexpr TCHAR ERR_SYSTEM_NOT_COMPILED[]                        = TEXT("SYSTEM_NOT_COMPILED");
     inline constexpr TCHAR ERR_SYSTEM_NOT_FOUND[]                           = TEXT("SYSTEM_NOT_FOUND");
     inline constexpr TCHAR ERR_SYSTEM_VIEW_MODEL_UNAVAILABLE[]              = TEXT("SYSTEM_VIEW_MODEL_UNAVAILABLE");
-    inline constexpr TCHAR ERR_TESTS_FAILED[]                               = TEXT("TESTS_FAILED");
+    // gameplay_tags.remove: the tag (or an implicit parent the delete would take with it) has
+    // SearchableName referencers in the asset registry, which the engine's DeleteTagFromINI
+    // refuses with only an editor toast. Error data carries blockingTag + referencers[].
+    inline constexpr TCHAR ERR_TAG_IN_USE[]                                 = TEXT("TAG_IN_USE");
+    inline constexpr TCHAR ERR_TESTS_FAILED[]                             = TEXT("TESTS_FAILED");
     inline constexpr TCHAR ERR_TESTS_SKIPPED[]                              = TEXT("TESTS_SKIPPED");
     inline constexpr TCHAR ERR_TEST_DISCOVERY_TIMEOUT[]                     = TEXT("TEST_DISCOVERY_TIMEOUT");
     // An isolated automation child exited without a terminal queue-drain marker or with counts
@@ -1473,7 +1512,11 @@ namespace ErrorCodes
     inline constexpr TCHAR ERR_TILE_OUT_OF_RANGE[]                          = TEXT("TILE_OUT_OF_RANGE");
     inline constexpr TCHAR ERR_TIMEOUT[]                                    = TEXT("TIMEOUT");
     inline constexpr TCHAR ERR_TOO_MANY_SHOTS[]                             = TEXT("TOO_MANY_SHOTS");
+    // insights.start_session: a trace connection is already open (payload names its destination).
+    inline constexpr TCHAR ERR_TRACE_ALREADY_ACTIVE[]                       = TEXT("TRACE_ALREADY_ACTIVE");
     inline constexpr TCHAR ERR_TRACE_NOT_FOUND[]                            = TEXT("TRACE_NOT_FOUND");
+    // insights.start_session: FTraceAuxiliary::Start returned false or left no connected destination.
+    inline constexpr TCHAR ERR_TRACE_START_FAILED[]                         = TEXT("TRACE_START_FAILED");
     inline constexpr TCHAR ERR_TRACK_CREATE_FAILED[]                        = TEXT("TRACK_CREATE_FAILED");
     inline constexpr TCHAR ERR_TRACK_CREATION_FAILED[]                      = TEXT("TRACK_CREATION_FAILED");
     // sequencer.add_track was given a trackName it cannot store on the track: either the
@@ -1494,7 +1537,6 @@ namespace ErrorCodes
     inline constexpr TCHAR ERR_TREE_PROGRAMMATIC[]                          = TEXT("TREE_PROGRAMMATIC");
     inline constexpr TCHAR ERR_TYPE_MISMATCH[]                              = TEXT("TYPE_MISMATCH");
     inline constexpr TCHAR ERR_TYPE_NOT_FOUND[]                             = TEXT("TYPE_NOT_FOUND");
-    inline constexpr TCHAR ERR_UBT_NOT_FOUND[]                              = TEXT("UBT_NOT_FOUND");
     inline constexpr TCHAR ERR_UNDO_NOT_REVERSIBLE[]                        = TEXT("UNDO_NOT_REVERSIBLE");
     // A recipe named an audio effect the registry does not carry. An error rather than a
     // skipped layer: a typo'd effect name that silently passes the dry signal through is

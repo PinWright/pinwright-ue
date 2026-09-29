@@ -28,7 +28,7 @@ For full BPIR syntax and examples, use `call("bpir")` for the topic index, `call
 - **Bulk authoring / BPIR syntax** — use `call("blueprint.compile_bpir")` for whole graphs, then return here for fixups. The IR + compile loop can auto-layout unpositioned bodies and supports authored `@(x, y)` suffixes when every visible primary node in an entry body needs fixed coordinates; see `call("bpir")`, `call("bpir.instructions")`, and `call("bpir.examples")` before replacing imperative calls.
 - **Read before editing** — use [`blueprint.inspect`](blueprint.inspect.md), [`blueprint.decompile`](blueprint.decompile.md), or cached `bpir.txt` from [`asset.dump`](asset.dump.md) to understand existing graph logic before direct node edits. Use this page when you need exact nodes, pins, GUIDs, graph connections, execution flow, or orphan analysis.
 - **Widget graph logic** — UMG `widget_event` handlers and widget-variable references are still Blueprint graphs, but their names come from the widget tree. Inspect that tree through [`widget.describe`](widget.describe.md), [`widget.export_xml`](widget.export_xml.md), or cached `tree.xml` from [`asset.dump`](asset.dump.md) before creating direct nodes that target widgets.
-- **Validation** — after edits, run `call("blueprint.compile")` (or rely on `compile_bpir`'s implicit compile) before treating the BP as ready.
+- **Validation** — after edits, run `call("blueprint.compile")` (or rely on `compile_bpir`'s implicit compile) before treating the BP as ready. `connect_pins` never compiles; `connect_pins_batch` compiles once only when passed `compile:true`.
 - **Visual graph models elsewhere** — `call("material.graph")` and `call("niagara.graph")` follow the same low-level imperative shape for their respective domains; the patterns transfer.
 
 ## Standard exec pin names (skip discovery for vanilla exec wiring)
@@ -397,3 +397,29 @@ For a leaner read, pass **`namesOnly:true`** (`nodeId/nodeName/nodeType/nodeTitl
 ### blueprint.graph.get_execution_flow
 
 `startNodeId` defaults to the first event / function-entry node. When a graph has **no** event or function-entry node but is driven by a latent exec-output-only root — the common case is an auto-play `K2Node_Timeline` whose `Update`/`Finished`/`Impact` exec outputs root the chain while its `Play`/`Stop` exec inputs are unwired — that root is auto-discovered: default-start, `entryPointsOnly`, and `includeAllEntryPoints` all resolve it instead of failing. Such inferred roots appear in `entryPoints` with the result flag `entryPointsAreLatentRoots: true` (declared event entries leave it `false`). A timeline that is *called* from an upstream event (its `Play` exec input wired) is **not** treated as a separate root — it is already reachable from its real entry, so it is not double-listed. If a graph has neither a real entry nor a latent root, the call returns `NODE_NOT_FOUND` with a message pointing you to pass an explicit `startNodeId` (locate one via `find_nodes` / `get_graph_details`).
+
+### blueprint.graph.connect_pins
+
+Wires one output pin to one input pin and **never compiles**: the Blueprint is left dirty until `blueprint.compile` (or another compiling verb) runs. For more than one link, use `blueprint.graph.connect_pins_batch`: one call, one undo entry, and an optional single compile at the end.
+
+### blueprint.graph.connect_pins_batch
+
+Applies `links: [{fromNodeId, fromPinName, toNodeId, toPinName}, ...]` in array order inside one undo transaction. Each field means what it means on `connect_pins`, including `Node.Pin` qualified pin names and case-insensitive pin lookup. An empty `links` array is refused with `INVALID_ARGUMENT`.
+
+Each entry is independent: a failed entry is reported in `results[]` and never rolls back the others. The call itself succeeds with `totalLinks`, `successCount`, `failureCount`, and `results[]`, whose entries carry `index`, the four echoed fields, `success`, `connection` when a link was made or found, and `error` + `message` on failure:
+
+| `connection` | Meaning |
+|---|---|
+| `direct` | Pin-to-pin link made. `brokeExistingLinks: true` when the schema replaced a link on a single-link pin (an exec output or a data input). |
+| `alreadyConnected` | The link already existed and was left alone, so a retried batch converges. |
+| `conversionNode` / `promotion` | The schema inserted a conversion node or promoted a wildcard pin instead of making a direct link. |
+
+| `error` | Meaning |
+|---|---|
+| `INVALID_ARGUMENT` | Entry is not an object, or one of the four fields is empty. |
+| `NODE_NOT_FOUND` | A node id or name did not resolve in the graph. |
+| `PIN_NOT_FOUND` | A pin did not resolve; `sourcePinLookup` / `targetPinLookup` list the node's live pins. |
+| `CONNECTION_FAILED` | The schema refused the pair; `message` carries the schema's reason. |
+| `LINK_SUPERSEDED` | The link was made, then a later entry in the same batch replaced it on a single-link pin. Success is measured on the final graph, so wire each single-link pin once. |
+
+`compile:true` runs the Blueprint compiler once after all links and adds `compiled`, `status`, `compileErrors`, `compileWarnings` (plus `reinstanced` when live instances were rebuilt). With compile on, the call is refused with `LIVE_INSTANCES_WOULD_BE_REINSTANCED` before any link is made when loaded worlds hold live instances of the class, unless `allowReinstancing:true`. Without `compile`, `compiled` is `false` and nothing compiles. The verb runs at the editor's tick safe point, like every compiling Blueprint verb.

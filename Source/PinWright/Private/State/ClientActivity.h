@@ -78,6 +78,12 @@ namespace ClientActivity
     // anonymous callers, since every anonymous caller is the same empty id.
     bool GetMostRecentOtherClient(const FString& CallerId, FActivity& Out);
 
+    // Seconds since the most recent dispatch by ANY client, anonymous included.
+    // False when nothing has been dispatched yet. Drives the background-throttle
+    // hold (State/BackgroundThrottleGuard.h), which cares that someone is driving
+    // the editor, not who.
+    bool GetSecondsSinceLastDispatch(double& OutSecondsAgo);
+
     // Tests only. The ledger is a process-global.
     void ResetForTests();
 

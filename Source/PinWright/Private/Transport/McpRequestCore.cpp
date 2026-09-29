@@ -728,13 +728,29 @@ bool McpRequestCore::ProcessRequestBody(const FString& Body,
         if (bHasArgsField)
         {
             const TSharedPtr<FJsonValue>& ArgsValue = *ArgsValuePtr;
-            if (!ArgsValue.IsValid() || ArgsValue->Type != EJson::Object)
+            if (ArgsValue.IsValid() && ArgsValue->Type == EJson::String)
+            {
+                // Some MCP clients serialize a nested object argument as a JSON
+                // string; accept it when it parses to an object.
+                const TSharedRef<TJsonReader<>> ArgsReader = TJsonReaderFactory<>::Create(ArgsValue->AsString());
+                if (!FJsonSerializer::Deserialize(ArgsReader, ArgsObj) || !ArgsObj.IsValid())
+                {
+                    auto ErrResp = JsonRpc::BuildErrorResponse(Env.Id, JsonRpc::kInvalidParams,
+                        TEXT("tools/call argument 'args' must be an object when present; ")
+                        TEXT("it was a string that did not parse to a JSON object."));
+                    return Immediate(Out, ErrResp, 200, true);
+                }
+            }
+            else if (!ArgsValue.IsValid() || ArgsValue->Type != EJson::Object)
             {
                 auto ErrResp = JsonRpc::BuildErrorResponse(Env.Id, JsonRpc::kInvalidParams,
                     TEXT("tools/call argument 'args' must be an object when present."));
                 return Immediate(Out, ErrResp, 200, true);
             }
-            ArgsObj = ArgsValue->AsObject();
+            else
+            {
+                ArgsObj = ArgsValue->AsObject();
+            }
         }
 
         // Wiki root index: no method AND no args.

@@ -16,6 +16,10 @@ Drive the editor application itself — viewport camera, view mode, PIE play/pau
 
 Note on legacy: the `editor.execute.*` family was dropped (Wave 1, Chunk 1C). Each former member has a modern replacement under a topical namespace — `editor.execute.spawn_actor` → `actor.spawn`, `editor.execute.delete_actor` → `actor.delete`, `editor.execute.get_all_actors` → `actor.list` (or `system.inspect.list_objects` for read-only audit), `editor.execute.create_asset` → the per-domain `*.create_*` methods (`asset.create_*`, `material.authoring.create_*`, `audio.authoring.create_*`, etc.), `editor.execute.resolve_object` → `system.inspect.inspect_object`, `editor.execute.list_actor_components` → `actor.get_components`, `editor.execute.blueprint_add_component` → `blueprint.scs.add_component`. If you find docs or skills still referencing `editor.execute.*` anywhere, that is stale — update them to the modern target.
 
+## No renderer (headless mode)
+
+`editor.screenshot`, `editor.screenshot_window` need a GPU renderer. In an editor launched with `-NullRHI` (mode `headless`, or a commandlet) they refuse with `RENDERING_UNAVAILABLE` before reading any parameter; the error data carries `method` and `renderingModes: ["offscreen", "visible"]`. Relaunch in mode `offscreen` or `visible`.
+
 ## See also
 
 - [`safe-mutation-save`](safe-mutation-save.md) — the read → mutate → verify → save loop for any editor change that must persist.
@@ -55,13 +59,26 @@ For multiple cvars, prefer `editor.set_preferences` so applied / failed are repo
 
 Before issuing an unfamiliar command, search the live console registry with `call("system.console.search", {"query": "ScreenPercentage"})`. It returns matching command/CVar names, kind, help text, flags, and current values for variables.
 
-Output from the command (logs printed by the command itself) is not captured by this RPC — it goes to the project's `Saved/Logs/<ProjectName>.log` file and the editor's Output Log. If you need the output, read the project log file.
+Output from the command (logs printed by the command itself) is not captured by this RPC — it goes to this editor's log file and the editor's Output Log. If you need the output, read the path `system.identity` returns as `log_file`, not an assumed `Saved/Logs/<ProjectName>.log`, which belongs to another editor when two are open on the project (the second writes `<ProjectName>_2.log`).
 
 Because a console line can reach any operation, calls arriving during `UWorld::Tick` are re-queued to the editor core ticker (at most one 0.1 s pass later), with the same response contract. This prevents `open <map>` from tripping `Assertion failed: !LevelList.Contains(TickTaskLevel)` — the crash `level.load` was gated against, but the console could still reach.
 
-It does **not** make console commands safe, and only one class of line is refused (scalability-CVar sets, below). A command that starts a long synchronous operation holds the game thread until it finishes, with no progress and no cancel — after 90 s `ping` reports `EDITOR_GAME_THREAD_STALLED` naming this verb, which is detection, not recovery. A command that shuts the editor down still does. Prefer a typed verb where one exists — `level.load` over `open`, `editor.quit` over `quit`, `editor.set_view_mode` over `viewmode`. See "Console commands run at a safe point" and "Modal dialogs" on `call("system")`, and the freeze section of `call("python")` for the same hazard reached from script.
+It does **not** make console commands safe, and only the lines listed below are refused (scalability-CVar sets, and the lines that bypass a typed verb's checks). A command that starts a long synchronous operation holds the game thread until it finishes, with no progress and no cancel — after 90 s `ping` reports `EDITOR_GAME_THREAD_STALLED` naming this verb, which is detection, not recovery. A shutdown line run with `force: true` still shuts down. Prefer a typed verb where one exists — `level.load` over `open`, `editor.quit` over `quit`, `editor.set_view_mode` over `viewmode`. See "Console commands run at a safe point" and "Modal dialogs" on `call("system")`, and the freeze section of `call("python")` for the same hazard reached from script.
 
 **A line that SETS a scalability CVar is refused** with `SCALABILITY_CVAR_USE_TYPED_VERB` — either an `sg.*` group or **any** CVar declared with `ECVF_Scalability` / `ECVF_ScalabilityGroup` (`r.ViewDistanceScale`, `r.Streaming.PoolSize`, `r.ScreenPercentage`, `r.MaxAnisotropy`, ...). A scalability group is not a special kind of variable: it is a name for a list of ordinary CVars in a `[<Group>@N]` ini section, and the console pins a member exactly as it pins the group. The set lands at `ECVF_SetByConsole`, the highest CVar priority, which outranks the `ECVF_SetByScalability` priority the editor's own *Settings → Engine Scalability Settings* panel writes at — for the rest of the session, so every later change the user makes to the owning group is silently discarded until the editor restarts. Use `performance.set_scalability`, which drives the groups through `Scalability::SetQualityLevels` at the panel's own priority — re-applying every member CVar of the groups it touches — and cannot create the pin. `force: true` runs the line anyway and accepts the pin. **Not refused**, because the engine performs no `Set` on them: **reading** such a CVar (its name with no value, or a bare `?`); the aggregate `scalability N`, which routes through `SetQualityLevels` too; and a first token that resolves to no console object at all (a typo, or an `Exec` command owned by a module). The rule tests the FLAG on the resolved console object rather than the spelling of the name, which is why `r.ScreenPercentage` and `r.VSync` are covered despite having no `BaseScalability.ini` row; `system.console.search` reports `Scalability` / `ScalabilityGroup` in each row's `flags`, so you can tell in advance which lines will be refused.
+
+**Lines that bypass a typed verb's checks are refused** (same rule as `system.console_command`). The first command word is matched the way the engine's exec handlers match it (`FParse::Command`: case-insensitive, leading whitespace skipped, the word ends at the first non-alphanumeric character, so `py.foo` counts as `PY`). The error payload carries `refusedCommand`, `useVerb` when there is one, and `forceOverrides: true`; `force: true` runs the line anyway.
+
+| First word | Code | Use instead | Why |
+|---|---|---|---|
+| `QUIT_EDITOR`, `CLOSE_SLATE_MAINFRAME` | `EDITOR_QUIT_USE_TYPED_VERB` | `editor.quit` | skips the `EDITOR_IN_USE` and `UNSAVED_CHANGES` refusals, the PIE end and asset-editor close before shutdown, and job termination |
+| `PY` | `PYTHON_USE_TYPED_VERB` | `python.execute` | same safe-point deferral, but no private scope with `sys.modules` restore, no captured log output, no PIE-active warning, no leaked-callback report |
+| `EXECFILE` | `EXECFILE_SEND_LINES_INDIVIDUALLY` | one call per line | the file's lines run through `Exec` and neither guard sees them |
+| `DEBUG` + crash subcommand (`CRASH`, `GPF`, `CHECK`, `FATAL`, `ENSURE`, `RENDERCRASH`, `THREADCRASH`, `GPUCRASH`, `TERMINATE`, `ABORT`, `RECURSE`, `STACKOVERFLOW`, `BUFFEROVERRUN`, ...) | `DEBUG_COMMAND_CRASHES_PROCESS` | none | kills the shared editor (`ENSURE` variants write a crash report instead) |
+| `DEBUG` + `STALL`, `SPIN`, `RENDERSPIN`, `SLEEP`, `SOFTLOCK`, `INFINITELOOP` | `DEBUG_COMMAND_HANGS_PROCESS` | none | blocks the game or render thread for seconds to forever |
+| `DEBUG` + `EATMEM`, `OOM`, `ALLOC`, `GPUALLOC` | `DEBUG_COMMAND_EXHAUSTS_MEMORY` | none | allocates until the process runs out, or leaks on purpose |
+
+**Not refused:** `DEBUG HITCH` / `DEBUG RENDERHITCH` (bounded profiling sleeps), `DEBUG RESETLOADERS`, `MACRO` / `EXEC` (they only open a "deprecated command" dialog, suppressed during dispatch), and `EXIT` / `QUIT` (the editor's exec chain has no quit handler for them; the PIE local player's, which ends PIE, is not on this route). The full subcommand lists are in `Handlers/ConsoleCommandGuard.h`.
 
 ### editor.focus_actor
 
@@ -354,3 +371,20 @@ An editor nobody is driving produces no traffic, so the five-minute window event
 The response acks first and the process exits ~1 s later, so the reply flushes before teardown begins: a caller sees success, then the endpoint stops answering.
 
 Only a dispatched RPC counts as driving the editor. `ping`, `initialize`, `tools/list` and wiki-page lookups are answered by the transport and never reach a handler, so an idle session that is merely connected — or one reading these pages — cannot hold an editor "in use", and cannot be mistaken for one that is.
+
+### editor.undo_history
+
+Read-only view of the editor transaction buffer, so an agent can see what `editor.undo` would reverse before calling it. Returns `queueLength`, `undoCount` (entries already undone and still redoable), `transactionActive`, `canUndo` / `canRedo` with `canUndoReason` / `canRedoReason` when false (the engine's own text: empty side, undo barrier, or a transaction in progress), and two lists of entries `{index, title, context, id, primaryObject?}`:
+
+- `undo[]` — newest first, so `undo[0]` is what the next `editor.undo` reverses.
+- `redo[]` — in redo order, so `redo[0]` is what the next `editor.redo` re-applies.
+
+`limit` (default 20, must be >= 1) caps each list; `undoTruncated` / `redoTruncated` say whether entries were cut. `index` is the buffer position (0 = oldest) and matches the `index` in undo/redo responses. An empty buffer is a normal answer (`queueLength: 0`, both lists empty, `canUndo: false` with its reason), not an error. Titles are whatever the recording code passed to its transaction; PinWright verbs title theirs after the operation, engine UI actions use the menu text.
+
+### editor.undo
+
+Undo up to `steps` transactions (default 1, must be >= 1), one engine undo per step. Returns `undone[]` — the entries actually undone, newest first, in the `editor.undo_history` entry shape — plus `requestedSteps`, `completedSteps`, and the buffer's `queueLength` / `undoCount` afterwards. `success` is true only when every requested step ran; when fewer did, the call still succeeds with what it undid and `stoppedReason` carries the engine's reason. Zero steps undone is the error `NOTHING_TO_UNDO` with the same payload (empty undo side, an undo barrier set by an open tool, or a transaction in progress). One engine undo can skip expired tool-scoped transactions before applying one; the reported entry is the one actually applied.
+
+### editor.redo
+
+The mirror of `editor.undo`: `steps` (default 1), `redone[]` in redo order, zero steps redone is `NOTHING_TO_REDO`. Any new transaction recorded after an undo discards the redo side, so read `editor.undo_history` first when the redo matters.

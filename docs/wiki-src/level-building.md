@@ -122,12 +122,12 @@ Propose the arrangement visually, then confirm it by measurement. A screenshot n
 
 | Intent | Call |
 |---|---|
-| Absolute transform | `actor.set_transform {actorName, location, rotation, scale}` — omitted fields stay unchanged. **One actor per call; there is no batch move.** |
-| Relative shove | `actor.nudge {actorName, deltaWorld}`, or `deltaCamera {right, up, forward}` for "push it away from me" |
+| Absolute transform | `actor.set_transform {actorName, location, rotation, scale}` — omitted fields stay unchanged. `lookAt` (a point or an actor) replaces `rotation` to aim the actor. Many actors: `actors:[{actorName, location, ...}, ...]` in one call. |
+| Relative shove | `actor.nudge {actorName, deltaWorld}`, or `deltaCamera {right, up, forward}` for "push it away from me"; `actors:[...]` for many |
 | Stated relation to an anchor | `spatial.place_relative {actor, anchor, relation, gap, align}` |
 | Rest on whatever is below | `spatial.place_on_surface {actorName, dropDown: true}` |
 
-**Known gap: no verb moves many actors in one call.** `spatial.ground_actors` is the only batch re-seat and it writes Z only, against a required `surface` filter. For an arbitrary bulk move, either re-run the pass that placed them (`actor.spawn_batch` takes per-entry transforms, capped at 512) or drive `actor.set_transform` from a script with a bounded, reported count — an unbounded per-actor loop over a whole level is what wedged an editor for 168 minutes with 5,100 uncancellable calls.
+**Bulk moves go in one call.** `actor.set_transform` and `actor.nudge` take an `actors[]` entry array: one undo transaction, per-entry results, an unknown actor reported per entry. Never loop the single form per actor — an unbounded per-actor loop over a whole level is what wedged an editor for 168 minutes with 5,100 uncancellable calls. `spatial.ground_actors` remains the batch Z-only re-seat against a required `surface` filter.
 
 `relation` accepts exactly `on_top_of`, `below`, `left_of`, `right_of`, `in_front_of`, `behind`, `centered_on`, `against_wall`. `gap` (default `0`) is the centimetre clearance between the facing surfaces and is ignored for `centered_on`; `align` sets each non-relation axis to `min`, `center`, or `max`.
 

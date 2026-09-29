@@ -610,17 +610,24 @@ UK2Node_ExecutionSequence* FCodeNodeEmitter::CreateSequenceNode(int32 NumOutputs
     return Node;
 }
 
-UK2Node_Timeline* FCodeNodeEmitter::CreateTimelineNode(const FString& Name, UEdGraphPin*& InOutExecPin)
+UK2Node_Timeline* FCodeNodeEmitter::CreateTimelineNode(const FString& Name, UEdGraphPin*& InOutExecPin, UTimelineTemplate*& OutTemplate)
 {
+    OutTemplate = nullptr;
     if (!Graph || !Blueprint)
+    {
+        return nullptr;
+    }
+
+    // Register the template first: a node created against a name AddNewTimeline refused would
+    // bind to whatever template already carries that name.
+    OutTemplate = FBlueprintEditorUtils::AddNewTimeline(Blueprint, FName(*Name));
+    if (!OutTemplate)
     {
         return nullptr;
     }
 
     UK2Node_Timeline* Node = NewObject<UK2Node_Timeline>(Graph);
     Node->TimelineName = FName(*Name);
-    // Register the timeline in the Blueprint's timeline list so it survives compilation
-    FBlueprintEditorUtils::AddNewTimeline(Blueprint, Node->TimelineName);
     InitializeNode(Node);
     PlaceNode(Node, InOutExecPin);
     InOutExecPin = FindExecPin(Node, FName(TEXT("Update")));

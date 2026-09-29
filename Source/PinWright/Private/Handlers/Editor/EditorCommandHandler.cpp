@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Alexander Penkin. MIT License.
 
 // EditorCommandHandler.cpp - Migrated from PinWright_ControlHandlers.cpp
-// Handles editor.console_command, editor.undo, editor.redo, editor.save_all,
+// Handles editor.console_command, editor.undo, editor.redo, editor.undo_history, editor.save_all,
 // editor.open_asset, editor.close_asset, editor.open_level,
 // editor.set_preferences, editor.simulate_input, editor.start_recording,
 // editor.stop_recording, editor.create_bookmark, editor.jump_to_bookmark
@@ -12,6 +12,7 @@
 #include "Handlers/ParamAliasUtils.h"
 #include "Handlers/ErrorCodes.h"
 #include "Handlers/ScalabilityConsoleGuard.h"
+#include "Handlers/ConsoleCommandGuard.h"
 #include "PinWrightGlobals.h"
 #include "PinWrightHelpers.h"
 #include "PinWrightSubsystem.h"
@@ -28,6 +29,7 @@
 #include "Utils/AssetUtils.h"
 
 #include "Editor.h"
+#include "Editor/Transactor.h"
 #include "EditorAssetLibrary.h"
 #include "EditorViewportClient.h"
 #include "Bookmarks/IBookmarkTypeTools.h"
@@ -295,11 +297,11 @@ bool SaveDirtyPackagesWithIntegrityGate(TSharedPtr<FJsonObject>& OutResult, FStr
 } // namespace EditorSaveAllDiagnostic
 
 // ---- editor.console_command ----
-REGISTER_RPC_HANDLER("editor.console_command", "editor", "Execute a console command in the editor world or, via the optional 'world' selector, inside a specific PIE world ('server', 'client', 'client:N', 'pie:N') — the multiplayer-in-PIE routing path (e.g. run 'servertravel ...' in the PIE server world, 'open <ip>' in a PIE client world). Distinct from system.console_command which targets the broader process; use this for editor-, viewport-, and PIE-world-scoped commands. See editor.pie_status for what PIE worlds exist. Returns EXEC_FAILED when no exec handler and no console variable recognised the line (typo, or a command owned by an unloaded module); a success means the line was consumed, NOT that the command's effect succeeded — read that back with a typed verb. A line that SETS a scalability CVar is REFUSED with SCALABILITY_CVAR_USE_TYPED_VERB — either an 'sg.*' group, or any CVar carrying ECVF_Scalability / ECVF_ScalabilityGroup (r.ViewDistanceScale, r.Streaming.PoolSize, r.ScreenPercentage, r.MaxAnisotropy, ...), because a console set pins it at ECVF_SetByConsole above the ECVF_SetByScalability priority the editor's own Settings > Engine Scalability Settings panel writes at, for the rest of the session. Use performance.set_scalability, or pass force:true to accept the pin. READING such a CVar (its name with no value) is not refused, and neither is the aggregate 'scalability N', which routes through Scalability::SetQualityLevels at the panel's own priority.",
+REGISTER_RPC_HANDLER("editor.console_command", "editor", "Execute a console command in the editor world or, via the optional 'world' selector, inside a specific PIE world ('server', 'client', 'client:N', 'pie:N') — the multiplayer-in-PIE routing path (e.g. run 'servertravel ...' in the PIE server world, 'open <ip>' in a PIE client world). Distinct from system.console_command which targets the broader process; use this for editor-, viewport-, and PIE-world-scoped commands. See editor.pie_status for what PIE worlds exist. Returns EXEC_FAILED when no exec handler and no console variable recognised the line (typo, or a command owned by an unloaded module); a success means the line was consumed, NOT that the command's effect succeeded — read that back with a typed verb. A line that SETS a scalability CVar is REFUSED with SCALABILITY_CVAR_USE_TYPED_VERB — either an 'sg.*' group, or any CVar carrying ECVF_Scalability / ECVF_ScalabilityGroup (r.ViewDistanceScale, r.Streaming.PoolSize, r.ScreenPercentage, r.MaxAnisotropy, ...), because a console set pins it at ECVF_SetByConsole above the ECVF_SetByScalability priority the editor's own Settings > Engine Scalability Settings panel writes at, for the rest of the session. Use performance.set_scalability, or pass force:true to accept the pin. READING such a CVar (its name with no value) is not refused, and neither is the aggregate 'scalability N', which routes through Scalability::SetQualityLevels at the panel's own priority. A line whose first command word is QUIT_EDITOR or CLOSE_SLATE_MAINFRAME is REFUSED with EDITOR_QUIT_USE_TYPED_VERB (use editor.quit), PY with PYTHON_USE_TYPED_VERB (use python.execute), EXECFILE with EXECFILE_SEND_LINES_INDIVIDUALLY, and DEBUG followed by a crash, hang or memory subcommand with DEBUG_COMMAND_CRASHES_PROCESS / DEBUG_COMMAND_HANGS_PROCESS / DEBUG_COMMAND_EXHAUSTS_MEMORY (DEBUG HITCH / RENDERHITCH are allowed); force:true runs any of them anyway.",
     RPC_PARAMS(
         RPC_PARAM_REQ("command", "string", "Full console command line including arguments, e.g. 'Stat Unit' or 'showflag.Bloom 0'."),
         RPC_PARAM_DEF("world", "string", "Target world selector: 'editor' (default, the historical behavior), 'server' (first PIE world with authority — listen/dedicated server, or the sole standalone instance), 'client' (first PIE client), 'client:N' (N-th PIE client, 1-based), or 'pie:N' (raw PIEInstance N).", "editor"),
-        RPC_PARAM_DEF("force", "boolean", "Run a scalability-CVar set anyway ('sg.<Group> N' or any ECVF_Scalability CVar), accepting that the CVar is pinned at ECVF_SetByConsole and the editor's own Scalability panel can no longer change its group until the editor restarts. Ignored for every other command.", "false")
+        RPC_PARAM_DEF("force", "boolean", "Run a refused line anyway: a scalability-CVar set ('sg.<Group> N' or any ECVF_Scalability CVar), accepting that the CVar is pinned at ECVF_SetByConsole and the editor's own Scalability panel can no longer change its group until the editor restarts; or a QUIT_EDITOR / CLOSE_SLATE_MAINFRAME, PY, EXECFILE or DEBUG crash/hang/memory line, accepting that it skips the checks of the typed verb named in the refusal. Ignored for every other command.", "false")
     ))
 {
   // A console set of ANY scalability-flagged cvar — the sg.* group or one of the ordinary r.*
@@ -314,6 +316,14 @@ REGISTER_RPC_HANDLER("editor.console_command", "editor", "Execute a console comm
     Ctx.SendError(ErrorCodes::ERR_SCALABILITY_CVAR_USE_TYPED_VERB,
         ScalabilityConsoleGuard::MakeScalabilityTypedVerbRefusal(Command));
     return true;
+  }
+  // QUIT_EDITOR, PY, EXECFILE and DEBUG crash/hang/memory lines bypass the checks of the typed
+  // verbs that own those effects; see Handlers/ConsoleCommandGuard.h.
+  if (!Ctx.GetBool(TEXT("force"), false)) {
+    if (const TOptional<ConsoleCommandGuard::FRefusal> Refusal = ConsoleCommandGuard::FindRefusal(Command)) {
+      Ctx.SendError(Refusal->Code, Refusal->Message, Refusal->ToJson());
+      return true;
+    }
   }
 
   if (!GEditor) {
@@ -393,38 +403,164 @@ REGISTER_RPC_HANDLER("editor.console_command", "editor", "Execute a console comm
   return true;
 }
 
-// ---- editor.undo ----
-REGISTER_RPC_HANDLER("editor.undo", "editor", "Undo the most recent editor transaction (Ctrl+Z equivalent). Returns success=false if there is nothing to undo.",
-    RPC_NO_PARAMS)
+namespace EditorUndoHistory
 {
-  if (!GEditor) {
-    Ctx.SendError(ErrorCodes::ERR_EDITOR_NOT_AVAILABLE, TEXT("Editor not available"));
+
+// One transaction-buffer entry as the wire sees it. Index is the UTransactor queue index
+// (0 = oldest), so an entry reads the same in undo_history and in an undo/redo response.
+static TSharedPtr<FJsonObject> DescribeTransaction(const UTransactor& Trans, int32 QueueIndex)
+{
+  TSharedPtr<FJsonObject> Entry = MakeShared<FJsonObject>();
+  Entry->SetNumberField(TEXT("index"), QueueIndex);
+  if (const FTransaction* Transaction = Trans.GetTransaction(QueueIndex)) {
+    const FTransactionContext Context = Transaction->GetContext();
+    Entry->SetStringField(TEXT("title"), Context.Title.ToString());
+    Entry->SetStringField(TEXT("context"), Context.Context);
+    Entry->SetStringField(TEXT("id"), Context.TransactionId.ToString(EGuidFormats::DigitsWithHyphens));
+    if (Context.PrimaryObject) {
+      Entry->SetStringField(TEXT("primaryObject"), Context.PrimaryObject->GetPathName());
+    }
+  }
+  return Entry;
+}
+
+// Shared body of editor.undo and editor.redo: applies up to `steps` transactions one engine call
+// at a time and reports each one actually applied. Stops at the first step the engine refuses.
+static bool RunSteps(FHandlerContext& Ctx, bool bRedo)
+{
+  if (!GEditor || !GEditor->Trans) {
+    Ctx.SendError(ErrorCodes::ERR_EDITOR_NOT_AVAILABLE, TEXT("Editor transaction buffer not available"));
     return true;
   }
 
-  const bool bSuccess = GEditor->UndoTransaction();
+  const int32 Steps = Ctx.GetInt(TEXT("steps"), 1);
+  if (Steps < 1) {
+    Ctx.SendError(ErrorCodes::ERR_INVALID_ARGUMENT,
+        FString::Printf(TEXT("steps must be >= 1 (got %d)."), Steps));
+    return true;
+  }
+
+  UTransactor* Trans = GEditor->Trans;
+  TArray<TSharedPtr<FJsonValue>> Applied;
+  FString StoppedReason;
+  for (int32 Step = 0; Step < Steps; ++Step) {
+    FText Blocked;
+    if (!(bRedo ? Trans->CanRedo(&Blocked) : Trans->CanUndo(&Blocked))) {
+      StoppedReason = Blocked.ToString();
+      break;
+    }
+    if (!(bRedo ? GEditor->RedoTransaction() : GEditor->UndoTransaction())) {
+      StoppedReason = FString::Printf(
+          TEXT("The editor declined the %s: a package save or garbage collection is in progress, or every remaining transaction has expired."),
+          bRedo ? TEXT("redo") : TEXT("undo"));
+      break;
+    }
+    // One engine Undo/Redo can step over expired transactions before applying one, so the applied
+    // entry is read at the position the buffer ended on, not predicted from where it started.
+    const int32 QueueLength = Trans->GetQueueLength();
+    const int32 UndoCount = Trans->GetUndoCount();
+    const int32 AppliedIndex = bRedo ? QueueLength - UndoCount - 1 : QueueLength - UndoCount;
+    Applied.Add(MakeShared<FJsonValueObject>(DescribeTransaction(*Trans, AppliedIndex)));
+  }
 
   TSharedPtr<FJsonObject> Resp = MakeShared<FJsonObject>();
-  Resp->SetStringField(TEXT("action"), TEXT("undo"));
-  Resp->SetBoolField(TEXT("success"), bSuccess);
+  Resp->SetStringField(TEXT("action"), bRedo ? TEXT("redo") : TEXT("undo"));
+  Resp->SetBoolField(TEXT("success"), Applied.Num() == Steps);
+  Resp->SetNumberField(TEXT("requestedSteps"), Steps);
+  Resp->SetNumberField(TEXT("completedSteps"), Applied.Num());
+  Resp->SetArrayField(bRedo ? TEXT("redone") : TEXT("undone"), Applied);
+  Resp->SetNumberField(TEXT("queueLength"), Trans->GetQueueLength());
+  Resp->SetNumberField(TEXT("undoCount"), Trans->GetUndoCount());
+  if (!StoppedReason.IsEmpty()) {
+    Resp->SetStringField(TEXT("stoppedReason"), StoppedReason);
+  }
+
+  if (Applied.Num() == 0) {
+    Ctx.SendError(bRedo ? ErrorCodes::ERR_NOTHING_TO_REDO : ErrorCodes::ERR_NOTHING_TO_UNDO,
+        FString::Printf(TEXT("Nothing was %s: %s Read editor.undo_history to see the buffer."),
+            bRedo ? TEXT("redone") : TEXT("undone"), *StoppedReason),
+        Resp);
+    return true;
+  }
   Ctx.SendSuccess(Resp);
   return true;
 }
 
-// ---- editor.redo ----
-REGISTER_RPC_HANDLER("editor.redo", "editor", "Redo the most recently undone editor transaction (Ctrl+Y equivalent). Returns success=false if the redo stack is empty.",
-    RPC_NO_PARAMS)
+} // namespace EditorUndoHistory
+
+// ---- editor.undo ----
+REGISTER_RPC_HANDLER("editor.undo", "editor", "Undo the most recent editor transaction(s) (Ctrl+Z equivalent). Returns undone[] with the index, title, context, id and primaryObject of every transaction actually undone, newest first; success is true only when all requested steps ran, and stoppedReason carries the engine's reason when fewer did. Zero steps undone is NOTHING_TO_UNDO (empty undo side, undo barrier, or a transaction in progress) with the same payload. See editor.undo_history for the buffer.",
+    RPC_PARAMS(
+        RPC_PARAM_DEF("steps", "integer", "How many transactions to undo, one engine undo per step; must be >= 1. Stops early at the first step the engine refuses.", "1")
+    ))
 {
-  if (!GEditor) {
-    Ctx.SendError(ErrorCodes::ERR_EDITOR_NOT_AVAILABLE, TEXT("Editor not available"));
+  return EditorUndoHistory::RunSteps(Ctx, /*bRedo=*/false);
+}
+
+// ---- editor.redo ----
+REGISTER_RPC_HANDLER("editor.redo", "editor", "Redo the most recently undone editor transaction(s) (Ctrl+Y equivalent). Returns redone[] with the index, title, context, id and primaryObject of every transaction actually redone, in redo order; success is true only when all requested steps ran, and stoppedReason carries the engine's reason when fewer did. Zero steps redone is NOTHING_TO_REDO with the same payload. Any new transaction discards the redo side.",
+    RPC_PARAMS(
+        RPC_PARAM_DEF("steps", "integer", "How many transactions to redo, one engine redo per step; must be >= 1. Stops early at the first step the engine refuses.", "1")
+    ))
+{
+  return EditorUndoHistory::RunSteps(Ctx, /*bRedo=*/true);
+}
+
+// ---- editor.undo_history ----
+REGISTER_RPC_HANDLER("editor.undo_history", "editor", "Read-only: the editor transaction buffer. Returns queueLength, undoCount (entries already undone and redoable), canUndo/canRedo with the engine's reason when false (empty side, undo barrier, transaction in progress), transactionActive, and the titled entries on each side: undo[] newest first (the next editor.undo first) and redo[] in redo order, each capped at limit, with undoTruncated/redoTruncated. An empty buffer is a normal answer (queueLength 0, both lists empty), not an error.",
+    RPC_PARAMS(
+        RPC_PARAM_DEF("limit", "integer", "Maximum entries listed on each side (undo and redo); must be >= 1.", "20")
+    ))
+{
+  if (!GEditor || !GEditor->Trans) {
+    Ctx.SendError(ErrorCodes::ERR_EDITOR_NOT_AVAILABLE, TEXT("Editor transaction buffer not available"));
     return true;
   }
 
-  const bool bSuccess = GEditor->RedoTransaction();
+  const int32 Limit = Ctx.GetInt(TEXT("limit"), 20);
+  if (Limit < 1) {
+    Ctx.SendError(ErrorCodes::ERR_INVALID_ARGUMENT,
+        FString::Printf(TEXT("limit must be >= 1 (got %d)."), Limit));
+    return true;
+  }
+
+  UTransactor* Trans = GEditor->Trans;
+  const int32 QueueLength = Trans->GetQueueLength();
+  const int32 UndoCount = Trans->GetUndoCount();
+  // Queue layout: [0, QueueLength - UndoCount) is the undo side, oldest first;
+  // [QueueLength - UndoCount, QueueLength) is the redo side, next redo first.
+  const int32 FirstRedo = QueueLength - UndoCount;
+
+  TArray<TSharedPtr<FJsonValue>> UndoEntries;
+  for (int32 Index = FirstRedo - 1; Index >= 0 && UndoEntries.Num() < Limit; --Index) {
+    UndoEntries.Add(MakeShared<FJsonValueObject>(EditorUndoHistory::DescribeTransaction(*Trans, Index)));
+  }
+  TArray<TSharedPtr<FJsonValue>> RedoEntries;
+  for (int32 Index = FirstRedo; Index < QueueLength && RedoEntries.Num() < Limit; ++Index) {
+    RedoEntries.Add(MakeShared<FJsonValueObject>(EditorUndoHistory::DescribeTransaction(*Trans, Index)));
+  }
+
+  FText UndoBlocked;
+  FText RedoBlocked;
+  const bool bCanUndo = Trans->CanUndo(&UndoBlocked);
+  const bool bCanRedo = Trans->CanRedo(&RedoBlocked);
 
   TSharedPtr<FJsonObject> Resp = MakeShared<FJsonObject>();
-  Resp->SetStringField(TEXT("action"), TEXT("redo"));
-  Resp->SetBoolField(TEXT("success"), bSuccess);
+  Resp->SetNumberField(TEXT("queueLength"), QueueLength);
+  Resp->SetNumberField(TEXT("undoCount"), UndoCount);
+  Resp->SetBoolField(TEXT("transactionActive"), Trans->IsActive());
+  Resp->SetBoolField(TEXT("canUndo"), bCanUndo);
+  if (!bCanUndo) {
+    Resp->SetStringField(TEXT("canUndoReason"), UndoBlocked.ToString());
+  }
+  Resp->SetBoolField(TEXT("canRedo"), bCanRedo);
+  if (!bCanRedo) {
+    Resp->SetStringField(TEXT("canRedoReason"), RedoBlocked.ToString());
+  }
+  Resp->SetArrayField(TEXT("undo"), UndoEntries);
+  Resp->SetArrayField(TEXT("redo"), RedoEntries);
+  Resp->SetBoolField(TEXT("undoTruncated"), UndoEntries.Num() < FirstRedo);
+  Resp->SetBoolField(TEXT("redoTruncated"), RedoEntries.Num() < UndoCount);
   Ctx.SendSuccess(Resp);
   return true;
 }

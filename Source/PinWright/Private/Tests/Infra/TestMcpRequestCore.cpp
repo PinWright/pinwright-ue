@@ -1692,6 +1692,88 @@ bool FMcpRequestCoreToolsCallArgumentObjectTypeTest::RunTest(const FString& Para
 }
 
 // ============================================================================
+// tools/call — `args` sent as a JSON string (some MCP clients serialize nested
+// objects that way). A string that parses to an object dispatches as that
+// object, including args.wait; a non-object JSON string or invalid JSON stays
+// -32602 and says the string did not parse. The outer `arguments` stays strict.
+// ============================================================================
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMcpRequestCoreToolsCallStringArgsTest,
+    "PinWright.infra.request_core.ToolsCall.StringArgs",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FMcpRequestCoreToolsCallStringArgsTest::RunTest(const FString& Parameters)
+{
+    using namespace McpRequestCoreTest;
+
+    auto BuildStringArgsBody = [](int32 Id, const FString& ArgsText)
+    {
+        TSharedPtr<FJsonObject> Arguments = MakeShared<FJsonObject>();
+        Arguments->SetStringField(TEXT("method"), TEXT("any.method"));
+        Arguments->SetStringField(TEXT("args"), ArgsText);
+        return BuildToolsCallEnvelope(Id, Arguments);
+    };
+
+    // Object in a string: dispatched with the parsed object, wait honoured.
+    {
+        McpRequestCore::FRequestDecision Out;
+        TestTrue(TEXT("object string: request accepted"), McpRequestCore::ProcessRequestBody(
+            BuildStringArgsBody(80, TEXT("{\"assetPath\":\"/Game/X\",\"wait\":false}")),
+            FString(), Out, MakeConfig()));
+        if (TestTrue(TEXT("object string: DispatchRpc"),
+                Out.Kind == McpRequestCore::FRequestDecision::EKind::DispatchRpc)
+            && TestTrue(TEXT("object string: args object present"), Out.Args.IsValid()))
+        {
+            TestEqual(TEXT("object string: method"), Out.Method, FString(TEXT("any.method")));
+            TestEqual(TEXT("object string: assetPath parsed"),
+                Out.Args->GetStringField(TEXT("assetPath")), FString(TEXT("/Game/X")));
+            TestFalse(TEXT("object string: wait=false honoured"), Out.bWaitAccepted);
+        }
+    }
+
+    auto ExpectRejected = [this](const FString& Body, const FString& Label, bool bExpectParseText)
+    {
+        McpRequestCore::FRequestDecision Out;
+        if (!TestTrue(Label + TEXT(": request accepted"), McpRequestCore::ProcessRequestBody(
+                Body, FString(), Out, MakeConfig())))
+        {
+            return;
+        }
+        if (!TestTrue(Label + TEXT(": immediate response"),
+                Out.Kind == McpRequestCore::FRequestDecision::EKind::ImmediateResponse))
+        {
+            return;
+        }
+        TSharedPtr<FJsonObject> Err = ErrorObject(Out.ImmediateBody);
+        if (!TestTrue(Label + TEXT(": error object present"), Err.IsValid()))
+        {
+            return;
+        }
+        TestEqual(Label + TEXT(": error.code is kInvalidParams"),
+            static_cast<int32>(Err->GetNumberField(TEXT("code"))), JsonRpc::kInvalidParams);
+        const FString Message = Err->GetStringField(TEXT("message"));
+        TestTrue(Label + TEXT(": message requires an object"), Message.Contains(TEXT("must be an object")));
+        if (bExpectParseText)
+        {
+            TestTrue(Label + TEXT(": message says the string did not parse"),
+                Message.Contains(TEXT("did not parse to a JSON object")));
+        }
+    };
+
+    ExpectRejected(BuildStringArgsBody(81, TEXT("[1,2]")), TEXT("array string"), true);
+    ExpectRejected(BuildStringArgsBody(82, TEXT("42")), TEXT("number string"), true);
+    ExpectRejected(BuildStringArgsBody(83, TEXT("{not json")), TEXT("invalid JSON string"), true);
+
+    // The outer MCP `arguments` field is not coerced, even when its string holds an object.
+    ExpectRejected(
+        BuildToolsCallEnvelopeValue(84, MakeShared<FJsonValueString>(
+            TEXT("{\"method\":\"any.method\",\"args\":{}}"))),
+        TEXT("outer object string"), false);
+
+    return true;
+}
+
+// ============================================================================
 // WrapToolResult — error docs pointer. A failed wrap with a non-empty Method
 // appends a `Docs: <page>` line to content[0].text and attaches a top-level
 // docs object {page, wiki}. Successes never get docs; the legacy 6-arg wrap

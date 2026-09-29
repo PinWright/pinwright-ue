@@ -186,6 +186,27 @@ An editor window does not come back the same size across restarts: one machine g
 looked like a spectacular optimisation. Pin the window size before baselining and verify it after the
 capture, not only before.
 
+## Background Throttling While An Agent Is Active
+
+The engine throttles an unfocused editor to 3 FPS and turns its viewports' realtime off. While an
+agent drives the editor (an RPC dispatched in the last 5 minutes, the same window `editor.quit` uses
+for "in use", or any job still running), PinWright lifts both: it answers `true` from a
+`GEditor->ShouldDisableCPUThrottlingDelegates` entry, which lifts the frame cap, and clears
+Editor Preferences > Performance > *Use Less CPU when in Background* (`bThrottleCPUWhenNotForeground`)
+in memory, because the viewport "Background Process" override reads that flag and ignores the
+delegates. The user's value is restored when activity lapses and when the editor shuts down; it is
+never saved (if the preferences panel saves that section mid-hold, the restore saves the user's value
+back). A background editor therefore renders its viewports and costs GPU for up to 5 minutes after the
+last call. Opt out with Project Settings > Plugins > PinWright (Project) > *Disable Background
+Throttling While Agent Active* (`bDisableBackgroundThrottleWhileAgentActive`, default on).
+`performance.run_benchmark` reports per-frame counts of throttled, background and guard-held frames
+in its `backgroundThrottle` block and warns when any frame was throttled.
+
+**Limit: a minimized editor still does not draw.** The hold lifts the tick cap there too, but
+`UEditorEngine::Tick` skips the viewport redraw whenever every top-level window is hidden, and neither
+lever reaches that check. Viewport screenshots and profiles from a minimized editor stay empty
+(next section); restore the window first.
+
 ## What Will Lie To You
 
 Each of these was measured, and each cost real time.
@@ -197,7 +218,9 @@ whenever it throttles, and it throttles whenever every top-level window is hidde
 hidden-window check runs after that setting and overrides it. The editor also skips the viewport
 redraw entirely in that state, so the CSV reports 0 draw calls, frozen thread times and garbage
 counters. The tells are the constant to five figures and the zero draw count. `t.MaxFPS 0` is
-irrelevant; no CVar disables this path.
+irrelevant; no CVar disables this path. While an agent is active PinWright's throttle delegate lifts
+the 3 FPS cap (previous section), so the frame time is no longer that constant, but the zero draw
+count remains.
 
   A window verb cannot recover it. `editor.set_window_state {state:"restored"}` returns
   `NO_WINDOWS`, because a minimized window is not a *visible* top-level window and the shared window

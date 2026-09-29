@@ -130,7 +130,7 @@ bool FBpirMacroRecompilePreservesCallerInstancesTest::RunTest(const FString& Par
     {
         FBpirCompiler Compiler(BP);
         FCompileResult Result = Compiler.Compile(
-            TEXT("entry macro TestMacro(float Value, text Label, object<Object> Target) -> (float Result) {\n")
+            TEXT("entry macro TestMacro(float Value, text Label, object Target) -> (float Result) {\n")
             TEXT("    %clamped = pure FClamp(Value: $Value, Min: 0.0, Max: 10.0)\n")
             TEXT("    return (Result: %clamped)\n")
             TEXT("}"));
@@ -227,7 +227,7 @@ bool FBpirMacroRecompilePreservesCallerInstancesTest::RunTest(const FString& Par
     {
         FBpirCompiler Compiler(BP);
         FCompileResult Result = Compiler.Compile(
-            TEXT("entry macro TestMacro(float Value, text Label, object<Object> Target) -> (float Result) {\n")
+            TEXT("entry macro TestMacro(float Value, text Label, object Target) -> (float Result) {\n")
             TEXT("    %clamped = pure FClamp(Value: $Value, Min: 1.0, Max: 9.0)\n")
             TEXT("    return (Result: %clamped)\n")
             TEXT("}"),
@@ -312,8 +312,8 @@ bool FBpirMacroRecompilePreservesCallerInstancesTest::RunTest(const FString& Par
     {
         FBpirCompiler Compiler(BP);
         FCompileResult Result = Compiler.Compile(
-            TEXT("entry macro TestMacro(int Value, text Label, object<Object> Target) -> (float Result) {\n")
-            TEXT("    %converted = pure Conv_IntToFloat(InInt: $Value)\n")
+            TEXT("entry macro TestMacro(int Value, text Label, object Target) -> (float Result) {\n")
+            TEXT("    %converted = pure Conv_IntToDouble(InInt: $Value)\n")
             TEXT("    return (Result: %converted)\n")
             TEXT("}"),
             EBpirCompileMode::Replace);
@@ -322,6 +322,19 @@ bool FBpirMacroRecompilePreservesCallerInstancesTest::RunTest(const FString& Par
         if (Result.bSuccess)
         {
             return false;
+        }
+        // The body must emit cleanly so the failure is the caller-pin guard, not an emission error.
+        const bool bFailedOnCallerPinType = Result.Errors.ContainsByPredicate([](const FCompileError& Err)
+        {
+            return Err.Message.Contains(TEXT("changed type on existing caller pin 'Value'"));
+        });
+        TestTrue(TEXT("Failed recompile is rejected by the caller pin-type guard"), bFailedOnCallerPinType);
+        if (!bFailedOnCallerPinType)
+        {
+            for (const FCompileError& Err : Result.Errors)
+            {
+                AddInfo(FString::Printf(TEXT("Signature recompile L%d: %s"), Err.Line, *Err.Message));
+            }
         }
     }
 

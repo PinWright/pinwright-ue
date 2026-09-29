@@ -71,5 +71,10 @@ struct FParamSpec
     FParamSpec{TEXT(Name), TEXT(Type), TEXT(Desc), false, TEXT(""), \
         TArray<FString>(), TArray<FParamAliasSpec>(), TArray<FString>({__VA_ARGS__})}
 
+// The required form of RPC_PARAM_OPT_NESTED: same closed nested allow-list, plus the missing-param gate.
+#define RPC_PARAM_REQ_NESTED(Name, Type, Desc, ...) \
+    FParamSpec{TEXT(Name), TEXT(Type), TEXT(Desc), true, TEXT(""), \
+        TArray<FString>(), TArray<FParamAliasSpec>(), TArray<FString>({__VA_ARGS__})}
+
 #define RPC_PARAMS(...) TArray<FParamSpec>({__VA_ARGS__})
 #define RPC_NO_PARAMS TArray<FParamSpec>()

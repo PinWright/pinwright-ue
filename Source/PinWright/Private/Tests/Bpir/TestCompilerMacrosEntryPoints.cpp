@@ -8,10 +8,10 @@
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "K2Node_Event.h"
 #include "K2Node_MacroInstance.h"
+#include "K2Node_MultiGate.h"
 #include "K2Node_InputKey.h"
 #include "K2Node_Select.h"
 #include "EdGraph/EdGraph.h"
-#include "Tests/TestSkipReporting.h"
 
 using namespace CompilerTestUtils;
 
@@ -138,38 +138,86 @@ bool FCompilerIntegrationMacroMultiGateTest::RunTest(const FString& Parameters)
         TEXT("    call PrintString(InString: \"Out 1\")\n")
         TEXT("}"));
 
-    // MultiGate may not exist in StandardMacros on all UE versions (e.g. UE 5.6+).
-    // If it fails, verify it's a clean error about the macro not being found, not a crash.
-    if (!Result.bSuccess)
+    // MultiGate is the native UK2Node_MultiGate on every UE 5.x (StandardMacros has no such
+    // graph), so `macro MultiGate` must compile to that node with both bare-index targets wired.
+    if (!Result.bSuccess) { for (const FCompileError& Err : Result.Errors) { AddError(FString::Printf(TEXT("  L%d: %s"), Err.Line, *Err.Message)); } }
+    TestTrue(TEXT("Compile succeeded"), Result.bSuccess);
+    TestEqual(TEXT("Exactly one native MultiGate node exists"),
+        CountNodesOfType<UK2Node_MultiGate>(BP), 1);
+    TestEqual(TEXT("No MacroInstance was created for MultiGate"),
+        CountNodesOfType<UK2Node_MacroInstance>(BP), 0);
+
+    UK2Node_MultiGate* Gate = FindNodeOfType<UK2Node_MultiGate>(BP);
+    if (!TestNotNull(TEXT("MultiGate node found"), Gate)) return false;
+    for (const TCHAR* OutName : { TEXT("Out 0"), TEXT("Out 1") })
     {
-        bool bIsMacroNotFound = false;
-        for (const FCompileError& Err : Result.Errors)
+        UEdGraphPin* OutPin = Gate->FindPin(OutName, EGPD_Output);
+        TestTrue(FString::Printf(TEXT("'%s' is wired to its label"), OutName),
+            OutPin && OutPin->LinkedTo.Num() == 1);
+    }
+    return true;
+}
+
+// ============================================================================
+// 4b. Compiler.Integration.MacroMultiGateOutputCount
+// `outputs: N` grows to max(N, highest wired index + 1); a non-positive count is
+// rejected before any node is created.
+// ============================================================================
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCompilerIntegrationMacroMultiGateOutputCountTest,
+    "PinWright.bpir.compiler.integration.MacroMultiGateOutputCount",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FCompilerIntegrationMacroMultiGateOutputCountTest::RunTest(const FString& Parameters)
+{
+    auto CountExecOuts = [](const UEdGraphNode* Node)
+    {
+        int32 Count = 0;
+        for (const UEdGraphPin* Pin : Node->Pins)
         {
-            AddInfo(FString::Printf(TEXT("  L%d: %s"), Err.Line, *Err.Message));
-            if (Err.Message.Contains(TEXT("not found")))
-            {
-                bIsMacroNotFound = true;
-            }
+            Count += (Pin->Direction == EGPD_Output && Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_Exec) ? 1 : 0;
         }
-        if (bIsMacroNotFound)
-        {
-            // Greppable SKIPPED marker rather than AddWarning: this runner treats
-            // AddWarning as a test failure (see TestCompilerIntegration.cpp ~3322), and
-            // MultiGate really is absent from StandardMacros on some engine versions, so
-            // a warning here would turn a legitimate environment skip into a red test.
-            // The marker at least makes the abandoned assertions greppable in the log.
-            PinWrightTestSkip::SkipAssertions(*this, TEXT("multigate-macro-unavailable"),
-                TEXT("SKIPPED: MultiGate macro not available in this UE version's StandardMacros; skipping MultiGate entry-point test."));
-            return true;
-        }
-        // Unexpected failure
+        return Count;
+    };
+
+    // A wired index beyond the declared count wins: outputs: 2 with Out 3 wired -> 4 outputs.
+    {
+        UBlueprint* BP = CreateTransientTestBP(TEXT("MacroEntryTestBP"));
+        if (!TestNotNull(TEXT("Blueprint was created"), BP)) return false;
+        FBpirCompiler Compiler(BP);
+        FCompileResult Result = Compiler.Compile(
+            TEXT("entry event BeginPlay() {\n")
+            TEXT("    %mg = macro MultiGate(outputs: 2) [3 -> @last]\n")
+            TEXT("\n")
+            TEXT("@last:\n")
+            TEXT("    call PrintString(InString: \"Out 3\")\n")
+            TEXT("}"));
         for (const FCompileError& Err : Result.Errors) { AddError(FString::Printf(TEXT("  L%d: %s"), Err.Line, *Err.Message)); }
         TestTrue(TEXT("Compile succeeded"), Result.bSuccess);
+        UK2Node_MultiGate* Gate = FindNodeOfType<UK2Node_MultiGate>(BP);
+        if (!TestNotNull(TEXT("MultiGate node found"), Gate)) return false;
+        TestEqual(TEXT("Output count grows to the highest wired index + 1"), CountExecOuts(Gate), 4);
+        UEdGraphPin* Out3 = Gate->FindPin(TEXT("Out 3"), EGPD_Output);
+        TestTrue(TEXT("'Out 3' is wired"), Out3 && Out3->LinkedTo.Num() == 1);
     }
-    else
+
+    // outputs: 0 is not a count; the compile fails and leaves no MultiGate behind.
     {
-        TestTrue(TEXT("At least one MacroInstance node exists"),
-            CountNodesOfType<UK2Node_MacroInstance>(BP) >= 1);
+        UBlueprint* BP = CreateTransientTestBP(TEXT("MacroEntryTestBP"));
+        if (!TestNotNull(TEXT("Blueprint was created"), BP)) return false;
+        FBpirCompiler Compiler(BP);
+        FCompileResult Result = Compiler.Compile(
+            TEXT("entry event BeginPlay() {\n")
+            TEXT("    %mg = macro MultiGate(outputs: 0)\n")
+            TEXT("}"));
+        TestFalse(TEXT("Compile fails on outputs: 0"), Result.bSuccess);
+        bool bNamesTheArg = false;
+        for (const FCompileError& Err : Result.Errors)
+        {
+            bNamesTheArg |= Err.Message.Contains(TEXT("'outputs' must be a positive integer"));
+        }
+        TestTrue(TEXT("Error names the outputs argument"), bNamesTheArg);
+        TestEqual(TEXT("No MultiGate node is left in the graph"), CountNodesOfType<UK2Node_MultiGate>(BP), 0);
     }
     return true;
 }

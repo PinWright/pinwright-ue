@@ -573,6 +573,7 @@ namespace
         TEXT("blueprint.compile"),
         TEXT("blueprint.compile_bpir"),
         TEXT("blueprint.delete_unused_variables"),
+        TEXT("blueprint.graph.connect_pins_batch"),
         TEXT("blueprint.graph.delete_orphaned_nodes"),
         TEXT("blueprint.insert_bpir_at_node"),
         TEXT("blueprint.insert_bpir_before_node"),

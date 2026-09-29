@@ -2,6 +2,15 @@
 
 Operate on World Partition editor systems for partitioned maps — cell loading, Data Layer creation/assignment, cleanup of invalid Data Layers, HLOD-related organization, and partitioned level state. Use this for World Partition state and Data Layer workflows; use `call("level.structure")` for detailed HLOD layer setup and `call("level")` / `call("actor")` for ordinary non-partition level edits.
 
+## Data layer asset location
+
+`world_partition.create_datalayer` creates the `UDataLayerAsset` at
+`<dataLayerAssetPath>/<dataLayerName>`. `dataLayerAssetPath` is an optional
+content folder, default `/Game/DataLayers`, validated like other create verbs
+(a mounted content root, no traversal); an invalid folder returns
+`INVALID_PARAMS` and creates nothing. The response's `dataLayerAssetPath` is the
+full asset path, the same shape as `level.structure.create_data_layer`.
+
 ## Mutation readback
 
 `world_partition.set_datalayer` captures the engine mutation result and reads the

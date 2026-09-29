@@ -892,6 +892,770 @@ REGISTER_RPC_HANDLER("animation.authoring.list_curves", "animation.authoring",
 }
 
 // ---------------------------------------------------------------------------
+// Curve read / batch write / key removal / curve removal / rename. Key verbs edit Float curves;
+// Transform curves can be removed and renamed, but their nine channel curves are not keyed here.
+// Every multi-step edit runs inside one controller bracket: the controller opens its own
+// transactions, so no FScopedTransaction is layered on top.
+
+namespace PwAnimCurveEdit
+{
+    // Frame-derived times round-trip through float; this is also the tolerance for matching a
+    // requested time to a stored key.
+    constexpr float KeyTimeTolerance = 1.0e-4f;
+
+    struct FModeName
+    {
+        const TCHAR* Name;
+        int32 Value;
+    };
+
+    const FModeName InterpModes[] = {
+        {TEXT("linear"), RCIM_Linear}, {TEXT("constant"), RCIM_Constant}, {TEXT("cubic"), RCIM_Cubic}};
+    const FModeName TangentModes[] = {
+        {TEXT("auto"), RCTM_Auto}, {TEXT("smartAuto"), RCTM_SmartAuto},
+        {TEXT("user"), RCTM_User}, {TEXT("break"), RCTM_Break}};
+
+    const TCHAR* ModeToName(TConstArrayView<FModeName> Table, int32 Value)
+    {
+        for (const FModeName& Entry : Table)
+        {
+            if (Entry.Value == Value)
+            {
+                return Entry.Name;
+            }
+        }
+        return TEXT("none");
+    }
+
+    bool NameToMode(TConstArrayView<FModeName> Table, const FString& Text, int32& OutValue)
+    {
+        for (const FModeName& Entry : Table)
+        {
+            if (Text.Equals(Entry.Name, ESearchCase::IgnoreCase))
+            {
+                OutValue = Entry.Value;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    TArray<TSharedPtr<FJsonValue>> KeysToJson(const FRichCurve& Curve, const FFrameRate& Rate)
+    {
+        TArray<TSharedPtr<FJsonValue>> Out;
+        for (const FRichCurveKey& Key : Curve.GetConstRefOfKeys())
+        {
+            double Frame = static_cast<double>(Key.Time) * Rate.AsDecimal();
+            const double NearestFrame = FMath::RoundToDouble(Frame);
+            if (FMath::IsNearlyEqual(Frame, NearestFrame, 1.0e-3))
+            {
+                Frame = NearestFrame;
+            }
+            TSharedRef<FJsonObject> Obj = MakeShared<FJsonObject>();
+            Obj->SetNumberField(TEXT("time"), Key.Time);
+            Obj->SetNumberField(TEXT("frame"), Frame);
+            Obj->SetNumberField(TEXT("value"), Key.Value);
+            Obj->SetStringField(TEXT("interpMode"), ModeToName(MakeArrayView(InterpModes), Key.InterpMode.GetValue()));
+            Obj->SetStringField(TEXT("tangentMode"), ModeToName(MakeArrayView(TangentModes), Key.TangentMode.GetValue()));
+            Obj->SetNumberField(TEXT("arriveTangent"), Key.ArriveTangent);
+            Obj->SetNumberField(TEXT("leaveTangent"), Key.LeaveTangent);
+            Out.Add(MakeShared<FJsonValueObject>(Obj));
+        }
+        return Out;
+    }
+
+    // Parses one keys[] entry. bWithValue selects the write shape (value plus optional modes and
+    // tangents) over the bare time selector the removal verb takes.
+    bool ReadKey(const TSharedPtr<FJsonValue>& Entry, int32 Index, const FFrameRate& Rate,
+        double PlayLength, bool bWithValue, FRichCurveKey& OutKey, FString& OutError)
+    {
+        const TSharedPtr<FJsonObject>* ObjPtr = nullptr;
+        if (!Entry.IsValid() || !Entry->TryGetObject(ObjPtr) || !ObjPtr || !ObjPtr->IsValid())
+        {
+            OutError = FString::Printf(TEXT("keys[%d] must be an object"), Index);
+            return false;
+        }
+        const FJsonObject& Obj = **ObjPtr;
+
+        double Time = 0.0;
+        double Frame = 0.0;
+        const bool bHasTime = Obj.TryGetNumberField(TEXT("time"), Time);
+        const bool bHasFrame = Obj.TryGetNumberField(TEXT("frame"), Frame);
+        if (!bHasTime && !bHasFrame)
+        {
+            OutError = FString::Printf(TEXT("keys[%d] needs an integer frame or a time in seconds"), Index);
+            return false;
+        }
+        if (!bHasTime)
+        {
+            if (!FMath::IsFinite(Frame) || Frame != FMath::RoundToDouble(Frame))
+            {
+                OutError = FString::Printf(
+                    TEXT("keys[%d].frame must be an integer; pass time for a sub-frame key"), Index);
+                return false;
+            }
+            Time = Frame * Rate.Denominator / static_cast<double>(Rate.Numerator);
+        }
+        else if (bHasFrame && !FMath::IsNearlyEqual(Time * Rate.AsDecimal(), Frame, 1.0e-3))
+        {
+            OutError = FString::Printf(
+                TEXT("keys[%d] has frame %g and time %g, which name different frames at %s"),
+                Index, Frame, Time, *Rate.ToPrettyText().ToString());
+            return false;
+        }
+        if (!FMath::IsFinite(Time) || Time < -KeyTimeTolerance || Time > PlayLength + KeyTimeTolerance)
+        {
+            OutError = FString::Printf(
+                TEXT("keys[%d] time %g s is outside the sequence (0 to %g s)"), Index, Time, PlayLength);
+            return false;
+        }
+        OutKey = FRichCurveKey(static_cast<float>(FMath::Max(Time, 0.0)), 0.0f);
+        if (!bWithValue)
+        {
+            return true;
+        }
+
+        double Value = 0.0;
+        if (!Obj.TryGetNumberField(TEXT("value"), Value) || !FMath::IsFinite(Value))
+        {
+            OutError = FString::Printf(TEXT("keys[%d].value must be a number"), Index);
+            return false;
+        }
+        OutKey.Value = static_cast<float>(Value);
+
+        FString ModeText;
+        int32 Mode = 0;
+        if (Obj.TryGetStringField(TEXT("interpMode"), ModeText))
+        {
+            if (!NameToMode(MakeArrayView(InterpModes), ModeText, Mode))
+            {
+                OutError = FString::Printf(
+                    TEXT("keys[%d].interpMode '%s' must be linear, constant or cubic"), Index, *ModeText);
+                return false;
+            }
+            OutKey.InterpMode = static_cast<ERichCurveInterpMode>(Mode);
+        }
+        if (Obj.TryGetStringField(TEXT("tangentMode"), ModeText))
+        {
+            if (!NameToMode(MakeArrayView(TangentModes), ModeText, Mode))
+            {
+                OutError = FString::Printf(
+                    TEXT("keys[%d].tangentMode '%s' must be auto, smartAuto, user or break"), Index, *ModeText);
+                return false;
+            }
+            OutKey.TangentMode = static_cast<ERichCurveTangentMode>(Mode);
+        }
+        double Tangent = 0.0;
+        if (Obj.TryGetNumberField(TEXT("arriveTangent"), Tangent))
+        {
+            OutKey.ArriveTangent = static_cast<float>(Tangent);
+        }
+        if (Obj.TryGetNumberField(TEXT("leaveTangent"), Tangent))
+        {
+            OutKey.LeaveTangent = static_cast<float>(Tangent);
+        }
+        return true;
+    }
+
+    // Parses a whole keys[] array; refuses an empty array and two entries at one time.
+    bool ReadKeys(const FHandlerContext& Ctx, const UAnimSequence* Sequence, bool bWithValue,
+        TArray<FRichCurveKey>& OutKeys, FString& OutError)
+    {
+        const TArray<TSharedPtr<FJsonValue>>* Entries = Ctx.GetArray(TEXT("keys"));
+        if (!Entries || Entries->Num() == 0)
+        {
+            OutError = TEXT("keys must be a non-empty array");
+            return false;
+        }
+        const FFrameRate Rate = Sequence->GetSamplingFrameRate();
+        if (Rate.Numerator <= 0 || Rate.Denominator <= 0)
+        {
+            OutError = TEXT("The sequence has no valid sampling frame rate");
+            return false;
+        }
+        OutKeys.Reset(Entries->Num());
+        for (int32 Index = 0; Index < Entries->Num(); ++Index)
+        {
+            FRichCurveKey Key;
+            if (!ReadKey((*Entries)[Index], Index, Rate, Sequence->GetPlayLength(), bWithValue, Key, OutError))
+            {
+                return false;
+            }
+            if (OutKeys.ContainsByPredicate([&Key](const FRichCurveKey& Other)
+                { return FMath::IsNearlyEqual(Other.Time, Key.Time, KeyTimeTolerance); }))
+            {
+                OutError = FString::Printf(TEXT("keys[%d] repeats the time %g s of an earlier entry"), Index, Key.Time);
+                return false;
+            }
+            OutKeys.Add(Key);
+        }
+        return true;
+    }
+
+    bool ReadNames(const FHandlerContext& Ctx, const TCHAR* Field, TArray<FName>& OutNames, FString& OutError)
+    {
+        const TArray<TSharedPtr<FJsonValue>>* Values = Ctx.GetArray(Field);
+        if (!Values || Values->Num() == 0)
+        {
+            OutError = FString::Printf(TEXT("%s must be a non-empty array of curve names"), Field);
+            return false;
+        }
+        for (int32 Index = 0; Index < Values->Num(); ++Index)
+        {
+            FString Name;
+            if (!(*Values)[Index].IsValid() || !(*Values)[Index]->TryGetString(Name) || Name.IsEmpty())
+            {
+                OutError = FString::Printf(TEXT("%s[%d] must be a non-empty string"), Field, Index);
+                return false;
+            }
+            OutNames.AddUnique(FName(*Name));
+        }
+        return true;
+    }
+
+    UAnimSequence* LoadSequenceOrSendError(const FHandlerContext& Ctx, FString& OutAssetPath)
+    {
+        OutAssetPath = NormalizeContentAssetPath(Ctx.GetString(TEXT("assetPath")));
+        UAnimSequence* Sequence = AnimationAuthoringHelpers::LoadAnimSequenceFromPath(OutAssetPath);
+        if (!Sequence || !Sequence->GetDataModel())
+        {
+            Ctx.SendError(ErrorCodes::ERR_SEQUENCE_NOT_FOUND,
+                FString::Printf(TEXT("Could not load animation sequence: %s"), *OutAssetPath));
+            return nullptr;
+        }
+        return Sequence;
+    }
+
+    // Which curve list holds Name. FName comparison is case-insensitive, as it is in the engine.
+    bool FindCurveType(const UAnimSequence* Sequence, FName Name, ERawCurveTrackTypes& OutType)
+    {
+        const IAnimationDataModel* Model = Sequence->GetDataModel();
+        for (const ERawCurveTrackTypes Type : {ERawCurveTrackTypes::RCT_Float, ERawCurveTrackTypes::RCT_Transform})
+        {
+            if (Model && Model->FindCurve(FAnimationCurveIdentifier(Name, Type)))
+            {
+                OutType = Type;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void SendCurveNotFound(const FHandlerContext& Ctx, const UAnimSequence* Sequence, const FString& Names)
+    {
+        TSharedPtr<FJsonObject> Details = MakeShared<FJsonObject>();
+        Details->SetStringField(TEXT("missing"), Names);
+        Details->SetArrayField(TEXT("curves"), AnimSequenceDumpBuilder::BuildCurvesArrayJson(Sequence));
+        Ctx.SendError(ErrorCodes::ERR_CURVE_NOT_FOUND, FString::Printf(
+            TEXT("No curve named %s on this sequence; the curves field lists the curves it has"), *Names),
+            Details);
+    }
+
+    // Resolves a Float curve for the key verbs, sending CURVE_NOT_FOUND or TYPE_MISMATCH itself.
+    const FFloatCurve* FindFloatCurveOrSendError(const FHandlerContext& Ctx, const UAnimSequence* Sequence, FName Name)
+    {
+        ERawCurveTrackTypes Type = ERawCurveTrackTypes::RCT_Float;
+        if (!FindCurveType(Sequence, Name, Type))
+        {
+            SendCurveNotFound(Ctx, Sequence, FString::Printf(TEXT("'%s'"), *Name.ToString()));
+            return nullptr;
+        }
+        if (Type != ERawCurveTrackTypes::RCT_Float)
+        {
+            Ctx.SendError(ErrorCodes::ERR_TYPE_MISMATCH, FString::Printf(
+                TEXT("'%s' is a Transform curve; key verbs edit Float curves only"), *Name.ToString()));
+            return nullptr;
+        }
+        return Sequence->GetDataModel()->FindFloatCurve(FAnimationCurveIdentifier(Name, Type));
+    }
+
+    const FRichCurveKey* FindStoredKey(const FFloatCurve& Curve, float Time)
+    {
+        return Curve.FloatCurve.GetConstRefOfKeys().FindByPredicate([Time](const FRichCurveKey& Key)
+            { return FMath::IsNearlyEqual(Key.Time, Time, KeyTimeTolerance); });
+    }
+
+    void AddFrameRate(const TSharedPtr<FJsonObject>& Result, const UAnimSequence* Sequence)
+    {
+        const FFrameRate Rate = Sequence->GetSamplingFrameRate();
+        TSharedPtr<FJsonObject> RateObj = MakeShared<FJsonObject>();
+        RateObj->SetNumberField(TEXT("numerator"), Rate.Numerator);
+        RateObj->SetNumberField(TEXT("denominator"), Rate.Denominator);
+        Result->SetObjectField(TEXT("frameRate"), RateObj);
+    }
+}
+
+REGISTER_RPC_HANDLER("animation.authoring.get_curve_keys", "animation.authoring",
+    "Read every key (time, frame, value, interpolation, tangents) of Float curves on an AnimSequence, in the shape set_curve_keys accepts.",
+    RPC_PARAMS(
+        RPC_PARAM_REQ("assetPath", "path", "Path to the AnimSequence."),
+        RPC_PARAM_OPT("curveNames", "array", "Float curve names to read. Omitted: every Float curve; Transform curves are then listed in skippedTransformCurves. A named Transform curve is refused TYPE_MISMATCH.")
+    ))
+{
+    FString AssetPath;
+    UAnimSequence* Sequence = PwAnimCurveEdit::LoadSequenceOrSendError(Ctx, AssetPath);
+    if (!Sequence)
+    {
+        return true;
+    }
+
+    TArray<FName> Names;
+    TArray<TSharedPtr<FJsonValue>> SkippedTransform;
+    if (Ctx.GetArray(TEXT("curveNames")))
+    {
+        FString ParseError;
+        if (!PwAnimCurveEdit::ReadNames(Ctx, TEXT("curveNames"), Names, ParseError))
+        {
+            Ctx.SendError(ErrorCodes::ERR_INVALID_PARAMS, ParseError);
+            return true;
+        }
+    }
+    else
+    {
+        for (const FFloatCurve& Curve : Sequence->GetDataModel()->GetFloatCurves())
+        {
+            Names.Add(Curve.GetName());
+        }
+        for (const FTransformCurve& Curve : Sequence->GetDataModel()->GetCurveData().TransformCurves)
+        {
+            SkippedTransform.Add(MakeShared<FJsonValueString>(Curve.GetName().ToString()));
+        }
+    }
+
+    const FFrameRate Rate = Sequence->GetSamplingFrameRate();
+    TArray<TSharedPtr<FJsonValue>> Curves;
+    for (const FName Name : Names)
+    {
+        const FFloatCurve* Curve = PwAnimCurveEdit::FindFloatCurveOrSendError(Ctx, Sequence, Name);
+        if (!Curve)
+        {
+            return true;
+        }
+        TSharedRef<FJsonObject> CurveObj = MakeShared<FJsonObject>();
+        CurveObj->SetStringField(TEXT("name"), Name.ToString());
+        CurveObj->SetStringField(TEXT("type"), TEXT("Float"));
+        CurveObj->SetNumberField(TEXT("keyCount"), Curve->FloatCurve.GetNumKeys());
+        CurveObj->SetArrayField(TEXT("keys"), PwAnimCurveEdit::KeysToJson(Curve->FloatCurve, Rate));
+        Curves.Add(MakeShared<FJsonValueObject>(CurveObj));
+    }
+
+    TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+    Result->SetBoolField(TEXT("success"), true);
+    Result->SetStringField(TEXT("assetPath"), AssetPath);
+    PwAnimCurveEdit::AddFrameRate(Result, Sequence);
+    Result->SetArrayField(TEXT("curves"), Curves);
+    Result->SetArrayField(TEXT("skippedTransformCurves"), SkippedTransform);
+    Ctx.SendSuccess(Result);
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+
+REGISTER_RPC_HANDLER("animation.authoring.set_curve_keys", "animation.authoring",
+    "Write many keys to one Float curve of an AnimSequence as one undoable edit. mode replace leaves exactly these keys; mode merge overwrites keys at the same times and keeps the rest. Returns the stored keys read back.",
+    RPC_PARAMS(
+        RPC_PARAM_REQ("assetPath", "path", "Path to the AnimSequence."),
+        RPC_PARAM_REQ("curveName", "string", "Float curve name."),
+        RPC_PARAM_REQ("mode", "string", "replace (the curve ends with exactly these keys) or merge (a key at an existing key's time overwrites it; other existing keys stay). No default: replace discards keys."),
+        RPC_PARAM_REQ_NESTED("keys", "array", "Non-empty array of {frame, time, value, interpMode, tangentMode, arriveTangent, leaveTangent}. Give an integer frame or a time in seconds (both may be sent if they agree; time is used). value is required. interpMode: linear (default), constant or cubic. tangentMode: auto (default), smartAuto, user or break; auto tangents are recomputed by the engine, and a cubic key directly after a linear key is stored as break (reported in engineAdjustedTangentModes). Tangents default 0. Times must be unique and inside the sequence. Other keys are refused.",
+            TEXT("frame"), TEXT("time"), TEXT("value"), TEXT("interpMode"), TEXT("tangentMode"), TEXT("arriveTangent"), TEXT("leaveTangent")),
+        RPC_PARAM_OPT("createIfMissing", "boolean", "Create the Float curve when it does not exist (default true, as set_curve_key)."),
+        RPC_PARAM_OPT("save", "boolean", "Mark the asset dirty (default true).")
+    ))
+{
+    FString CurveName;
+    FString Mode;
+    if (!Ctx.RequireString(TEXT("curveName"), CurveName) || !Ctx.RequireString(TEXT("mode"), Mode))
+    {
+        return true;
+    }
+    const bool bMerge = Mode.Equals(TEXT("merge"), ESearchCase::IgnoreCase);
+    if (!bMerge && !Mode.Equals(TEXT("replace"), ESearchCase::IgnoreCase))
+    {
+        Ctx.SendError(ErrorCodes::ERR_INVALID_MODE,
+            FString::Printf(TEXT("mode '%s' must be replace or merge"), *Mode));
+        return true;
+    }
+
+    FString AssetPath;
+    UAnimSequence* Sequence = PwAnimCurveEdit::LoadSequenceOrSendError(Ctx, AssetPath);
+    if (!Sequence)
+    {
+        return true;
+    }
+
+    TArray<FRichCurveKey> Incoming;
+    FString ParseError;
+    if (!PwAnimCurveEdit::ReadKeys(Ctx, Sequence, /*bWithValue=*/true, Incoming, ParseError))
+    {
+        Ctx.SendError(ErrorCodes::ERR_INVALID_PARAMS, ParseError);
+        return true;
+    }
+
+    const FName CurveFName(*CurveName);
+    const FAnimationCurveIdentifier CurveId(CurveFName, ERawCurveTrackTypes::RCT_Float);
+    ERawCurveTrackTypes ExistingType = ERawCurveTrackTypes::RCT_Float;
+    const bool bExisted = PwAnimCurveEdit::FindCurveType(Sequence, CurveFName, ExistingType);
+    TArray<FRichCurveKey> FinalKeys;
+    if (bExisted)
+    {
+        const FFloatCurve* Existing = PwAnimCurveEdit::FindFloatCurveOrSendError(Ctx, Sequence, CurveFName);
+        if (!Existing)
+        {
+            return true;
+        }
+        if (bMerge)
+        {
+            FinalKeys = Existing->FloatCurve.GetConstRefOfKeys();
+        }
+    }
+    else if (!Ctx.GetBool(TEXT("createIfMissing"), true))
+    {
+        PwAnimCurveEdit::SendCurveNotFound(Ctx, Sequence, FString::Printf(TEXT("'%s'"), *CurveName));
+        return true;
+    }
+
+    for (const FRichCurveKey& Key : Incoming)
+    {
+        FRichCurveKey* Same = FinalKeys.FindByPredicate([&Key](const FRichCurveKey& Other)
+            { return FMath::IsNearlyEqual(Other.Time, Key.Time, PwAnimCurveEdit::KeyTimeTolerance); });
+        if (Same)
+        {
+            *Same = Key;
+        }
+        else
+        {
+            FinalKeys.Add(Key);
+        }
+    }
+    // FRichCurve::SetKeys stores the array as given; evaluation assumes time order.
+    FinalKeys.Sort([](const FRichCurveKey& A, const FRichCurveKey& B) { return A.Time < B.Time; });
+
+    IAnimationDataController& Controller = Sequence->GetController();
+    bool bWritten = false;
+    {
+        IAnimationDataController::FScopedBracket Bracket(
+            Controller, FText::FromString(TEXT("Set animation curve keys")));
+        bWritten = (bExisted || Controller.AddCurve(CurveId, AACF_DefaultCurve))
+            && Controller.SetCurveKeys(CurveId, FinalKeys);
+    }
+    const FFloatCurve* Stored = Sequence->GetDataModel()->FindFloatCurve(CurveId);
+    if (!bWritten || !Stored)
+    {
+        Ctx.SendError(ErrorCodes::ERR_OPERATION_FAILED,
+            FString::Printf(TEXT("The animation data controller refused the key write on curve '%s'"), *CurveName));
+        return true;
+    }
+
+    const bool bSave = Ctx.GetBool(TEXT("save"), true);
+    EAssetSaveState SaveState = EAssetSaveState::NotRequested;
+    AnimationAuthoringHelpers::SaveAnimAsset(Sequence, bSave, SaveState);
+
+    TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+    Result->SetBoolField(TEXT("success"), true);
+    Result->SetStringField(TEXT("assetPath"), AssetPath);
+    Result->SetStringField(TEXT("curveName"), CurveName);
+    Result->SetStringField(TEXT("mode"), bMerge ? TEXT("merge") : TEXT("replace"));
+    Result->SetBoolField(TEXT("created"), !bExisted);
+    Result->SetNumberField(TEXT("keyCount"), Stored->FloatCurve.GetNumKeys());
+    Result->SetArrayField(TEXT("keys"), PwAnimCurveEdit::KeysToJson(Stored->FloatCurve, Sequence->GetSamplingFrameRate()));
+    // The AnimationData plugin's sequencer data model (UE 5.3-5.8) stores a cubic key that follows a
+    // linear key as tangentMode break with a linear arrive tangent
+    // (AnimSequencerHelpers::ConvertRichCurveKeysToFloatChannel), so a sent mode can differ from the
+    // stored one. Name each such key rather than leave the caller to diff keys[].
+    TArray<TSharedPtr<FJsonValue>> AdjustedModes;
+    for (const FRichCurveKey& Sent : Incoming)
+    {
+        const FRichCurveKey* Kept = PwAnimCurveEdit::FindStoredKey(*Stored, Sent.Time);
+        if (Kept && Kept->TangentMode != Sent.TangentMode)
+        {
+            TSharedRef<FJsonObject> Entry = MakeShared<FJsonObject>();
+            Entry->SetNumberField(TEXT("time"), Kept->Time);
+            Entry->SetStringField(TEXT("sent"),
+                PwAnimCurveEdit::ModeToName(MakeArrayView(PwAnimCurveEdit::TangentModes), Sent.TangentMode.GetValue()));
+            Entry->SetStringField(TEXT("stored"),
+                PwAnimCurveEdit::ModeToName(MakeArrayView(PwAnimCurveEdit::TangentModes), Kept->TangentMode.GetValue()));
+            AdjustedModes.Add(MakeShared<FJsonValueObject>(Entry));
+        }
+    }
+    Result->SetArrayField(TEXT("engineAdjustedTangentModes"), AdjustedModes);
+    AddAssetVerification(Result, Sequence);
+    AddAssetSaveReport(Result, bSave, /*bSavedToDisk=*/false, SaveState);
+    Ctx.SendSuccess(Result);
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+
+REGISTER_RPC_HANDLER("animation.authoring.remove_curve_key", "animation.authoring",
+    "Remove keys, selected by frame or time, from one Float curve of an AnimSequence as one undoable edit. Every selected key must exist or nothing is removed.",
+    RPC_PARAMS(
+        RPC_PARAM_REQ("assetPath", "path", "Path to the AnimSequence."),
+        RPC_PARAM_REQ("curveName", "string", "Float curve name."),
+        RPC_PARAM_REQ_NESTED("keys", "array", "Non-empty array of {frame, time} selectors: an integer frame or a time in seconds, matched to a stored key within 0.0001 s. Other keys (value, interpMode, tangents) are refused, so strip them from get_curve_keys output.",
+            TEXT("frame"), TEXT("time")),
+        RPC_PARAM_OPT("save", "boolean", "Mark the asset dirty (default true).")
+    ))
+{
+    FString CurveName;
+    if (!Ctx.RequireString(TEXT("curveName"), CurveName))
+    {
+        return true;
+    }
+    FString AssetPath;
+    UAnimSequence* Sequence = PwAnimCurveEdit::LoadSequenceOrSendError(Ctx, AssetPath);
+    if (!Sequence)
+    {
+        return true;
+    }
+    TArray<FRichCurveKey> Selectors;
+    FString ParseError;
+    if (!PwAnimCurveEdit::ReadKeys(Ctx, Sequence, /*bWithValue=*/false, Selectors, ParseError))
+    {
+        Ctx.SendError(ErrorCodes::ERR_INVALID_PARAMS, ParseError);
+        return true;
+    }
+    const FName CurveFName(*CurveName);
+    const FFloatCurve* Curve = PwAnimCurveEdit::FindFloatCurveOrSendError(Ctx, Sequence, CurveFName);
+    if (!Curve)
+    {
+        return true;
+    }
+
+    const FFrameRate Rate = Sequence->GetSamplingFrameRate();
+    // The stored time, not the requested one, goes to RemoveCurveKey: UE 5.3 matches it with zero
+    // tolerance (FindKey(Time, 0.f)), later engines with KINDA_SMALL_NUMBER.
+    TArray<float> StoredTimes;
+    TArray<TSharedPtr<FJsonValue>> Missing;
+    for (const FRichCurveKey& Selector : Selectors)
+    {
+        if (const FRichCurveKey* Stored = PwAnimCurveEdit::FindStoredKey(*Curve, Selector.Time))
+        {
+            StoredTimes.AddUnique(Stored->Time);
+        }
+        else
+        {
+            Missing.Add(MakeShared<FJsonValueNumber>(Selector.Time));
+        }
+    }
+    if (Missing.Num() > 0)
+    {
+        TSharedPtr<FJsonObject> Details = MakeShared<FJsonObject>();
+        Details->SetArrayField(TEXT("missingTimes"), Missing);
+        Details->SetArrayField(TEXT("keys"), PwAnimCurveEdit::KeysToJson(Curve->FloatCurve, Rate));
+        Ctx.SendError(ErrorCodes::ERR_KEY_NOT_FOUND, FString::Printf(
+            TEXT("%d selected key(s) are not on curve '%s'; nothing was removed. The keys field lists the stored keys"),
+            Missing.Num(), *CurveName), Details);
+        return true;
+    }
+
+    const int32 KeysBefore = Curve->FloatCurve.GetNumKeys();
+    const FAnimationCurveIdentifier CurveId(CurveFName, ERawCurveTrackTypes::RCT_Float);
+    IAnimationDataController& Controller = Sequence->GetController();
+    bool bRemoved = true;
+    {
+        IAnimationDataController::FScopedBracket Bracket(
+            Controller, FText::FromString(TEXT("Remove animation curve keys")));
+        for (const float Time : StoredTimes)
+        {
+            bRemoved &= Controller.RemoveCurveKey(CurveId, Time);
+        }
+    }
+    const FFloatCurve* After = Sequence->GetDataModel()->FindFloatCurve(CurveId);
+    if (!bRemoved || !After)
+    {
+        Ctx.SendError(ErrorCodes::ERR_OPERATION_FAILED,
+            FString::Printf(TEXT("The animation data controller refused a key removal on curve '%s'"), *CurveName));
+        return true;
+    }
+
+    const bool bSave = Ctx.GetBool(TEXT("save"), true);
+    EAssetSaveState SaveState = EAssetSaveState::NotRequested;
+    AnimationAuthoringHelpers::SaveAnimAsset(Sequence, bSave, SaveState);
+
+    TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+    Result->SetBoolField(TEXT("success"), true);
+    Result->SetStringField(TEXT("assetPath"), AssetPath);
+    Result->SetStringField(TEXT("curveName"), CurveName);
+    Result->SetNumberField(TEXT("removedCount"), KeysBefore - After->FloatCurve.GetNumKeys());
+    Result->SetNumberField(TEXT("keyCount"), After->FloatCurve.GetNumKeys());
+    Result->SetArrayField(TEXT("keys"), PwAnimCurveEdit::KeysToJson(After->FloatCurve, Rate));
+    AddAssetVerification(Result, Sequence);
+    AddAssetSaveReport(Result, bSave, /*bSavedToDisk=*/false, SaveState);
+    Ctx.SendSuccess(Result);
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+
+REGISTER_RPC_HANDLER("animation.authoring.remove_curve", "animation.authoring",
+    "Remove whole Float or Transform curves from an AnimSequence as one undoable edit. Every named curve must exist or nothing is removed. Skeleton curve metadata is not touched.",
+    RPC_PARAMS(
+        RPC_PARAM_REQ("assetPath", "path", "Path to the AnimSequence."),
+        RPC_PARAM_REQ("curveNames", "array", "Non-empty array of curve names; each may be a Float or a Transform curve."),
+        RPC_PARAM_OPT("save", "boolean", "Mark the asset dirty (default true).")
+    ))
+{
+    FString AssetPath;
+    UAnimSequence* Sequence = PwAnimCurveEdit::LoadSequenceOrSendError(Ctx, AssetPath);
+    if (!Sequence)
+    {
+        return true;
+    }
+    TArray<FName> Names;
+    FString ParseError;
+    if (!PwAnimCurveEdit::ReadNames(Ctx, TEXT("curveNames"), Names, ParseError))
+    {
+        Ctx.SendError(ErrorCodes::ERR_INVALID_PARAMS, ParseError);
+        return true;
+    }
+
+    TArray<FAnimationCurveIdentifier> Ids;
+    TArray<FString> Missing;
+    for (const FName Name : Names)
+    {
+        ERawCurveTrackTypes Type = ERawCurveTrackTypes::RCT_Float;
+        if (PwAnimCurveEdit::FindCurveType(Sequence, Name, Type))
+        {
+            Ids.Add(FAnimationCurveIdentifier(Name, Type));
+        }
+        else
+        {
+            Missing.Add(FString::Printf(TEXT("'%s'"), *Name.ToString()));
+        }
+    }
+    if (Missing.Num() > 0)
+    {
+        PwAnimCurveEdit::SendCurveNotFound(Ctx, Sequence, FString::Join(Missing, TEXT(", ")));
+        return true;
+    }
+
+    IAnimationDataController& Controller = Sequence->GetController();
+    {
+        IAnimationDataController::FScopedBracket Bracket(
+            Controller, FText::FromString(TEXT("Remove animation curves")));
+        for (const FAnimationCurveIdentifier& Id : Ids)
+        {
+            Controller.RemoveCurve(Id);
+        }
+    }
+
+    // Report what the model no longer holds, not what the controller returned.
+    TArray<TSharedPtr<FJsonValue>> Removed;
+    TArray<FString> Survivors;
+    for (const FAnimationCurveIdentifier& Id : Ids)
+    {
+        if (Sequence->GetDataModel()->FindCurve(Id))
+        {
+            Survivors.Add(Id.CurveName.ToString());
+            continue;
+        }
+        TSharedRef<FJsonObject> Entry = MakeShared<FJsonObject>();
+        Entry->SetStringField(TEXT("name"), Id.CurveName.ToString());
+        Entry->SetStringField(TEXT("type"),
+            Id.CurveType == ERawCurveTrackTypes::RCT_Float ? TEXT("Float") : TEXT("Transform"));
+        Removed.Add(MakeShared<FJsonValueObject>(Entry));
+    }
+    if (Survivors.Num() > 0)
+    {
+        Ctx.SendError(ErrorCodes::ERR_OPERATION_FAILED, FString::Printf(
+            TEXT("The animation data controller left these curves in place: %s"), *FString::Join(Survivors, TEXT(", "))));
+        return true;
+    }
+
+    const bool bSave = Ctx.GetBool(TEXT("save"), true);
+    EAssetSaveState SaveState = EAssetSaveState::NotRequested;
+    AnimationAuthoringHelpers::SaveAnimAsset(Sequence, bSave, SaveState);
+
+    TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+    Result->SetBoolField(TEXT("success"), true);
+    Result->SetStringField(TEXT("assetPath"), AssetPath);
+    Result->SetArrayField(TEXT("removed"), Removed);
+    Result->SetArrayField(TEXT("curves"), AnimSequenceDumpBuilder::BuildCurvesArrayJson(Sequence));
+    AddAssetVerification(Result, Sequence);
+    AddAssetSaveReport(Result, bSave, /*bSavedToDisk=*/false, SaveState);
+    Ctx.SendSuccess(Result);
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+
+REGISTER_RPC_HANDLER("animation.authoring.rename_curve", "animation.authoring",
+    "Rename a Float or Transform curve on an AnimSequence, keeping its keys. Refuses a newName that another curve already uses. Skeleton curve metadata is not touched.",
+    RPC_PARAMS(
+        RPC_PARAM_REQ("assetPath", "path", "Path to the AnimSequence."),
+        RPC_PARAM_REQ("curveName", "string", "Current curve name."),
+        RPC_PARAM_REQ("newName", "string", "New curve name. Must differ from curveName (case-insensitively, like all FNames) and name no existing curve."),
+        RPC_PARAM_OPT("save", "boolean", "Mark the asset dirty (default true).")
+    ))
+{
+    FString CurveName;
+    FString NewName;
+    if (!Ctx.RequireString(TEXT("curveName"), CurveName) || !Ctx.RequireString(TEXT("newName"), NewName))
+    {
+        return true;
+    }
+    const FName OldFName(*CurveName);
+    const FName NewFName(*NewName);
+    if (NewName.IsEmpty() || NewFName == OldFName)
+    {
+        Ctx.SendError(ErrorCodes::ERR_INVALID_PARAMS,
+            TEXT("newName must be non-empty and differ from curveName (curve names are case-insensitive)"));
+        return true;
+    }
+    FString AssetPath;
+    UAnimSequence* Sequence = PwAnimCurveEdit::LoadSequenceOrSendError(Ctx, AssetPath);
+    if (!Sequence)
+    {
+        return true;
+    }
+
+    ERawCurveTrackTypes Type = ERawCurveTrackTypes::RCT_Float;
+    if (!PwAnimCurveEdit::FindCurveType(Sequence, OldFName, Type))
+    {
+        PwAnimCurveEdit::SendCurveNotFound(Ctx, Sequence, FString::Printf(TEXT("'%s'"), *CurveName));
+        return true;
+    }
+    // The controller does not check this: renaming onto a taken name leaves two curves sharing it.
+    ERawCurveTrackTypes TakenType = ERawCurveTrackTypes::RCT_Float;
+    if (PwAnimCurveEdit::FindCurveType(Sequence, NewFName, TakenType))
+    {
+        TSharedPtr<FJsonObject> Details = MakeShared<FJsonObject>();
+        Details->SetArrayField(TEXT("curves"), AnimSequenceDumpBuilder::BuildCurvesArrayJson(Sequence));
+        Ctx.SendError(ErrorCodes::ERR_ALREADY_EXISTS, FString::Printf(
+            TEXT("A curve named '%s' already exists; remove it first or pick another newName"), *NewName), Details);
+        return true;
+    }
+
+    const FAnimationCurveIdentifier OldId(OldFName, Type);
+    const FAnimationCurveIdentifier NewId(NewFName, Type);
+    const bool bRenamed = Sequence->GetController().RenameCurve(OldId, NewId);
+    const IAnimationDataModel* Model = Sequence->GetDataModel();
+    if (!bRenamed || !Model->FindCurve(NewId) || Model->FindCurve(OldId))
+    {
+        Ctx.SendError(ErrorCodes::ERR_OPERATION_FAILED,
+            FString::Printf(TEXT("The animation data controller did not rename '%s' to '%s'"), *CurveName, *NewName));
+        return true;
+    }
+
+    const bool bSave = Ctx.GetBool(TEXT("save"), true);
+    EAssetSaveState SaveState = EAssetSaveState::NotRequested;
+    AnimationAuthoringHelpers::SaveAnimAsset(Sequence, bSave, SaveState);
+
+    TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+    Result->SetBoolField(TEXT("success"), true);
+    Result->SetStringField(TEXT("assetPath"), AssetPath);
+    Result->SetStringField(TEXT("curveName"), CurveName);
+    Result->SetStringField(TEXT("newName"), NewName);
+    Result->SetStringField(TEXT("type"), Type == ERawCurveTrackTypes::RCT_Float ? TEXT("Float") : TEXT("Transform"));
+    Result->SetArrayField(TEXT("curves"), AnimSequenceDumpBuilder::BuildCurvesArrayJson(Sequence));
+    AddAssetVerification(Result, Sequence);
+    AddAssetSaveReport(Result, bSave, /*bSavedToDisk=*/false, SaveState);
+    Ctx.SendSuccess(Result);
+    return true;
+}
+
+// ---------------------------------------------------------------------------
 
 REGISTER_RPC_HANDLER("animation.authoring.list_notifies", "animation.authoring",
     "List anim notifies on an animation sequence or montage",

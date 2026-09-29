@@ -20,6 +20,7 @@
 #include "K2Node_AsyncAction.h"
 #include "K2Node_Event.h"
 #include "K2Node_MakeStruct.h"
+#include "K2Node_MultiGate.h"
 #include "K2Node_Select.h"
 #include "K2Node_VariableGet.h"
 #include "EdGraph/EdGraph.h"
@@ -2594,31 +2595,10 @@ bool FRoundTripMacroMultiGateTest::RunTest(const FString& Parameters)
     FBpirCompiler Compiler(BP);
     FCompileResult CompileResult = Compiler.Compile(InputBpir);
 
-    // MultiGate may not exist in StandardMacros on all UE versions (e.g. UE 5.6+).
-    // If it fails with "not found", that's an environment issue — skip gracefully.
+    // MultiGate is the native UK2Node_MultiGate on every UE 5.x (StandardMacros has no such
+    // graph); the round trip must come back as that node, not as a plain ExecutionSequence.
     if (!CompileResult.bSuccess)
     {
-        bool bIsMacroNotFound = false;
-        for (const FCompileError& Err : CompileResult.Errors)
-        {
-            AddInfo(FString::Printf(TEXT("  L%d: %s"), Err.Line, *Err.Message));
-            if (Err.Message.Contains(TEXT("not found")))
-            {
-                bIsMacroNotFound = true;
-            }
-        }
-        if (bIsMacroNotFound)
-        {
-            // Greppable SKIPPED marker rather than AddWarning: this runner treats
-            // AddWarning as a test failure (see TestCompilerIntegration.cpp ~3322), and
-            // MultiGate really is absent from StandardMacros on some engine versions, so
-            // a warning here would turn a legitimate environment skip into a red test.
-            // The marker at least makes the abandoned assertions greppable in the log.
-            PinWrightTestSkip::SkipAssertions(*this, TEXT("multigate-macro-unavailable"),
-                TEXT("SKIPPED: MultiGate macro not available in this UE version's StandardMacros; skipping RoundTripMultiGate."));
-            return true;
-        }
-        // Unexpected failure
         for (const FCompileError& Err : CompileResult.Errors) { AddError(FString::Printf(TEXT("  L%d: %s"), Err.Line, *Err.Message)); }
         TestTrue(TEXT("Compile succeeded"), CompileResult.bSuccess);
         return false;
@@ -2630,7 +2610,7 @@ bool FRoundTripMacroMultiGateTest::RunTest(const FString& Parameters)
     if (!DecompileResult.bSuccess) return false;
 
     const FString& Output = DecompileResult.BpirText;
-    TestTrue(TEXT("Output contains MultiGate"), Output.Contains(TEXT("MultiGate")));
+    TestTrue(TEXT("Output contains 'macro MultiGate('"), Output.Contains(TEXT("macro MultiGate(")));
 
     // Re-parse
     {
@@ -2661,7 +2641,78 @@ bool FRoundTripMacroMultiGateTest::RunTest(const FString& Parameters)
                 AddError(FString::Printf(TEXT("Re-compile L%d: %s"), Err.Line, *Err.Message));
             }
         }
+        TestEqual(TEXT("Re-compiled graph holds one native MultiGate"),
+            CountNodesOfType<UK2Node_MultiGate>(BP2), 1);
+        // CountNodesOfType matches subclasses, so this counts the MultiGate too: 1 means no stray sequence.
+        TestEqual(TEXT("MultiGate did not come back as a plain ExecutionSequence"),
+            CountNodesOfType<UK2Node_ExecutionSequence>(BP2), 1);
     }
+    return true;
+}
+
+// ----------------------------------------------------------------------------
+// 27b. RoundTripMacroMultiGateKeepsUnwiredOutputs — a 4-output MultiGate with only
+// Out 0 wired must come back with 4 outputs (the count travels as `outputs: N`).
+// ----------------------------------------------------------------------------
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FRoundTripMacroMultiGateKeepsUnwiredOutputsTest,
+    "PinWright.bpir.round_trip.MacroMultiGateKeepsUnwiredOutputs",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FRoundTripMacroMultiGateKeepsUnwiredOutputsTest::RunTest(const FString& Parameters)
+{
+    auto CountGateOuts = [](const UK2Node_MultiGate* Gate, int32& OutWired)
+    {
+        int32 Count = 0;
+        OutWired = 0;
+        for (const UEdGraphPin* Pin : Gate->Pins)
+        {
+            if (Pin->Direction == EGPD_Output && Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_Exec)
+            {
+                ++Count;
+                OutWired += Pin->LinkedTo.Num() > 0 ? 1 : 0;
+            }
+        }
+        return Count;
+    };
+
+    UBlueprint* BP = CreateTransientTestBP(TEXT("RoundTripMultiGateOutputsBP"));
+    if (!TestNotNull(TEXT("Blueprint created"), BP)) return false;
+
+    FBpirCompiler Compiler(BP);
+    FCompileResult CompileResult = Compiler.Compile(TEXT(
+        "entry event BeginPlay() {\n"
+        "    %mg = macro MultiGate(outputs: 4) [0 -> @a]\n"
+        "\n"
+        "@a:\n"
+        "    call PrintString(InString: \"PathA\")\n"
+        "}"));
+    for (const FCompileError& Err : CompileResult.Errors) { AddError(FString::Printf(TEXT("  L%d: %s"), Err.Line, *Err.Message)); }
+    if (!TestTrue(TEXT("Compile succeeded"), CompileResult.bSuccess)) return false;
+
+    UK2Node_MultiGate* Gate = FindNodeOfType<UK2Node_MultiGate>(BP);
+    if (!TestNotNull(TEXT("Native MultiGate created"), Gate)) return false;
+    int32 Wired = 0;
+    TestEqual(TEXT("outputs: 4 creates four outputs"), CountGateOuts(Gate, Wired), 4);
+    TestEqual(TEXT("Only Out 0 is wired"), Wired, 1);
+
+    FBpirDecompiler Decompiler(BP);
+    FBpirDecompileResult DecompileResult = Decompiler.Decompile();
+    if (!TestTrue(TEXT("Decompile succeeded"), DecompileResult.bSuccess)) return false;
+    const FString& Output = DecompileResult.BpirText;
+    TestTrue(TEXT("Decompiled MultiGate carries 'outputs: 4'"), Output.Contains(TEXT("macro MultiGate(outputs: 4")));
+
+    UBlueprint* BP2 = CreateTransientTestBP(TEXT("RoundTripMultiGateOutputsRecompileBP"));
+    FBpirCompiler Compiler2(BP2);
+    FCompileResult RecompileResult = Compiler2.Compile(Output);
+    for (const FCompileError& Err : RecompileResult.Errors) { AddError(FString::Printf(TEXT("Re-compile L%d: %s"), Err.Line, *Err.Message)); }
+    if (!TestTrue(TEXT("Re-compile succeeded"), RecompileResult.bSuccess)) return false;
+
+    UK2Node_MultiGate* Gate2 = FindNodeOfType<UK2Node_MultiGate>(BP2);
+    if (!TestNotNull(TEXT("Re-compiled graph holds a native MultiGate"), Gate2)) return false;
+    int32 Wired2 = 0;
+    TestEqual(TEXT("Round trip keeps all four outputs"), CountGateOuts(Gate2, Wired2), 4);
+    TestEqual(TEXT("Round trip keeps only Out 0 wired"), Wired2, 1);
     return true;
 }
 

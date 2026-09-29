@@ -2,15 +2,26 @@
 
 #include "Misc/AutomationTest.h"
 
+#include "AssetRegistry/IAssetRegistry.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
+#include "EdGraphSchema_K2.h"
+#include "EditorAssetLibrary.h"
+#include "Engine/Blueprint.h"
+#include "Engine/BlueprintGeneratedClass.h"
+#include "GameFramework/Actor.h"
+#include "GameplayTagContainer.h"
 #include "GameplayTagsManager.h"
 #include "GameplayTagsSettings.h"
 #include "HAL/FileManager.h"
+#include "Kismet2/BlueprintEditorUtils.h"
+#include "Kismet2/KismetEditorUtilities.h"
 #include "Misc/ConfigCacheIni.h"
+#include "Misc/PackageName.h"
 #include "Misc/Paths.h"
 #include "Misc/ScopeExit.h"
 #include "Tests/TestUtils.h"
+#include "UObject/Package.h"
 
 namespace
 {
@@ -103,6 +114,70 @@ void CleanupTagSource(const FString& Source)
 
     const FString ConfigPath = FPaths::ProjectConfigDir() / TEXT("Tags") / Source;
     IFileManager::Get().Delete(*ConfigPath, /*RequireExists=*/false, /*EvenReadOnly=*/true);
+}
+
+// Saves a Blueprint whose CDO stores Tag in an FGameplayTag member, then force-rescans its file so
+// the asset registry holds the SearchableName edge (written by FGameplayTag::PostSerialize on save)
+// that both gameplay_tags.find_referencers and the engine's delete check read. Tag must already
+// be registered, or the member default does not import.
+bool SaveTagReferencingBlueprint(FAutomationTestBase& Test, const FString& Tag, FString& OutPackagePath)
+{
+    OutPackagePath = FString::Printf(TEXT("/Game/PinWrightTests/PWTagRef_%s"),
+        *FGuid::NewGuid().ToString(EGuidFormats::Digits));
+    UPackage* Package = CreatePackage(*OutPackagePath);
+    UBlueprint* Blueprint = Package ? FKismetEditorUtilities::CreateBlueprint(
+        AActor::StaticClass(), Package, FName(*FPackageName::GetLongPackageAssetName(OutPackagePath)),
+        BPTYPE_Normal, UBlueprint::StaticClass(), UBlueprintGeneratedClass::StaticClass()) : nullptr;
+    if (!Test.TestNotNull(TEXT("fixture blueprint created"), Blueprint))
+    {
+        return false;
+    }
+
+    FEdGraphPinType PinType;
+    PinType.PinCategory = UEdGraphSchema_K2::PC_Struct;
+    PinType.PinSubCategoryObject = FGameplayTag::StaticStruct();
+    FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("FixtureTag"), PinType,
+        FString::Printf(TEXT("(TagName=\"%s\")"), *Tag));
+    FKismetEditorUtilities::CompileBlueprint(Blueprint);
+
+    // Known-good control: the CDO must really hold the tag, or an empty referencer list below
+    // would be the fixture's failure, not the verb's.
+    const FStructProperty* TagProperty = Blueprint->GeneratedClass
+        ? FindFProperty<FStructProperty>(Blueprint->GeneratedClass, TEXT("FixtureTag")) : nullptr;
+    const FGameplayTag* Stored = TagProperty
+        ? TagProperty->ContainerPtrToValuePtr<FGameplayTag>(Blueprint->GeneratedClass->GetDefaultObject()) : nullptr;
+    if (!Test.TestTrue(TEXT("fixture CDO stores the tag"), Stored && Stored->GetTagName() == FName(*Tag)))
+    {
+        return false;
+    }
+
+    FString Filename;
+    if (!Test.TestTrue(TEXT("fixture saved"), UEditorAssetLibrary::SaveAsset(OutPackagePath, /*bOnlyIfIsDirty=*/false))
+        || !Test.TestTrue(TEXT("fixture filename resolves"), FPackageName::TryConvertLongPackageNameToFilename(
+            OutPackagePath, Filename, FPackageName::GetAssetPackageExtension())))
+    {
+        return false;
+    }
+    IAssetRegistry::GetChecked().ScanFilesSynchronous({Filename}, /*bForceRescan=*/true);
+    return true;
+}
+
+bool ReferencersContainPackage(const TSharedPtr<FJsonObject>& Object, const FString& PackagePath)
+{
+    const TArray<TSharedPtr<FJsonValue>>* Referencers = nullptr;
+    if (!Object.IsValid() || !Object->TryGetArrayField(TEXT("referencers"), Referencers) || !Referencers)
+    {
+        return false;
+    }
+    for (const TSharedPtr<FJsonValue>& Value : *Referencers)
+    {
+        const TSharedPtr<FJsonObject>* Row = nullptr;
+        if (Value.IsValid() && Value->TryGetObject(Row) && Row && (*Row)->GetStringField(TEXT("packageName")) == PackagePath)
+        {
+            return true;
+        }
+    }
+    return false;
 }
 }
 
@@ -516,5 +591,157 @@ bool FGameplayTagsListFieldProjectionTest::RunTest(const FString& Parameters)
 
     SetTagInSource(Source, Tag, FString(), false);
 
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGameplayTagsFindReferencersSavedFixtureTest,
+    "PinWright.gameplay_tags.FindReferencersListsSavedFixture",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FGameplayTagsFindReferencersSavedFixtureTest::RunTest(const FString& Parameters)
+{
+    const FString Source = TEXT("McpAutomationTagRefFindTags.ini");
+    const FString ReferencedTag = TEXT("Mcp.Automation.TagRefFind.Referenced");
+    const FString FreeTag = TEXT("Mcp.Automation.TagRefFind.Free");
+    const FString UnregisteredTag = TEXT("Mcp.Automation.TagRefFind.NeverRegistered");
+    FString FixturePath;
+
+    ON_SCOPE_EXIT
+    {
+        CleanupTestAsset(FixturePath);
+        SetTagInSource(Source, ReferencedTag, FString(), false);
+        SetTagInSource(Source, FreeTag, FString(), false);
+        CleanupTagSource(Source);
+    };
+
+    FTestResponseCapture Capture;
+    TSharedPtr<FJsonObject> AddSourcePayload = MakeShared<FJsonObject>();
+    AddSourcePayload->SetStringField(TEXT("source"), Source);
+    if (!InvokeGameplayTagsHandler(*this, TEXT("gameplay_tags.add_source"), AddSourcePayload, Capture)
+        || !TestTrue(TEXT("referenced tag registered"), SetTagInSource(Source, ReferencedTag, FString(), true))
+        || !TestTrue(TEXT("free tag registered"), SetTagInSource(Source, FreeTag, FString(), true))
+        || !SaveTagReferencingBlueprint(*this, ReferencedTag, FixturePath))
+    {
+        return false;
+    }
+
+    TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+    TArray<TSharedPtr<FJsonValue>> TagValues;
+    TagValues.Add(MakeShared<FJsonValueString>(ReferencedTag));
+    TagValues.Add(MakeShared<FJsonValueString>(FreeTag));
+    TagValues.Add(MakeShared<FJsonValueString>(UnregisteredTag));
+    Payload->SetArrayField(TEXT("tags"), TagValues);
+    if (!InvokeGameplayTagsHandler(*this, TEXT("gameplay_tags.find_referencers"), Payload, Capture))
+    {
+        return false;
+    }
+
+    const TArray<TSharedPtr<FJsonValue>>* Rows = nullptr;
+    if (!TestTrue(TEXT("one row per requested tag"),
+        Capture.Result->TryGetArrayField(TEXT("tags"), Rows) && Rows && Rows->Num() == 3))
+    {
+        return false;
+    }
+
+    const TSharedPtr<FJsonObject> Referenced = (*Rows)[0]->AsObject();
+    const TSharedPtr<FJsonObject> Free = (*Rows)[1]->AsObject();
+    const TSharedPtr<FJsonObject> Unregistered = (*Rows)[2]->AsObject();
+    TestEqual(TEXT("rows keep request order"), Referenced->GetStringField(TEXT("tag")), ReferencedTag);
+    TestTrue(TEXT("referenced tag lists the saved fixture package"), ReferencersContainPackage(Referenced, FixturePath));
+    TestTrue(TEXT("referenced tag count is positive"), Referenced->GetNumberField(TEXT("referencerCount")) >= 1);
+    TestTrue(TEXT("referenced tag is registered"), Referenced->GetBoolField(TEXT("registered")));
+
+    // Paired control from the same source: a registered tag nothing stores reads zero.
+    TestEqual(TEXT("free tag has no referencers"), static_cast<int32>(Free->GetNumberField(TEXT("referencerCount"))), 0);
+    TestTrue(TEXT("free tag is registered"), Free->GetBoolField(TEXT("registered")));
+    TestFalse(TEXT("unregistered tag is reported unregistered, not dropped"), Unregistered->GetBoolField(TEXT("registered")));
+
+    // An empty match set is an error, not a zero-row success.
+    TSharedPtr<FJsonObject> EmptyPayload = MakeShared<FJsonObject>();
+    EmptyPayload->SetArrayField(TEXT("tags"), TArray<TSharedPtr<FJsonValue>>());
+    Capture.Reset();
+    InvokeHandlerWithCapture(TEXT("gameplay_tags.find_referencers"), EmptyPayload, Capture);
+    TestFalse(TEXT("empty tags is refused"), Capture.bSuccess);
+    TestEqual(TEXT("empty tags error code"), Capture.ErrorCode, FString(TEXT("INVALID_PARAMS")));
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGameplayTagsRemoveReferencedTagTest,
+    "PinWright.gameplay_tags.RemoveReferencedTagReportsReferencers",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FGameplayTagsRemoveReferencedTagTest::RunTest(const FString& Parameters)
+{
+    const FString Source = TEXT("McpAutomationTagRefRemoveTags.ini");
+    const FString ImplicitParent = TEXT("Mcp.Automation.TagRefRemove");
+    const FString ReferencedTag = ImplicitParent + TEXT(".Referenced");
+    const FString FreeTag = ImplicitParent + TEXT(".Free");
+    FString FixturePath;
+
+    ON_SCOPE_EXIT
+    {
+        CleanupTestAsset(FixturePath);
+        SetTagInSource(Source, ReferencedTag, FString(), false);
+        SetTagInSource(Source, FreeTag, FString(), false);
+        CleanupTagSource(Source);
+    };
+
+    FTestResponseCapture Capture;
+    TSharedPtr<FJsonObject> AddSourcePayload = MakeShared<FJsonObject>();
+    AddSourcePayload->SetStringField(TEXT("source"), Source);
+    if (!InvokeGameplayTagsHandler(*this, TEXT("gameplay_tags.add_source"), AddSourcePayload, Capture)
+        || !TestTrue(TEXT("referenced tag registered"), SetTagInSource(Source, ReferencedTag, FString(), true))
+        || !TestTrue(TEXT("free tag registered"), SetTagInSource(Source, FreeTag, FString(), true))
+        || !SaveTagReferencingBlueprint(*this, ReferencedTag, FixturePath))
+    {
+        return false;
+    }
+
+    auto MakeRemovePayload = [&Source](const FString& Tag)
+    {
+        TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+        Payload->SetStringField(TEXT("tag"), Tag);
+        Payload->SetStringField(TEXT("source"), Source);
+        return Payload;
+    };
+
+    // The engine refuses this delete; the verb must say so with the referencers, not succeed.
+    Capture.Reset();
+    InvokeHandlerWithCapture(TEXT("gameplay_tags.remove"), MakeRemovePayload(ReferencedTag), Capture);
+    TestFalse(TEXT("referenced remove is not a success"), Capture.bSuccess);
+    TestEqual(TEXT("referenced remove error code"), Capture.ErrorCode, FString(TEXT("TAG_IN_USE")));
+    if (TestTrue(TEXT("referenced remove carries error data"), Capture.Result.IsValid()))
+    {
+        TestEqual(TEXT("reason is referenced"), Capture.Result->GetStringField(TEXT("reason")), FString(TEXT("referenced")));
+        TestEqual(TEXT("blockingTag names the tag"), Capture.Result->GetStringField(TEXT("blockingTag")), ReferencedTag);
+        TestFalse(TEXT("removed is false"), Capture.Result->GetBoolField(TEXT("removed")));
+        TestTrue(TEXT("referencers list the saved fixture"), ReferencersContainPackage(Capture.Result, FixturePath));
+    }
+
+    FString Comment;
+    TArray<FName> Sources;
+    bool bIsExplicit = false;
+    bool bIsRestricted = false;
+    bool bAllowNonRestrictedChildren = true;
+    UGameplayTagsManager::Get().GetTagEditorData(FName(*ReferencedTag), Comment, Sources, bIsExplicit, bIsRestricted, bAllowNonRestrictedChildren);
+    TestTrue(TEXT("refused tag is still explicitly registered"), bIsExplicit);
+
+    // Control: same call shape on an unreferenced sibling goes through.
+    if (InvokeGameplayTagsHandler(*this, TEXT("gameplay_tags.remove"), MakeRemovePayload(FreeTag), Capture))
+    {
+        TestTrue(TEXT("unreferenced sibling is removed"), Capture.Result->GetBoolField(TEXT("removed")));
+    }
+
+    // Non-removals that are not refusals carry a reason instead of a bare removed:false.
+    if (InvokeGameplayTagsHandler(*this, TEXT("gameplay_tags.remove"), MakeRemovePayload(ImplicitParent), Capture))
+    {
+        TestFalse(TEXT("implicit parent not removed"), Capture.Result->GetBoolField(TEXT("removed")));
+        TestEqual(TEXT("implicit parent reason"), Capture.Result->GetStringField(TEXT("reason")), FString(TEXT("implicit")));
+    }
+    if (InvokeGameplayTagsHandler(*this, TEXT("gameplay_tags.remove"), MakeRemovePayload(ImplicitParent + TEXT(".NeverRegistered")), Capture))
+    {
+        TestFalse(TEXT("unregistered tag not removed"), Capture.Result->GetBoolField(TEXT("removed")));
+        TestEqual(TEXT("unregistered reason"), Capture.Result->GetStringField(TEXT("reason")), FString(TEXT("not_registered")));
+    }
     return true;
 }

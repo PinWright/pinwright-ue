@@ -70,7 +70,7 @@ Use these for few-shot learning, developer onboarding, and as copy-paste templat
 | 23 | IsValid Pattern | `ParseBranch` | `IfElse` | `BranchNode` | `BranchReconverge` |
 | 24 | Nested Control Flow | `ParseBranch`, `ParseForeach` | `DeeplyNestedControlFlow` | -- | -- |
 | 25 | Construction Script | `ParseConstructionEntry` | `ConstructionEntry` | -- | -- |
-| 26 | MultiGate | `ParseMacro` | `MacroMultiGate` | `MacroMultiGate` | `MacroMultiGate` |
+| 26 | MultiGate | `ParseMacro` | `MacroMultiGate`, `MacroMultiGateOutputCount` | `MacroMultiGate` | `MacroMultiGate`, `MacroMultiGateKeepsUnwiredOutputs` |
 | 27 | Format Text | -- | `FormatText` (via K2Node handler) | `FormatArgsDefaultValues` (partial) | -- |
 | 28 | Macro Definition (Pure) | `MacroEntry` | (SetupMacro) | (decompile_macro) | `MacroSimple` |
 | 29 | Macro Definition (Multi-Exit) | `MacroEntryMultiExit` | (SetupMacro) | (decompile_macro) | `MacroExecOnly` |

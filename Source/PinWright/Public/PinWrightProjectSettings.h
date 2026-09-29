@@ -25,6 +25,10 @@ public:
     UPROPERTY(EditAnywhere, Config, Category = "Output Directories")
     FString WikiOutputDirectory;
 
+    /** While an agent drives this editor (an RPC in the last 5 minutes, or a job still running), stop the engine throttling it to 3 FPS and switching its viewports off when it is in the background. Editor Preferences > Performance > "Use Less CPU when in Background" is cleared in memory only for that time and restored afterwards; it is never saved. Off = keep the engine's background throttling. A minimized editor still skips viewport drawing. */
+    UPROPERTY(EditAnywhere, Config, Category = "Performance", meta = (DisplayName = "Disable Background Throttling While Agent Active"))
+    bool bDisableBackgroundThrottleWhileAgentActive = true;
+
     // Container stays at the UDeveloperSettings default ("Project"): these are
     // project-shared values, so they surface in Project Settings, unlike the
     // per-user UPinWrightSettings which lives in Editor Preferences.

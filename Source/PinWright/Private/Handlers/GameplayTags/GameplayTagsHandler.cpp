@@ -2,8 +2,11 @@
 
 #include "Handlers/HandlerRegistration.h"
 #include "Handlers/HandlerContext.h"
+#include "Handlers/ErrorCodes.h"
 #include "Handlers/ParamAliasUtils.h"
 
+#include "AssetRegistry/AssetRegistryModule.h"
+#include "AssetRegistry/IAssetRegistry.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "GameplayTagContainer.h"
@@ -223,6 +226,63 @@ bool RemoveTagFromSpecificSource(UGameplayTagsManager& Manager, const FName TagN
     Manager.EditorRefreshGameplayTagTree();
     return true;
 }
+
+// The query the engine's DeleteTagFromINI runs before refusing a delete: a saved package that
+// stores an FGameplayTag records it as a SearchableName dependency (FGameplayTag::PostSerialize).
+// Only packages saved (or rescanned) since the registry scan are visible; in-memory edits are not.
+TArray<FAssetIdentifier> FindTagReferencers(const FName TagName)
+{
+    TArray<FAssetIdentifier> Referencers;
+    FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get().GetReferencers(
+        FAssetIdentifier(FGameplayTag::StaticStruct(), TagName),
+        Referencers,
+        UE::AssetRegistry::EDependencyCategory::SearchableName);
+    Referencers.Sort([](const FAssetIdentifier& A, const FAssetIdentifier& B)
+    {
+        return A.ToString() < B.ToString();
+    });
+    return Referencers;
+}
+
+// Same row shape as asset.dependencies' referencers.
+TArray<TSharedPtr<FJsonValue>> ReferencersToJson(const TArray<FAssetIdentifier>& Referencers)
+{
+    TArray<TSharedPtr<FJsonValue>> Rows;
+    for (const FAssetIdentifier& Ref : Referencers)
+    {
+        TSharedPtr<FJsonObject> Row = MakeShared<FJsonObject>();
+        Row->SetStringField(TEXT("packageName"), Ref.PackageName.ToString());
+        if (!Ref.ObjectName.IsNone())
+        {
+            Row->SetStringField(TEXT("objectName"), Ref.ObjectName.ToString());
+        }
+        Rows.Add(MakeShared<FJsonValueObject>(Row));
+    }
+    return Rows;
+}
+
+// Mirrors DeleteTagFromINIInternal (UE 5.4+): deleting an explicit tag also deletes every
+// implicit parent left childless by it, and the engine refuses when any of those names has a
+// referencer. UE 5.3's engine loop checks the leaf name for every entry, so on 5.3 this
+// pre-check is stricter than the engine (it also blocks on a referenced implicit parent).
+TArray<FName> TagsDeletedWith(UGameplayTagsManager& Manager, const FName TagName)
+{
+    TArray<FName> Deleted;
+    Deleted.Add(TagName);
+    FGameplayTag Parent = Manager.RequestGameplayTag(TagName, /*ErrorIfNotFound=*/false).RequestDirectParent();
+    while (Parent.IsValid())
+    {
+        const TSharedPtr<FGameplayTagNode> ParentNode = Manager.FindTagNode(Parent);
+        if (!ParentNode.IsValid() || ParentNode->IsExplicitTag()
+            || Manager.RequestGameplayTagChildrenInDictionary(Parent).Num() != 1)
+        {
+            break;
+        }
+        Deleted.Add(Parent.GetTagName());
+        Parent = Parent.RequestDirectParent();
+    }
+    return Deleted;
+}
 }
 
 REGISTER_RPC_HANDLER("gameplay_tags.add", "gameplay_tags", "Add an explicit gameplay tag to an INI-backed tag source",
@@ -244,7 +304,7 @@ REGISTER_RPC_HANDLER("gameplay_tags.add", "gameplay_tags", "Add an explicit game
     if (!Manager.IsValidGameplayTagString(Tag, &ErrorText, &FixedString))
     {
         Ctx.SendError(
-            TEXT("INVALID_TAG"),
+            ErrorCodes::ERR_INVALID_TAG,
             FString::Printf(TEXT("Invalid gameplay tag '%s': %s"), *Tag, *ErrorText.ToString()));
         return true;
     }
@@ -273,7 +333,7 @@ REGISTER_RPC_HANDLER("gameplay_tags.add", "gameplay_tags", "Add an explicit game
         }
         if (!bAdded)
         {
-            Ctx.SendError(TEXT("ADD_FAILED"), FString::Printf(TEXT("Failed to add gameplay tag: %s"), *Tag));
+            Ctx.SendError(ErrorCodes::ERR_ADD_FAILED, FString::Printf(TEXT("Failed to add gameplay tag: %s"), *Tag));
             return true;
         }
     }
@@ -313,24 +373,57 @@ REGISTER_RPC_HANDLER("gameplay_tags.remove", "gameplay_tags", "Remove an explici
     TArray<FName> Sources;
     bool bIsExplicit = false;
     bool bIsRestricted = false;
-    if (!GetTagEditorData(Manager, TagName, Comment, Sources, bIsExplicit, &bIsRestricted) || !bIsExplicit || !SourceMatches(Sources, SourceFilter))
+    const bool bRegistered = GetTagEditorData(Manager, TagName, Comment, Sources, bIsExplicit, &bIsRestricted);
+    if (!bRegistered || !bIsExplicit || !SourceMatches(Sources, SourceFilter))
     {
+        // Nothing this call can remove; the reason separates a converged retry (not_registered)
+        // from a tag that still exists (implicit: only children define it; not_in_source).
         TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
         Result->SetStringField(TEXT("tag"), Tag);
         Result->SetStringField(TEXT("source"), SourceFilter.ToString());
         Result->SetBoolField(TEXT("removed"), false);
+        Result->SetStringField(TEXT("reason"),
+            !bRegistered ? TEXT("not_registered") : (!bIsExplicit ? TEXT("implicit") : TEXT("not_in_source")));
         Ctx.SendSuccess(Result);
         return true;
     }
 
     if (SourceFilter.IsNone() && Sources.Num() > 1)
     {
-        Ctx.SendError(TEXT("AMBIGUOUS_SOURCE"), FString::Printf(TEXT("Gameplay tag '%s' exists in multiple sources; pass source."), *Tag));
+        Ctx.SendError(ErrorCodes::ERR_AMBIGUOUS_SOURCE, FString::Printf(TEXT("Gameplay tag '%s' exists in multiple sources; pass source."), *Tag));
         return true;
     }
 
+    const FString ReportedSource = !SourceFilter.IsNone() ? SourceFilter.ToString() : (Sources.Num() > 0 ? Sources[0].ToString() : FString());
+    const bool bWholeTagDelete = SourceFilter.IsNone() || Sources.Num() <= 1;
+    if (bWholeTagDelete)
+    {
+        // DeleteTagFromINI refuses a referenced tag with only an editor toast and `false`, so run
+        // its referencer check first and return what it found.
+        for (const FName DeletedName : TagsDeletedWith(Manager, TagName))
+        {
+            const TArray<FAssetIdentifier> Referencers = FindTagReferencers(DeletedName);
+            if (Referencers.Num() > 0)
+            {
+                TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
+                Data->SetStringField(TEXT("tag"), Tag);
+                Data->SetStringField(TEXT("source"), ReportedSource);
+                Data->SetBoolField(TEXT("removed"), false);
+                Data->SetStringField(TEXT("reason"), TEXT("referenced"));
+                Data->SetStringField(TEXT("blockingTag"), DeletedName.ToString());
+                Data->SetNumberField(TEXT("referencerCount"), Referencers.Num());
+                Data->SetArrayField(TEXT("referencers"), ReferencersToJson(Referencers));
+                Ctx.SendError(ErrorCodes::ERR_TAG_IN_USE,
+                    FString::Printf(TEXT("Gameplay tag '%s' was not removed: '%s' is still referenced by %d saved package(s), first '%s'. The engine refuses to delete a referenced tag; clear it from the packages in referencers (gameplay_tags.find_referencers lists them), save them, then retry."),
+                        *Tag, *DeletedName.ToString(), Referencers.Num(), *Referencers[0].ToString()),
+                    Data);
+                return true;
+            }
+        }
+    }
+
     bool bRemoved = false;
-    if (!SourceFilter.IsNone() && Sources.Num() > 1)
+    if (!bWholeTagDelete)
     {
         const FScopedTransaction Transaction(FText::FromString(TEXT("Remove Gameplay Tag Source Entry")));
         bRemoved = RemoveTagFromSpecificSource(Manager, TagName, SourceFilter, bIsRestricted);
@@ -342,10 +435,70 @@ REGISTER_RPC_HANDLER("gameplay_tags.remove", "gameplay_tags", "Remove an explici
         bRemoved = IGameplayTagsEditorModule::Get().DeleteTagFromINI(TagNode);
     }
 
+    if (!bRemoved)
+    {
+        Ctx.SendError(ErrorCodes::ERR_REMOVE_FAILED,
+            FString::Printf(TEXT("The engine refused to remove gameplay tag '%s' from '%s' (its reason is in the editor log / notification, typically a source without a writable tag list: remove it from the .ini by hand)."),
+                *Tag, *ReportedSource));
+        return true;
+    }
+
     TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
     Result->SetStringField(TEXT("tag"), Tag);
-    Result->SetStringField(TEXT("source"), !SourceFilter.IsNone() ? SourceFilter.ToString() : (Sources.Num() > 0 ? Sources[0].ToString() : FString()));
-    Result->SetBoolField(TEXT("removed"), bRemoved);
+    Result->SetStringField(TEXT("source"), ReportedSource);
+    Result->SetBoolField(TEXT("removed"), true);
+    Ctx.SendSuccess(Result);
+    return true;
+}
+
+REGISTER_RPC_HANDLER("gameplay_tags.find_referencers", "gameplay_tags", "List the saved packages that reference each gameplay tag (the check the engine runs before refusing a tag delete)",
+    RPC_PARAMS(
+        RPC_PARAM_REQ("tags", "array", "Dotted gameplay tag names to look up, for example [\"Ability.Attack.Melee\"]. Unregistered names are still queried, so references to a tag already removed from the registry are found.")
+    ))
+{
+    const TArray<TSharedPtr<FJsonValue>>* TagValues = nullptr;
+    if (!Ctx.RequireArray(TEXT("tags"), TagValues))
+    {
+        return true;
+    }
+    if (TagValues->Num() == 0)
+    {
+        Ctx.SendError(ErrorCodes::ERR_INVALID_PARAMS, TEXT("tags must name at least one gameplay tag."));
+        return true;
+    }
+
+    TArray<FString> Tags;
+    for (const TSharedPtr<FJsonValue>& Value : *TagValues)
+    {
+        FString Tag;
+        if (!Value.IsValid() || !Value->TryGetString(Tag) || Tag.TrimStartAndEnd().IsEmpty())
+        {
+            Ctx.SendError(ErrorCodes::ERR_INVALID_PARAMS, TEXT("tags must be an array of non-empty strings."));
+            return true;
+        }
+        Tags.Add(Tag.TrimStartAndEnd());
+    }
+
+    UGameplayTagsManager& Manager = UGameplayTagsManager::Get();
+    TArray<TSharedPtr<FJsonValue>> Rows;
+    for (const FString& Tag : Tags)
+    {
+        const TArray<FAssetIdentifier> Referencers = FindTagReferencers(FName(*Tag));
+        TSharedPtr<FJsonObject> Row = MakeShared<FJsonObject>();
+        Row->SetStringField(TEXT("tag"), Tag);
+        Row->SetBoolField(TEXT("registered"), Manager.RequestGameplayTag(FName(*Tag), /*ErrorIfNotFound=*/false).IsValid());
+        Row->SetNumberField(TEXT("referencerCount"), Referencers.Num());
+        Row->SetArrayField(TEXT("referencers"), ReferencersToJson(Referencers));
+        Rows.Add(MakeShared<FJsonValueObject>(Row));
+    }
+
+    TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+    Result->SetArrayField(TEXT("tags"), Rows);
+    if (FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get().IsLoadingAssets())
+    {
+        // A mid-scan empty list may grow; say so rather than let it read as "unreferenced".
+        Result->SetBoolField(TEXT("registryScanInProgress"), true);
+    }
     Ctx.SendSuccess(Result);
     return true;
 }
@@ -493,7 +646,7 @@ REGISTER_RPC_HANDLER("gameplay_tags.add_source", "gameplay_tags", "Add an INI ga
     const FString Kind = Ctx.GetString(TEXT("kind"), TEXT("ini"));
     if (!Kind.Equals(TEXT("ini"), ESearchCase::IgnoreCase))
     {
-        Ctx.SendError(TEXT("UNSUPPORTED_SOURCE_KIND"), TEXT("gameplay_tags.add_source currently supports only INI tag sources."));
+        Ctx.SendError(ErrorCodes::ERR_UNSUPPORTED_SOURCE_KIND, TEXT("gameplay_tags.add_source currently supports only INI tag sources."));
         return true;
     }
 
@@ -506,7 +659,7 @@ REGISTER_RPC_HANDLER("gameplay_tags.add_source", "gameplay_tags", "Add an INI ga
         const FScopedTransaction Transaction(FText::FromString(TEXT("Add Gameplay Tag Source")));
         if (!IGameplayTagsEditorModule::Get().AddNewGameplayTagSource(SourceName.ToString(), Ctx.GetString(TEXT("searchPath"))))
         {
-            Ctx.SendError(TEXT("ADD_SOURCE_FAILED"), FString::Printf(TEXT("Failed to add gameplay tag source: %s"), *SourceName.ToString()));
+            Ctx.SendError(ErrorCodes::ERR_ADD_SOURCE_FAILED, FString::Printf(TEXT("Failed to add gameplay tag source: %s"), *SourceName.ToString()));
             return true;
         }
     }

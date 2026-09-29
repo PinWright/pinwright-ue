@@ -4,6 +4,7 @@
 #include "Handlers/HandlerContext.h"
 #include "Handlers/ParamSpec.h"
 #include "Handlers/ScalabilityConsoleGuard.h"
+#include "Handlers/ConsoleCommandGuard.h"
 #include "Handlers/System/RunTestsSupport.h"
 #include "PinWrightSubsystem.h"
 #include "PinWrightHelpers.h"
@@ -30,8 +31,6 @@
 #elif __has_include("UnrealEditorSubsystem.h")
 #include "UnrealEditorSubsystem.h"
 #endif
-#include "Handlers/BuildTools/ProcPollBind.h"
-#include "Handlers/BuildTools/UbtEntryPoint.h"
 #include "State/PluginState.h"
 
 namespace
@@ -889,117 +888,6 @@ namespace
     };
 }
 
-// ---- system.run_ubt ----
-REGISTER_RPC_HANDLER("system.run_ubt", "system", "Spawn Unreal Build Tool as a child process and capture stdout/stderr. Long-running; runs as a job. Useful for scripted hot-recompile from outside the editor.",
-    RPC_PARAMS(
-        RPC_PARAM_OPT("target", "string", "UBT target name (e.g. 'MyProjectEditor', 'MyProject'). Defaults to the current editor target."),
-        RPC_PARAM_OPT("platform", "string", "Target platform (e.g. 'Win64'). Defaults to the host platform."),
-        RPC_PARAM_OPT("configuration", "string", "Build configuration: 'Development', 'Shipping', 'DebugGame', etc. Defaults to 'Development'."),
-        RPC_PARAM_OPT("additionalArgs", "string", "Extra command-line arguments appended verbatim to the UBT invocation.")
-    ))
-{
-    FString Target = Ctx.GetString(TEXT("target"));
-    FString Platform = Ctx.GetString(TEXT("platform"));
-    FString Configuration = Ctx.GetString(TEXT("configuration"));
-    FString AdditionalArgs = Ctx.GetString(TEXT("additionalArgs"));
-
-    // Resolve the real per-platform UBT entry point (Build.bat on Windows /
-    // Build.sh elsewhere) via the shared resolver in Handlers/BuildTools/UbtEntryPoint.h.
-    const FString UBTPath = EARG_Ubt::ResolveUbtEntryPoint();
-
-    if (!FPaths::FileExists(UBTPath))
-    {
-        Ctx.SendError(TEXT("UBT_NOT_FOUND"), FString::Printf(TEXT("UBT not found at: %s"), *UBTPath));
-        return true;
-    }
-
-    // Build command line arguments
-    FString Arguments;
-
-    if (!Target.IsEmpty())
-    {
-        Arguments += Target + TEXT(" ");
-    }
-    else
-    {
-        FString ProjectPath = FPaths::GetProjectFilePath();
-        if (!ProjectPath.IsEmpty())
-        {
-            Arguments += FString::Printf(TEXT("-project=\"%s\" "), *ProjectPath);
-        }
-    }
-
-    if (!Platform.IsEmpty())
-    {
-        Arguments += Platform + TEXT(" ");
-    }
-    else
-    {
-#if PLATFORM_WINDOWS
-        Arguments += TEXT("Win64 ");
-#elif PLATFORM_MAC
-        Arguments += TEXT("Mac ");
-#else
-        Arguments += TEXT("Linux ");
-#endif
-    }
-
-    if (!Configuration.IsEmpty())
-    {
-        Arguments += Configuration + TEXT(" ");
-    }
-    else
-    {
-        Arguments += TEXT("Development ");
-    }
-
-    if (!AdditionalArgs.IsEmpty())
-    {
-        Arguments += AdditionalArgs;
-    }
-
-    FJobBindArgs Args;
-    Args.Method = TEXT("system.run_ubt");
-    Args.StartedPayload = MakeShared<FJsonObject>();
-    Args.StartedPayload->SetStringField(TEXT("ubtPath"), UBTPath);
-    Args.StartedPayload->SetStringField(TEXT("arguments"), Arguments);
-
-    Args.BindNativeDelegate =
-        [UBTPath, Arguments](FJobOnComplete OnComplete)
-    {
-        BindProcPollCompletion(UBTPath, Arguments, OnComplete);
-    };
-
-    const FString TicketId = Ctx.StartJob(Args);
-
-    // BindProcPollCompletion polls only the child's exit code (no output pipe),
-    // so the job has no mid-run observation point. Emit a ~10s heartbeat with
-    // the cheap observable state we do have: elapsed time and the size of UBT's
-    // own log file, which grows while the build makes progress. RecordProgress
-    // returns false once the ticket leaves "running" (completed / failed /
-    // cancelled), which self-removes the ticker on every terminal path.
-    const FString UbtLogPath = FPaths::Combine(
-        FPaths::EngineDir(), TEXT("Programs/UnrealBuildTool/Log.txt"));
-    FTSTicker::GetCoreTicker().AddTicker(
-        FTickerDelegate::CreateLambda(
-            [TicketId, UbtLogPath, StartSeconds = FPlatformTime::Seconds()](float) -> bool
-    {
-        const int32 Elapsed = FMath::RoundToInt(FPlatformTime::Seconds() - StartSeconds);
-        auto Progress = MakeShared<FJsonObject>();
-        Progress->SetNumberField(TEXT("elapsedSeconds"), Elapsed);
-        const int64 LogBytes = IFileManager::Get().FileSize(*UbtLogPath);
-        if (LogBytes >= 0)
-        {
-            Progress->SetNumberField(TEXT("ubtLogBytes"), static_cast<double>(LogBytes));
-        }
-        return FPluginState::Get().GetJobRegistry().RecordProgress(
-            TicketId,
-            FString::Printf(TEXT("UBT running, %ds elapsed"), Elapsed),
-            Progress, /*bBypassRateLimit=*/true);
-    }), 10.0f);
-    return true;
-}
-
 // ---- system.run_tests ----
 REGISTER_RPC_HANDLER("system.run_tests", "system", "Run UE automation tests and report pass/fail counts. Long-running; runs as a job. Pass exact test name(s) via test/tests or a broad filter pattern. Set isolateGroups for a fail-closed process boundary per '+'-separated filter group.",
     RPC_PARAMS(
@@ -1148,10 +1036,10 @@ REGISTER_RPC_HANDLER("system.run_tests", "system", "Run UE automation tests and 
 }
 
 // ---- system.console_command ----
-REGISTER_RPC_HANDLER("system.console_command", "system", "Run a console command at the process / GEngine scope. Distinct from editor.console_command which targets the editor world; use this for project / engine-wide commands. A line that SETS a scalability CVar is REFUSED with SCALABILITY_CVAR_USE_TYPED_VERB — either an 'sg.*' group, or any CVar carrying ECVF_Scalability / ECVF_ScalabilityGroup (r.ViewDistanceScale, r.Streaming.PoolSize, r.ScreenPercentage, r.MaxAnisotropy, ...), because a console set pins it at ECVF_SetByConsole above the ECVF_SetByScalability priority the editor's own Settings > Engine Scalability Settings panel writes at, for the rest of the session. Use performance.set_scalability, or pass force:true to accept the pin. READING such a CVar (its name with no value) is not refused, and neither is the aggregate 'scalability N', which routes through Scalability::SetQualityLevels at the panel's own priority.",
+REGISTER_RPC_HANDLER("system.console_command", "system", "Run a console command at the process / GEngine scope. Distinct from editor.console_command which targets the editor world; use this for project / engine-wide commands. A line that SETS a scalability CVar is REFUSED with SCALABILITY_CVAR_USE_TYPED_VERB — either an 'sg.*' group, or any CVar carrying ECVF_Scalability / ECVF_ScalabilityGroup (r.ViewDistanceScale, r.Streaming.PoolSize, r.ScreenPercentage, r.MaxAnisotropy, ...), because a console set pins it at ECVF_SetByConsole above the ECVF_SetByScalability priority the editor's own Settings > Engine Scalability Settings panel writes at, for the rest of the session. Use performance.set_scalability, or pass force:true to accept the pin. READING such a CVar (its name with no value) is not refused, and neither is the aggregate 'scalability N', which routes through Scalability::SetQualityLevels at the panel's own priority. A line whose first command word is QUIT_EDITOR or CLOSE_SLATE_MAINFRAME is REFUSED with EDITOR_QUIT_USE_TYPED_VERB (use editor.quit), PY with PYTHON_USE_TYPED_VERB (use python.execute), EXECFILE with EXECFILE_SEND_LINES_INDIVIDUALLY, and DEBUG followed by a crash, hang or memory subcommand with DEBUG_COMMAND_CRASHES_PROCESS / DEBUG_COMMAND_HANGS_PROCESS / DEBUG_COMMAND_EXHAUSTS_MEMORY (DEBUG HITCH / RENDERHITCH are allowed); force:true runs any of them anyway.",
     RPC_PARAMS(
         RPC_PARAM_REQ("command", "string", "Full console command line including arguments, e.g. 'log LogStreaming Verbose' or 'stat unit'."),
-        RPC_PARAM_DEF("force", "boolean", "Run a scalability-CVar set anyway ('sg.<Group> N' or any ECVF_Scalability CVar), accepting that the CVar is pinned at ECVF_SetByConsole and the editor's own Scalability panel can no longer change its group until the editor restarts. Ignored for every other command.", "false")
+        RPC_PARAM_DEF("force", "boolean", "Run a refused line anyway: a scalability-CVar set ('sg.<Group> N' or any ECVF_Scalability CVar), accepting that the CVar is pinned at ECVF_SetByConsole and the editor's own Scalability panel can no longer change its group until the editor restarts; or a QUIT_EDITOR / CLOSE_SLATE_MAINFRAME, PY, EXECFILE or DEBUG crash/hang/memory line, accepting that it skips the checks of the typed verb named in the refusal. Ignored for every other command.", "false")
     ))
 {
     auto* Payload = Ctx.GetRawPayload().Get();
@@ -1185,6 +1073,16 @@ REGISTER_RPC_HANDLER("system.console_command", "system", "Run a console command 
         Ctx.SendError(TEXT("SCALABILITY_CVAR_USE_TYPED_VERB"),
             ScalabilityConsoleGuard::MakeScalabilityTypedVerbRefusal(Cmd));
         return true;
+    }
+    // QUIT_EDITOR, PY, EXECFILE and DEBUG crash/hang/memory lines bypass the checks of the typed
+    // verbs that own those effects; see Handlers/ConsoleCommandGuard.h.
+    if (!Ctx.GetBool(TEXT("force"), false))
+    {
+        if (const TOptional<ConsoleCommandGuard::FRefusal> Refusal = ConsoleCommandGuard::FindRefusal(Cmd))
+        {
+            Ctx.SendError(Refusal->Code, Refusal->Message, Refusal->ToJson());
+            return true;
+        }
     }
 
     if (!GEditor)

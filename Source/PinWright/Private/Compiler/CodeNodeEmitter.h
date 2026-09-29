@@ -31,6 +31,7 @@ class UK2Node_MakeStruct;
 class UK2Node_MakeArray;
 class UK2Node_ExecutionSequence;
 class UK2Node_Timeline;
+class UTimelineTemplate;
 class UK2Node_CustomEvent;
 class UK2Node_Event;
 class UK2Node_FunctionEntry;
@@ -85,7 +86,9 @@ public:
     UK2Node_MakeStruct*         CreateMakeStructNode(UScriptStruct* Struct);
     UK2Node_MakeArray*          CreateMakeArrayNode(int32 NumInputs);
     UK2Node_ExecutionSequence*  CreateSequenceNode(int32 NumOutputs, UEdGraphPin*& InOutExecPin);
-    UK2Node_Timeline*           CreateTimelineNode(const FString& Name, UEdGraphPin*& InOutExecPin);
+    // Returns nullptr and creates nothing when AddNewTimeline refuses the name (taken, or the
+    // Blueprint cannot hold timelines); otherwise OutTemplate is the new, empty template.
+    UK2Node_Timeline*           CreateTimelineNode(const FString& Name, UEdGraphPin*& InOutExecPin, UTimelineTemplate*& OutTemplate);
     UK2Node_CustomEvent*        CreateCustomEventNode(FName EventName);
     UK2Node_Event*              CreateEventNode(FName EventName);
     UK2Node_FunctionEntry*      GetOrCreateFunctionEntry(UEdGraph* FuncGraph);

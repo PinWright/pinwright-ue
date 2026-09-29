@@ -14,6 +14,7 @@
 #include "K2Node_MacroInstance.h"
 #include "K2Node_Tunnel.h"
 #include "K2Node_ExecutionSequence.h"
+#include "K2Node_MultiGate.h"
 #include "K2Node_DynamicCast.h"
 #include "K2Node_Switch.h"
 #include "K2Node_Timeline.h"
@@ -87,6 +88,9 @@ namespace
             TMap<UClass*, ENodeSemantics> M;
             M.Add(UK2Node_IfThenElse::StaticClass(),       ENodeSemantics::Branch);
             M.Add(UK2Node_ExecutionSequence::StaticClass(), ENodeSemantics::Sequence);
+            // Native MultiGate derives from ExecutionSequence but emits as `macro MultiGate(...)`;
+            // the most-derived-first walk below picks this entry over Sequence.
+            M.Add(UK2Node_MultiGate::StaticClass(),         ENodeSemantics::MacroInstance);
             M.Add(UK2Node_DynamicCast::StaticClass(),      ENodeSemantics::Cast);
             M.Add(UK2Node_Timeline::StaticClass(),         ENodeSemantics::Timeline);
             M.Add(UK2Node_Switch::StaticClass(),           ENodeSemantics::Switch);

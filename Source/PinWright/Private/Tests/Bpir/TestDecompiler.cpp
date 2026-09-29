@@ -2690,31 +2690,11 @@ bool FDecompilerMacroMultiGateTest::RunTest(const FString& Parameters)
     FBpirCompiler Compiler(BP);
     FCompileResult CompileResult = Compiler.Compile(Code);
 
-    // MultiGate may not exist in StandardMacros on all UE versions (e.g. UE 5.6+).
-    // If it fails with "not found", that's an environment issue — skip gracefully.
+    // MultiGate compiles to the native UK2Node_MultiGate on every UE 5.x (StandardMacros has
+    // no such graph); the decompiler must render that node back as `macro MultiGate`, not as
+    // the `sequence` of its UK2Node_ExecutionSequence base class.
     if (!CompileResult.bSuccess)
     {
-        bool bIsMacroNotFound = false;
-        for (const FCompileError& Err : CompileResult.Errors)
-        {
-            AddInfo(FString::Printf(TEXT("Compile error L%d: %s"), Err.Line, *Err.Message));
-            if (Err.Message.Contains(TEXT("not found")))
-            {
-                bIsMacroNotFound = true;
-            }
-        }
-        if (bIsMacroNotFound)
-        {
-            // Greppable SKIPPED marker rather than AddWarning: this runner treats
-            // AddWarning as a test failure (see TestCompilerIntegration.cpp ~3322), and
-            // MultiGate really is absent from StandardMacros on some engine versions, so
-            // a warning here would turn a legitimate environment skip into a red test.
-            // The marker at least makes the abandoned assertions greppable in the log.
-            PinWrightTestSkip::SkipAssertions(*this, TEXT("multigate-macro-unavailable"),
-                TEXT("SKIPPED: MultiGate macro not available in this UE version's StandardMacros; skipping MultiGate decompile test."));
-            return true;
-        }
-        // Unexpected failure
         for (const FCompileError& Err : CompileResult.Errors) { AddError(FString::Printf(TEXT("  L%d: %s"), Err.Line, *Err.Message)); }
         TestTrue(TEXT("Compile succeeded"), CompileResult.bSuccess);
         return false;
@@ -2725,8 +2705,12 @@ bool FDecompilerMacroMultiGateTest::RunTest(const FString& Parameters)
     TestTrue(TEXT("Decompile succeeded"), DecompileResult.bSuccess);
 
     const FString& Output = DecompileResult.BpirText;
-    TestTrue(TEXT("Output contains 'MultiGate'"),
-        Output.Contains(TEXT("MultiGate")));
+    TestTrue(TEXT("Output contains 'macro MultiGate('"),
+        Output.Contains(TEXT("macro MultiGate(")));
+    TestFalse(TEXT("MultiGate is not decompiled as a sequence"),
+        Output.Contains(TEXT("sequence(")));
+    TestTrue(TEXT("Both MultiGate outputs are emitted as exec targets"),
+        Output.Contains(TEXT("Out0 ->")) && Output.Contains(TEXT("Out1 ->")));
     return true;
 }
 

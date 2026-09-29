@@ -102,7 +102,8 @@ REGISTER_RPC_HANDLER("world_partition.load_cells", "world_partition", "Load worl
 // ---- world_partition.create_datalayer ----
 REGISTER_RPC_HANDLER("world_partition.create_datalayer", "world_partition", "Create a new data layer",
     RPC_PARAMS(
-        RPC_PARAM_REQ("dataLayerName", "string", "Name for the new data layer")
+        RPC_PARAM_REQ("dataLayerName", "string", "Name for the new data layer"),
+        RPC_PARAM_DEF("dataLayerAssetPath", "path", "Content folder for the UDataLayerAsset", "/Game/DataLayers")
     ))
 {
     UWorld* World = GEditor->GetEditorWorldContext().World();
@@ -144,12 +145,13 @@ REGISTER_RPC_HANDLER("world_partition.create_datalayer", "world_partition", "Cre
         // A transient-outer asset lives under /Engine/Transient and can never be
         // serialized, so the data layer and every set_datalayer assignment that
         // references it would dangle on level save/reload (silent persistence no-op).
-        // Build a sanitized /Game-rooted package path and create the asset there with
-        // RF_Standalone so it is a saveable content asset, mirroring the persistable
-        // sibling level.structure.create_data_layer.
+        // Build a sanitized package path under the caller's folder (same parameter name and
+        // default as the sibling level.structure.create_data_layer) and create the asset there
+        // with RF_Standalone so it is a saveable content asset.
+        const FString AssetFolder = Ctx.GetString(TEXT("dataLayerAssetPath"), TEXT("/Game/DataLayers"));
         FString FullAssetPath;
         FString PathError;
-        if (!ValidateAssetCreationPath(TEXT("/Game/DataLayers"), DataLayerName, FullAssetPath, PathError))
+        if (!ValidateAssetCreationPath(AssetFolder, DataLayerName, FullAssetPath, PathError))
         {
             Ctx.SendError(ErrorCodes::ERR_INVALID_PARAMS,
                 FString::Printf(TEXT("Invalid data layer name/path: %s"), *PathError));

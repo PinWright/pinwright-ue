@@ -197,8 +197,8 @@ public:
     int32 TestSuiteResetIntervalTests;
 
     /** Fraction of physical RAM the editor's working set may reach before a suite reset is
-     *  forced ahead of the count trigger. Kept below the external Job Object cap that
-     *  scripts/Run-SuiteCapped.ps1 applies (0.60 of RAM) so the in-process reclaim runs first.
+     *  forced ahead of the count trigger. Kept below the external memory cap that
+     *  Content/Python/pinwright_supervisor.py applies (0.60 of RAM) so the in-process reclaim runs first.
      *  0 disables the watermark. Overridden by pinwright.TestMemoryWatermark and
      *  -PinWrightTestMemoryWatermark=F. */
     UPROPERTY(EditAnywhere, Config, Category = "Jobs",

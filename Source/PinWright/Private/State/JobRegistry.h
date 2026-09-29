@@ -115,6 +115,8 @@ public:
 
     bool   Get(const FString& TicketId, FJobTicket& OutTicket) const;
     TArray<FJobTicket> List() const;
+    // Tickets still "running". Polled every subsystem tick, so it copies nothing.
+    int32  NumRunning() const;
     void   EvictExpired(const FDateTime& Now);
 
     static TSharedPtr<FJsonObject> ToJson(const FJobTicket& Ticket);

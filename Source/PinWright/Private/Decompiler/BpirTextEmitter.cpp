@@ -8,6 +8,7 @@
 #include "Decompiler/GraphWalker.h"
 #include "Compiler/BpirSharedConstants.h"
 #include "Compiler/BpirStructLiteralUtils.h"
+#include "Compiler/BpirTimelineText.h"
 #include "Compiler/CodeNodeEmitter.h"
 #include "IrCore/IrTextUtils.h"
 #include "Utils/PropertyUtils.h"
@@ -23,6 +24,7 @@
 #include "K2Node_DynamicCast.h"
 #include "K2Node_IfThenElse.h"
 #include "K2Node_MacroInstance.h"
+#include "K2Node_MultiGate.h"
 #include "K2Node_Tunnel.h"
 #include "K2Node_Timeline.h"
 #include "K2Node_Event.h"
@@ -2566,19 +2568,36 @@ FString FBpirTextEmitter::EmitMacro(
     const TFunction<FString(UEdGraphPin*)>& ResolvePin)
 {
     UK2Node_MacroInstance* MacroNode = Cast<UK2Node_MacroInstance>(Node);
-    if (!MacroNode)
+    // The native UK2Node_MultiGate shares the macro form; the compiler maps it back to the native node.
+    const bool bNativeMultiGate = Node && Node->IsA<UK2Node_MultiGate>();
+    if (!MacroNode && !bNativeMultiGate)
     {
         return FString::Printf(TEXT("# [ERROR] Expected macro node"));
     }
 
-    FString MacroName;
-    if (UEdGraph* MacroGraph = MacroNode->GetMacroGraph())
+    FString MacroName = bNativeMultiGate ? FString(BpirSharedConstants::MacroNames::MultiGate) : FString();
+    if (UEdGraph* MacroGraph = MacroNode ? MacroNode->GetMacroGraph() : nullptr)
     {
         MacroName = MacroGraph->GetName();
     }
 
     FString GeneratedPrefix;
     FString Args = FormatArgs(Node, ResolvePin, true, nullptr, &GeneratedPrefix);
+    if (bNativeMultiGate)
+    {
+        // Exec targets list only wired outputs, so the count travels explicitly to keep
+        // unconnected trailing "Out N" pins.
+        int32 NumOuts = 0;
+        for (UEdGraphPin* Pin : Node->Pins)
+        {
+            if (Pin && Pin->Direction == EGPD_Output && Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_Exec)
+            {
+                ++NumOuts;
+            }
+        }
+        const FString OutputsArg = FString::Printf(TEXT("%s: %d"), BpirSharedConstants::MacroNames::MultiGateOutputsArg, NumOuts);
+        Args = Args.IsEmpty() ? OutputsArg : OutputsArg + TEXT(", ") + Args;
+    }
     FString ExecTargets = FormatExecTargets(LabelMap);
     const FString TypeAnno = ResolvePrimaryOutputTypeAnnotation(Node);
 
@@ -2927,14 +2946,21 @@ FString FBpirTextEmitter::EmitTimeline(
 {
     UK2Node_Timeline* TimelineNode = Cast<UK2Node_Timeline>(Node);
     FString TimelineName = TEXT("Unknown");
+    FString TemplateArgs;
     if (TimelineNode)
     {
         TimelineName = TimelineNode->TimelineName.ToString();
+        // The template holds the tracks and settings; a recompile rebuilds it from these args.
+        UBlueprint* Blueprint = FBlueprintEditorUtils::FindBlueprintForNode(TimelineNode);
+        if (UTimelineTemplate* Template = Blueprint ? Blueprint->FindTimelineTemplateByVariableName(TimelineNode->TimelineName) : nullptr)
+        {
+            TemplateArgs = BpirTimelineText::FormatArgs(Template);
+        }
     }
 
     FString ExecTargets = FormatExecTargets(LabelMap);
     const FString TypeAnno = ResolvePrimaryOutputTypeAnnotation(Node);
-    return FString::Printf(TEXT("%%%s%s = timeline %s()%s"), *ResultName, *TypeAnno, *TimelineName, *ExecTargets);
+    return FString::Printf(TEXT("%%%s%s = timeline %s(%s)%s"), *ResultName, *TypeAnno, *TimelineName, *TemplateArgs, *ExecTargets);
 }
 
 // ---------------------------------------------------------------------------

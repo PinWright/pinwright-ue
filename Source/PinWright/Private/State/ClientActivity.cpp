@@ -149,6 +149,24 @@ bool GetMostRecentOtherClient(const FString& CallerId, FActivity& Out)
     return true;
 }
 
+bool GetSecondsSinceLastDispatch(double& OutSecondsAgo)
+{
+    const double Now = FPlatformTime::Seconds();
+
+    FScopeLock Lock(&GMutex);
+    if (GClients.Num() == 0)
+    {
+        return false;
+    }
+    double Latest = TNumericLimits<double>::Lowest();
+    for (const TPair<FString, FClientRecord>& Pair : GClients)
+    {
+        Latest = FMath::Max(Latest, Pair.Value.LastSeenSeconds);
+    }
+    OutSecondsAgo = FMath::Max(0.0, Now - Latest);
+    return true;
+}
+
 void ResetForTests()
 {
     FScopeLock Lock(&GMutex);

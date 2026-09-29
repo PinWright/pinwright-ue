@@ -56,6 +56,14 @@ inline FParamSpec ActorNameParamReq(const TCHAR* Type, const TCHAR* Desc)
         /*bRequired=*/true, ActorNameKeys());
 }
 
+// Optional form of the same slot, for verbs whose batch form (an actors[] entry array) makes
+// the single-actor identity one of two alternatives the handler enforces itself.
+inline FParamSpec ActorNameParamOpt(const TCHAR* Type, const TCHAR* Desc)
+{
+    return ParamAliasUtils::MakeAliasParamSpec(*ActorNameKeys()[0], Type, Desc,
+        /*bRequired=*/false, ActorNameKeys());
+}
+
 // Body-side counterpart to the alias-annotated spec: resolves the actor-identity value
 // from the first matching key (canonical first). Returns the empty string when none of
 // the keys is present; the caller then sends its own domain error.

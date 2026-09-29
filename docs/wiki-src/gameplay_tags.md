@@ -1,6 +1,6 @@
 # gameplay_tags
 
-Authoring surface for the project's `GameplayTagsManager` registry and `FGameplayTagQuery` values on configured assets. Registry mutation (add / remove / list / add_source) is INI-backed through `IGameplayTagsEditorModule`; `build_query` walks a recursive JSON expression tree, serializes an `FGameplayTagQuery`, and can write it to a target asset property in one call. Use this namespace for registry work and declarative query authoring; use `call("gas")` for GAS asset bodies after registration or `call("property")` for other property writes.
+Authoring surface for the project's `GameplayTagsManager` registry and `FGameplayTagQuery` values on configured assets. Registry mutation (add / remove / list / add_source / find_referencers) is INI-backed through `IGameplayTagsEditorModule`; `build_query` walks a recursive JSON expression tree, serializes an `FGameplayTagQuery`, and can write it to a target asset property in one call. Use this namespace for registry work and declarative query authoring; use `call("gas")` for GAS asset bodies after registration or `call("property")` for other property writes.
 
 ## Cross-cluster overlap
 
@@ -12,6 +12,32 @@ Authoring surface for the project's `GameplayTagsManager` registry and `FGamepla
 - [`gas`](gas.md) for applying tags to GameplayAbility / GameplayEffect / AttributeSet assets.
 - [`property`](property.md) for arbitrary `FGameplayTagContainer` / `FGameplayTagQuery` writes when `build_query`'s target path is not enough.
 - [`asset`](asset.md) for `properties.json` dumps of tag and query values.
+
+### gameplay_tags.remove
+
+Deletes the tag through the engine's `DeleteTagFromINI` (or, with `source` on a tag present in several sources, only that source's entry). Outcomes:
+
+- **Removed:** `{tag, source, removed: true}`.
+- **Nothing to remove (success, `removed: false`, `reason`):** `not_registered` (no such tag; a retried call converges here), `implicit` (only child tags define it; remove the children), `not_in_source` (explicit, but not in the named `source`).
+- **`TAG_IN_USE` (error):** a saved package still references the tag, or an implicit parent the delete would take with it. The engine refuses this with only an editor toast; the verb runs the same asset-registry check first and returns error data `{tag, source, removed: false, reason: "referenced", blockingTag, referencerCount, referencers: [{packageName, objectName?}]}`. Clear the tag from those packages, save them, retry.
+- **`AMBIGUOUS_SOURCE`:** several sources define the tag and no `source` was passed.
+- **`REMOVE_FAILED`:** the engine refused for another reason (for example a source with no writable tag list); its message is in the editor log.
+
+Removing one source's entry of a multi-source tag skips the referencer check: the tag stays registered.
+
+### gameplay_tags.find_referencers
+
+Batch lookup of the packages that store each tag, from the asset registry's `SearchableName` dependencies (`GetReferencers(FAssetIdentifier(FGameplayTag::StaticStruct(), tag))`, the query `gameplay_tags.remove` and the engine's delete check use).
+
+```json
+{ "tags": [ { "tag": "Ability.Attack.Melee", "registered": true, "referencerCount": 1,
+              "referencers": [ { "packageName": "/Game/Abilities/BP_Melee" } ] } ] }
+```
+
+- `tags` is required and non-empty; rows come back in request order.
+- Unregistered names are still queried (`registered: false`), so references left behind by an already-removed tag are found.
+- The answer reflects packages as last **saved** and scanned by the registry: an unsaved in-memory edit that adds or clears a tag does not change it.
+- `registryScanInProgress: true` appears while the initial asset scan is running; an empty list then may grow.
 
 ### gameplay_tags.list
 

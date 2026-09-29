@@ -14,6 +14,7 @@
 class FSocketHttpServer;
 class FRpcDispatcher;
 class FToolCatalog;
+class FBackgroundThrottleGuard;
 
 UENUM(BlueprintType)
 enum class EPinWrightState : uint8 {
@@ -57,6 +58,9 @@ public:
 
     // Resolved listener status for the setup screen's status banner.
     EMcpServerStatus GetServerStatus() const;
+
+    // True while the background-throttle guard holds the engine's CPU throttle off.
+    bool IsHoldingBackgroundThrottle() const;
 
     // ---- Bind-failure introspection. A bind-failed editor serves no RPC at all, so nothing
     // it could answer would report this; these exist so the in-editor status surfaces and the
@@ -171,6 +175,10 @@ private:
     TSharedPtr<FSocketHttpServer> StreamingTransport;
     TSharedPtr<FRpcDispatcher> Dispatcher;
     TSharedPtr<FToolCatalog> Catalog;
+
+    // Holds the engine's background throttle off while an agent is active
+    // (State/BackgroundThrottleGuard.h); updated every tick.
+    TSharedPtr<FBackgroundThrottleGuard> ThrottleGuard;
 
     // Streaming transport bookkeeping (FSocketHttpServer exposes no port/active
     // accessors, so the subsystem tracks the Start() outcome itself).

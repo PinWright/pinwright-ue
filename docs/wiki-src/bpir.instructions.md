@@ -218,7 +218,10 @@ See `call("bpir.examples.do-once-flipflop")` and `call("bpir.examples.multigate"
 %flip = macro FlipFlop() [A -> @pathA, B -> @pathB]
 %gate = macro Gate(Open: true) [exit -> @through]
 %mg = macro MultiGate(IsRandom: true) [0 -> @out0, 1 -> @out1, 2 -> @out2]
+%mg4 = macro MultiGate(outputs: 4) [0 -> @first]
 ```
+
+MultiGate is the native `K2Node_MultiGate`, spelled as a macro. `outputs: N` is a node setting, not a pin: the node gets max(N, highest wired index + 1) outputs, so unwired trailing outputs survive a round trip. Output targets accept `0`, `Out 0` or `Out0`.
 
 ## 2.5 Format Text
 
@@ -237,10 +240,45 @@ The `Format:` argument is required and must contain the format string. Each `{pl
 See `call("bpir.examples.timeline")` for a worked pattern with track-output access.
 
 ```
-%tl = timeline MyFadeTimeline(
-    Alpha: float_curve((0.0, 0.0), (1.0, 1.0))
-) [update -> @update, finished -> @finished]
+%tl = timeline MyFadeTimeline(length: 2, Alpha: float_curve((0, 0), (1, 1))) [update -> @update, finished -> @finished]
 ```
+
+The whole instruction is one line; the parser does not join a `(` left open onto the next line.
+The args carry the Timeline template: settings, then one `Name: <kind>_curve(...)` arg per track
+in the order the node shows the track pins. The decompiler emits the same form, so decompile then
+recompile keeps every track. A timeline with no args gets a new template's defaults.
+
+| Setting | Values | New-template default |
+|---|---|---|
+| `length` | seconds | `5` |
+| `length_mode` | `timeline_length` \| `last_keyframe` | `timeline_length` |
+| `autoplay`, `loop`, `replicated`, `ignore_time_dilation` | `true` \| `false` | `false` |
+
+| Track | Form | Node pin |
+|---|---|---|
+| float | `Alpha: float_curve(<keys>)` | float output `%tl.Alpha` |
+| vector | `Offset: vector_curve(x(<keys>), y(<keys>), z(<keys>))` | Vector output |
+| linear color | `Tint: color_curve(r(<keys>), g(<keys>), b(<keys>), a(<keys>))` | LinearColor output |
+| event | `Beep: event_curve(<keys>)` | exec output; wire it in the exec clause: `[Beep -> @beep]` |
+| any, external curve asset | `Alpha: float_curve("/Game/Curves/C_Fade.C_Fade")` | as above; the track references the asset |
+
+A channel with no keys may be omitted. `<keys>` is a comma-separated list of key tuples, written in
+any order and sorted by time on compile:
+
+| Key | Meaning |
+|---|---|
+| `(t, v)` | linear |
+| `(t, v, constant)` / `(t, v, none)` | stepped / no interpolation |
+| `(t, v, cubic)` | cubic, tangents computed (auto) |
+| `(t, v, cubic, auto\|smart_auto\|user\|break\|none, arrive, leave)` | cubic with tangent mode and tangents |
+| `(t, v, cubic, <mode>, arrive, leave, arrive\|leave\|both, arriveWeight, leaveWeight)` | weighted tangents |
+
+Errors, all at compile and before anything is created: a name another timeline in the Blueprint
+already uses ("already exists"; recompile the entry that owns it in replace mode, or rename), a
+Blueprint that cannot hold timelines, a malformed key or channel, a duplicate track name, an
+unknown setting, and an external curve path that does not load as the track's curve class.
+Not carried: a curve's default value and pre/post-infinity extrapolation, and the timeline tick
+group.
 
 ## 2.7 Struct Operations
 

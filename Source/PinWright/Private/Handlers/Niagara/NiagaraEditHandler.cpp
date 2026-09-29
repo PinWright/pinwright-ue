@@ -769,6 +769,55 @@ namespace
         return OnlyOutputNode;
     }
 
+    // Shared by add_module and set_module_script: a module may only live in a stack its
+    // ModuleUsageBitmask allows. The refusal names the module, the requested stack and the
+    // allowed stacks so the caller can retry with a valid scriptUsage.
+    FNiagaraEditError CheckModuleUsageAllowsStack(const UNiagaraScript& ModuleScript, ENiagaraScriptUsage StackUsage)
+    {
+        const FVersionedNiagaraScriptData* ScriptData = ModuleScript.GetLatestScriptData();
+        if (!ScriptData || UNiagaraScript::IsSupportedUsageContextForBitmask(ScriptData->ModuleUsageBitmask, StackUsage))
+        {
+            return FNiagaraEditError();
+        }
+        const UEnum* UsageEnum = StaticEnum<ENiagaraScriptUsage>();
+        TArray<FString> Allowed;
+        for (const ENiagaraScriptUsage Usage : UNiagaraScript::GetSupportedUsageContextsForBitmask(ScriptData->ModuleUsageBitmask))
+        {
+            Allowed.Add(UsageEnum->GetNameStringByValue(static_cast<int64>(Usage)));
+        }
+        return FNiagaraEditError::Make(TEXT("INCOMPATIBLE_STACK_GROUP"),
+            FString::Printf(TEXT("Module '%s' cannot be placed in the %s stack: its ModuleUsageBitmask allows [%s]. Pass scriptUsage naming one of those stacks."),
+                *ModuleScript.GetPathName(),
+                *UsageEnum->GetNameStringByValue(static_cast<int64>(StackUsage)),
+                *FString::Join(Allowed, TEXT(", "))));
+    }
+
+    // With scriptUsage omitted: the one stack in this graph the module's bitmask allows, or null
+    // when none or several qualify (the caller then keeps the ParticleUpdate default, which the
+    // bitmask check refuses loudly when it is not allowed).
+    UNiagaraNodeOutput* FindOnlyAllowedStackOutputNode(const FNiagaraResolvedTarget& Target, const UNiagaraScript& ModuleScript)
+    {
+        const FVersionedNiagaraScriptData* ScriptData = ModuleScript.GetLatestScriptData();
+        if (!Target.Graph || !ScriptData)
+        {
+            return nullptr;
+        }
+        UNiagaraNodeOutput* Found = nullptr;
+        for (UEdGraphNode* Node : Target.Graph->Nodes)
+        {
+            UNiagaraNodeOutput* OutputNode = Cast<UNiagaraNodeOutput>(Node);
+            if (OutputNode && UNiagaraScript::IsSupportedUsageContextForBitmask(ScriptData->ModuleUsageBitmask, OutputNode->GetUsage()))
+            {
+                if (Found)
+                {
+                    return nullptr;
+                }
+                Found = OutputNode;
+            }
+        }
+        return Found;
+    }
+
     UNiagaraNodeOutput* FindOwningStackOutputNode(const FNiagaraResolvedTarget& Target)
     {
         if (!Target.ModuleNode)
@@ -985,8 +1034,9 @@ namespace
 
         if (Operation == ENiagaraEditOperation::AddModule)
         {
+            // An explicit scriptUsage is resolved (and refused) before the module is loaded.
             UNiagaraNodeOutput* OutputNode = ResolveStackOutputNode(Target, Payload.Target.ScriptUsage);
-            if (!OutputNode)
+            if (!OutputNode && !Payload.Target.ScriptUsage.IsEmpty())
             {
                 return FNiagaraEditError::Make(TEXT("OUTPUT_NODE_NOT_FOUND"), TEXT("Could not resolve Niagara stack output node for the requested script usage."));
             }
@@ -995,6 +1045,26 @@ namespace
             if (!ModuleScript)
             {
                 return FNiagaraEditError::Make(TEXT("MODULE_SCRIPT_NOT_FOUND"), FString::Printf(TEXT("Could not load Niagara module script '%s'."), *Payload.ModulePath));
+            }
+
+            // scriptUsage omitted: derive the stack when the bitmask leaves exactly one candidate in
+            // this graph; otherwise keep the ParticleUpdate default, which the check below refuses
+            // when the module does not allow it.
+            if (Payload.Target.ScriptUsage.IsEmpty())
+            {
+                if (UNiagaraNodeOutput* Derived = FindOnlyAllowedStackOutputNode(Target, *ModuleScript))
+                {
+                    OutputNode = Derived;
+                }
+            }
+            if (!OutputNode)
+            {
+                return FNiagaraEditError::Make(TEXT("OUTPUT_NODE_NOT_FOUND"), TEXT("Could not resolve Niagara stack output node for the requested script usage."));
+            }
+            const FNiagaraEditError UsageError = CheckModuleUsageAllowsStack(*ModuleScript, OutputNode->GetUsage());
+            if (UsageError.HasError())
+            {
+                return UsageError;
             }
 
             const int32 TargetIndex = Payload.Target.ToIndex == INDEX_NONE ? INDEX_NONE : Payload.Target.ToIndex;
@@ -1432,13 +1502,10 @@ namespace
                     FString::Printf(TEXT("New script usage does not match existing module usage.")));
             }
 
-            // Stack-group compatibility via ModuleUsageBitmask
-            const ENiagaraScriptUsage StackUsage = OutputNode->GetUsage();
-            const FVersionedNiagaraScriptData* NewScriptData = NewScript->GetLatestScriptData();
-            if (NewScriptData && !UNiagaraScript::IsSupportedUsageContextForBitmask(NewScriptData->ModuleUsageBitmask, StackUsage))
+            const FNiagaraEditError StackError = CheckModuleUsageAllowsStack(*NewScript, OutputNode->GetUsage());
+            if (StackError.HasError())
             {
-                return FNiagaraEditError::Make(TEXT("INCOMPATIBLE_STACK_GROUP"),
-                    FString::Printf(TEXT("New script's ModuleUsageBitmask does not support the current stack's script usage.")));
+                return StackError;
             }
 
             // Kill running instances before mutating to avoid rendering partial state

@@ -6,6 +6,7 @@
 
 #include "IntegrationGates.h"
 #include "State/PluginState.h"
+#include "State/BackgroundThrottleGuard.h"
 #include "Transport/PortAdvertisement.h"
 #include "Transport/ModalStateProbe.h"
 #include "Transport/SocketHttpServer.h"
@@ -211,6 +212,9 @@ void UPinWrightSubsystem::Initialize(
                TEXT("HTTP transport is disabled in settings."));
     }
 
+    ThrottleGuard = MakeShared<FBackgroundThrottleGuard>();
+    ThrottleGuard->Register();
+
     // Register ticker
     TickHandle = FTSTicker::GetCoreTicker().AddTicker(
         FTickerDelegate::CreateUObject(this,
@@ -227,6 +231,13 @@ void UPinWrightSubsystem::Deinitialize()
     {
         FTSTicker::GetCoreTicker().RemoveTicker(TickHandle);
         TickHandle.Reset();
+    }
+
+    // Restores the user's background-throttle preference if a hold is still live.
+    if (ThrottleGuard.IsValid())
+    {
+        ThrottleGuard->Unregister();
+        ThrottleGuard.Reset();
     }
 
     if (!IsRunningCommandlet())
@@ -293,6 +304,11 @@ UPinWrightSubsystem::GetBridgeState() const
 int32 UPinWrightSubsystem::GetBoundHttpPort() const
 {
     return (StreamingTransport.IsValid() && bStreamingActive) ? StreamingPort : 0;
+}
+
+bool UPinWrightSubsystem::IsHoldingBackgroundThrottle() const
+{
+    return ThrottleGuard.IsValid() && ThrottleGuard->IsHolding();
 }
 
 EMcpServerStatus UPinWrightSubsystem::GetServerStatus() const
@@ -518,6 +534,13 @@ bool UPinWrightSubsystem::Tick(float DeltaTime)
 
     // Evict completed tickets every tick (cheap; only walks completed entries past TTL).
     FPluginState::Get().GetJobRegistry().EvictExpired(FDateTime::UtcNow());
+
+    if (ThrottleGuard.IsValid())
+    {
+        ThrottleGuard->Update(
+            GetDefault<UPinWrightProjectSettings>()->bDisableBackgroundThrottleWhileAgentActive,
+            FBackgroundThrottleGuard::IsAgentActive());
+    }
 
     return true;
 }

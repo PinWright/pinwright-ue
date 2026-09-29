@@ -13,6 +13,9 @@
 #include "Containers/Ticker.h"
 #include "ShaderCompiler.h"
 #include "Engine/Engine.h"
+#include "Editor/EditorPerformanceSettings.h"
+#include "HAL/PlatformApplicationMisc.h"
+#include "Misc/App.h"
 #include "Misc/Guid.h"
 #include "Misc/Paths.h"
 // FCommandStatsFile::Get().LastFileSaved — the absolute path the stats system records for the
@@ -76,6 +79,7 @@
 #include "Engine/StaticMesh.h"
 #include "Engine/StaticMeshActor.h"
 #include "Modules/ModuleManager.h"
+#include "Utils/RenderingAvailability.h"
 
 // ---- performance.generate_memory_report ----
 REGISTER_RPC_HANDLER("performance.generate_memory_report", "performance", "Run UE's 'memreport' console command and write the breakdown (or 'memreport -full' for the detailed variant) to Saved/Profiling/MemReports. The absolute path of the written .memreport file is resolved and returned in the response. Useful for diagnosing memory leaks and large texture/mesh hogs.",
@@ -909,7 +913,32 @@ struct FPinWrightBenchmarkFrameWindow
     double MeasuredSeconds = 0.0;
     // Wall clock at window open, used only by the backstop below.
     double StartWallSeconds = 0.0;
+    // Per-frame background-throttle observations, counted over the same sampled frames:
+    // the engine's own throttle decision (UEditorEngine::ShouldThrottleCPUUsage, which caps
+    // the editor at 3 FPS), the editor being neither foreground nor focused (the engine's
+    // background condition), PinWright's guard holding the throttle off, and the effective
+    // UEditorPerformanceSettings::bThrottleCPUWhenNotForeground flag.
+    int32 ThrottledFrames = 0;
+    int32 BackgroundFrames = 0;
+    int32 GuardHeldFrames = 0;
+    int32 ThrottleSettingOnFrames = 0;
 };
+
+// Samples the background-throttle state for the frame just observed.
+static void PinWrightSampleBenchmarkThrottleState(FPinWrightBenchmarkFrameWindow& Window)
+{
+    if (!GEditor)
+    {
+        return;
+    }
+    Window.ThrottledFrames += GEditor->ShouldThrottleCPUUsage() ? 1 : 0;
+    Window.BackgroundFrames +=
+        (!FPlatformApplicationMisc::IsThisApplicationForeground() && !FApp::HasFocus()) ? 1 : 0;
+    const UPinWrightSubsystem* Subsystem = GEditor->GetEditorSubsystem<UPinWrightSubsystem>();
+    Window.GuardHeldFrames += (Subsystem && Subsystem->IsHoldingBackgroundThrottle()) ? 1 : 0;
+    Window.ThrottleSettingOnFrames +=
+        GetDefault<UEditorPerformanceSettings>()->bThrottleCPUWhenNotForeground ? 1 : 0;
+}
 
 // Reduce one window's per-frame samples to the published `frameTimeMs` block. Takes the array by
 // value and sorts it so the percentile reads are index lookups. Returns null when there is nothing
@@ -949,11 +978,16 @@ static TSharedPtr<FJsonObject> PinWrightSummarizeBenchmarkFrameTimesMs(TArray<do
     return Block;
 }
 
-REGISTER_RPC_HANDLER("performance.run_benchmark", "performance", "Measure editor frame time over a window: samples every frame for `duration` seconds, then completes the job with the MEASURED frameCount, measuredDurationSeconds, avgFps and frameTimeMs {min, p50, p95, max, mean}. Async — the call returns a ticket; poll system.job_status for the measurement. Where the engine still compiles the legacy stat-file capture in, a .uestats is taken alongside and reported as statFileCaptured/statFilePath; UE 5.8 deprecated that capture out, so statFileCaptured is false there and a warning says so (the frame measurement is unaffected — use insights.start_session for a full trace). If no frame time could be observed the job FAILS with FRAME_TIME_NOT_MEASURED; it never completes successfully without numbers.",
+REGISTER_RPC_HANDLER("performance.run_benchmark", "performance", "Measure editor frame time over a window: samples every frame for `duration` seconds, then completes the job with the MEASURED frameCount, measuredDurationSeconds, avgFps and frameTimeMs {min, p50, p95, max, mean}, plus backgroundThrottle {throttledFrames, backgroundFrames, guardHeldFrames, throttleCPUWhenNotForegroundFrames} counting how many sampled frames ran under the editor's 3 FPS background CPU throttle and why. Async — the call returns a ticket; poll system.job_status for the measurement. Where the engine still compiles the legacy stat-file capture in, a .uestats is taken alongside and reported as statFileCaptured/statFilePath; UE 5.8 deprecated that capture out, so statFileCaptured is false there and a warning says so (the frame measurement is unaffected — use insights.start_session for a full trace). If no frame time could be observed the job FAILS with FRAME_TIME_NOT_MEASURED; it never completes successfully without numbers.",
     RPC_PARAMS(
         RPC_PARAM_OPT("duration", "number", "Length of the measurement window in seconds (default 5)")
     ))
 {
+    if (!PinWrightRendering::RequireRenderer(Ctx))
+    {
+        return true;
+    }
+
     // `type` used to be declared here and read by nothing — an unvalidated, inert parameter that
     // advertised benchmark modes this verb has never had. Dropped rather than invented: the
     // dispatcher's UNKNOWN_PARAMS gate now rejects it loudly instead of accepting it silently.
@@ -993,6 +1027,7 @@ REGISTER_RPC_HANDLER("performance.run_benchmark", "performance", "Measure editor
         {
             Window->FrameTimesMs.Add((double)DeltaTime * 1000.0);
             Window->MeasuredSeconds += (double)DeltaTime;
+            PinWrightSampleBenchmarkThrottleState(*Window);
 
             // The window closes on ACCUMULATED frame time so that the samples and
             // measuredDurationSeconds describe the same span. The wall-clock backstop exists
@@ -1044,7 +1079,22 @@ REGISTER_RPC_HANDLER("performance.run_benchmark", "performance", "Measure editor
                 R->SetStringField(TEXT("statFilePath"), StatFilePath);
             }
 
+            // Frame counts over the sampled frames, so a window measured under the engine's
+            // 3 FPS background cap is labelled rather than read as scene cost.
+            TSharedPtr<FJsonObject> Throttle = MakeShared<FJsonObject>();
+            Throttle->SetNumberField(TEXT("throttledFrames"), Window->ThrottledFrames);
+            Throttle->SetNumberField(TEXT("backgroundFrames"), Window->BackgroundFrames);
+            Throttle->SetNumberField(TEXT("guardHeldFrames"), Window->GuardHeldFrames);
+            Throttle->SetNumberField(TEXT("throttleCPUWhenNotForegroundFrames"), Window->ThrottleSettingOnFrames);
+            R->SetObjectField(TEXT("backgroundThrottle"), Throttle);
+
             TArray<FString> Warnings;
+            if (Window->ThrottledFrames > 0)
+            {
+                Warnings.Add(FString::Printf(
+                    TEXT("%d of %d sampled frame(s) ran under the editor's background CPU throttle (capped at 3 FPS); those frame times measure the throttle, not the scene. Focus the editor or enable the PinWright project setting bDisableBackgroundThrottleWhileAgentActive."),
+                    Window->ThrottledFrames, Window->FrameTimesMs.Num()));
+            }
             // Whole frames are sampled, so the window overruns `duration` by up to one frame; the
             // backstop can also close it early. Warn only when the gap is material.
             if (FMath::Abs(Window->MeasuredSeconds - DurationSeconds) > 0.1 * DurationSeconds)

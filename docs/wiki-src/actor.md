@@ -49,7 +49,9 @@ world and keep the PIE-first fallback when no world is supplied.
 
 `actor.select` and `actor.delete` also accept plural `actorNames` **arrays**; both
 accept singular `actorName`, so `actor.select {actorName:"X"}` targets one actor and
-`actor.select {actorNames:[]}` clears selection. `sequencer.*_actors` is array-only.
+`actor.select {actorNames:[]}` clears selection. `actor.set_transform` and `actor.nudge`
+take an `actors[]` array of entry objects instead, each carrying its own `actorName` plus
+per-actor fields. `sequencer.*_actors` is array-only.
 
 **Spawn-time label.** `actor.spawn`, `actor.spawn_shape` and
 `actor.spawn_from_blueprint` take optional canonical `actorName` plus `label`, `name`
@@ -385,12 +387,46 @@ Move and/or rotate an actor by a RELATIVE delta, not an absolute transform.
 
 Args:
 
-- `actorName` (string, **required**; aliases `objectPath` / `actorPath`).
+- `actorName` (string; aliases `objectPath` / `actorPath`) — required unless `actors` is given.
 - one of `deltaWorld` (object `{x,y,z}`, world axes) or `deltaCamera` (object `{right,up,forward}`, active viewport camera basis).
 - `deltaRotation` (object `{pitch,yaw,roll}` degrees, optional).
+- `actors` (array) — batch form, see [`actor.set_transform`](actor.set_transform.md): entries `{actorName, deltaWorld?, deltaCamera?, deltaRotation?}`, each with at least one delta.
 
 ```js
 call({ path: "actor.nudge", args: { actorName: "Crate_1", deltaCamera: { forward: 100 } } })
+call({ path: "actor.nudge", args: { actors: [
+  { actorName: "Crate_1", deltaWorld: { z: 50 } },
+  { actorName: "Crate_2", deltaRotation: { yaw: 90 } } ] } })
 ```
 
-Gotchas: at least one delta is required (`INVALID_PARAMS` otherwise). If both translation deltas are given, **`deltaWorld` wins**. `deltaCamera` needs an active editor viewport or returns `VIEWPORT_NOT_AVAILABLE`; use `deltaWorld` otherwise. The response includes the resulting transform, `units`, `axis`, `pivot` and `bounds`.
+Gotchas: at least one delta is required (`INVALID_PARAMS` otherwise; in batch form a delta-less entry refuses the whole batch with `INVALID_ARGUMENT`). If both translation deltas are given, **`deltaWorld` wins**. `deltaCamera` needs an active editor viewport or returns `VIEWPORT_NOT_AVAILABLE`; use `deltaWorld` otherwise. The response includes the resulting transform, `units`, `axis`, `pivot` and `bounds` (per row in batch form). Nudge is relative, so re-sending a batch after a timeout moves the actors again.
+
+### actor.set_transform
+
+Set absolute world transforms, optionally aiming the actor with `lookAt`.
+
+Args (single form):
+
+- `actorName` (string; aliases `objectPath` / `actorPath` / `actor_name`) — required unless `actors` is given.
+- `location` `{x,y,z}` cm, `rotation` `{pitch,yaw,roll}` degrees, `scale` `{x,y,z}` — each optional; omitted fields keep current values.
+- `lookAt` — a world point `{x,y,z}` (exactly those three numbers) or another actor's identifier string (aims at its **location**, i.e. its pivot). Points the actor's forward (+X) axis at the target from the **new** location when `location` is also given. Refused together with `rotation`.
+- `roll` (number, degrees, default 0) — twist about the aim axis; only valid with `lookAt`.
+
+Batch form: `actors` — array of entry objects `{actorName, location, rotation, scale, lookAt, roll}` (identity aliases accepted per entry); any other entry key is refused with `UNKNOWN_NESTED_PARAMS`, in `actor.nudge` too. Top-level `actorName` / transform fields are refused beside it.
+
+```js
+call({ path: "actor.set_transform", args: { actorName: "Cam_1", location: { x: 0, y: -500, z: 300 }, lookAt: "Statue" } })
+call({ path: "actor.set_transform", args: { actors: [
+  { actorName: "Wall_1", location: { x: 0, y: 0, z: 0 } },
+  { actorName: "Wall_2", location: { x: 400, y: 0, z: 0 }, rotation: { yaw: 90 } } ] } })
+```
+
+Single-form response is unchanged: `actorName`, `location`, `scale`, plus the actor verification fields; with `lookAt` it adds `lookAt {target, targetActor?, targetActorObjectName?, rotation, roll, aimErrorDegrees}`, where `aimErrorDegrees` is measured off the actor's resulting forward axis (`TRANSFORM_MISMATCH` above 0.1°).
+
+Batch response (shared with `actor.nudge`): `success` (every entry applied), `total`, `succeededCount`, `failedCount`, `results[]` index-aligned with `actors[]` — each row is `{index, requestedName, success}` plus the single-form payload, or `errorCode` / `message` (and `candidates` for `AMBIGUOUS_ACTOR_NAME`) — and `missing[]` / `ambiguous[]` for entry actors that did not resolve, as in `actor.set_folder`.
+
+Gotchas:
+
+- Two phases. A malformed batch (empty array, non-object entry, entry without identity, `lookAt` with `rotation`, `roll` without `lookAt`, top-level single-form fields) is refused with `INVALID_ARGUMENT` listing every faulty index, and **nothing moves**. After that, entries apply in order under **one** undo transaction; a failed entry does not undo the others, and a later entry sees earlier entries' moves (e.g. `lookAt` an actor moved above it).
+- If no entry applied, the call is an error carrying the first failure's code and the full body; a partial batch is a success with `success:false`.
+- `lookAt` failures: unknown / ambiguous target → `ACTOR_NOT_FOUND` / `AMBIGUOUS_ACTOR_NAME`; the actor itself, or a target at its location → `INVALID_ARGUMENT`.

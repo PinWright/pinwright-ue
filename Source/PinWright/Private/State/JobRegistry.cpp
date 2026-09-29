@@ -247,6 +247,17 @@ TArray<FJobTicket> FJobRegistry::List() const
     return Out;
 }
 
+int32 FJobRegistry::NumRunning() const
+{
+    FScopeLock Lock(&Mutex);
+    int32 Count = 0;
+    for (const auto& Pair : Tickets)
+    {
+        if (Pair.Value.Status == TEXT("running")) ++Count;
+    }
+    return Count;
+}
+
 void FJobRegistry::EvictExpired(const FDateTime& Now)
 {
     const FTimespan Ttl = FTimespan::FromSeconds(TtlSeconds);

@@ -6,7 +6,7 @@ Fine-grained authoring of skeletal-animation assets: anim sequences, montages, c
 
 The cluster groups six workflows that share asset paths but compose independently:
 
-- **Anim sequences** - `create_animation_sequence` -> `set_sequence_length`, bone tracks (`add_bone_track`, `set_bone_track_keys`), curves (`set_curve_key`, `list_curves`), notifies (`add_notify`, `add_notify_state`, `set_notify_state_property`, `list_notifies`), sync markers (`add_sync_marker`, `set_sync_markers`, `remove_sync_marker`, `list_sync_markers`), and additive/root-motion/interpolation settings.
+- **Anim sequences** - `create_animation_sequence` -> `set_sequence_length`, bone tracks (`add_bone_track`, `set_bone_track_keys`), curves (`set_curve_key`, `set_curve_keys`, `get_curve_keys`, `remove_curve_key`, `remove_curve`, `rename_curve`, `list_curves`), notifies (`add_notify`, `add_notify_state`, `set_notify_state_property`, `list_notifies`), sync markers (`add_sync_marker`, `set_sync_markers`, `remove_sync_marker`, `list_sync_markers`), and additive/root-motion/interpolation settings.
 - **Montages** - `create_montage` -> `add_montage_slot`, `add_montage_section`, `link_sections`, `set_section_timing`, `set_blend_in`, `set_blend_out`, `add_montage_notify`.
 - **Anim composites** - `create_composite` + `add_composite_segment` stitch `UAnimSequenceBase` clips into one lightweight playback asset without montage slots or sections.
 - **Anim blueprints + state machines** - `create_anim_blueprint`, state-machine/state/transition verbs, `set_transition_rules`, graph-node and blend/slot/pose/IK mutators, `bind_player_asset`, `set_sync_group`, and `set_anim_graph_node_value`.
@@ -22,6 +22,8 @@ Most authoring methods take an `asset_path` to an existing asset and mutate it i
 `get_animation_info` on a `USkeleton` is bare: only `{assetType:"Skeleton"}`, with no bone list or hierarchy. To find `startBone` / `endBone` for `add_ik_chain`, use [`skeleton.list_bones`](skeleton.md), not `get_animation_info`.
 
 Use `list_curves`, `list_notifies`, and `list_sync_markers` for the `anim_sequence.json` array shapes emitted by `asset.dump`. They delegate to `AnimSequenceDumpBuilder`: curves return Float / Transform `{name, type, keyCount}` (Transform `keyCount` sums translation, rotation, and scale X/Y/Z channels); notifies return sorted `{name, time, duration, branchingPoint}` for any `UAnimSequenceBase`; sync markers return sorted `{name, time}` for authored `UAnimSequence` markers.
+
+**Curve keys.** `list_curves` gives only counts; `get_curve_keys` returns every key of Float curves as `{time, frame, value, interpMode, tangentMode, arriveTangent, leaveTangent}`, which is the entry shape `set_curve_keys` takes, so a read can be edited and written back. Key edits cover Float curves only; a Transform curve can be renamed or removed but its channel keys are not editable here. Skeleton curve metadata is never touched.
 
 **Sync-marker authoring**
 
@@ -289,3 +291,40 @@ call("animation.authoring.set_retarget_chain_mapping", {
 `add_ik_chain` needs exact `startBone` / `endBone` names; bad names return `CHAIN_NOT_ADDED`.
 
 **Where the `startBone`/`endBone` bone names come from:** `add_ik_chain`, `get_animation_info`, and `asset.get` do not provide a Skeleton / SkeletalMesh bone list. Call `call("skeleton.list_bones", {skeletalMeshPath})` (or `{skeletonPath}`) to enumerate every reference-skeleton bone (`name` / `index` / `parentIndex` / `parentName` / `location`) and use those names. A missing name returns `CHAIN_NOT_ADDED`; after that rejection, confirm it with [`skeleton.list_bones`](skeleton.md) instead of dumping the Skeleton and reading `skeleton.json`.
+
+### animation.authoring.get_curve_keys
+
+Reads the keys of Float curves. `curveNames` omitted reads every Float curve and lists Transform curves in `skippedTransformCurves`; a named Transform curve is refused `TYPE_MISMATCH`, an unknown name `CURVE_NOT_FOUND` (the error's `curves` field lists what exists).
+
+Response: `{assetPath, frameRate: {numerator, denominator}, curves: [{name, type: "Float", keyCount, keys: [{time, frame, value, interpMode, tangentMode, arriveTangent, leaveTangent}]}], skippedTransformCurves}`. `frame` is `time` times the sampling rate, snapped to the integer when within 0.001 of one, so sub-frame keys read back fractional.
+
+### animation.authoring.set_curve_keys
+
+Writes many keys to one Float curve in one controller bracket (one undo step). `mode` is required: `replace` leaves exactly the sent keys, `merge` overwrites any stored key within 0.0001 s of a sent key and keeps the rest. Each entry gives an integer `frame` or a `time` in seconds (both are accepted when they agree, and `time` wins, so `get_curve_keys` output can be sent back as is); `value` is required; `interpMode` is `linear` (default), `constant` or `cubic`; `tangentMode` is `auto` (default), `smartAuto`, `user` or `break`. Auto tangents are recomputed by the engine, so send `user` to keep explicit `arriveTangent` / `leaveTangent`. Any other entry key is refused `UNKNOWN_NESTED_PARAMS`. Tangent weights are not exposed.
+
+Every entry is validated before anything is written: an empty array, two entries at one time, or a time outside the sequence is `INVALID_PARAMS`, an unknown `mode` is `INVALID_MODE`. A missing curve is created unless `createIfMissing: false` (then `CURVE_NOT_FOUND`).
+
+Response: `{assetPath, curveName, mode, created, keyCount, keys, engineAdjustedTangentModes}` plus the usual verification and save fields. `keys` is read back from the data model after the write, not echoed from the request. `engineAdjustedTangentModes` lists `{time, sent, stored}` for every sent key whose stored `tangentMode` differs from the one sent (empty when none).
+
+**The engine rewrites one tangent mode.** With the AnimationData plugin's sequencer data model (the default for AnimSequences, UE 5.3 through 5.8), a `cubic` key directly after a `linear` key is stored as `tangentMode: "break"` with `arriveTangent` set to the linear segment's slope, whatever mode was sent (`AnimSequencerHelpers::ConvertRichCurveKeysToFloatChannel`). That is what makes the linear segment into the key evaluate correctly, so PinWright does not undo it; the key reads back as `break` and appears in `engineAdjustedTangentModes`. Every other omitted `tangentMode` reads back `auto`. Sending the stored key back (`break` with that arrive tangent) is stable.
+
+```
+call("animation.authoring.set_curve_keys", {
+  "assetPath": "/Game/Anim/AS_Wave.AS_Wave",
+  "curveName": "Blink",
+  "mode": "replace",
+  "keys": [{"frame": 0, "value": 0}, {"frame": 5, "value": 1, "interpMode": "cubic"}, {"frame": 10, "value": 0}]
+})
+```
+
+### animation.authoring.remove_curve_key
+
+Removes keys selected by `{frame}` or `{time}` from one Float curve, in one controller bracket. Every selector must match a stored key within 0.0001 s; if any does not, nothing is removed and the error is `KEY_NOT_FOUND` with `missingTimes` and the stored `keys`. Selectors accept only `frame` and `time`, so strip `value` and the mode fields from `get_curve_keys` output. Response: `{assetPath, curveName, removedCount, keyCount, keys}`; `removedCount` is the measured drop in key count.
+
+### animation.authoring.remove_curve
+
+Removes whole curves named in `curveNames` (Float or Transform, detected per name) in one controller bracket. An unknown name removes nothing and returns `CURVE_NOT_FOUND`. Response: `{assetPath, removed: [{name, type}], curves}` where `removed` lists curves the model no longer holds after the call and `curves` is the remaining `list_curves` shape.
+
+### animation.authoring.rename_curve
+
+Renames one Float or Transform curve and keeps its keys. The engine controller does not check the new name, and renaming onto a taken name would leave two curves sharing it, so the verb refuses that with `ALREADY_EXISTS`. `newName` equal to `curveName` (case-insensitively, as FNames compare) is `INVALID_PARAMS`. A retry after a timed-out rename gets `CURVE_NOT_FOUND`; its `curves` field shows whether `newName` is already there. Response: `{assetPath, curveName, newName, type, curves}`.

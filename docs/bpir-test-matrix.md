@@ -23,6 +23,7 @@ Total: **329 tests** across 13 files.
 | TestBpirRoundTrip.cpp | 34 | Fidelity | Compile → decompile → recompile identity for all major features, macro graphs (simple, exec-only, backtick name), chained property access (%ref.Pin.Property), auto-BreakStruct (%ref.Member on struct return) |
 | TestCompilerIntegration.cpp | 43 | E2E | All instruction types to graph, insertion API, multi-entry blocks, legacy brace syntax |
 | TestCompilerAdvanced.cpp | 5 | E2E | Latent, cast, timeline, make/break struct |
+| TestBpirTimelineTracks.cpp | 8 | Fidelity + E2E | Timeline template settings and float/vector/color/event tracks survive decompile → recompile and replace-mode recompile; taken name and malformed args are compile errors (`B-decompile-drops-timeline-tracks`) |
 | TestCompilerDispatchersOps.cpp | 10 | E2E | Enum literal, enum ref, make_array, call/bind/unbind dispatcher (with and without real delegates), enum defaults on generic byte pins (EqualEqual_ByteByte + ETraceTypeQuery), bind_dispatcher with external target (graceful failure) |
 | TestCompilerErrors.cpp | 12 | E2E | Error detection, duplicate names/labels, rollback, malformed entry, empty block, forward refs, mismatched braces |
 | TestCompilerMacrosEntryPoints.cpp | 7 | E2E | Macros (DoOnce, FlipFlop, Gate, MultiGate), construction entry, select, foreach_break |
@@ -62,7 +63,7 @@ Total: **329 tests** across 13 files.
 | `macro FlipFlop` | --- | `ParseMacro` | `MacroFlipFlop` | --- | `MacroFlipFlop` | Partial |
 | `macro Gate` | --- | `ParseMacro` | `MacroGate` | `MacroGate` | `MacroGate` | Full |
 | `macro MultiGate` | --- | `ParseMacro` | `MacroMultiGate` | `MacroMultiGate` | `MacroMultiGate` | Full |
-| `timeline` | --- | `ParseTimeline` | `TimelineNode` | `Timeline` | `Timeline` | Full |
+| `timeline` | --- | `ParseTimeline` | `TimelineNode`, `timeline_tracks.DuplicateNameIsRejected`, `timeline_tracks.MalformedArgsAreRejected` | `Timeline` | `Timeline`, `timeline_tracks.{Float,Vector,Color,Event}TrackRoundTrips`, `timeline_tracks.SettingsRoundTrip`, `timeline_tracks.ReplaceModeRecompileKeepsTracks` | Full (external-curve tracks: failure direction only) |
 | `make_struct` | --- | `ParseMakeStruct` | `MakeStruct` | `MakeStruct` | `MakeStruct` | Full |
 | `break_struct` | --- | `ParseBreakStruct` | `BreakStruct` | `BreakStructNode` | `BreakStruct` | Full |
 | `make_array` | `MakeArrayKeyword` | `ParseMakeArray` | `MakeArray` | `MakeArrayNode` | `MakeArray`, `MakeArrayTextElementLiteral` | Full |

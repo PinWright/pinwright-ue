@@ -146,6 +146,7 @@ namespace HandlerTickSafetyRatchet
         TEXT("blueprint.add_variable"),
         TEXT("blueprint.compile_bpir"),
         TEXT("blueprint.delete_unused_variables"),
+        TEXT("blueprint.graph.connect_pins_batch"),
         TEXT("blueprint.graph.delete_orphaned_nodes"),
         TEXT("blueprint.insert_bpir_at_node"),
         TEXT("blueprint.insert_bpir_before_node"),
@@ -206,6 +207,7 @@ namespace HandlerTickSafetyRatchet
     const FRequiredConsentSite RequiredConsentSites[] = {
         {TEXT("Blueprint/BpirCompilerHandler.cpp"), 3, 3},
         {TEXT("Blueprint/BlueprintComponentHandler.cpp"), 1, 1},
+        {TEXT("Blueprint/BlueprintGraphConnectionsHandler.cpp"), 1, 1},
         {TEXT("Blueprint/BlueprintReparentHandler.cpp"), 1, 1},
         {TEXT("Blueprint/SCSComponentDuplicateHandler.cpp"), 1, 1},
         {TEXT("Blueprint/SCSHandler.cpp"), 5, 1},
@@ -534,8 +536,8 @@ bool FHandlerHazardsStayGatedTest::RunTest(const FString& Parameters)
                            DeferredFullGarbageCollectionPattern),
               1);
 
-    TestEqual(TEXT("The complete compile-mutator route inventory stays at 59"),
-              static_cast<int32>(UE_ARRAY_COUNT(BlueprintCompileVerbs)), 59);
+    TestEqual(TEXT("The complete compile-mutator route inventory stays at 60"),
+              static_cast<int32>(UE_ARRAY_COUNT(BlueprintCompileVerbs)), 60);
 
     TMap<FString, FString> HandlerSources;
     for (const FString& File : Files)
