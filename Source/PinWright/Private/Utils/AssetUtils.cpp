@@ -308,7 +308,12 @@ FResolvedAsset ResolveAsset(const FString& InPath, bool bLoadObject)
     }
 
     UObject* Object = FindObject<UObject>(nullptr, *ObjectPath);
-    if (!Object && bLoadObject)
+    // Load only what can load: a registry hit, or a package file on disk the registry has not
+    // indexed yet. Anything else is a guaranteed miss - in-memory objects, transient ones
+    // included, were already found above - and LoadObject would only log a user-visible
+    // "Failed to find object" warning and leave an empty in-memory UPackage behind, which a
+    // later package-existence probe then mistakes for a real asset.
+    if (!Object && bLoadObject && (Out.bExists || FPackageName::DoesPackageExist(Normalized.Path)))
     {
         Out.bLoadAttempted = true;
         Object = LoadObject<UObject>(nullptr, *ObjectPath);
@@ -1434,11 +1439,17 @@ ESaveLoadedAssetOutcome SaveLoadedAssetThrottled(UObject* Asset, double Throttle
         return ESaveLoadedAssetOutcome::Failed;
 
     UPackage* Package = Asset->GetOutermost();
-    if (!Package || Package == GetTransientPackage() || Package->HasAnyFlags(RF_Transient))
+    if (!Package || Package == GetTransientPackage() || Package->HasAnyFlags(RF_Transient)
+        || Asset->HasAnyFlags(RF_Transient))
     {
         // A transient asset can never reach disk. This used to return true, which is
         // how create verbs that land their asset in the transient package reported
         // saved:true for something that is discarded at editor shutdown.
+        // The object flag is checked too: an RF_Transient object in an ordinary package
+        // fails UObject::IsAsset, so UEditorAssetLibrary::SaveLoadedAsset refuses it with an
+        // engine `Error:` line ("Asset is not registered ... is not an asset") and the
+        // caller got state=failed / pendingFlush:true for a save no flush can ever land
+        // (board B-save-transient-object-reaches-engine-refusal).
         return ESaveLoadedAssetOutcome::NotPersistable;
     }
 

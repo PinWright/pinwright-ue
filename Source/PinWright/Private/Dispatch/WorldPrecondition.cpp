@@ -136,20 +136,11 @@ void AddWorldField(const TSharedPtr<FJsonObject>& Result)
 
 void AddWorldField(const TSharedPtr<FJsonObject>& Result, const FString& Method)
 {
+    // A handler-set `world` wins and is not compared to the resolved path: handlers document it in
+    // their own vocabulary (editor.console_command echoes its PIE selector, level.add_sublevel the
+    // short world name), so a mismatch is normal output, not a broken invariant.
     if (!Result.IsValid() || Result->HasField(TEXT("world")))
     {
-        if (Result.IsValid() && Result->HasField(TEXT("world")))
-        {
-            FString ExistingWorld;
-            const FString ResolvedWorld = GetWorldIdForMethod(Method);
-            if (Result->TryGetStringField(TEXT("world"), ExistingWorld) &&
-                !ResolvedWorld.IsEmpty())
-            {
-                ensureMsgf(ExistingWorld.Equals(ResolvedWorld, ESearchCase::IgnoreCase),
-                    TEXT("Handler-defined world '%s' disagrees with resolved target '%s'"),
-                    *ExistingWorld, *ResolvedWorld);
-            }
-        }
         return;
     }
     Result->SetStringField(TEXT("world"), GetWorldIdForMethod(Method));

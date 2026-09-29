@@ -4,14 +4,15 @@ Niagara editor-state gotchas: uninitialised compile reporting, the real storage 
 
 ## Compile-state honesty: `compileStatus: null` and `COMPILE_STATE_UNINITIALIZED`
 
-UE 5.6 defaults `fx.Niagara.OnDemandCompile=1`: Niagara assets load *uncompiled* until opened in the asset editor or spawned as an FX component, unlike Blueprints, which compile on load. A fresh `UNiagaraSystem`/`UNiagaraEmitter` therefore reports every script as `NCS_Unknown` and `bIsReadyToRun=false` even when the asset is healthy.
+`fx.Niagara.OnDemandCompileEnabled` defaults to `1` (UE 5.3-5.5) or `2` (UE 5.6+), and either value defers compile in the editor: Niagara assets load *uncompiled* until opened in the asset editor or spawned as an FX component, unlike Blueprints, which compile on load. A fresh `UNiagaraSystem`/`UNiagaraEmitter` therefore reports every script as `NCS_Unknown` and `bIsReadyToRun=false` even when the asset is healthy.
 
 The dumper handles this honestly rather than parroting the misleading `NCS_Unknown` text:
 
 - Per-script `compileStatus` is JSON `null` when the value is `NCS_Unknown`, not the literal string.
 - System-level `readyToRun` is JSON `null` when any script is uninitialised, not `false`.
 - An info-severity issue `COMPILE_STATE_UNINITIALIZED` is added to the issues array on both system and emitter dump paths, with a message pointing at "open the asset in the editor or spawn it once to populate compile state."
-- The pre-existing `compileDeferredOnLoad` field + `COMPILE_DEFERRED_ON_LOAD` warning are kept on the system path and mirrored on the emitter path for parity.
+- `compileDeferredOnLoad` (system, emitter and script compile blocks of `niagara.inspect` / `niagara.validate`) always reports the session fact: whether `fx.Niagara.OnDemandCompileEnabled` defers compile on load (the editor default).
+- The `COMPILE_DEFERRED_ON_LOAD` info issue (a warning in `niagara.validate`) is raised only when that deferral actually affects this asset: for a system, when it is not ready to run or still has a compile request pending (PostLoad leaves a system whose cached bytecode is out of sync with its graph pending on demand); for an emitter or script asset, when any script is not at a terminal status (`null`, `NCS_Dirty`, `NCS_BeingCreated`). A system compiled in this session carries no such issue. Its presence means "run `niagara.compile` before trusting this verdict".
 
 For callers, `null` means "we don't know yet", not "compile failed". Open the asset to trigger a real compile before treating null fields as authoritative. Do **not** synchronously call `RequestCompile` from the dumper: `UNiagaraScript::CachedScriptVM` is a non-`Transient` UPROPERTY, so compilation silently mutates persistent state and a later save would commit it.
 

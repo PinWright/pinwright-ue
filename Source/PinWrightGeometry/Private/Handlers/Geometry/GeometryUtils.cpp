@@ -854,7 +854,9 @@ bool EnsureMeshHasUVs(UDynamicMesh* Mesh)
 
 bool EnsureMeshHasUVChannel(UDynamicMesh* Mesh, int32 UVChannel)
 {
-    if (!Mesh || UVChannel < 0)
+    // Channels 0-7 only: SetNumUVSets refuses more than 8 sets, and with a nullptr Debug that
+    // refusal is logged as a LogGeometry Error the caller sees beside our own structured one.
+    if (!Mesh || UVChannel < 0 || UVChannel >= 8)
     {
         return false;
     }
@@ -870,8 +872,7 @@ bool EnsureMeshHasUVChannel(UDynamicMesh* Mesh, int32 UVChannel)
         UGeometryScriptLibrary_MeshUVFunctions::SetNumUVSets(Mesh, RequiredSets, nullptr);
     }
 
-    // Report whether the channel now exists — SetNumUVSets rejects >8 sets, so an
-    // out-of-range channel stays absent and the caller can still detect the no-op.
+    // Report whether the channel now exists.
     return UGeometryScriptLibrary_MeshQueryFunctions::GetNumUVSets(Mesh) >= RequiredSets;
 }
 

@@ -47,9 +47,15 @@ namespace NiagaraCompileWaitTestLocal
     {
         for (const FNiagaraEmitterHandle& Handle : System.GetEmitterHandles())
         {
-            if (UNiagaraEmitter* Emitter = Handle.GetInstance().Emitter.Get())
+            // The handle's own Version is FGuid() for an emitter with versioning disabled
+            // (FNiagaraEmitterHandle::ConditionalPostLoad), which the stock fixture's emitter is.
+            // Resolve the guid the way niagara.compile does (ResolveEmitterVersionGuid): from the
+            // emitter data the handle points at, which always carries a real version.
+            UNiagaraEmitter* Emitter = Handle.GetInstance().Emitter.Get();
+            const FVersionedNiagaraEmitterData* EmitterData = Handle.GetEmitterData();
+            if (Emitter && EmitterData)
             {
-                OutVersionGuid = Handle.GetInstance().Version;
+                OutVersionGuid = EmitterData->Version.VersionGuid;
                 return Emitter;
             }
         }

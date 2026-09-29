@@ -67,7 +67,9 @@ Parameter notes:
 
 ### level.structure.open_level_blueprint
 
-Opens the active level's level-script Blueprint in the editor and returns its handle. The
+Opens the active level's level-script Blueprint in the editor and returns its handle,
+creating it first when the level has none (unsaved levels included), as the editor's own
+Open Level Blueprint does; `add_level_blueprint_node` creates it the same way. The
 `assetPath` it hands back is the level-script object path
 (`/Game/Maps/<Map>.<Map>:PersistentLevel.<Map>`) — the form that **round-trips** straight
 into the `blueprint.graph.*` family (`list_graphs`, `create_node`, …) this verb is the

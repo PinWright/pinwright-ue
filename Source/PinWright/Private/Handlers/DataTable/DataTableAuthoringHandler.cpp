@@ -262,10 +262,29 @@ namespace
     // out-of-band asset.dump. Single source of truth for the enriched message
     // shape shared by add_row and set_row's converter-failure paths.
     static FString WithRowValueDetail(const FString& Base, const UStruct* RowStruct,
+        const TSharedPtr<FJsonObject>& Values, const FText& ConverterReason)
+    {
+        FString Detail = DataTableAuthoringInternal::DescribeRowValueFailure(RowStruct, Values);
+        if (Detail.IsEmpty())
+        {
+            // Failures the pre-checks leave to the converter (a malformed date, an unresolvable
+            // object path) are named by the converter's own reason, one clause per nesting level.
+            Detail = ConverterReason.ToString().Replace(TEXT("\n"), TEXT(": "));
+        }
+        return Detail.IsEmpty() ? Base : Base + FString::Printf(TEXT(". %s"), *Detail);
+    }
+
+    // An enum string the engine converter cannot resolve is refused here, before the converter
+    // runs: JsonObjectToUStruct would log two LogJson Error lines for it and fail anyway. Returns
+    // the same INVALID_ROW_VALUES message the converter-failure path builds, or empty when every
+    // supplied enum literal resolves.
+    static FString DescribeUnresolvableEnumValues(const FString& RowName, const UStruct* RowStruct,
         const TSharedPtr<FJsonObject>& Values)
     {
         const FString Detail = DataTableAuthoringInternal::DescribeRowValueFailure(RowStruct, Values);
-        return Detail.IsEmpty() ? Base : Base + FString::Printf(TEXT(". %s"), *Detail);
+        return Detail.IsEmpty() ? FString() : FString::Printf(
+            TEXT("Failed to apply values to row '%s' of struct '%s'. %s"),
+            *RowName, *RowStruct->GetName(), *Detail);
     }
 
     static void AddDataTableSaveReport(const TSharedPtr<FJsonObject>& Result,
@@ -297,6 +316,14 @@ namespace
             OutErrorMsg = ValidationMsg;
             return nullptr;
         }
+        const FString EnumFailure = DescribeUnresolvableEnumValues(
+            RowName.ToString(), Table->RowStruct, Values);
+        if (!EnumFailure.IsEmpty())
+        {
+            OutErrorCode = TEXT("INVALID_ROW_VALUES");
+            OutErrorMsg = EnumFailure;
+            return nullptr;
+        }
 
         Table->Modify();
         uint8* RowMem = FDataTableEditorUtils::AddRow(Table, RowName);
@@ -306,7 +333,9 @@ namespace
             OutErrorMsg = FString::Printf(TEXT("FDataTableEditorUtils::AddRow returned null for '%s'"), *RowName.ToString());
             return nullptr;
         }
-        if (!FJsonObjectConverter::JsonObjectToUStruct(Values.ToSharedRef(), Table->RowStruct, RowMem, 0, 0))
+        FText ConverterReason;
+        if (!FJsonObjectConverter::JsonObjectToUStruct(Values.ToSharedRef(), Table->RowStruct, RowMem, 0, 0,
+                /*bStrictMode=*/false, &ConverterReason))
         {
             // Roll back the just-added row so we never leave an orphan.
             FDataTableEditorUtils::RemoveRow(Table, RowName);
@@ -314,7 +343,7 @@ namespace
             OutErrorMsg = WithRowValueDetail(
                 FString::Printf(TEXT("Failed to apply values to row '%s' of struct '%s'"),
                     *RowName.ToString(), *Table->RowStruct->GetName()),
-                Table->RowStruct, Values);
+                Table->RowStruct, Values, ConverterReason);
             return nullptr;
         }
         Table->MarkPackageDirty();
@@ -374,6 +403,13 @@ namespace
         {
             return true;
         }
+        // The converter's own predicate (JsonObjectConverter.cpp, enum string import). Checked
+        // first so a value it accepts, such as a user-defined enum's authored name, is never
+        // refused by the pre-converter check.
+        if (Enum->GetValueByName(FName(*InStr), EGetByNameFlags::CheckAuthoredName) != INDEX_NONE)
+        {
+            return true;
+        }
         if (Enum->GetValueByNameString(InStr) != INDEX_NONE)
         {
             return true;
@@ -385,56 +421,146 @@ namespace
 
 namespace DataTableAuthoringInternal
 {
-    FString DescribeRowValueFailure(const UStruct* Struct, const TSharedPtr<FJsonObject>& Values)
+    // Rejection detail for one enum literal at PropertyPath, or empty when the literal resolves.
+    static FString DescribeEnumLiteral(const UEnum* Enum, const FString& InStr,
+        const FString& PropertyPath, const UStruct* RowStruct, const TCHAR* ValueKind)
+    {
+        if (EnumStringResolves(Enum, InStr))
+        {
+            return FString();
+        }
+        const TArray<FString> Literals = GatherEnumLiterals(Enum);
+        FString Detail = FString::Printf(
+            TEXT("Field '%s' of struct '%s': %s \"%s\" is not a valid %s"),
+            *PropertyPath, *RowStruct->GetName(), ValueKind, *InStr, *Enum->GetName());
+        if (Literals.Num() > 0)
+        {
+            Detail += FString::Printf(TEXT(". Valid values: %s"),
+                *FString::Join(Literals, TEXT(", ")));
+        }
+        return Detail;
+    }
+
+    static FString DescribeStructEnumFailure(const UStruct* Struct,
+        const TSharedPtr<FJsonObject>& Values, const FString& PathPrefix, const UStruct* RowStruct);
+
+    // Walks one JSON value the way FJsonObjectConverter imports it into Prop (array and set
+    // elements, map keys and values, nested struct fields) and returns the detail for the first
+    // enum string the converter would refuse. Null values are skipped, as the converter skips them.
+    static FString DescribeValueEnumFailure(const FProperty* Prop, const TSharedPtr<FJsonValue>& Value,
+        const FString& PropertyPath, const UStruct* RowStruct)
+    {
+        if (!Prop || !Value.IsValid() || Value->IsNull())
+        {
+            return FString();
+        }
+        if (const UEnum* Enum = GetPropertyEnum(Prop))
+        {
+            return Value->Type == EJson::String
+                ? DescribeEnumLiteral(Enum, Value->AsString(), PropertyPath, RowStruct, TEXT("value"))
+                : FString();
+        }
+        if (Value->Type == EJson::Array)
+        {
+            const FProperty* ElementProp = nullptr;
+            if (const FArrayProperty* ArrayProp = CastField<FArrayProperty>(Prop))
+            {
+                ElementProp = ArrayProp->Inner;
+            }
+            else if (const FSetProperty* SetProp = CastField<FSetProperty>(Prop))
+            {
+                ElementProp = SetProp->ElementProp;
+            }
+            if (ElementProp)
+            {
+                const TArray<TSharedPtr<FJsonValue>>& Elements = Value->AsArray();
+                for (int32 Index = 0; Index < Elements.Num(); ++Index)
+                {
+                    const FString Detail = DescribeValueEnumFailure(ElementProp, Elements[Index],
+                        FString::Printf(TEXT("%s[%d]"), *PropertyPath, Index), RowStruct);
+                    if (!Detail.IsEmpty())
+                    {
+                        return Detail;
+                    }
+                }
+            }
+            return FString();
+        }
+        if (Value->Type != EJson::Object)
+        {
+            return FString();
+        }
+        if (const FMapProperty* MapProp = CastField<FMapProperty>(Prop))
+        {
+            const UEnum* KeyEnum = GetPropertyEnum(MapProp->KeyProp);
+            for (const TPair<FString, TSharedPtr<FJsonValue>>& Entry : Value->AsObject()->Values)
+            {
+                if (!Entry.Value.IsValid() || Entry.Value->IsNull())
+                {
+                    continue; // The converter skips null entries, key included.
+                }
+                const FString EntryPath = FString::Printf(TEXT("%s[\"%s\"]"), *PropertyPath, *Entry.Key);
+                FString Detail = KeyEnum
+                    ? DescribeEnumLiteral(KeyEnum, Entry.Key, EntryPath, RowStruct, TEXT("key"))
+                    : FString();
+                if (Detail.IsEmpty())
+                {
+                    Detail = DescribeValueEnumFailure(MapProp->ValueProp, Entry.Value, EntryPath, RowStruct);
+                }
+                if (!Detail.IsEmpty())
+                {
+                    return Detail;
+                }
+            }
+            return FString();
+        }
+        if (const FStructProperty* StructProp = CastField<FStructProperty>(Prop))
+        {
+            return DescribeStructEnumFailure(StructProp->Struct, Value->AsObject(),
+                PropertyPath + TEXT("."), RowStruct);
+        }
+        return FString();
+    }
+
+    static FString DescribeStructEnumFailure(const UStruct* Struct,
+        const TSharedPtr<FJsonObject>& Values, const FString& PathPrefix, const UStruct* RowStruct)
     {
         if (!Struct || !Values.IsValid())
         {
             return FString();
         }
-
-        // Walk authored fields (the names the converter matches on) and return a
-        // rich detail for the first supplied value that cannot be converted. The
-        // enum-literal case is the one that escapes ValidateValuesAgainstStruct
-        // and lands as the bare converter failure, so it is the one we enrich.
+        // Authored names are the keys the converter matches fields on.
         for (TFieldIterator<FProperty> It(Struct); It; ++It)
         {
             const FProperty* Prop = *It;
-            const FString FieldName = Struct->GetAuthoredNameForField(Prop);
-            const TSharedPtr<FJsonValue> Value = Values->TryGetField(FieldName);
-            if (!Value.IsValid() || Value->Type == EJson::Null)
+            const FString FieldPath = PathPrefix + Struct->GetAuthoredNameForField(Prop);
+            const TSharedPtr<FJsonValue> Value = Values->TryGetField(Struct->GetAuthoredNameForField(Prop));
+            FString Detail;
+            if (Prop->ArrayDim > 1 && Value.IsValid() && Value->Type == EJson::Array)
             {
-                continue; // Missing/null: converter leaves the default — not a failure.
-            }
-
-            const UEnum* Enum = GetPropertyEnum(Prop);
-            if (!Enum)
-            {
-                continue; // Only enum literals are pinpointed here.
-            }
-
-            // A string that does not resolve to any literal is the rejected case.
-            if (Value->Type == EJson::String)
-            {
-                const FString InStr = Value->AsString();
-                if (EnumStringResolves(Enum, InStr))
+                // A fixed-size C array: each JSON element imports into one slot of the same property.
+                const TArray<TSharedPtr<FJsonValue>>& Elements = Value->AsArray();
+                for (int32 Index = 0; Index < Elements.Num() && Detail.IsEmpty(); ++Index)
                 {
-                    continue;
+                    Detail = DescribeValueEnumFailure(Prop, Elements[Index],
+                        FString::Printf(TEXT("%s[%d]"), *FieldPath, Index), RowStruct);
                 }
-
-                const TArray<FString> Literals = GatherEnumLiterals(Enum);
-                FString Detail = FString::Printf(
-                    TEXT("Field '%s' of struct '%s': value \"%s\" is not a valid %s"),
-                    *FieldName, *Struct->GetName(), *InStr, *Enum->GetName());
-                if (Literals.Num() > 0)
-                {
-                    Detail += FString::Printf(TEXT(". Valid values: %s"),
-                        *FString::Join(Literals, TEXT(", ")));
-                }
+            }
+            else
+            {
+                Detail = DescribeValueEnumFailure(Prop, Value, FieldPath, RowStruct);
+            }
+            if (!Detail.IsEmpty())
+            {
                 return Detail;
             }
         }
-
         return FString();
+    }
+
+    FString DescribeRowValueFailure(const UStruct* Struct, const TSharedPtr<FJsonObject>& Values)
+    {
+        return DescribeStructEnumFailure(Struct, Values, FString(), Struct);
     }
 }
 
@@ -612,6 +738,12 @@ REGISTER_RPC_HANDLER("data_table.set_row", "data_table",
     // request with a partial update.
     uint8* Existing = *ExistingPtr;
     const UScriptStruct* RowStruct = Table->RowStruct;
+    const FString EnumFailure = DescribeUnresolvableEnumValues(RowNameStr, RowStruct, Values);
+    if (!EnumFailure.IsEmpty())
+    {
+        Ctx.SendError(TEXT("INVALID_ROW_VALUES"), EnumFailure);
+        return true;
+    }
     FStructOnScope Scratch(RowStruct);
     uint8* ScratchMemory = Scratch.GetStructMemory();
     if (!ScratchMemory)
@@ -623,12 +755,14 @@ REGISTER_RPC_HANDLER("data_table.set_row", "data_table",
     }
     RowStruct->CopyScriptStruct(ScratchMemory, Existing);
 
-    if (!FJsonObjectConverter::JsonObjectToUStruct(Values.ToSharedRef(), RowStruct, ScratchMemory, 0, 0))
+    FText ConverterReason;
+    if (!FJsonObjectConverter::JsonObjectToUStruct(Values.ToSharedRef(), RowStruct, ScratchMemory, 0, 0,
+            /*bStrictMode=*/false, &ConverterReason))
     {
         const FString ErrMsg = WithRowValueDetail(
             FString::Printf(TEXT("Failed to apply values to row '%s' of struct '%s'"),
                 *RowNameStr, *RowStruct->GetName()),
-            RowStruct, Values);
+            RowStruct, Values, ConverterReason);
         Ctx.SendError(TEXT("INVALID_ROW_VALUES"), ErrMsg);
         return true;
     }

@@ -39,6 +39,7 @@
 #include "NiagaraScript.h"
 #include "NiagaraSystem.h"
 #include "UObject/Package.h"
+#include "ViewModels/Stack/NiagaraParameterHandle.h"
 
 // ---------------------------------------------------------------------------
 // Registration tests
@@ -104,19 +105,21 @@ namespace
         return PinWrightNiagara::FindParameterMapPin(Pins);
     }
 
-    // Name of the first non-parameter-map input pin. Discovered rather than hardcoded so a
-    // future engine rename of Add_Float's input pins cannot silently turn the nested-override
-    // half of the fixture into a no-op (same reasoning as TestNIRDecompiler's depth test).
-    FName ResetStackTestFirstValueInputName(UNiagaraNode& Node)
+    // Short name of the node's first float stack input. Discovered rather than hardcoded so a
+    // future engine rename of Add_Float's inputs cannot silently turn the nested-override half
+    // of the fixture into a no-op. A dynamic input's inputs are "Module." parameter-map reads
+    // with no pin on the function-call node (its only input pin is the parameter map), so they
+    // are enumerated the way the stack view and niagara.set_module_input do. Float only,
+    // because NIRTestFixtures::SetModuleInputDynamicInput always builds a float override pin.
+    FName ResetStackTestFirstFloatInputName(const UNiagaraNodeFunctionCall& Node)
     {
-        TArray<UEdGraphPin*> Pins;
-        Node.GetInputPins(Pins);
-        const UEdGraphPin* MapPin = PinWrightNiagara::FindParameterMapPin(Pins);
-        for (const UEdGraphPin* Pin : Pins)
+        TArray<FNiagaraVariable> Inputs;
+        NiagaraEdit::EnumerateModuleStackInputs(Node, Inputs);
+        for (const FNiagaraVariable& Input : Inputs)
         {
-            if (Pin && Pin != MapPin)
+            if (Input.GetType() == FNiagaraTypeDefinition::GetFloatDef())
             {
-                return Pin->PinName;
+                return FNiagaraParameterHandle(Input.GetName()).GetName();
             }
         }
         return NAME_None;
@@ -184,7 +187,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FNiagaraResetModuleInputDynamicInputKeepsStackChainTest::RunTest(const FString& Parameters)
 {
     // Both are stock assets of the Niagara engine plugin, not host-project content.
-    UNiagaraScript* ModuleScript = LoadObject<UNiagaraScript>(nullptr, TEXT("/Niagara/Modules/Spawn/SpawnRate.SpawnRate"));
+    UNiagaraScript* ModuleScript = LoadObject<UNiagaraScript>(nullptr, TEXT("/Niagara/Modules/Emitter/SpawnRate.SpawnRate"));
     UNiagaraScript* DynamicInputScript = LoadObject<UNiagaraScript>(nullptr, TEXT("/Niagara/DynamicInputs/Add/Add_Float.Add_Float"));
     if (!ModuleScript || !DynamicInputScript)
     {
@@ -231,7 +234,7 @@ bool FNiagaraResetModuleInputDynamicInputKeepsStackChainTest::RunTest(const FStr
         NIRTestFixtures::DestroyFixture(System);
         return false;
     }
-    const FName NestedInputName = ResetStackTestFirstValueInputName(*DynamicInputNode);
+    const FName NestedInputName = ResetStackTestFirstFloatInputName(*DynamicInputNode);
     UNiagaraNodeFunctionCall* NestedDynamicInputNode = NestedInputName.IsNone()
         ? nullptr
         : NIRTestFixtures::SetModuleInputDynamicInput(DynamicInputNode, NestedInputName, DynamicInputScript);

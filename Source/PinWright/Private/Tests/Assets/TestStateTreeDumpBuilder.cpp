@@ -15,6 +15,7 @@
 #include "Misc/Guid.h"
 #include "Misc/Paths.h"
 #include "AssetDumpTestHelpers.h"
+#include "Tests/TestAssetTeardown.h"
 
 #include "StateTree.h"
 #include "StateTreeEditorData.h"
@@ -76,6 +77,17 @@ namespace
         return StateTree;
     }
 
+    // RemoveFromRoot alone leaves the RF_Standalone tree alive through every suite GC, and
+    // authoring it already put it on the StateTree compiler manager's dirty list. The next PIE
+    // start re-resolves that list (FCompilerManagerImpl::HandlePreBeginPIE) and the schema-less
+    // tree trips ensure(EditorData->Schema). Detach it, then garbage-mark it so the list's weak
+    // key stops resolving now rather than at the next periodic GC.
+    void PWStateTreeDumpDiscardFixture(UStateTree* StateTree)
+    {
+        PwTestAssetTeardown::DiscardLoadedAssetNoGc(StateTree);
+        StateTree->MarkAsGarbage();
+    }
+
     TSharedPtr<FJsonObject> FindStateByName(const TArray<TSharedPtr<FJsonValue>>* States, const FString& Name)
     {
         if (!States)
@@ -114,7 +126,7 @@ bool FStateTreeDumpBuilderShapeTest::RunTest(const FString& Parameters)
     TestTrue(TEXT("BuildStateTreeJson returns non-null"), Json.IsValid());
     if (!Json.IsValid())
     {
-        StateTree->RemoveFromRoot();
+        PWStateTreeDumpDiscardFixture(StateTree);
         return false;
     }
 
@@ -128,7 +140,7 @@ bool FStateTreeDumpBuilderShapeTest::RunTest(const FString& Parameters)
     TestTrue(TEXT("Root state present in dump"), RootJson.IsValid());
     if (!RootJson.IsValid())
     {
-        StateTree->RemoveFromRoot();
+        PWStateTreeDumpDiscardFixture(StateTree);
         return false;
     }
 
@@ -186,7 +198,7 @@ bool FStateTreeDumpBuilderShapeTest::RunTest(const FString& Parameters)
         }
     }
 
-    StateTree->RemoveFromRoot();
+    PWStateTreeDumpDiscardFixture(StateTree);
     return true;
 }
 
@@ -231,7 +243,7 @@ bool FStateTreeAssetDumpWritesStateTreeAspectFileTest::RunTest(const FString& Pa
     }
 
     IFileManager::Get().DeleteDirectory(*ScratchRoot, /*RequireExists=*/false, /*Tree=*/true);
-    StateTree->RemoveFromRoot();
+    PWStateTreeDumpDiscardFixture(StateTree);
     return true;
 }
 

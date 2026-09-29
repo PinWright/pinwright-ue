@@ -11,6 +11,7 @@
 #include "EditorActorSubsystem.h"
 #endif
 #include "EditorAssetLibrary.h"
+#include "Utils/PieState.h"
 #include "Engine/LevelScriptActor.h"
 #include "Dom/JsonObject.h"
 #include "UObject/UObjectGlobals.h"
@@ -246,7 +247,11 @@ McpActorUtils::FActorResolution McpActorUtils::ResolveActorFiltered(
         {
             CollectWorldActors(Candidate.World, Candidates);
         }
-        else if (GEditor)
+        // UEditorActorSubsystem::GetAllLevelActors and UEditorAssetLibrary refuse during PIE
+        // (EditorScriptingHelpers::CheckIfInEditorAndPIE): they return nothing and log a LogUtils
+        // Error, "The Editor is currently in a play mode.", on every lookup. Skipping them
+        // then yields the same empty result without the engine error.
+        else if (GEditor && !PinWrightPieState::IsPlayInEditorActive())
         {
             if (UEditorActorSubsystem* ActorSS = GEditor->GetEditorSubsystem<UEditorActorSubsystem>())
             {
@@ -272,8 +277,15 @@ McpActorUtils::FActorResolution McpActorUtils::ResolveActorFiltered(
     // path-shaped name that didn't match a live actor (a common miss — a stale objectPath,
     // a typo'd /Game path) spams the log misleadingly. DoesAssetExist is a registry-only
     // lookup that returns false silently, so only paths that actually resolve reach LoadAsset.
-    if (Policy != EActorResolvePolicy::ExactLabel &&
-        ActorName.StartsWith(TEXT("/")) && UEditorAssetLibrary::DoesAssetExist(ActorName))
+    // DoesAssetExist also answers true for a LIVE non-asset object (the registry builds asset
+    // data from any loaded object, e.g. an actor in another loaded world), and LoadAsset then
+    // logs "LoadAsset failed: '...' is not a valid asset" for that very object. Skip the load
+    // when the path already names a loaded non-asset: it cannot succeed.
+    const UObject* LiveObject = ActorName.StartsWith(TEXT("/"))
+        ? FSoftObjectPath(ActorName).ResolveObject() : nullptr;
+    const bool bLiveNonAsset = LiveObject && !LiveObject->IsA<UPackage>() && !LiveObject->IsAsset();
+    if (Policy != EActorResolvePolicy::ExactLabel && !PinWrightPieState::IsPlayInEditorActive() &&
+        ActorName.StartsWith(TEXT("/")) && !bLiveNonAsset && UEditorAssetLibrary::DoesAssetExist(ActorName))
     {
         if (UObject* Obj = UEditorAssetLibrary::LoadAsset(ActorName))
         {

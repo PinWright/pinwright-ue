@@ -1749,19 +1749,15 @@ REGISTER_RPC_HANDLER("level.structure.open_level_blueprint", "level.structure",
         return true;
     }
 
-    FString LevelPackageName = World->GetOutermost()->GetName();
-    bool bIsSavedLevel = !LevelPackageName.IsEmpty() && !LevelPackageName.StartsWith(TEXT("/Temp/"));
-
-    ULevelScriptBlueprint* LevelBP = PersistentLevel->GetLevelScriptBlueprint(true);
+    // The parameter is bDontCreate: false creates the Level Blueprint when the level has none yet,
+    // saved or not.
+    ULevelScriptBlueprint* LevelBP = PersistentLevel->GetLevelScriptBlueprint(false);
     if (!LevelBP)
     {
-        if (!bIsSavedLevel)
-        {
-            Ctx.SendError(TEXT("OPERATION_FAILED"),
-                TEXT("Level Blueprint unavailable for unsaved levels. Please save the level first."));
-            return true;
-        }
-        Ctx.SendError(TEXT("OPERATION_FAILED"), TEXT("Failed to get or create Level Blueprint"));
+        Ctx.SendError(TEXT("OPERATION_FAILED"), FString::Printf(
+            TEXT("Level '%s' has no Level Blueprint and the engine did not create one ")
+            TEXT("(ULevel::GetLevelScriptBlueprint returned null)."),
+            *World->GetOutermost()->GetName()));
         return true;
     }
 
@@ -1837,7 +1833,8 @@ REGISTER_RPC_HANDLER("level.structure.add_level_blueprint_node", "level.structur
         return true;
     }
 
-    ULevelScriptBlueprint* LevelBP = CurrentLevel->GetLevelScriptBlueprint(true);
+    // The parameter is bDontCreate: false creates the Level Blueprint when the level has none yet.
+    ULevelScriptBlueprint* LevelBP = CurrentLevel->GetLevelScriptBlueprint(false);
     if (!LevelBP)
     {
         Ctx.SendError(TEXT("OPERATION_FAILED"), TEXT("Failed to get Level Blueprint"));

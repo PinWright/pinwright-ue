@@ -41,6 +41,7 @@
 #include "Engine/BlueprintGeneratedClass.h"
 #include "GameFramework/Actor.h"
 #include "Kismet2/KismetEditorUtilities.h"
+#include "Misc/ScopeExit.h"
 
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
@@ -265,7 +266,9 @@ namespace
     // Transient is fine for Invoke (unlike the template cache). Returns the event graph, or null
     // on failure; OutScratchBP receives the owning blueprint so the caller's local keeps it (and
     // thus the returned graph) referenced for the synchronous call — GC does not run mid-dispatch,
-    // and both are collected as transient garbage after the handler returns.
+    // and the caller discards it with DiscardScratchProbeBlueprint when done. CreateBlueprint flags
+    // it RF_Standalone, so without that it outlived every call and each later PIE start recompiled
+    // all of them (ResolveDirtyBlueprints).
     UEdGraph* MakeScratchProbeGraph(UBlueprint*& OutScratchBP)
     {
         OutScratchBP = FKismetEditorUtilities::CreateBlueprint(
@@ -280,6 +283,23 @@ namespace
             return nullptr;
         }
         return OutScratchBP->UbergraphPages[0];
+    }
+
+    // The engine's own Blueprint teardown (FBlueprintUnloader::UnloadBlueprint, Kismet2.cpp):
+    // leave the standalone/transactional sets, garbage-mark, then ClearEditorReferences so every
+    // editor registry that tracks Blueprints (action database, open editors, Find-in-Blueprints,
+    // thumbnails, component type registry) drops it. The generated classes are left to GC, as the
+    // engine does. Only this call's own scratch Blueprint is touched, never the template cache's
+    // PROTO_BP_* Blueprints the node spawners prime from.
+    void DiscardScratchProbeBlueprint(UBlueprint* ScratchBP)
+    {
+        if (ScratchBP)
+        {
+            ScratchBP->SetFlags(RF_Transient);
+            ScratchBP->ClearFlags(RF_Standalone | RF_Public | RF_Transactional);
+            ScratchBP->MarkAsGarbage();
+            ScratchBP->ClearEditorReferences();
+        }
     }
 
     // Spawn a REAL node for the spawner into ScratchGraph, with pins allocated. Uses Invoke
@@ -349,6 +369,7 @@ REGISTER_RPC_HANDLER("blueprint.graph.find_node_types", "blueprint.graph",
     // different graph type and would fatally assert on spawn — and (b) hosts pin-context probes.
     UBlueprint* ScratchBP = nullptr;
     UEdGraph* ScratchGraph = MakeScratchProbeGraph(ScratchBP);
+    ON_SCOPE_EXIT { DiscardScratchProbeBlueprint(ScratchBP); };
     if (!ScratchGraph)
     {
         Ctx.SendError(TEXT("GRAPH_UNAVAILABLE"), TEXT("Could not create a scratch graph for node discovery."));
@@ -496,6 +517,7 @@ REGISTER_RPC_HANDLER("blueprint.graph.get_node_type_pins", "blueprint.graph",
     // its pins. Invoke (not the template cache) so this works headlessly on a transient graph.
     UBlueprint* ScratchBP = nullptr;
     UEdGraph* ScratchGraph = MakeScratchProbeGraph(ScratchBP);
+    ON_SCOPE_EXIT { DiscardScratchProbeBlueprint(ScratchBP); };
     if (!ScratchGraph)
     {
         Ctx.SendError(TEXT("GRAPH_UNAVAILABLE"), TEXT("Could not create a scratch graph to inspect node pins."));

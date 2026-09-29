@@ -554,7 +554,7 @@ bool EnsureMeshHasUVs(UDynamicMesh* Mesh);
 // never truncates pre-existing higher UV sets and can address channels above 0. The
 // layer starts element-less; the caller's projection/unwrap then populates it.
 // Distinct from EnsureMeshHasUVs, which is a channel-0-only bake guard that also
-// box-projects. Null-safe (false on null mesh or negative channel).
+// box-projects. Null-safe (false on null mesh or a channel outside 0-7, without calling the engine).
 bool EnsureMeshHasUVChannel(UDynamicMesh* Mesh, int32 UVChannel);
 
 // ---------------------------------------------------------------------------

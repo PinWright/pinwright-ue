@@ -2,6 +2,8 @@
 
 #include "Misc/AutomationTest.h"
 #include "Handlers/Niagara/NiagaraDumpBuilder.h"
+#include "Handlers/Niagara/NiagaraCompileWait.h"
+#include "Tests/Assets/NiagaraEditTestUtils.h"
 #include "NiagaraJsonAssertionHelpers.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
@@ -13,6 +15,8 @@
 #include "NiagaraSystem.h"
 #include "UObject/Package.h"
 #include "Misc/Guid.h"
+#include "Misc/ScopeExit.h"
+#include "UObject/StrongObjectPtr.h"
 
 namespace
 {
@@ -64,9 +68,9 @@ namespace
 }
 
 // Regression test for B-asset-dump-niagara-compile-state-stale:
-// niagara_compile.json must surface fx.Niagara.OnDemandCompile state via a
+// niagara_compile.json must surface fx.Niagara.OnDemandCompileEnabled state via a
 // compileDeferredOnLoad boolean and emit a COMPILE_DEFERRED_ON_LOAD info-severity
-// issue when that CVar is enabled, so consumers can distinguish post-load
+// issue when that CVar is enabled and the system has never compiled (the transient system here), so consumers can distinguish post-load
 // deferred state from a genuinely broken system.
 //
 // Counterfactual: if the new compileDeferredOnLoad field write and the
@@ -79,15 +83,15 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FNiagaraDumpCompileDeferredFlagTest,
 
 bool FNiagaraDumpCompileDeferredFlagTest::RunTest(const FString& Parameters)
 {
-    IConsoleVariable* OnDemandCV = IConsoleManager::Get().FindConsoleVariable(TEXT("fx.Niagara.OnDemandCompile"));
+    IConsoleVariable* OnDemandCV = IConsoleManager::Get().FindConsoleVariable(TEXT("fx.Niagara.OnDemandCompileEnabled"));
     if (!OnDemandCV)
     {
         PinWrightTestSkip::SkipAssertions(*this, TEXT("cvar-absent"),
-            TEXT("fx.Niagara.OnDemandCompile CVar is not registered; skipping deferred-flag test."));
+            TEXT("fx.Niagara.OnDemandCompileEnabled CVar is not registered; skipping deferred-flag test."));
         return true;
     }
 
-    const bool bOriginal = OnDemandCV->GetBool();
+    const FString Original = OnDemandCV->GetString();
 
     UNiagaraSystem* System = MakeTransientSystemForTest();
     TestNotNull(TEXT("Transient Niagara system created"), System);
@@ -121,7 +125,7 @@ bool FNiagaraDumpCompileDeferredFlagTest::RunTest(const FString& Parameters)
     }
 
     // Restore original CVar value.
-    OnDemandCV->Set(bOriginal ? TEXT("1") : TEXT("0"), ECVF_SetByCode);
+    OnDemandCV->Set(*Original, ECVF_SetByCode);
 
     System->RemoveFromRoot();
     return true;
@@ -138,22 +142,22 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FNiagaraDumpUninitializedSystemTest,
 
 bool FNiagaraDumpUninitializedSystemTest::RunTest(const FString& Parameters)
 {
-    IConsoleVariable* OnDemandCV = IConsoleManager::Get().FindConsoleVariable(TEXT("fx.Niagara.OnDemandCompile"));
+    IConsoleVariable* OnDemandCV = IConsoleManager::Get().FindConsoleVariable(TEXT("fx.Niagara.OnDemandCompileEnabled"));
     if (!OnDemandCV)
     {
         PinWrightTestSkip::SkipAssertions(*this, TEXT("cvar-absent"),
-            TEXT("fx.Niagara.OnDemandCompile CVar is not registered; skipping uninitialized-system test."));
+            TEXT("fx.Niagara.OnDemandCompileEnabled CVar is not registered; skipping uninitialized-system test."));
         return true;
     }
 
-    const bool bOriginal = OnDemandCV->GetBool();
+    const FString Original = OnDemandCV->GetString();
     OnDemandCV->Set(TEXT("1"), ECVF_SetByCode);
 
     UNiagaraSystem* System = MakeTransientSystemForTest();
     TestNotNull(TEXT("Transient Niagara system created"), System);
     if (!System)
     {
-        OnDemandCV->Set(bOriginal ? TEXT("1") : TEXT("0"), ECVF_SetByCode);
+        OnDemandCV->Set(*Original, ECVF_SetByCode);
         return false;
     }
 
@@ -187,7 +191,7 @@ bool FNiagaraDumpUninitializedSystemTest::RunTest(const FString& Parameters)
         }
     }
 
-    OnDemandCV->Set(bOriginal ? TEXT("1") : TEXT("0"), ECVF_SetByCode);
+    OnDemandCV->Set(*Original, ECVF_SetByCode);
     System->RemoveFromRoot();
     return true;
 }
@@ -202,22 +206,22 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FNiagaraDumpUninitializedEmitterTest,
 
 bool FNiagaraDumpUninitializedEmitterTest::RunTest(const FString& Parameters)
 {
-    IConsoleVariable* OnDemandCV = IConsoleManager::Get().FindConsoleVariable(TEXT("fx.Niagara.OnDemandCompile"));
+    IConsoleVariable* OnDemandCV = IConsoleManager::Get().FindConsoleVariable(TEXT("fx.Niagara.OnDemandCompileEnabled"));
     if (!OnDemandCV)
     {
         PinWrightTestSkip::SkipAssertions(*this, TEXT("cvar-absent"),
-            TEXT("fx.Niagara.OnDemandCompile CVar is not registered; skipping uninitialized-emitter test."));
+            TEXT("fx.Niagara.OnDemandCompileEnabled CVar is not registered; skipping uninitialized-emitter test."));
         return true;
     }
 
-    const bool bOriginal = OnDemandCV->GetBool();
+    const FString Original = OnDemandCV->GetString();
     OnDemandCV->Set(TEXT("1"), ECVF_SetByCode);
 
     UNiagaraEmitter* Emitter = MakeTransientEmitterForTest();
     TestNotNull(TEXT("Transient Niagara emitter created"), Emitter);
     if (!Emitter)
     {
-        OnDemandCV->Set(bOriginal ? TEXT("1") : TEXT("0"), ECVF_SetByCode);
+        OnDemandCV->Set(*Original, ECVF_SetByCode);
         return false;
     }
 
@@ -230,7 +234,58 @@ bool FNiagaraDumpUninitializedEmitterTest::RunTest(const FString& Parameters)
     TestTrue(TEXT("emitter issues contain COMPILE_STATE_UNINITIALIZED"),
         IssuesContainCode(CompileJson, TEXT("COMPILE_STATE_UNINITIALIZED")));
 
-    OnDemandCV->Set(bOriginal ? TEXT("1") : TEXT("0"), ECVF_SetByCode);
+    OnDemandCV->Set(*Original, ECVF_SetByCode);
     Emitter->RemoveFromRoot();
+    return true;
+}
+
+// COMPILE_DEFERRED_ON_LOAD is raised only while the system's compile state is not current. A
+// system compiled in this session keeps compileDeferredOnLoad=true (the session fact) and carries
+// no issue. Counterfactual: raising the issue whenever the cvar is on fails the TestFalse below.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FNiagaraDumpDeferredIssueClearsAfterCompileTest,
+    "PinWright.Niagara.DumpCompile.DeferredIssueClearsAfterCompile",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FNiagaraDumpDeferredIssueClearsAfterCompileTest::RunTest(const FString& Parameters)
+{
+    IConsoleVariable* OnDemandCV = IConsoleManager::Get().FindConsoleVariable(TEXT("fx.Niagara.OnDemandCompileEnabled"));
+    if (!OnDemandCV)
+    {
+        PinWrightTestSkip::SkipAssertions(*this, TEXT("cvar-absent"),
+            TEXT("fx.Niagara.OnDemandCompileEnabled CVar is not registered; skipping compiled-system test."));
+        return true;
+    }
+
+    // A saved stock system with graphs intact; compiling a source-less synthetic system can crash the host.
+    // RF_Standalone fixture: the owner keeps it alive, CleanupTestAsset detaches it. Declared before
+    // the owner so it runs after it.
+    FString SystemPath;
+    ON_SCOPE_EXIT { CleanupTestAsset(SystemPath); };
+    TStrongObjectPtr<UNiagaraSystem> SystemOwner(
+        NiagaraEditTestUtils::DuplicateFixtureSystemWithEmitters(TEXT("NS_DeferredCompiled"), SystemPath));
+    UNiagaraSystem* System = SystemOwner.Get();
+    if (!System)
+    {
+        PinWrightTestSkip::SkipAssertions(*this, TEXT("fixture-missing"),
+            FString::Printf(TEXT("could not duplicate '%s'"), NiagaraEditTestUtils::FixtureSystemAssetPath));
+        return true;
+    }
+
+    System->RequestCompile(/*bForce=*/true);
+    const PinWrightNiagara::FCompileWaitOutcome Wait =
+        PinWrightNiagara::WaitForSystemCompile(*System, /*bMayFlushRequestCompile=*/true);
+    TestFalse(TEXT("forced compile landed within the wait budget"), Wait.bTimedOut || Wait.bOutstanding);
+
+    const FString Original = OnDemandCV->GetString();
+    OnDemandCV->Set(TEXT("1"), ECVF_SetByCode);
+    TSharedPtr<FJsonObject> CompileJson = NiagaraDumpBuilder::BuildCompileDiagnosticsJson(System);
+    OnDemandCV->Set(*Original, ECVF_SetByCode);
+
+    TestTrue(TEXT("premise: the engine reports the compiled system ready to run"), System->IsReadyToRun());
+    TestTrue(TEXT("compileDeferredOnLoad still reports the session fact"),
+        CompileJson.IsValid() && CompileJson->GetBoolField(TEXT("compileDeferredOnLoad")));
+    TestFalse(TEXT("no COMPILE_DEFERRED_ON_LOAD issue for a system compiled in this session"),
+        IssuesContainCode(CompileJson, TEXT("COMPILE_DEFERRED_ON_LOAD")));
+
     return true;
 }

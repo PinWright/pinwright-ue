@@ -13,7 +13,6 @@
 #include "NiagaraEmitterHandle.h"
 #include "NiagaraGraph.h"
 #include "NiagaraNodeFunctionCall.h"
-#include "NiagaraNodeParameterMapSet.h"
 #include "NiagaraParameterStore.h"
 #include "NiagaraRendererProperties.h"
 #include "NiagaraScript.h"
@@ -32,7 +31,6 @@
 #include "Handlers/Niagara/NiagaraDumpBuilder.h"
 #include "Handlers/Niagara/NiagaraJsonHelpers.h"
 #include "Handlers/Niagara/NiagaraModelBuilder.h"
-#include "Handlers/Niagara/NiagaraResetModuleInputHelpers.h"
 
 namespace
 {
@@ -333,37 +331,6 @@ namespace
         return true;
     }
 
-    // Map module-input name (un-aliased, matches the function-call's pin names) →
-    // the override-node input pin that drives it. The override-node pin name carries
-    // the aliased "<ModuleFunctionName>.<InputName>" handle; this routine strips
-    // the alias so per-input lookups against the function-call use un-aliased names.
-    TMap<FName, UEdGraphPin*> CollectOverridePinsByInputName(
-        const UNiagaraNodeFunctionCall& Node,
-        UNiagaraNodeParameterMapSet* OverrideNode)
-    {
-        TMap<FName, UEdGraphPin*> Result;
-        if (!OverrideNode)
-        {
-            return Result;
-        }
-        TArray<UEdGraphPin*> OverridePins;
-        OverrideNode->GetInputPins(OverridePins);
-        const FName ModuleFunctionName(*Node.GetFunctionName());
-        for (UEdGraphPin* Pin : OverridePins)
-        {
-            if (!Pin)
-            {
-                continue;
-            }
-            const FNiagaraParameterHandle Handle(Pin->PinName);
-            if (Handle.GetNamespace() == ModuleFunctionName)
-            {
-                Result.Add(Handle.GetName(), Pin);
-            }
-        }
-        return Result;
-    }
-
     // Parses a {name, value} entry from BuildStaticSwitchInputs JSON, appending the
     // formatted "static X = Y" line through the emitter and returning the input name.
     bool EmitStaticSwitchEntry(
@@ -441,7 +408,7 @@ namespace
             return;
         }
 
-        TArray<UEdGraphPin*> InputPins;
+        TMap<FName, UEdGraphPin*> CallPinsByName;
         for (UEdGraphPin* Pin : Node->Pins)
         {
             if (!Pin || Pin->Direction != EGPD_Input)
@@ -452,16 +419,29 @@ namespace
             {
                 continue;
             }
-            InputPins.Add(Pin);
+            CallPinsByName.Add(Pin->PinName, Pin);
         }
-        InputPins.Sort([](const UEdGraphPin& A, const UEdGraphPin& B)
+
+        // A module's regular inputs (Module.* parameters such as SpawnRate) are not pins on
+        // the function-call node, which carries only the parameter map and static switches;
+        // their overrides exist solely as pins on the stack override node. Walk both sets.
+        TArray<FName> InputNames;
+        CallPinsByName.GetKeys(InputNames);
+        for (const TPair<FName, UEdGraphPin*>& OverrideEntry : OverridePinsByInputName)
         {
-            return A.PinName.LexicalLess(B.PinName);
+            if (!CallPinsByName.Contains(OverrideEntry.Key) && !StaticSwitchInputNames.Contains(OverrideEntry.Key))
+            {
+                InputNames.Add(OverrideEntry.Key);
+            }
+        }
+        InputNames.Sort([](const FName& A, const FName& B)
+        {
+            return A.LexicalLess(B);
         });
 
-        for (UEdGraphPin* Pin : InputPins)
+        for (const FName& InputName : InputNames)
         {
-            UEdGraphPin* const* OverridePinPtr = OverridePinsByInputName.Find(Pin->PinName);
+            UEdGraphPin* const* OverridePinPtr = OverridePinsByInputName.Find(InputName);
             if (OverridePinPtr && *OverridePinPtr)
             {
                 // Resolve the full override chain (literal / linked-param /
@@ -471,17 +451,17 @@ namespace
                 {
                     Emitter.AppendLine(FString::Printf(
                         TEXT("input %s = %s"),
-                        *NIRTextEmitter::FormatNameToken(Pin->PinName.ToString()),
+                        *NIRTextEmitter::FormatNameToken(InputName.ToString()),
                         *Expr));
                 }
                 continue;
             }
             FString Literal;
-            if (TryEmitLiteralFromPin(Pin, Literal))
+            if (TryEmitLiteralFromPin(CallPinsByName.FindRef(InputName), Literal))
             {
                 Emitter.AppendLine(FString::Printf(
                     TEXT("input %s = %s"),
-                    *NIRTextEmitter::FormatNameToken(Pin->PinName.ToString()),
+                    *NIRTextEmitter::FormatNameToken(InputName.ToString()),
                     *Literal));
             }
         }
@@ -529,8 +509,7 @@ namespace
             }
         }
 
-        UNiagaraNodeParameterMapSet* OverrideNode = NiagaraResetModuleInput::FindStackFunctionOverrideNode(*Node);
-        const TMap<FName, UEdGraphPin*> OverridePinsByInputName = CollectOverridePinsByInputName(*Node, OverrideNode);
+        const TMap<FName, UEdGraphPin*> OverridePinsByInputName = CollectOverridePinsByInputName(*Node);
         AppendOverrideInputs(Emitter, Node, StaticSwitchInputNames, OverridePinsByInputName);
         Emitter.SetIndentDepth(Emitter.GetIndentDepth() - 1);
     }

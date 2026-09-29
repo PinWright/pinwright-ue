@@ -16,7 +16,8 @@ Coverage:
 - Authored parameter data: `param`, `rapid`, and `binding` lines include type, value, and scope annotations when the backing Niagara parameter store exposes them.
 - Module input override-chain expansion (v1b): each override-node-driven `input X = ...` resolves to one of:
   - **Literal**: `input Strength = 3.14` (or per-type serialised form for vectors / quats / structs).
-  - **Linked parameter**: `input Strength = $User.Speed` (the upstream `UNiagaraNodeInput` exposes its scoped parameter handle).
+  - **Linked parameter**: `input Strength = $User.Speed` (the override pin is fed by a Parameter Map Get output pin named for the bound parameter; an upstream `UNiagaraNodeInput`, which carries a data-interface or object value, renders the same `$Namespace.Name` form).
+  - Regular module inputs (`Module.*` parameters) have no pin on the module's function-call node, so their `input` lines come from the stack override node's pins; inputs without an override pin emit nothing.
   - **Dynamic input** (recursive): `input Strength = dynamic NoiseClamp { input Range = 0.5 }` — the inner module's own inputs are emitted via the same expression emitter; `dynamic Name@vMajor.Minor` for version-pinned references. Depth is bounded at 32 — chains beyond that emit `# recursion-limit-reached` and a matching `FNIRResult.Warnings` entry.
   - **Static switch** override: emitted as `static X = ... @source override|default @default <value>` alongside the module row when source/default metadata is available (decoded via `NiagaraDumpBuilder::BuildStaticSwitchInputs`).
 - Standalone `UNiagaraScript` emits `script "..." { graph <Usage> { ... } }` with a node-by-node body (v1c — see "Script-graph body grammar" below).

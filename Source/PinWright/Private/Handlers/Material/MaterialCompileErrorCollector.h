@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Compat/EngineVersionCompat.h"
+#include "Dispatch/SafePoint.h"
 #include "HAL/PlatformProcess.h"
 #include "HAL/PlatformTime.h"
 #include "MaterialShaderPrecompileMode.h"
@@ -11,6 +12,7 @@
 #include "Materials/Material.h"
 #include "Materials/MaterialInstance.h"
 #include "Materials/MaterialInterface.h"
+#include "RenderingThread.h"
 #include "RHIFeatureLevel.h"
 #if UE_VERSION_NEWER_THAN_OR_EQUAL(5, 7, 0)
 #include "RHIShaderPlatform.h"
@@ -215,9 +217,33 @@ namespace MaterialCompileErrorCollector
         // PinWright::AssetCompile::AdvanceOnGameThread, is the game-thread pass that finalises a
         // finished shader map and writes its errors into FMaterial::CompileErrors. A loop that
         // only slept would starve the single thread that work needs. See Utils/AssetCompilePump.h.
+        //
+        // "Finished" is only trusted once it survives a render-thread flush. CacheShaders keeps an
+        // existing incomplete shader map for a material instance (FMaterial::CacheShaders completion:
+        // bRequiredComplete is false for instances), so its missing permutations are submitted on
+        // demand by the RENDER thread (FMaterial::TryGetShaders) for frames already in flight. A
+        // game-thread poll can read finished before those jobs register, and the measurement right
+        // after the loop then read `outstanding` with no timeout. Once the render thread is flushed
+        // it can submit nothing more until the game thread ticks again, which it cannot do while
+        // this loop holds it, so a finished read after the flush is stable.
         const double StartSeconds = FPlatformTime::Seconds();
-        while (!Resource->IsCompilationFinished())
+        for (;;)
         {
+            if (Resource->IsCompilationFinished())
+            {
+                // A flush from inside a tick or a named-thread pump is a documented stall/deadlock
+                // source (Dispatch/SafePoint.cpp); there the pre-fix single read is all we can do.
+                if (!PinWrightSafePoint::IsSafeNow())
+                {
+                    break;
+                }
+                FlushRenderingCommands();
+                PinWright::AssetCompile::AdvanceOnGameThread();
+                if (Resource->IsCompilationFinished())
+                {
+                    break;
+                }
+            }
             Outcome.bWaited = true;
             if (FPlatformTime::Seconds() - StartSeconds >= TimeoutSeconds)
             {

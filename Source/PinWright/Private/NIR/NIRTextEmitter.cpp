@@ -12,12 +12,14 @@
 #include "NiagaraNode.h"
 #include "NiagaraNodeFunctionCall.h"
 #include "NiagaraNodeInput.h"
+#include "NiagaraNodeParameterMapSet.h"
 #include "NiagaraScript.h"
 #include "NiagaraTypes.h"
 #include "Templates/SharedPointer.h"
 #include "ViewModels/Stack/NiagaraParameterHandle.h"
 
 #include "Handlers/Niagara/NiagaraJsonHelpers.h"
+#include "Handlers/Niagara/NiagaraResetModuleInputHelpers.h"
 
 namespace
 {
@@ -346,7 +348,22 @@ namespace
     // simply recurses one level deeper.
     FString EmitDynamicInputBody(UNiagaraNodeFunctionCall& DynamicInputNode, FNIRTextEmitter& Out, int32 Depth)
     {
+        // A dynamic input's Module.* inputs have no pin on its call node; their overrides
+        // live on its own stack override node, exactly as for a module.
+        const TMap<FName, UEdGraphPin*> OverridePinsByInputName = CollectOverridePinsByInputName(DynamicInputNode);
+        TSet<FName> EmittedNames;
         TArray<FString> InputClauses;
+        auto AddClause = [&InputClauses, &Out, Depth](FName InputName, UEdGraphPin* ValuePin)
+        {
+            const FString Expr = EmitInputValueExpr(ValuePin, Out, Depth + 1);
+            if (!Expr.IsEmpty())
+            {
+                InputClauses.Add(FString::Printf(
+                    TEXT("input %s = %s"),
+                    *NIRTextEmitter::FormatNameToken(InputName.ToString()),
+                    *Expr));
+            }
+        };
         for (UEdGraphPin* InputPin : DynamicInputNode.Pins)
         {
             if (!InputPin || InputPin->Direction != EGPD_Input)
@@ -360,15 +377,25 @@ namespace
             {
                 continue;
             }
-            const FString Expr = EmitInputValueExpr(InputPin, Out, Depth + 1);
-            if (Expr.IsEmpty())
+            UEdGraphPin* OverridePin = OverridePinsByInputName.FindRef(InputPin->PinName);
+            AddClause(InputPin->PinName, OverridePin ? OverridePin : InputPin);
+            EmittedNames.Add(InputPin->PinName);
+        }
+        TArray<FName> OverrideOnlyNames;
+        for (const TPair<FName, UEdGraphPin*>& OverrideEntry : OverridePinsByInputName)
+        {
+            if (!EmittedNames.Contains(OverrideEntry.Key))
             {
-                continue;
+                OverrideOnlyNames.Add(OverrideEntry.Key);
             }
-            InputClauses.Add(FString::Printf(
-                TEXT("input %s = %s"),
-                *NIRTextEmitter::FormatNameToken(InputPin->PinName.ToString()),
-                *Expr));
+        }
+        OverrideOnlyNames.Sort([](const FName& A, const FName& B)
+        {
+            return A.LexicalLess(B);
+        });
+        for (const FName& InputName : OverrideOnlyNames)
+        {
+            AddClause(InputName, OverridePinsByInputName.FindRef(InputName));
         }
         return FString::Join(InputClauses, TEXT(", "));
     }
@@ -406,6 +433,16 @@ FString EmitInputValueExpr(UEdGraphPin* InputPin, FNIRTextEmitter& Out, int32 De
         return NIRTextEmitter::FormatParameterRef(InputNode->Input.GetName());
     }
 
+    // Case 2b: UNiagaraNodeParameterMapGet → linked parameter "$Namespace.Name".
+    // FNiagaraStackGraphUtilities::SetLinkedParameterValueForFunctionInput always wires a
+    // linked parameter through a Map Get whose output pin is named for the bound parameter.
+    // The class has no NIAGARAEDITOR_API, so it is resolved by reflection.
+    const UClass* ParameterMapGetClass = FindObject<UClass>(nullptr, TEXT("/Script/NiagaraEditor.NiagaraNodeParameterMapGet"));
+    if (ParameterMapGetClass && UpstreamNode->IsA(ParameterMapGetClass))
+    {
+        return NIRTextEmitter::FormatParameterRef(UpstreamPin->PinName);
+    }
+
     // Case 3: UNiagaraNodeFunctionCall → dynamic-input module call (recursive).
     if (UNiagaraNodeFunctionCall* FunctionCallNode = Cast<UNiagaraNodeFunctionCall>(UpstreamNode))
     {
@@ -440,6 +477,34 @@ FString EmitInputValueExpr(UEdGraphPin* InputPin, FNIRTextEmitter& Out, int32 De
         *UpstreamNode->GetName(),
         *UpstreamNode->GetClass()->GetName()));
     return FormatNiagaraPinLiteral(*InputPin, Out);
+}
+
+TMap<FName, UEdGraphPin*> CollectOverridePinsByInputName(UNiagaraNodeFunctionCall& Node)
+{
+    TMap<FName, UEdGraphPin*> Result;
+    UNiagaraNodeParameterMapSet* OverrideNode = NiagaraResetModuleInput::FindStackFunctionOverrideNode(Node);
+    if (!OverrideNode)
+    {
+        return Result;
+    }
+    TArray<UEdGraphPin*> OverridePins;
+    OverrideNode->GetInputPins(OverridePins);
+    const FName FunctionName(*Node.GetFunctionName());
+    for (UEdGraphPin* Pin : OverridePins)
+    {
+        if (!Pin)
+        {
+            continue;
+        }
+        // The override node carries every call's overrides upstream of that call; the
+        // "<FunctionName>." alias namespace selects this call's pins.
+        const FNiagaraParameterHandle Handle(Pin->PinName);
+        if (Handle.GetNamespace() == FunctionName)
+        {
+            Result.Add(Handle.GetName(), Pin);
+        }
+    }
+    return Result;
 }
 
 FString FormatPinValueRef(UEdGraphPin* Pin)
@@ -521,7 +586,7 @@ void EmitGraphBody(UNiagaraGraph* Graph, FNIRTextEmitter& Out)
 
 void EmitScriptGraphScope(const UNiagaraScript* Script, FNIRTextEmitter& Out)
 {
-    // fx.Niagara.OnDemandCompile is system-scoped; standalone-script emission deliberately omits the # compile-state-stale annotation.
+    // fx.Niagara.OnDemandCompileEnabled is system-scoped; standalone-script emission deliberately omits the # compile-state-stale annotation.
     if (!Script)
     {
         return;

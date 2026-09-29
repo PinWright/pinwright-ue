@@ -17,9 +17,15 @@
 // call would not link: that engine helper is not NIAGARAEDITOR_API.)
 //
 // Counterfactual: revert the relayout call in the move_module handler and the
-// NodePosY-order assertion below fails — the three modules keep the identical
+// NodePosY-order assertion below fails — every module in the chain keeps the identical
 // pre-move NodePosY this test forces, so the NodePosY-sorted readback order no longer
 // matches the (correctly reordered) ParameterMap chain.
+//
+// The fixture emitter is duplicated from the stock SimpleExplosion template, whose
+// ParticleUpdate stack already carries its own modules (6 on UE 5.8), so the test asserts
+// the three seeded modules as the chain's tail rather than as the whole chain. SpawnRate's
+// ModuleUsageBitmask covers only EmitterSpawn/EmitterUpdate; placing it in ParticleUpdate
+// is harmless here because the move is pure graph surgery run with compile:false.
 //
 // Follows the live-asset fixture pattern of TestNIRGraphLinkCoverage.cpp.
 
@@ -108,8 +114,9 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 
 bool FNiagaraMoveModuleRelayoutsNodePosYTest::RunTest(const FString& Parameters)
 {
-    // SpawnRate is a stock CPU module ship-asset that wires cleanly into any usage stack.
-    UNiagaraScript* ModuleScript = LoadObject<UNiagaraScript>(nullptr, TEXT("/Niagara/Modules/Spawn/SpawnRate.SpawnRate"));
+    // SpawnRate is a stock CPU module ship-asset; the stack helper wires it into any usage
+    // stack regardless of its ModuleUsageBitmask (see the file header).
+    UNiagaraScript* ModuleScript = LoadObject<UNiagaraScript>(nullptr, TEXT("/Niagara/Modules/Emitter/SpawnRate.SpawnRate"));
     if (!ModuleScript)
     {
         PinWrightTestSkip::SkipAssertions(*this, TEXT("fixture-missing"),
@@ -131,7 +138,7 @@ bool FNiagaraMoveModuleRelayoutsNodePosYTest::RunTest(const FString& Parameters)
     }
 
     // Seed three modules into the ParticleUpdate stack. Each appends at the tail, so the
-    // resulting chain order is [A, B, C].
+    // chain ends [..., A, B, C] after the template's own modules.
     UNiagaraNodeFunctionCall* ModuleA = NIRTestFixtures::AddModuleToStack(System, ENiagaraScriptUsage::ParticleUpdateScript, ModuleScript);
     UNiagaraNodeFunctionCall* ModuleB = NIRTestFixtures::AddModuleToStack(System, ENiagaraScriptUsage::ParticleUpdateScript, ModuleScript);
     UNiagaraNodeFunctionCall* ModuleC = NIRTestFixtures::AddModuleToStack(System, ENiagaraScriptUsage::ParticleUpdateScript, ModuleScript);
@@ -153,21 +160,25 @@ bool FNiagaraMoveModuleRelayoutsNodePosYTest::RunTest(const FString& Parameters)
         return false;
     }
 
-    // Force a degenerate NodePosY state: all three modules share the same Y. This is the
-    // stale state a chain-only reconnect leaves behind. With the bug, the move never
-    // touches NodePosY, so the NodePosY-sorted readback can never reflect a reorder.
-    ModuleA->NodePosY = 0;
-    ModuleB->NodePosY = 0;
-    ModuleC->NodePosY = 0;
-
     const TArray<UNiagaraNodeFunctionCall*> PreOrder = GetChainOrderedModules(*OutputNode);
-    if (!TestEqual(TEXT("Three modules in the ParticleUpdate chain before the move"), PreOrder.Num(), 3))
+    const int32 ChainCount = PreOrder.Num();
+    if (!TestTrue(TEXT("The three seeded modules are the tail [A, B, C] of the ParticleUpdate chain before the move"),
+            ChainCount >= 3 && PreOrder[ChainCount - 3] == ModuleA && PreOrder[ChainCount - 2] == ModuleB && PreOrder[ChainCount - 1] == ModuleC))
     {
         NIRTestFixtures::DestroyFixture(System);
         return false;
     }
 
-    // Move the tail module (chain index 2) to the front (chain index 0).
+    // Force a degenerate NodePosY state: every module in the chain, template ones included,
+    // shares the same Y. This is the stale state a chain-only reconnect leaves behind. With
+    // the bug, the move never touches NodePosY, so the NodePosY-sorted readback can never
+    // reflect a reorder.
+    for (UNiagaraNodeFunctionCall* ChainModule : PreOrder)
+    {
+        ChainModule->NodePosY = 0;
+    }
+
+    // Move the tail module (ModuleC) to the front (chain index 0).
     UNiagaraNodeFunctionCall* MovedModule = PreOrder.Last();
 
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
@@ -190,7 +201,7 @@ bool FNiagaraMoveModuleRelayoutsNodePosYTest::RunTest(const FString& Parameters)
     // 1. The ParameterMap chain — the authoritative execution order — actually changed:
     //    the moved module is now first in the chain. (Guards against a real no-op regression.)
     const TArray<UNiagaraNodeFunctionCall*> PostOrder = GetChainOrderedModules(*OutputNode);
-    if (!TestEqual(TEXT("Three modules remain in the chain after the move"), PostOrder.Num(), 3))
+    if (!TestEqual(TEXT("Every module remains in the chain after the move"), PostOrder.Num(), ChainCount))
     {
         NIRTestFixtures::DestroyFixture(System);
         return false;
@@ -200,10 +211,12 @@ bool FNiagaraMoveModuleRelayoutsNodePosYTest::RunTest(const FString& Parameters)
 
     // 2. The fix: the handler's vendored RelayoutModuleNodePositions rewrote NodePosY from
     //    the new chain order, so the NodePosY values are no longer all identical AND the
-    //    NodePosY-sorted order matches the chain order. Without that relayout call, all three
-    //    NodePosY stay at the forced 0 and both of these assertions fail.
-    const bool bNodePosYDistinct =
-        !(MovedModule->NodePosY == PostOrder[1]->NodePosY && PostOrder[1]->NodePosY == PostOrder[2]->NodePosY);
+    //    NodePosY-sorted order matches the chain order. Without that relayout call, every
+    //    NodePosY stays at the forced 0 and both of these assertions fail.
+    const bool bNodePosYDistinct = PostOrder.ContainsByPredicate([MovedModule](const UNiagaraNodeFunctionCall* Module)
+    {
+        return Module->NodePosY != MovedModule->NodePosY;
+    });
     TestTrue(TEXT("NodePosY values are no longer all identical after the move (relayout ran)"), bNodePosYDistinct);
 
     // The relayout assigns the output-adjacent module the smallest Y and each module further

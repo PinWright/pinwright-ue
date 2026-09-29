@@ -789,7 +789,9 @@ int32 GetAspectVersion(const FString& RelativeFile)
         // 9: an entry node the grammar cannot name and that gates no exec body no longer
         //    renders as an anonymous `entry event UnknownEntry() {}` stub, so AnimGraphs go
         //    back to the single empty-graph marker.
-        { TEXT("bpir.txt"),                 9 },
+        // 10: `timeline Name(...)` now carries the template's settings and every track with
+        //    its keys, so any Blueprint holding a Timeline with tracks dumps different bytes.
+        { TEXT("bpir.txt"),                 10 },
         // 3: entry material blocks now carry the material-level properties (blend mode,
         //    shading model, two-sided, domain, translucency lighting mode, ...) as
         //    `property Name: Value` lines above the graph.
@@ -804,7 +806,10 @@ int32 GetAspectVersion(const FString& RelativeFile)
         //    a bump on any listed aspect.
         { TEXT("btir.txt"),                 2 },
         { TEXT("crir.txt"),                 2 },
-        { TEXT("nir.txt"),                  3 },
+        // 4: override-driven Module.* inputs (linked parameter, dynamic input, override-pin
+        //    literal) now emit `input X = ...` lines, nested dynamic-input bodies included, and
+        //    a linked parameter renders as `$Namespace.Name` instead of the pin literal.
+        { TEXT("nir.txt"),                  4 },
         // 5: preset detection moved off the cleared PresetOptions.bIsPreset, so a preset's MSIR
         //    now emits its `preset` document shape instead of a full patch/source body.
         { TEXT("msir.txt"),                 5 },

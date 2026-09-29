@@ -23,6 +23,7 @@
 #include "PCGCommon.h"
 #include "PCGComponent.h"
 #include "PCGGraph.h"
+#include "Helpers/PCGHelpers.h"
 
 // Per-request state for the pcg.generate job, shared (TSharedRef) by the two PCG
 // completion delegates and the watchdog ticker. A named namespace (never anonymous)
@@ -141,6 +142,19 @@ REGISTER_RPC_HANDLER("pcg.generate", "pcg",
                 FString::Printf(TEXT("Could not load a UPCGGraph at '%s'."), *GraphPath));
             return true;
         }
+    }
+
+    // PCG generates inside its owner's bounds (the union of the actor's primitive components,
+    // or a landscape's extent) and cannot use an actor that has none: registering a component
+    // on it logs "Component has invalid bounds", and a generate on it logs "Didn't schedule any
+    // task" and aborts, which the cancelled delegate would report as PCG_GENERATION_CANCELLED.
+    // Checked before the component is added so a refused call leaves the actor untouched.
+    if (!PCGHelpers::GetGridBounds(Actor, nullptr).IsValid)
+    {
+        Ctx.SendError(TEXT("ACTOR_HAS_NO_BOUNDS"),
+            FString::Printf(TEXT("Actor '%s' has no bounds (no primitive component with extent), so PCG has no volume to generate in. Generate on a PCG volume or give the actor a primitive component such as a box."),
+                *Actor->GetActorLabel()));
+        return true;
     }
 
     const bool bForce = Ctx.GetBool(TEXT("force"), true);

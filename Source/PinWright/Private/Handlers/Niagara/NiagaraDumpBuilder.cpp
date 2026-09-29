@@ -1315,6 +1315,48 @@ namespace
         return false;
     }
 
+    // True when a present script has not compiled to a terminal status in this session: null
+    // (NCS_Unknown), NCS_Dirty, NCS_BeingCreated. Terminal = the UpToDate family or NCS_Error.
+    bool ScriptsHaveNonTerminalCompileStatus(const TArray<TSharedPtr<FJsonValue>>& Scripts)
+    {
+        for (const TSharedPtr<FJsonValue>& Value : Scripts)
+        {
+            const TSharedPtr<FJsonObject> Obj = Value.IsValid() ? Value->AsObject() : nullptr;
+            const TSharedPtr<FJsonValue> StatusField = Obj.IsValid() ? Obj->TryGetField(TEXT("compileStatus")) : nullptr;
+            if (!StatusField.IsValid())
+            {
+                continue;
+            }
+            if (StatusField->Type == EJson::Null)
+            {
+                return true;
+            }
+            const FString Status = StatusField->AsString();
+            if (Status != TEXT("NCS_UpToDate") && Status != TEXT("NCS_UpToDateWithWarnings")
+                && Status != TEXT("NCS_ComputeUpToDateWithWarnings") && Status != TEXT("NCS_Error"))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // COMPILE_DEFERRED_ON_LOAD explains why an asset's compile state is not current, so it is raised
+    // only when deferral is on AND this asset has something not yet compiled; compileDeferredOnLoad
+    // always carries the session fact. An issue present on every call would be noise.
+    void AddCompileDeferredIssueIfStale(TArray<TSharedPtr<FJsonValue>>& Issues, bool bCompileDeferredOnLoad, bool bCompileStateStale)
+    {
+        if (!bCompileDeferredOnLoad || !bCompileStateStale)
+        {
+            return;
+        }
+        TSharedPtr<FJsonObject> Issue = MakeObject();
+        Issue->SetStringField(TEXT("severity"), TEXT("info"));
+        Issue->SetStringField(TEXT("code"), TEXT("COMPILE_DEFERRED_ON_LOAD"));
+        Issue->SetStringField(TEXT("message"), TEXT("fx.Niagara.OnDemandCompileEnabled deferred this asset's compile on load and it has not compiled in this session; compile state shown is post-load, not a fresh compile. Run niagara.compile for a current verdict."));
+        Issues.Add(MakeObjectValue(Issue));
+    }
+
     void AddGpuIncompatibleModuleIssues(
         TArray<TSharedPtr<FJsonValue>>& Issues,
         const FVersionedNiagaraEmitterData* EmitterData,
@@ -2137,21 +2179,35 @@ namespace NiagaraDumpBuilder
         const TArray<TSharedPtr<FJsonValue>> Scripts = BuildSystemCompileScriptArray(System);
         Obj->SetArrayField(TEXT("scripts"), Scripts);
 
-        // UE 5.6 ships fx.Niagara.OnDemandCompile defaulted on, deferring Niagara compile until
+        // fx.Niagara.OnDemandCompileEnabled is on by default in the editor, deferring Niagara compile until
         // the editor opens the system or an FX component spawns it. Surface that as a diagnostic
         // so consumers can distinguish post-load deferred state from a genuinely broken system.
         const bool bCompileDeferredOnLoad = NiagaraDecompileHelpers::IsNiagaraOnDemandCompileEnabled();
         Obj->SetBoolField(TEXT("compileDeferredOnLoad"), bCompileDeferredOnLoad);
 
         TArray<TSharedPtr<FJsonValue>> Issues;
-        if (bCompileDeferredOnLoad)
+        // PostLoad parks a system whose cached bytecode is out of sync with its graph in
+        // RequestPendingOnDemand (NeedsRequestCompile, seen through HasOutstandingCompilationRequests
+        // inside IsSystemReadyToRunWithoutLoading). A system that never compiled is caught by its own
+        // SYSTEM scripts' status: readiness alone misses it (an emitter-less transient system with no
+        // pending request reads ready). Emitter-script statuses are not used: on-demand compilation
+        // can leave duplicated emitter-script statuses at NCS_Unknown after a successful compile,
+        // which would make the issue permanent.
+        const auto IsNonTerminal = [](const UNiagaraScript* Script)
         {
-            TSharedPtr<FJsonObject> Issue = MakeObject();
-            Issue->SetStringField(TEXT("severity"), TEXT("info"));
-            Issue->SetStringField(TEXT("code"), TEXT("COMPILE_DEFERRED_ON_LOAD"));
-            Issue->SetStringField(TEXT("message"), TEXT("UE 5.6 fx.Niagara.OnDemandCompile is enabled; compile state shown reflects post-load deferred state, not a fresh compile."));
-            Issues.Add(MakeObjectValue(Issue));
-        }
+            if (!Script)
+            {
+                return false;
+            }
+            const ENiagaraScriptCompileStatus Status = Script->GetLastCompileStatus();
+            return Status != ENiagaraScriptCompileStatus::NCS_UpToDate
+                && Status != ENiagaraScriptCompileStatus::NCS_UpToDateWithWarnings
+                && Status != ENiagaraScriptCompileStatus::NCS_ComputeUpToDateWithWarnings
+                && Status != ENiagaraScriptCompileStatus::NCS_Error;
+        };
+        AddCompileDeferredIssueIfStale(Issues, bCompileDeferredOnLoad,
+            !IsSystemReadyToRunWithoutLoading(System)
+                || (System && (IsNonTerminal(System->GetSystemSpawnScript()) || IsNonTerminal(System->GetSystemUpdateScript()))));
         Issues.Append(BuildSystemAuthoredIssues(System));
 
         // readyToRun and the COMPILE_STATE_UNINITIALIZED issue are written last so we can null
@@ -2184,20 +2240,13 @@ namespace NiagaraDumpBuilder
         const TArray<TSharedPtr<FJsonValue>> Scripts = BuildEmitterCompileScriptArray(Emitter);
         Obj->SetArrayField(TEXT("scripts"), Scripts);
 
-        // Mirror the System path: surface fx.Niagara.OnDemandCompile so the standalone-emitter
+        // Mirror the System path: surface fx.Niagara.OnDemandCompileEnabled so the standalone-emitter
         // schema matches the system schema and consumers see the same deferred-on-load signal.
         const bool bCompileDeferredOnLoad = NiagaraDecompileHelpers::IsNiagaraOnDemandCompileEnabled();
         Obj->SetBoolField(TEXT("compileDeferredOnLoad"), bCompileDeferredOnLoad);
 
         TArray<TSharedPtr<FJsonValue>> Issues;
-        if (bCompileDeferredOnLoad)
-        {
-            TSharedPtr<FJsonObject> Issue = MakeObject();
-            Issue->SetStringField(TEXT("severity"), TEXT("info"));
-            Issue->SetStringField(TEXT("code"), TEXT("COMPILE_DEFERRED_ON_LOAD"));
-            Issue->SetStringField(TEXT("message"), TEXT("UE 5.6 fx.Niagara.OnDemandCompile is enabled; compile state shown reflects post-load deferred state, not a fresh compile."));
-            Issues.Add(MakeObjectValue(Issue));
-        }
+        AddCompileDeferredIssueIfStale(Issues, bCompileDeferredOnLoad, ScriptsHaveNonTerminalCompileStatus(Scripts));
         Issues.Append(BuildEmitterAuthoredIssues(Emitter));
 
         // readyToRun and the COMPILE_STATE_UNINITIALIZED issue are written last so we can null
@@ -2235,14 +2284,7 @@ namespace NiagaraDumpBuilder
         Obj->SetBoolField(TEXT("compileDeferredOnLoad"), bCompileDeferredOnLoad);
 
         TArray<TSharedPtr<FJsonValue>> Issues;
-        if (bCompileDeferredOnLoad)
-        {
-            TSharedPtr<FJsonObject> Issue = MakeObject();
-            Issue->SetStringField(TEXT("severity"), TEXT("info"));
-            Issue->SetStringField(TEXT("code"), TEXT("COMPILE_DEFERRED_ON_LOAD"));
-            Issue->SetStringField(TEXT("message"), TEXT("UE 5.6 fx.Niagara.OnDemandCompile is enabled; compile state shown reflects post-load deferred state, not a fresh compile."));
-            Issues.Add(MakeObjectValue(Issue));
-        }
+        AddCompileDeferredIssueIfStale(Issues, bCompileDeferredOnLoad, ScriptsHaveNonTerminalCompileStatus(Scripts));
         Issues.Append(BuildScriptAuthoredIssues(Script));
 
         const bool bUninitializedCompileState = ScriptsHaveUninitializedCompileStatus(Scripts);
@@ -2268,8 +2310,12 @@ namespace NiagaraDecompileHelpers
 {
     bool IsNiagaraOnDemandCompileEnabled()
     {
-        const IConsoleVariable* CV = IConsoleManager::Get().FindConsoleVariable(TEXT("fx.Niagara.OnDemandCompile"));
-        return CV && CV->GetBool();
+        // The engine cvar is fx.Niagara.OnDemandCompileEnabled on every supported engine (5.3-5.8;
+        // default 1 before 5.6, 2 from 5.6). The predicate mirrors UNiagaraSystem::PostLoad:
+        // 1 defers in editor only, 2 defers in editor and game.
+        const IConsoleVariable* CV = IConsoleManager::Get().FindConsoleVariable(TEXT("fx.Niagara.OnDemandCompileEnabled"));
+        const int32 Mode = CV ? CV->GetInt() : 0;
+        return Mode != 0 && (GIsEditor || Mode == 2);
     }
 
     TArray<UNiagaraNodeFunctionCall*> CollectAndSortFunctionCalls(const UNiagaraGraph* Graph)

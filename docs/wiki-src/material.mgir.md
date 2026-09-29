@@ -15,7 +15,7 @@ MGIR is the bulk text path for material graph authoring, backed by `material.com
 - `save` - writes modified assets to disk when true (default). When false, the graph remains an in-memory edit.
 - `waitForShaderCompile` - block until the shaders of every material this document wrote finish compiling, and report the real verdict rather than the non-blocking probe.
 
-**"compile" in `compile_mgir` means the GRAPH, not the shader.** `blocksCompiled` and `expressionsCreated` count expressions placed and wired; a document whose Custom node holds malformed HLSL, or that samples a texture with the wrong `SamplerType`, returns the same numbers as one that renders. The response's `shaderCompile` block is the measurement — branch on `shaderCompile.status`, treat `notCompiled` as "no compile has run" rather than as clean, and pass `waitForShaderCompile: true` (or finish with [`material.authoring.compile_material`](material.authoring.compile_material.md)) for a real answer. `shaderCompile.materials[]` breaks the verdict down per asset for a multi-entry document, and a failure is also raised into `warnings[]`. See [`material.compile-state`](material.compile-state.md).
+**"compile" in `compile_mgir` means the GRAPH, not the shader.** `blocksCompiled` and `expressionsCreated` count expressions placed and wired; a document whose Custom node holds malformed HLSL, or that samples a texture with the wrong `SamplerType`, returns the same numbers as one that renders. The response's `shaderCompile` block is the measurement — branch on `shaderCompile.status`, treat `onDemand` and `notCompiled` as "no full compile has run" rather than as clean, and pass `waitForShaderCompile: true` (or finish with [`material.authoring.compile_material`](material.authoring.compile_material.md)) for a real answer. `shaderCompile.materials[]` breaks the verdict down per asset for a multi-entry document, and a failure is also raised into `warnings[]`. See [`material.compile-state`](material.compile-state.md).
 
 `material.decompile_mgir` accepts `assetPath`, optional `includeReferencedFunctions`, and optional `emitSubstrateSugar`.
 
@@ -192,5 +192,5 @@ The MGIR decompiler whitelist accepts `FArrayProperty` for reflected expression 
 
 ## See also
 
-- [`material.compile-state`](material.compile-state.md) for the `shaderCompile` block, the five statuses, and why a successful MGIR compile is not a shader compile.
+- [`material.compile-state`](material.compile-state.md) for the `shaderCompile` block, the six statuses, and why a successful MGIR compile is not a shader compile.
 - [`asset`](asset.md) for asset dump sidecar registration and diff-baseline behavior.

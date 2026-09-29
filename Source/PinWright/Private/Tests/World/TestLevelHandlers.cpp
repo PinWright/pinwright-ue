@@ -1822,7 +1822,8 @@ bool FLevelStructureOpenLevelBlueprintAssetPathRoundTripsTest::RunTest(const FSt
         return true;
     }
 
-    // GetLevelScriptBlueprint(true) create-or-fetches the level-script BP; mark the
+    // GetLevelScriptBlueprint(false) create-or-fetches the level-script BP (the parameter is
+    // bDontCreate); mark the
     // level's dirty flag so creating it (if it did not yet exist) leaves no trace.
     UPackage* LevelPackage = PersistentLevel->GetOutermost();
     const bool bWasDirty = LevelPackage && LevelPackage->IsDirty();
@@ -1834,7 +1835,7 @@ bool FLevelStructureOpenLevelBlueprintAssetPathRoundTripsTest::RunTest(const FSt
         }
     };
 
-    ULevelScriptBlueprint* LevelBP = PersistentLevel->GetLevelScriptBlueprint(true);
+    ULevelScriptBlueprint* LevelBP = PersistentLevel->GetLevelScriptBlueprint(false);
     if (!LevelBP)
     {
         PinWrightTestSkip::SkipAssertions(*this, TEXT("level-script-blueprint-unavailable"),
@@ -1882,12 +1883,83 @@ bool FLevelStructureOpenLevelBlueprintAssetPathRoundTripsTest::RunTest(const FSt
 // level.structure.add_level_blueprint_node — requires: nodeClass
 // ============================================================================
 
+namespace
+{
+    // Creates-or-fetches the current level's Level Blueprint exactly as the level-BP verbs do,
+    // snapshots its nodes and the level package's dirty flag, and on scope exit removes every node
+    // added since and restores the flag. An unbound stub left in the suite world's Level Blueprint
+    // would otherwise be compiled by every later PIE start.
+    struct FPWLevelBlueprintNodeGuard
+    {
+        ULevelScriptBlueprint* LevelBP = nullptr;
+        UPackage* LevelPackage = nullptr;
+        bool bWasDirty = false;
+        TSet<UEdGraphNode*> NodesBefore;
+
+        FPWLevelBlueprintNodeGuard()
+        {
+            UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+            ULevel* Level = World ? World->GetCurrentLevel() : nullptr;
+            if (!Level)
+            {
+                return;
+            }
+            LevelPackage = Level->GetOutermost();
+            bWasDirty = LevelPackage->IsDirty();
+            LevelBP = Level->GetLevelScriptBlueprint(/*bDontCreate=*/false);
+            if (LevelBP)
+            {
+                TArray<UEdGraph*> Graphs;
+                LevelBP->GetAllGraphs(Graphs);
+                for (UEdGraph* Graph : Graphs)
+                {
+                    for (UEdGraphNode* Node : Graph->Nodes)
+                    {
+                        NodesBefore.Add(Node);
+                    }
+                }
+            }
+        }
+
+        ~FPWLevelBlueprintNodeGuard()
+        {
+            if (LevelBP)
+            {
+                bool bRemoved = false;
+                TArray<UEdGraph*> Graphs;
+                LevelBP->GetAllGraphs(Graphs);
+                for (UEdGraph* Graph : Graphs)
+                {
+                    const TArray<TObjectPtr<UEdGraphNode>> Nodes = Graph->Nodes;
+                    for (UEdGraphNode* Node : Nodes)
+                    {
+                        if (Node && !NodesBefore.Contains(Node))
+                        {
+                            Graph->RemoveNode(Node);
+                            bRemoved = true;
+                        }
+                    }
+                }
+                if (bRemoved)
+                {
+                    FBlueprintEditorUtils::MarkBlueprintAsModified(LevelBP);
+                }
+            }
+            if (LevelPackage)
+            {
+                LevelPackage->SetDirtyFlag(bWasDirty);
+            }
+        }
+    };
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FLevelStructureAddLevelBlueprintNodeValidParamsNoCrashTest,
     "PinWright.level.structure.add_level_blueprint_node.ValidParamsNoCrash",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 
 bool FLevelStructureAddLevelBlueprintNodeValidParamsNoCrashTest::RunTest(const FString& Parameters)
 {
+    FPWLevelBlueprintNodeGuard LevelBlueprintGuard;
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
     Payload->SetStringField(TEXT("nodeClass"), TEXT("K2Node_Event"));
     TestTrue(TEXT("level.structure.add_level_blueprint_node found"), InvokeHandler(TEXT("level.structure.add_level_blueprint_node"), Payload));
@@ -2068,6 +2140,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FLevelStructureConnectLevelBlueprintNodesValidP
 
 bool FLevelStructureConnectLevelBlueprintNodesValidParamsNoCrashTest::RunTest(const FString& Parameters)
 {
+    FPWLevelBlueprintNodeGuard LevelBlueprintGuard;
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
     Payload->SetStringField(TEXT("sourceNodeName"), TEXT("BeginPlay"));
     Payload->SetStringField(TEXT("targetNodeName"), TEXT("PrintString"));

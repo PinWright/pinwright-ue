@@ -47,8 +47,26 @@
 #include "PCGManagedResource.h"
 #include "PCGParamData.h"
 
+#include "Components/BoxComponent.h"
 #include "Components/InstancedStaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
+
+namespace PcgGenerateTestFixture
+{
+    // PCG needs its owner to have bounds (the union of the actor's primitive components). On a
+    // bare AActor, UPCGComponent::RegisterComponent logs "Component has invalid bounds" and a
+    // generate aborts before scheduling. Call before registering the PCG component; the box
+    // is the extent a PCG volume would give.
+    inline void GiveActorBounds(AActor* Actor)
+    {
+        UBoxComponent* Box = NewObject<UBoxComponent>(Actor);
+        Box->SetBoxExtent(FVector(500.0));
+        Box->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+        Actor->SetRootComponent(Box);
+        Actor->AddInstanceComponent(Box);
+        Box->RegisterComponent();
+    }
+}
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPCGGenerateHandlerRegisteredTest,
     "PinWright.pcg.generate.HandlerRegistered",
@@ -162,6 +180,7 @@ bool FPCGGenerateCountsSpawnedInstancesTest::RunTest(const FString& Parameters)
 
     Actor->SetActorLabel(FString::Printf(TEXT("MCP_PcgGenCount_%s"),
         *FGuid::NewGuid().ToString(EGuidFormats::Digits)));
+    PcgGenerateTestFixture::GiveActorBounds(Actor);
 
     UPCGComponent* PcgComp = NewObject<UPCGComponent>(Actor, UPCGComponent::StaticClass(),
         NAME_None, RF_Transactional);
@@ -395,6 +414,7 @@ bool FPCGGenerateAttributesInstancesByMeshTest::RunTest(const FString& Parameter
 
     Actor->SetActorLabel(FString::Printf(TEXT("MCP_PcgGenSpecies_%s"),
         *FGuid::NewGuid().ToString(EGuidFormats::Digits)));
+    PcgGenerateTestFixture::GiveActorBounds(Actor);
 
     UPCGComponent* PcgComp = NewObject<UPCGComponent>(Actor, UPCGComponent::StaticClass(),
         NAME_None, RF_Transactional);
@@ -700,6 +720,49 @@ bool FPCGGenerateMissingActorTest::RunTest(const FString& Parameters)
 }
 
 // ---------------------------------------------------------------------------
+// An actor with no bounds is refused inline with ACTOR_HAS_NO_BOUNDS, before any
+// component is added. Pre-fix the verb added and registered a PCG component (engine
+// Error "Component has invalid bounds"), then the aborted pass logged "Didn't schedule
+// any task" and was reported as PCG_GENERATION_CANCELLED, naming no cause. No expected
+// errors are declared: the engine must not log anything on this path.
+// ---------------------------------------------------------------------------
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPCGGenerateBoundlessActorTest,
+    "PinWright.pcg.generate.BoundlessActorRejected",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FPCGGenerateBoundlessActorTest::RunTest(const FString& Parameters)
+{
+    UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+    AActor* Actor = World ? World->SpawnActor<AActor>() : nullptr;
+    if (!Actor)
+    {
+        PinWrightTestSkip::SkipAssertions(*this, TEXT("fixture-unavailable"),
+            TEXT("No editor world or SpawnActor<AActor>() returned null, so the boundless-actor "
+                 "assertions could not run."));
+        return true;
+    }
+    ON_SCOPE_EXIT { if (IsValid(Actor)) { World->DestroyActor(Actor); } };
+
+    const FString Label = FString::Printf(TEXT("MCP_PcgGenBoundless_%s"),
+        *FGuid::NewGuid().ToString(EGuidFormats::Digits));
+    Actor->SetActorLabel(Label);
+
+    TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+    Payload->SetStringField(TEXT("actorName"), Label);
+
+    FTestResponseCapture Capture;
+    TestTrue(TEXT("pcg.generate handler registered"),
+        InvokeHandlerWithCapture(TEXT("pcg.generate"), Payload, Capture));
+    TestTrue(TEXT("handler responded synchronously"), Capture.bWasCalled);
+    TestFalse(TEXT("boundless actor rejected, not faked-success"), Capture.bSuccess);
+    TestEqual(TEXT("error code is ACTOR_HAS_NO_BOUNDS"),
+        Capture.ErrorCode, FString(TEXT("ACTOR_HAS_NO_BOUNDS")));
+    TestNull(TEXT("the refused call added no PCG component"),
+        Actor->FindComponentByClass<UPCGComponent>());
+    return true;
+}
+
+// ---------------------------------------------------------------------------
 // No-schedule completion (anti-hang). When UPCGComponent::GenerateInternal cannot
 // schedule a task it returns InvalidPCGTaskId and broadcasts NO completion delegate.
 // An implementation that binds ONLY OnPCGGraphGeneratedDelegate and fires the void
@@ -741,6 +804,8 @@ bool FPCGGenerateNoScheduleResolvesTest::RunTest(const FString& Parameters)
     const FString Label = FString::Printf(TEXT("MCP_PcgGenNoSchedule_%s"),
         *FGuid::NewGuid().ToString(EGuidFormats::Digits));
     Actor->SetActorLabel(Label);
+    // Bounds keep the handler's ACTOR_HAS_NO_BOUNDS guard from answering first.
+    PcgGenerateTestFixture::GiveActorBounds(Actor);
 
     // A deactivated component makes UPCGComponent::ShouldGenerate() return false
     // deterministically (its first guard is !bActivated), so GenerateLocalGetTaskId
@@ -835,6 +900,9 @@ bool FPCGGenerateTicketedKickoffTest::RunTest(const FString& Parameters)
     const FString Label = FString::Printf(TEXT("MCP_PcgGenTicket_%s"),
         *FGuid::NewGuid().ToString(EGuidFormats::Digits));
     Actor->SetActorLabel(Label);
+    // Without bounds the pass aborts before scheduling and this test only ever reached its
+    // PCG_GENERATION_CANCELLED skip path.
+    PcgGenerateTestFixture::GiveActorBounds(Actor);
 
     // Activated (unlike the no-schedule fixture above) so UPCGComponent::ShouldGenerate
     // can pass and the scheduler path is the one under test.
@@ -901,8 +969,8 @@ bool FPCGGenerateTicketedKickoffTest::RunTest(const FString& Parameters)
         //   PCG_GENERATION_NOT_SCHEDULED (:342) -- the trigger returned InvalidPCGTaskId,
         //     nothing was scheduled, so no completion delegate will ever fire.
         //   PCG_GENERATION_CANCELLED (:313) -- OnPCGGraphCancelledDelegate fired on this
-        //     same stack because the pass aborted immediately, which is what a bare
-        //     automation world without a live PCG scheduler actually produces.
+        //     same stack because the pass aborted immediately. The measured cause was the
+        //     fixture actor having no bounds, which GiveActorBounds now supplies.
         // Any OTHER code still fails: a handler that rejected a good actor, or that lost
         // the scheduler trigger, does not land on either of these.
         const bool bAcceptableInlineRejection =
@@ -1091,6 +1159,7 @@ bool FPCGGenerateNonPointOutputIsDistinguishableTest::RunTest(const FString& Par
     {
         OwningActor->SetActorLabel(FString::Printf(TEXT("%s_%s"), LabelPrefix,
             *FGuid::NewGuid().ToString(EGuidFormats::Digits)));
+        PcgGenerateTestFixture::GiveActorBounds(OwningActor);
         UPCGComponent* Comp = NewObject<UPCGComponent>(OwningActor, UPCGComponent::StaticClass(),
             NAME_None, RF_Transactional);
         if (!Comp)

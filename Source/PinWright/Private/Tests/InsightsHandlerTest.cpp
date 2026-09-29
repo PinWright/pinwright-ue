@@ -18,6 +18,27 @@
 #include "Misc/ScopeExit.h"
 #include "Tests/TestSkipReporting.h"
 
+// Named namespace, not anonymous: Unity may merge this TU with other test files.
+namespace PwInsightsTestTrace
+{
+    // A bare Stop right after Start is refused while the connection is still pending, and an
+    // accepted Stop only queues the close (see RequestTraceStop / WaitForTraceClose); starting
+    // before the close completes logs the engine's "already tracing" Error. Returns whether the
+    // trace is closed.
+    bool StopAndWaitForClose()
+    {
+        PinWrightRpc::Insights::RequestTraceStop(5.0);
+        return PinWrightRpc::Insights::WaitForTraceClose(5.0);
+    }
+
+    // WriteToFile refuses an existing file and Start then logs "Trace failed to connect" at Error,
+    // so a fixed trace name fails every run after the one that first wrote it.
+    FString UniqueTraceName(const TCHAR* Prefix)
+    {
+        return FString::Printf(TEXT("%s_%s"), Prefix, *FGuid::NewGuid().ToString(EGuidFormats::Digits));
+    }
+}
+
 // Verifies ResolveActiveTracePath returns an empty string when no trace is
 // connected. Counterfactual: if the helper hardcoded a sentinel path (or
 // returned a stale value from a previous session), .IsEmpty() would be false
@@ -29,10 +50,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FInsightsResolveActiveTracePathNotConnectedRetu
 bool FInsightsResolveActiveTracePathNotConnectedReturnsEmptyTest::RunTest(const FString& Parameters)
 {
     // Ensure no trace is active before measuring the disconnected state.
-    if (FTraceAuxiliary::IsConnected())
-    {
-        FTraceAuxiliary::Stop();
-    }
+    PwInsightsTestTrace::StopAndWaitForClose();
 
     TestTrue(TEXT("ResolveActiveTracePath is empty when not connected"),
         PinWrightRpc::Insights::ResolveActiveTracePath().IsEmpty());
@@ -49,9 +67,16 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FInsightsResolveActiveTracePathAfterFileTraceRe
 
 bool FInsightsResolveActiveTracePathAfterFileTraceReturnsPathTest::RunTest(const FString& Parameters)
 {
+    if (!PwInsightsTestTrace::StopAndWaitForClose())
+    {
+        PinWrightTestSkip::SkipAssertions(*this, TEXT("trace-still-closing"),
+            TEXT("Previous trace did not finish closing, skipping"));
+        return true;
+    }
+
     const bool bStarted = FTraceAuxiliary::Start(
         FTraceAuxiliary::EConnectionType::File,
-        TEXT("InsightsHandlerTest"),
+        *PwInsightsTestTrace::UniqueTraceName(TEXT("InsightsHandlerTest")),
         nullptr,
         nullptr);
 
@@ -67,7 +92,10 @@ bool FInsightsResolveActiveTracePathAfterFileTraceReturnsPathTest::RunTest(const
     TestTrue(TEXT("Path contains the requested trace target name"),
         Path.Contains(TEXT("InsightsHandlerTest"), ESearchCase::IgnoreCase));
 
-    FTraceAuxiliary::Stop();
+    if (PwInsightsTestTrace::StopAndWaitForClose() && !Path.IsEmpty())
+    {
+        IFileManager::Get().Delete(*Path, /*RequireExists=*/false, /*EvenReadOnly=*/true);
+    }
     return true;
 }
 
@@ -128,14 +156,16 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FInsightsExportWriteFailureIsTypedAndAtomicTest
 
 bool FInsightsExportWriteFailureIsTypedAndAtomicTest::RunTest(const FString& Parameters)
 {
-    if (FTraceAuxiliary::IsConnected())
+    if (!PwInsightsTestTrace::StopAndWaitForClose())
     {
-        FTraceAuxiliary::Stop();
+        PinWrightTestSkip::SkipAssertions(*this, TEXT("trace-still-closing"),
+            TEXT("Previous trace did not finish closing, skipping export write-failure check"));
+        return true;
     }
 
     const bool bStarted = FTraceAuxiliary::Start(
         FTraceAuxiliary::EConnectionType::File,
-        TEXT("InsightsExportWriteFailureTest"),
+        *PwInsightsTestTrace::UniqueTraceName(TEXT("InsightsExportWriteFailureTest")),
         nullptr,
         nullptr);
     if (!bStarted)
@@ -146,7 +176,7 @@ bool FInsightsExportWriteFailureIsTypedAndAtomicTest::RunTest(const FString& Par
     }
 
     FString TracePath = PinWrightRpc::Insights::ResolveActiveTracePath();
-    FTraceAuxiliary::Stop();
+    PwInsightsTestTrace::StopAndWaitForClose();
 
     const FString OutDir = FPaths::ConvertRelativePathToFull(
         FPaths::Combine(FPaths::ProjectIntermediateDir(), TEXT("InsightsExportFailureTests"),
@@ -160,6 +190,7 @@ bool FInsightsExportWriteFailureIsTypedAndAtomicTest::RunTest(const FString& Par
         {
             PinWrightRpc::TraceExport::SetWriteFailureInjectionForTests(false);
             FileManager.DeleteDirectory(*OutDir, /*RequireExists=*/false, /*Tree=*/true);
+            FileManager.Delete(*TracePath, /*RequireExists=*/false, /*EvenReadOnly=*/true);
         }
     };
 
@@ -261,14 +292,16 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FInsightsExportNoGameFramesIsTypedFailureTest,
 
 bool FInsightsExportNoGameFramesIsTypedFailureTest::RunTest(const FString& Parameters)
 {
-    if (FTraceAuxiliary::IsConnected())
+    if (!PwInsightsTestTrace::StopAndWaitForClose())
     {
-        FTraceAuxiliary::Stop();
+        PinWrightTestSkip::SkipAssertions(*this, TEXT("trace-still-closing"),
+            TEXT("Previous trace did not finish closing, skipping no-frame export check"));
+        return true;
     }
 
     const bool bStarted = FTraceAuxiliary::Start(
         FTraceAuxiliary::EConnectionType::File,
-        TEXT("InsightsExportNoFramesTest"),
+        *PwInsightsTestTrace::UniqueTraceName(TEXT("InsightsExportNoFramesTest")),
         nullptr,
         nullptr);
     if (!bStarted)
@@ -279,7 +312,7 @@ bool FInsightsExportNoGameFramesIsTypedFailureTest::RunTest(const FString& Param
     }
 
     FString TracePath = PinWrightRpc::Insights::ResolveActiveTracePath();
-    FTraceAuxiliary::Stop();
+    PwInsightsTestTrace::StopAndWaitForClose();
 
     const FString OutDir = FPaths::ConvertRelativePathToFull(
         FPaths::Combine(FPaths::ProjectIntermediateDir(), TEXT("InsightsExportNoFrameTests"),
@@ -293,6 +326,7 @@ bool FInsightsExportNoGameFramesIsTypedFailureTest::RunTest(const FString& Param
         {
             PinWrightRpc::TraceExport::SetForceNoGameFramesForTests(false);
             FileManager.DeleteDirectory(*OutDir, /*RequireExists=*/false, /*Tree=*/true);
+            FileManager.Delete(*TracePath, /*RequireExists=*/false, /*EvenReadOnly=*/true);
         }
     };
 
@@ -389,13 +423,15 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FInsightsExportTimeoutIsTypedAndCleansArtifacts
 
 bool FInsightsExportTimeoutIsTypedAndCleansArtifactsTest::RunTest(const FString& Parameters)
 {
-    if (FTraceAuxiliary::IsConnected())
+    if (!PwInsightsTestTrace::StopAndWaitForClose())
     {
-        FTraceAuxiliary::Stop();
+        PinWrightTestSkip::SkipAssertions(*this, TEXT("trace-still-closing"),
+            TEXT("Previous trace did not finish closing, skipping timeout check"));
+        return true;
     }
     const bool bStarted = FTraceAuxiliary::Start(
         FTraceAuxiliary::EConnectionType::File,
-        TEXT("InsightsExportTimeoutTest"), nullptr, nullptr);
+        *PwInsightsTestTrace::UniqueTraceName(TEXT("InsightsExportTimeoutTest")), nullptr, nullptr);
     if (!bStarted)
     {
         PinWrightTestSkip::SkipAssertions(*this, TEXT("trace-unavailable"),
@@ -404,7 +440,7 @@ bool FInsightsExportTimeoutIsTypedAndCleansArtifactsTest::RunTest(const FString&
     }
 
     const FString TracePath = PinWrightRpc::Insights::ResolveActiveTracePath();
-    FTraceAuxiliary::Stop();
+    PwInsightsTestTrace::StopAndWaitForClose();
     const FString OutDir = FPaths::ConvertRelativePathToFull(
         FPaths::Combine(FPaths::ProjectIntermediateDir(), TEXT("InsightsExportTimeoutTests"),
             FGuid::NewGuid().ToString(EGuidFormats::Digits)));
@@ -417,6 +453,7 @@ bool FInsightsExportTimeoutIsTypedAndCleansArtifactsTest::RunTest(const FString&
         {
             PinWrightRpc::TraceExport::SetForceSlowAnalysisForTests(false);
             FileManager.DeleteDirectory(*OutDir, false, true);
+            FileManager.Delete(*TracePath, false, true);
         }
     };
     if (TracePath.IsEmpty() || !FileManager.FileExists(*TracePath))
@@ -480,5 +517,187 @@ bool FInsightsExportTimeoutIsTypedAndCleansArtifactsTest::RunTest(const FString&
     TestEqual(TEXT("timeout uses EXPORT_TIMED_OUT"), Ticket.Error,
         FString(ErrorCodes::ERR_EXPORT_TIMED_OUT));
     TestFalse(TEXT("timeout leaves no final CSV"), FileManager.FileExists(*CsvPath));
+    return true;
+}
+
+// insights.start_session must refuse, naming the active destination, when a trace is already open.
+// Counterfactual: the old handler ran 'Trace.Start', which made the engine log "Unable to start
+// trace, already tracing to" at Error (failing this test on its own) and still answered
+// status:"started"; both the error-code and the unchanged-destination assertions fail on it.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FInsightsStartSessionRefusesWhileTraceActiveTest,
+    "PinWright.insights.start_session.RefusesWhileTraceActive",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FInsightsStartSessionRefusesWhileTraceActiveTest::RunTest(const FString& Parameters)
+{
+    if (!PwInsightsTestTrace::StopAndWaitForClose())
+    {
+        PinWrightTestSkip::SkipAssertions(*this, TEXT("trace-still-closing"),
+            TEXT("Previous trace did not finish closing, skipping start_session refusal check"));
+        return true;
+    }
+    if (!FTraceAuxiliary::Start(FTraceAuxiliary::EConnectionType::File,
+            *PwInsightsTestTrace::UniqueTraceName(TEXT("InsightsStartSessionActiveTest")), nullptr, nullptr))
+    {
+        PinWrightTestSkip::SkipAssertions(*this, TEXT("trace-unavailable"),
+            TEXT("Trace start unavailable, skipping start_session refusal check"));
+        return true;
+    }
+    const FString OwnPath = PinWrightRpc::Insights::ResolveActiveTracePath();
+    ON_SCOPE_EXIT
+    {
+        if (PwInsightsTestTrace::StopAndWaitForClose() && !OwnPath.IsEmpty())
+        {
+            IFileManager::Get().Delete(*OwnPath, /*RequireExists=*/false, /*EvenReadOnly=*/true);
+        }
+    };
+
+    FTestResponseCapture Capture;
+    TestTrue(TEXT("start_session handler is registered"),
+        InvokeHandlerWithCapture(TEXT("insights.start_session"), MakeShared<FJsonObject>(), Capture));
+    TestTrue(TEXT("start_session responds"), Capture.bWasCalled);
+    TestFalse(TEXT("start_session refuses while a trace is active"), Capture.bSuccess);
+    TestEqual(TEXT("refusal is TRACE_ALREADY_ACTIVE"), Capture.ErrorCode,
+        FString(ErrorCodes::ERR_TRACE_ALREADY_ACTIVE));
+    FString ActiveDestination;
+    TestTrue(TEXT("refusal names the active destination"), Capture.Result.IsValid()
+        && Capture.Result->TryGetStringField(TEXT("activeDestination"), ActiveDestination));
+    TestEqual(TEXT("named destination is the trace the test opened"), ActiveDestination, OwnPath);
+    TestTrue(TEXT("the open trace is still connected"), FTraceAuxiliary::IsConnected());
+    TestEqual(TEXT("the open trace still writes to its own destination"),
+        PinWrightRpc::Insights::ResolveActiveTracePath(), OwnPath);
+    return true;
+}
+
+// An accepted stop leaves the connection open until TraceLog's worker thread closes it (a couple of
+// worker updates later). start_session issued in that window must wait the close out and start, and
+// stop_session must report a closed file. Counterfactual: the old handler started straight into the
+// pending close (engine Error, no new trace) and still answered status:"started"; the old
+// stop_session returned before the close.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FInsightsStartSessionWaitsOutPendingCloseTest,
+    "PinWright.insights.start_session.WaitsOutPendingClose",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FInsightsStartSessionWaitsOutPendingCloseTest::RunTest(const FString& Parameters)
+{
+    if (!PwInsightsTestTrace::StopAndWaitForClose())
+    {
+        PinWrightTestSkip::SkipAssertions(*this, TEXT("trace-still-closing"),
+            TEXT("Previous trace did not finish closing, skipping pending-close check"));
+        return true;
+    }
+    if (!FTraceAuxiliary::Start(FTraceAuxiliary::EConnectionType::File,
+            *PwInsightsTestTrace::UniqueTraceName(TEXT("InsightsStartSessionPendingTest")), nullptr, nullptr))
+    {
+        PinWrightTestSkip::SkipAssertions(*this, TEXT("trace-unavailable"),
+            TEXT("Trace start unavailable, skipping pending-close check"));
+        return true;
+    }
+    const FString FirstPath = PinWrightRpc::Insights::ResolveActiveTracePath();
+    FString SessionPath;
+    ON_SCOPE_EXIT
+    {
+        if (PwInsightsTestTrace::StopAndWaitForClose())
+        {
+            IFileManager::Get().Delete(*FirstPath, /*RequireExists=*/false, /*EvenReadOnly=*/true);
+            if (!SessionPath.IsEmpty())
+            {
+                IFileManager::Get().Delete(*SessionPath, /*RequireExists=*/false, /*EvenReadOnly=*/true);
+            }
+        }
+    };
+
+    // A bare Stop here would be refused (the connection is still pending adoption by the worker);
+    // RequestTraceStop retries until the stop is accepted, which queues the close.
+    if (!TestTrue(TEXT("the test's stop is accepted"), PinWrightRpc::Insights::RequestTraceStop(5.0)))
+    {
+        return true;
+    }
+    if (!FTraceAuxiliary::IsConnected()
+        || FTraceAuxiliary::GetConnectionType() != FTraceAuxiliary::EConnectionType::None)
+    {
+        PinWrightTestSkip::SkipAssertions(*this, TEXT("close-completed-before-probe"),
+            TEXT("The trace closed before start_session could be issued, so the pending-close state was not entered"));
+        return true;
+    }
+
+    FTestResponseCapture StartCapture;
+    TestTrue(TEXT("start_session handler is registered"),
+        InvokeHandlerWithCapture(TEXT("insights.start_session"), MakeShared<FJsonObject>(), StartCapture));
+    TestTrue(FString::Printf(TEXT("start_session starts after the pending close (errorCode='%s')"),
+        *StartCapture.ErrorCode), StartCapture.bSuccess);
+    if (!StartCapture.bSuccess || !StartCapture.Result.IsValid())
+    {
+        return true;
+    }
+    StartCapture.Result->TryGetStringField(TEXT("tracePath"), SessionPath);
+    TestFalse(TEXT("start_session reports a destination"), SessionPath.IsEmpty());
+    TestEqual(TEXT("reported destination is the engine's live destination"),
+        PinWrightRpc::Insights::ResolveActiveTracePath(), SessionPath);
+    TestNotEqual(TEXT("the new session writes a new file"), SessionPath, FirstPath);
+    TestTrue(TEXT("a trace is connected after start_session"), FTraceAuxiliary::IsConnected());
+
+    FTestResponseCapture StopCapture;
+    TestTrue(TEXT("stop_session handler is registered"),
+        InvokeHandlerWithCapture(TEXT("insights.stop_session"), MakeShared<FJsonObject>(), StopCapture));
+    TestTrue(TEXT("stop_session succeeds"), StopCapture.bSuccess && StopCapture.Result.IsValid());
+    if (StopCapture.Result.IsValid())
+    {
+        TestEqual(TEXT("stop_session reports stopped"),
+            StopCapture.Result->GetStringField(TEXT("status")), FString(TEXT("stopped")));
+        TestTrue(TEXT("stop_session reports the file closed"), StopCapture.Result->GetBoolField(TEXT("closed")));
+        TestEqual(TEXT("stop_session reports the session's path"),
+            StopCapture.Result->GetStringField(TEXT("tracePath")), SessionPath);
+    }
+    TestFalse(TEXT("no trace is connected after stop_session"), FTraceAuxiliary::IsConnected());
+    TestTrue(TEXT("the session's .utrace exists"), IFileManager::Get().FileExists(*SessionPath));
+    return true;
+}
+
+// FTraceAuxiliary::Start only queues the connection; until TraceLog's worker adopts it, Stop is
+// refused. stop_session issued in that window must still stop the trace and report it closed.
+// Counterfactual: the old stop_session made one bare Stop call, which was refused, and answered
+// status:"not_running" while the trace went on recording.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FInsightsStopSessionStopsATraceStillConnectingTest,
+    "PinWright.insights.stop_session.StopsATraceStillConnecting",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FInsightsStopSessionStopsATraceStillConnectingTest::RunTest(const FString& Parameters)
+{
+    if (!PwInsightsTestTrace::StopAndWaitForClose())
+    {
+        PinWrightTestSkip::SkipAssertions(*this, TEXT("trace-still-closing"),
+            TEXT("Previous trace did not finish closing, skipping stop-while-connecting check"));
+        return true;
+    }
+    if (!FTraceAuxiliary::Start(FTraceAuxiliary::EConnectionType::File,
+            *PwInsightsTestTrace::UniqueTraceName(TEXT("InsightsStopSessionConnectingTest")), nullptr, nullptr))
+    {
+        PinWrightTestSkip::SkipAssertions(*this, TEXT("trace-unavailable"),
+            TEXT("Trace start unavailable, skipping stop-while-connecting check"));
+        return true;
+    }
+    const FString OwnPath = PinWrightRpc::Insights::ResolveActiveTracePath();
+    ON_SCOPE_EXIT
+    {
+        if (PwInsightsTestTrace::StopAndWaitForClose() && !OwnPath.IsEmpty())
+        {
+            IFileManager::Get().Delete(*OwnPath, /*RequireExists=*/false, /*EvenReadOnly=*/true);
+        }
+    };
+
+    FTestResponseCapture StopCapture;
+    TestTrue(TEXT("stop_session handler is registered"),
+        InvokeHandlerWithCapture(TEXT("insights.stop_session"), MakeShared<FJsonObject>(), StopCapture));
+    TestTrue(TEXT("stop_session succeeds"), StopCapture.bSuccess && StopCapture.Result.IsValid());
+    if (StopCapture.Result.IsValid())
+    {
+        TestEqual(TEXT("stop_session reports stopped, not not_running"),
+            StopCapture.Result->GetStringField(TEXT("status")), FString(TEXT("stopped")));
+        TestTrue(TEXT("stop_session reports the file closed"), StopCapture.Result->GetBoolField(TEXT("closed")));
+        TestEqual(TEXT("stop_session reports the trace's path"),
+            StopCapture.Result->GetStringField(TEXT("tracePath")), OwnPath);
+    }
+    TestFalse(TEXT("no trace is connected after stop_session"), FTraceAuxiliary::IsConnected());
     return true;
 }

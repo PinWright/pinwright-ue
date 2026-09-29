@@ -8,6 +8,7 @@ class UEdGraphNode;
 class UEdGraphPin;
 class UNiagaraGraph;
 class UNiagaraNode;
+class UNiagaraNodeFunctionCall;
 class UNiagaraScript;
 enum class ENiagaraScriptUsage : uint8;
 struct FNiagaraTypeDefinition;
@@ -92,6 +93,13 @@ namespace NIRTextEmitter
 // pins. Returns the formatted RHS string; warnings (including the depth-32 recursion-limit
 // marker) are routed through Out.
 FString EmitInputValueExpr(UEdGraphPin* InputPin, FNIRTextEmitter& Out, int32 Depth);
+
+// Map un-aliased input name -> override pin on Node's stack override node (the
+// UNiagaraNodeParameterMapSet feeding Node's parameter-map input, whose pins are named
+// "<FunctionName>.<Input>"). Module and dynamic-input calls both keep the overrides of their
+// Module.* inputs there, because those inputs have no pin on the call node itself.
+// Empty when Node has no override node.
+TMap<FName, UEdGraphPin*> CollectOverridePinsByInputName(UNiagaraNodeFunctionCall& Node);
 
 // Format an input-pin RHS as the SSA-style "%upstream.OutputPinName" local reference when the
 // pin is linked, or the literal pin default when it's not. The "%name" form mirrors BPIR /

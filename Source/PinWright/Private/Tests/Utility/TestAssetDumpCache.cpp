@@ -251,15 +251,17 @@ bool FAssetDumpCacheBpirAspectVersionTest::RunTest(const FString& Parameters)
     // (AnimGraph roots reach the decompiler through the engine compile-root backstop) and
     // that gates no exec body no longer renders as `entry event UnknownEntry() {}`, so
     // AnimGraph-bearing Blueprints go back to the single empty-graph marker.
+    // Bumped to 10: `timeline Name(...)` carries the template's settings and tracks
+    // (ticket B-decompile-drops-timeline-tracks).
     TestEqual(TEXT("bpir.txt explicit aspect version"),
         AssetDumpCache::GetAspectVersion(DumpFileNames::BpirTxt),
-        static_cast<int32>(9));
+        static_cast<int32>(10));
 
     const TArray<FString> WrittenFiles{DumpFileNames::BpirTxt};
     const TMap<FString, int32> AspectVersions = AssetDumpCache::MakeCurrentAspectVersions(WrittenFiles);
     TestEqual(TEXT("bpir.txt current aspect version"),
         AspectVersions.FindRef(DumpFileNames::BpirTxt),
-        static_cast<int32>(9));
+        static_cast<int32>(10));
 
     return true;
 }

@@ -4,11 +4,11 @@
 // TestAssetSaveHonesty.cpp: a verb whose report did not match what happened.
 //
 // system.job_cancel returned {cancelled:true} for any ticket that happened to be in "running",
-// regardless of whether anything could stop the work. Only 4 of the 19 ticketed verbs register a
+// regardless of whether anything could stop the work. Only 4 of the 18 ticketed verbs register a
 // cancel hook (asset.dump, asset.dump_folder, localization.gather, localization.compile, plus
-// pcg.generate on 5.4+); the other fifteen — level.build_lighting, level.build_all,
+// pcg.generate on 5.4+); the other fourteen — level.build_lighting, level.build_all,
 // level.build_navigation, level.save, level.save_as, lighting.build_lighting,
-// navigation.rebuild_navigation, system.run_ubt, system.run_tests, editor.screenshot,
+// navigation.rebuild_navigation, system.run_tests, editor.screenshot,
 // blueprint.build_api_index, performance.run_benchmark, performance.optimize_shaders,
 // render.nanite_rebuild_mesh, mrq.run_jobs — have no mechanism at all.
 //
@@ -17,7 +17,7 @@
 // belief that the editor was idle, and one recorded run wrote ~19,700 files after the
 // "successful" cancel.
 //
-// Making the fifteen genuinely cancellable is 200-500 lines each (chunking work loops that have
+// Making the fourteen genuinely cancellable is 200-500 lines each (chunking work loops that have
 // no engine completion hook), so the fix is to report the truth, not to fake the capability.
 // Every assertion below is written so it FAILS if the verb goes back to answering success.
 

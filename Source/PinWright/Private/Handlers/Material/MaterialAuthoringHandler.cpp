@@ -1718,7 +1718,7 @@ REGISTER_RPC_HANDLER("material.authoring.add_custom_expression", "material.autho
 // connect_nodes
 // --------------------------------------------------------------------------
 REGISTER_RPC_HANDLER("material.authoring.connect_nodes", "material.authoring",
-    "Connect a source expression output to a target expression input or main material node. A wire is a GRAPH write, not a shader compile: read shaderCompile.status in the response for the material's measured shader state, and call material.authoring.compile_material for the final verdict when it reads notCompiled.",
+    "Connect a source expression output to a target expression input or main material node. A wire is a GRAPH write, not a shader compile: read shaderCompile.status in the response for the material's measured shader state, and call material.authoring.compile_material for the final verdict when it reads onDemand or notCompiled.",
     RPC_PARAMS(
         MaterialHandlerUtils::MaterialAssetPathParamReq(TEXT("assetPath"), TEXT("path"), TEXT("Material asset path")),
         RPC_PARAM_REQ("sourceNodeId", "string", "Source node ID/name"),

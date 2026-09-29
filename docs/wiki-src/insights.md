@@ -40,7 +40,7 @@ Periodically samples the call stack of running threads via **ETW** on Windows, i
 - **Enable (runtime):** `call("insights.set_channels", {"enable": "stacksampling"})`. Channel name matching is case-insensitive and strips a trailing `"Channel"` suffix (`TraceLog/Private/Trace/Channel.cpp:48-83`), so `stacksampling`, `StackSampling`, and `StackSamplingChannel` all resolve to the same channel defined at `PlatformEvents.cpp:61` (`UE_TRACE_CHANNEL_CUSTOM_DEFINE(StackSamplingChannel, ...)`).
 - **Enable (relaunch):** `-trace=default,stacksampling` (parsed at `TraceAuxiliary.cpp:1714`). Pairing with `contextswitch` is recommended (see Step 3).
 - **Sampling interval:** default **125 µs (8 kHz)**; override only at launch with `-samplinginterval=<microseconds>` (`TraceAuxiliary.cpp:2189-2192`). There is **no runtime cvar** for the interval. The ETW driver clamps the effective interval to 1221–10,000,000 (×100 ns units) in `EventTracingForWindows.cpp:519`.
-- **Windows requirements — hard gate:** the process must be **elevated (run as administrator)**. `FPlatformEvents::CanEnable` checks the token elevation and refuses otherwise with "Process does not have privileges to start event tracing" (`EventTracingForWindows.cpp:257-307`); `StartTraceW` returns `ERROR_ACCESS_DENIED` → "Administrator rights required for ETW" (`EventTracingForWindows.cpp:558-563`). It uses the single system-wide **NT Kernel Logger** session, so it can collide with other ETW tools (WPR/xperf) — those must be stopped first. Enabling the channel without admin silently produces no samples; check `Saved/Logs/<ProjectName>.log` for the privilege error if the timeline stays empty.
+- **Windows requirements — hard gate:** the process must be **elevated (run as administrator)**. `FPlatformEvents::CanEnable` checks the token elevation and refuses otherwise with "Process does not have privileges to start event tracing" (`EventTracingForWindows.cpp:257-307`); `StartTraceW` returns `ERROR_ACCESS_DENIED` → "Administrator rights required for ETW" (`EventTracingForWindows.cpp:558-563`). It uses the single system-wide **NT Kernel Logger** session, so it can collide with other ETW tools (WPR/xperf) — those must be stopped first. Enabling the channel without admin silently produces no samples; check this editor's log (the path `system.identity` returns as `log_file`) for the privilege error if the timeline stays empty.
 - **Overhead caveat:** sampling adds per-sample call-stack-walk cost and a kernel→user event stream; far cheaper than named events for total-frame fidelity, but the trace grows fast at 8 kHz across all threads. Capture in short windows.
 
 **Step 3 — Context switches (computing vs. blocked)**
@@ -111,3 +111,23 @@ Deadline enforcement is cooperative at plugin-controlled enumeration boundaries;
 1. **Locate the slow window.** Export `frame_series` and plot `GameThread_busy_ms` and `RenderThread_busy_ms` across the whole trace. Find the frame range where total frame time spikes and note which thread carries the cost — that range (in ms) becomes your investigation window, and the dominant thread tells you whether you are CPU-game-bound or render-bound.
 2. **Discover the scope names.** Export `timers` and read `timers.csv` to list the timer (scope) names active in the trace. This is how you find the exact Chaos scope strings to target in step 3. Note: under Chaos resimulated physics the resim work runs on **"Foreground Worker #N"** threads, and N is not stable run-to-run — so isolate Chaos cost by **timer name, not by thread**. Filtering `frame_series` by a `Foreground Worker` thread name will miss or mislabel the resim cost; filtering `timer_stats` by the Chaos scope name will not.
 3. **Diff two windows.** Run `timer_stats` with two `windows[]` entries — a moving window and an idle window over the same trace — restricted (via `timers[]` or `topN`) to the scopes of interest. This yields `timer_stats__moving.csv` and `timer_stats__idle.csv`. Load both in pandas, join on timer name, and sort by the delta in **exclusive ms-per-frame**; the top of that diff is the scope whose per-frame cost grew when the pawn started moving.
+
+### insights.start_session
+
+Opens an auto-named file trace (`FTraceAuxiliary::Start`, `.utrace` in the profiling directory) and reports what the engine actually connected: `tracePath` (the live destination), `connected`, `connectionType` and `activeChannels` (the measured channel set; `channels` echoes the request when given).
+
+- **One trace at a time.** When a trace is already open the call refuses with `TRACE_ALREADY_ACTIVE`; the error payload names `activeDestination` and `connectionType`. Stop it with `insights.stop_session` first. The open trace is left untouched.
+- **A stop that is still closing is waited out.** `FTraceAuxiliary::Stop` only queues the close, and the engine's trace writer thread finishes it shortly after; starting in that window would make the engine refuse. The verb waits up to 5 s for such a pending close before starting, and refuses with `TRACE_ALREADY_ACTIVE` if it is still open after that.
+- `TRACE_START_FAILED` means the engine opened no connection (`started` / `connected` in the payload); the editor log carries the engine's reason.
+
+### insights.stop_session
+
+Stops the active trace, waits up to 5 s for the engine to close the file, and reports `tracePath` (captured before the stop) and `closed`. `status` is `stopped` (closed), `stop_pending` (stop accepted but the file was still open after 5 s; a `warnings` entry says so, poll `insights.get_trace_path` until `connected` is false before reading the file) or `not_running` (nothing to stop). The engine refuses `FTraceAuxiliary::Stop` while a just-started connection is still pending (its trace writer thread adopts it on the next update, every ~17 ms), so the verb retries the stop until the engine accepts it instead of reporting `not_running` for a trace that goes on recording.
+
+### insights.set_channels
+
+`enabled` / `disabled` echo the request; `activeChannels` is the engine's channel set measured after the change. A channel name the engine does not know is absent from `activeChannels`, which is the only signal: the console commands this verb forwards to do not report unknown names.
+
+### insights.snapshot
+
+Writes the in-memory trace buffer to a `.utrace` without stopping the session. A snapshot the engine did not write fails with `SNAPSHOT_FAILED` (the payload carries the requested `filePath`).

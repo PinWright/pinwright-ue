@@ -36,10 +36,10 @@
 //
 //   * ON THE CURRENT BUILD every MALFORMED `assetPath` below is refused INVALID_PATH inside
 //     BuildCreatePaths, which sets OutObjectPath only on its LAST line - so a rejected path never
-//     even reaches the ALREADY_EXISTS lookup, let alone CreatePackage. The one exception is the
-//     bare mount root, which the guard ACCEPTS and the companion-asset load refuses instead; it is
-//     driven through ExpectAssetPathRefusedDownstream and is not a Fatal vector. Measured
-//     2026-08-31, after the first version of this file asserted INVALID_PATH there and went red.
+//     even reaches the ALREADY_EXISTS lookup, let alone CreatePackage. That includes the bare
+//     mount root: IsValidLongPackageName accepts "/Game", so BuildCreatePaths refuses it with its
+//     own content-root check, added 2026-09-29 because the ALREADY_EXISTS LoadObject on
+//     "/Game.Game" logged a DoesPackageExist engine error (it is not a Fatal vector).
 //   * ON A BUILD MISSING ONE OR TWO of the three checks the remaining ones still refuse: every
 //     malformed value below carries "//", ".." or a drive letter, and no single check owns all
 //     three.
@@ -161,30 +161,6 @@ namespace PoseSearchCreateAssetPathSafetyHelpers
     // Drives one refusal case and reports on the three facts that separate the guarded contract
     // from an unguarded handler: it is refused, it is refused as a PATH error rather than as a
     // missing companion asset, and the message quotes the offending value so the caller can act.
-    // For an input that IS refused but NOT by the path guard, and is not a CreatePackage Fatal
-    // vector either. A bare mount root is the case: it carries no "//" and does not resolve empty,
-    // so both Fatal branches are unreachable, and FPackageName::IsValidLongPackageName accepts it
-    // -- BuildCreatePaths returns true and the companion-asset load below refuses it instead.
-    // Asserting INVALID_PATH here measured a contract the handler never had. What is worth pinning
-    // is that the call is refused at all and the process survives; the seven genuinely malformed
-    // values above are what discriminate a guarded build from an unguarded one.
-    inline void ExpectAssetPathRefusedDownstream(FAutomationTestBase& Test, const TCHAR* Method,
-        const TSharedPtr<FJsonObject>& Params, const FString& BadPath, const TCHAR* Label)
-    {
-        Params->SetStringField(TEXT("assetPath"), BadPath);
-
-        FTestResponseCapture Capture;
-        const bool bFound = InvokeHandlerWithCapture(Method, Params, Capture);
-        Test.TestTrue(*FString::Printf(TEXT("%s handler is registered"), Method), bFound);
-        Test.TestTrue(*FString::Printf(TEXT("%s answered the %s path"), Method, Label),
-            Capture.bWasCalled);
-        Test.TestFalse(*FString::Printf(TEXT("%s: a %s assetPath ('%s') is refused"), Method,
-            Label, *BadPath), Capture.bSuccess);
-        Test.TestFalse(*FString::Printf(
-            TEXT("%s: a %s assetPath does not create the asset"), Method, Label),
-            Capture.bSuccess && Capture.ErrorCode.IsEmpty());
-    }
-
     inline void ExpectAssetPathRefused(FAutomationTestBase& Test, const TCHAR* Method,
         const TSharedPtr<FJsonObject>& Params, const FString& BadPath, const TCHAR* Label)
     {
@@ -287,11 +263,10 @@ bool FPoseSearchCreateSchemaMalformedAssetPathIsRefusedTest::RunTest(const FStri
         FString::Printf(TEXT("C:/Temp/%s"), *SafetyUniqueLeaf(TEXT("Schema"))),
         TEXT("windows absolute"));
 
-    // A bare mount root is NOT a Fatal vector and is NOT refused by the path guard: it carries no
-    // "//", does not resolve empty, and IsValidLongPackageName accepts it, so BuildCreatePaths
-    // passes it through and the companion-asset load refuses it. Measured 2026-08-31 -- the
-    // original expectation of INVALID_PATH here was wrong about the handler and about the engine.
-    ExpectAssetPathRefusedDownstream(*this, TEXT("pose_search.create_schema"), MakeSchemaPayload(),
+    // A bare mount root is not a Fatal vector, and IsValidLongPackageName accepts it; the path
+    // guard refuses it by its own content-root check. No engine error is expected: before that
+    // check the ALREADY_EXISTS LoadObject on "/Game.Game" logged DoesPackageExist FAILED.
+    ExpectAssetPathRefused(*this, TEXT("pose_search.create_schema"), MakeSchemaPayload(),
         TEXT("/Game"), TEXT("bare mount root"));
 
     // CONTROL. Without this, a handler that refused every assetPath would satisfy every case
@@ -365,7 +340,7 @@ bool FPoseSearchCreateDatabaseMalformedAssetPathIsRefusedTest::RunTest(const FSt
         FString::Printf(TEXT("C:/Temp/%s"), *SafetyUniqueLeaf(TEXT("Database"))),
         TEXT("windows absolute"));
 
-    ExpectAssetPathRefusedDownstream(*this, TEXT("pose_search.create_database"), MakeDatabasePayload(),
+    ExpectAssetPathRefused(*this, TEXT("pose_search.create_database"), MakeDatabasePayload(),
         TEXT("/Game"), TEXT("bare mount root"));
 
     // CONTROL, as above: a well-formed path reaches the schema resolution.

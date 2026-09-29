@@ -72,6 +72,13 @@ bool FDataTableAddRowThenListRowsRoundTripTest::RunTest(const FString& /*Paramet
         TestTrue(TEXT("add_row handler found"), bFound);
         TestTrue(FString::Printf(TEXT("add_row succeeded (err='%s' msg='%s')"),
             *Capture.ErrorCode, *Capture.Message), Capture.bSuccess);
+        // The fixture is RF_Transient, so the save is classified before the engine is asked:
+        // no engine `Error:` line, and not the retryable-looking `failed`.
+        if (Capture.Result.IsValid())
+        {
+            TestEqual(TEXT("transient table reports saveState notPersistable"),
+                Capture.Result->GetStringField(TEXT("saveState")), FString(TEXT("notPersistable")));
+        }
     }
 
     {

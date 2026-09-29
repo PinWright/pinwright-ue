@@ -13,25 +13,20 @@ class UStruct;
 // unit.
 namespace DataTableAuthoringInternal
 {
-    // When FJsonObjectConverter::JsonObjectToUStruct rejects a `values` payload,
-    // it only returns a bool — no field, no value, no valid-set. This walks the
-    // row struct's authored fields against the supplied `Values` and returns a
-    // human-readable detail string for the FIRST field whose value cannot be
-    // converted, so the flat [INVALID_ROW_VALUES] error can name the offender.
+    // Walks `Values` the way FJsonObjectConverter::JsonObjectToUStruct imports them into the
+    // row struct (authored field names, array and set elements, map keys and values, nested
+    // struct fields) and returns a human-readable detail for the FIRST enum string the
+    // converter would refuse, or empty when every supplied enum literal resolves.
     //
-    // The common, otherwise-undiscoverable case is an enum field set to an
-    // invalid literal: ValidateValuesAgainstStruct deliberately skips enum/byte
-    // properties (their JSON type is "string", which the type pre-walk can't
-    // judge), so the literal failure falls through to the bare converter error.
-    // For an enum-typed property (FByteProperty-with-enum or FEnumProperty) given
-    // an unresolvable string, the returned detail names the field, the rejected
-    // value, the enum, and enumerates the valid literals — e.g.:
-    //   Field 'wall Drop' of struct 'S_RoomSettings': value "None" is not a valid
+    // add_row and set_row call it BEFORE the converter, so a caller's enum typo is refused as a
+    // typed [INVALID_ROW_VALUES] error and never reaches the converter, which would log two
+    // LogJson Error lines for it. ValidateValuesAgainstStruct cannot catch these: an enum's
+    // JSON type is "string", which a type check cannot judge. The detail names the property
+    // path, the rejected value, the enum, and the valid literals - e.g.:
+    //   Field 'Modes[2]' of struct 'S_RoomSettings': value "None" is not a valid
     //   E_EnclosureLevel. Valid values: Closed, Partial, Open
-    //
-    // Returns an empty string when no specific failing field can be pinpointed
-    // (the caller then keeps its original whole-row message). Pure inspection —
-    // mutates nothing.
+    // Map keys use `Field["Key"]` paths and read "key" instead of "value"; nested struct fields
+    // use dotted paths (`Inner.Mode`). Pure inspection - mutates nothing.
     PINWRIGHT_API FString DescribeRowValueFailure(
         const UStruct* Struct, const TSharedPtr<FJsonObject>& Values);
 }

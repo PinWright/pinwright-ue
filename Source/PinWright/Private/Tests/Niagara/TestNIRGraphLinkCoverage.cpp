@@ -27,7 +27,6 @@
 #include "Tests/Assets/NiagaraEditTestUtils.h"
 #include "Tests/Niagara/TestNIRFixtures.h"
 #include "Tests/TestSkipReporting.h"
-#include "Utils/StringUtils.h"
 
 #include "NiagaraEmitterHandle.h"
 #include "NiagaraNodeFunctionCall.h"
@@ -42,7 +41,7 @@ namespace
         // SpawnRate is a stock CPU module ship-asset whose authored graph contains
         // function-call nodes wired to the script's Output node — enough to give
         // any usage stack at least one `link` line once a module is added.
-        return LoadObject<UNiagaraScript>(nullptr, TEXT("/Niagara/Modules/Spawn/SpawnRate.SpawnRate"));
+        return LoadObject<UNiagaraScript>(nullptr, TEXT("/Niagara/Modules/Emitter/SpawnRate.SpawnRate"));
     }
 }
 
@@ -104,8 +103,11 @@ bool FNiagaraNirGraphLinkCoverageTest::RunTest(const FString& Parameters)
         Result.Text.Contains(TEXT("graph EmitterSpawn {")));
     TestTrue(TEXT("NIR contains EmitterUpdate graph scope"),
         Result.Text.Contains(TEXT("graph EmitterUpdate {")));
+    // The graph header names the script's own usage: an emitter with interpolated spawning
+    // (the SimpleExplosion seed emitter is one) has a ParticleSpawnScriptInterpolated spawn script.
     TestTrue(TEXT("NIR contains ParticleSpawn graph scope"),
-        Result.Text.Contains(TEXT("graph ParticleSpawn {")));
+        Result.Text.Contains(TEXT("graph ParticleSpawn {"))
+            || Result.Text.Contains(TEXT("graph ParticleSpawnInterpolated {")));
     TestTrue(TEXT("NIR contains ParticleUpdate graph scope"),
         Result.Text.Contains(TEXT("graph ParticleUpdate {")));
     TestTrue(TEXT("NIR contains SystemSpawn graph scope"),
@@ -113,10 +115,19 @@ bool FNiagaraNirGraphLinkCoverageTest::RunTest(const FString& Parameters)
     TestTrue(TEXT("NIR contains SystemUpdate graph scope"),
         Result.Text.Contains(TEXT("graph SystemUpdate {")));
 
-    // Floor at six: one `link` line per script minimum. The newline anchor
-    // discriminates real link entries from any incidental `link` substring
-    // appearing elsewhere in the text (none today, but the anchor future-proofs).
-    const int32 LinkLineCount = PinWright::CountSubstring(Result.Text, TEXTVIEW("\nlink "));
+    // Floor at six: one `link` line per script minimum. Graph scopes sit inside
+    // system / emitter scopes, so every link line is indented: match the line
+    // start after leading whitespace, not a bare "\nlink " anchor.
+    TArray<FString> Lines;
+    Result.Text.ParseIntoArrayLines(Lines);
+    int32 LinkLineCount = 0;
+    for (const FString& Line : Lines)
+    {
+        if (Line.TrimStart().StartsWith(TEXT("link ")))
+        {
+            ++LinkLineCount;
+        }
+    }
     TestTrue(
         FString::Printf(TEXT("NIR contains at least six `link ` lines (got %d)"), LinkLineCount),
         LinkLineCount >= 6);

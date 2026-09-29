@@ -4,7 +4,7 @@ Low-level material expression-graph editing: add / connect / inspect / remove no
 
 ## A graph write is not a shader compile
 
-Separate from the screen problem below and more fundamental: `nodeId`, `createdNodes` and `successCount` describe expressions placed and wired, never whether the resulting HLSL builds. Every verb here publishes a measured `shaderCompile` block — branch on `shaderCompile.status`, where `notCompiled` means "no compile has run", not "clean". `create_nodes` accepts `waitForShaderCompile: true` to block on the real verdict at the end of a batch; everywhere else, [`material.authoring.compile_material`](material.authoring.compile_material.md) is the verb that measures. See [`material.compile-state`](material.compile-state.md).
+Separate from the screen problem below and more fundamental: `nodeId`, `createdNodes` and `successCount` describe expressions placed and wired, never whether the resulting HLSL builds. Every verb here publishes a measured `shaderCompile` block — branch on `shaderCompile.status`, where `onDemand` means "only drawn permutations compiled" and `notCompiled` means "nothing can compile", neither of them "clean". `create_nodes` accepts `waitForShaderCompile: true` to block on the real verdict at the end of a batch; everywhere else, [`material.authoring.compile_material`](material.authoring.compile_material.md) is the verb that measures. See [`material.compile-state`](material.compile-state.md).
 
 ## Nothing in this namespace reaches the screen
 

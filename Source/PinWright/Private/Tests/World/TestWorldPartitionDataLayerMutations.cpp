@@ -91,12 +91,19 @@ namespace WorldPartitionDataLayerMutationTests
                 return false;
             }
 
-            WorldDataLayers = AWorldDataLayers::Create(World);
+            // A World Partition world already owns its WorldDataLayers actor; AWorldDataLayers::Create
+            // on such a world returns that actor but logs "There is already a WorldDataLayer Actor"
+            // at Error, so create one only when the world has none.
+            WorldDataLayers = World->GetWorldDataLayers();
+            if (!WorldDataLayers)
+            {
+                WorldDataLayers = AWorldDataLayers::Create(World);
+                World->SetWorldDataLayers(WorldDataLayers);
+            }
             if (!Test.TestNotNull(TEXT("transient world has a WorldDataLayers actor"), WorldDataLayers))
             {
                 return false;
             }
-            World->SetWorldDataLayers(WorldDataLayers);
             if (!Test.TestTrue(TEXT("WorldDataLayers is attached to the transient world"),
                     World->GetWorldDataLayers() == WorldDataLayers))
             {

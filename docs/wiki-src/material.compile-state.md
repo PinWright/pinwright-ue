@@ -14,12 +14,12 @@ Every material write verb and the material read verbs (`material.authoring.get_m
 
 | field | meaning |
 | --- | --- |
-| `status` | the single field to branch on — see the five spellings below |
-| `succeeded` | `true` only for `completed`. An empty error list from a compile that never ran is not a pass |
+| `status` | the single field to branch on — see the six spellings below |
+| `succeeded` | `true` only for `completed`. An empty error list from a compile that never ran, or from `onDemand`, is not a pass |
 | `failed` | the PERMANENT case. Kept as its own boolean because the recurring mis-read is treating it as a transient "still warming up" |
 | `errors[]` | failed-permutation HLSL errors verbatim, naming file, line, shader type and permutation |
 | `errorCount` | length of `errors[]` |
-| `rendersDefaultMaterial` | the renderer substitutes the engine Default Material for **the measured resource**: either the parent chain resolves to it, or that resource has no complete shader map. Read it with `measuredSubject` and `declaredUsages`, never alone — see below |
+| `rendersDefaultMaterial` | the renderer substitutes the engine Default Material for **the measured resource**: the parent chain resolves to it, or the resource is missing, failed, still compiling, or can never compile (`notCompiled`). `false` for `onDemand`, whose drawn permutations render from real shaders. Read it with `measuredSubject` and `declaredUsages`, never alone — see below |
 | `rendersDefaultMaterialScope` | **always present.** One sentence stating what the boolean was measured on and what it structurally cannot see. The flag is never published without it |
 | `measuredSubject` | which resource the whole block describes: `baseMaterial`, `instanceStaticPermutation`, or `parentInherited` (an instance with no static permutation, whose fields are its parent's). Omitted on a multi-material fold — `materials[]` carries one per row instead |
 | `measuredMaterialPath` | the asset that owns that resource — the parent's path for `parentInherited`. Omitted when there is none (a parentless instance) rather than emitted empty |
@@ -28,15 +28,16 @@ Every material write verb and the material read verbs (`material.authoring.get_m
 | `hint` | what to do next. Absent for `completed` |
 | `materials[]` | per-material `{assetPath, status, measuredSubject, declaredUsages[]}` rows, on verbs that finalise several materials in one call (`material.compile_mgir` over a multi-entry document). The top-level flag is those materials OR-ed together, so read the rows to find which one is substituted |
 
-## The five statuses
+## The six statuses
 
 - **`completed`** — a compile ran and the engine installed a complete shader map. The only clean pass.
 - **`failed`** — a compile ran and at least one permutation failed. Permanent: retrying produces the identical broken result forever, and a capture of this material is evidence of nothing.
 - **`outstanding`** — a compile is in flight. The verdict is not knowable yet; re-read, or block on it.
 - **`timedOut`** — a bounded wait expired with the compile still running. The compile is **not** abandoned.
-- **`notCompiled`** — no compile has run. **This is the common one on a write verb, and it is not a pass.**
+- **`onDemand`** — the shader map is incomplete only because permutations compile when a pass first draws them; everything drawn so far compiled and nothing is pending. **This is the common one on a write verb and on any loaded material, and it is not a pass.** Probe-only: `compile_material`'s `compileStatus` never carries it.
+- **`notCompiled`** — no shader map exists, or shader compilation is off for the editor, so nothing can compile and the renderer draws the Default Material.
 
-`notCompiled` deserves the emphasis. `PostEditChange` caches the shader map with `EMaterialShaderPrecompileMode::None`: it translates the material to HLSL and does **not** submit the permutation compile jobs, which are deferred until the material is first *drawn*. In a headless editor nothing is ever drawn, so a material that can never compile probes as `notCompiled` indefinitely. An empty `errors[]` beside `notCompiled` means "nobody asked", not "nothing was wrong".
+`onDemand` deserves the emphasis. `PostEditChange` caches the shader map with `EMaterialShaderPrecompileMode::None`: it translates the material to HLSL and does **not** submit the permutation compile jobs, which are deferred until the material is first *drawn*. From UE 5.5 every material loads that way too (`r.ShaderCompiler.JobCacheDDC`, on by default), so a complete map is the exception in an editor. A drawn permutation that is missing is compiled at once and reads `outstanding`, then `failed` if it breaks; so `onDemand` is not a Default Material substitution (`rendersDefaultMaterial:false`). But undrawn permutations were never compiled, so a material whose broken HLSL nobody has drawn probes as `onDemand` indefinitely. An empty `errors[]` beside `onDemand` means "nothing drawn failed", not "nothing is wrong". This state read `notCompiled` with `rendersDefaultMaterial:true` before 2026-09-29.
 
 ## A compile verdict is not a render verdict: usage flags
 
@@ -65,7 +66,7 @@ Every other write verb publishes the free non-blocking probe and, when the statu
 
 `asset.generate_thumbnail` and `render.capture_asset_preview` probe every directly inspectable material after the final render or retry and publish `materialReadiness`. They pump already-submitted compile work for one bounded wait, then read the actual interface resource, including a material instance's own static permutation. The top level reports `measured`, `compiled`, `compiling`, `failed`, `usingDefaultMaterial`, `fallbackOccurred`, `fallbackPossible`, `subjectMaterialsRendered`, and `subjects[]`. `reason` names a known fallback; `possibleReason:"shaderMapIncomplete"` names uncertainty after the wait. Thumbnail mesh rows use `meshUsagePolicy:"thumbnailLod0Sections"`: the engine's Static Mesh and Skeletal Mesh thumbnail renderers disable the LOD show flag, which selects LOD0. Asset-preview rows use `meshUsagePolicy:"capturedComponentSections"`; `renderedLodIndex` and `scope` say whether LOD came from the forced/predicted component state or the Static Mesh LOD0 fallback, and editor preview/hidden-section filters keep inactive sections out of fallback policy. Null included slots are reported as unassigned Default Material substitutions instead of disappearing from the report.
 
-A known Default Material substitution is not visual evidence. A failed shader map with compile errors or an unassigned rendered slot therefore returns `success:false` with error code `MATERIAL_FALLBACK` by default, retaining `materialReadiness` in the error details. Pass `allowFallback:true` only when that known-fallback image is wanted; the normal image result is then retained, while `fallbackOccurred:true` and a reason-aware top-level `warnings[]` entry remain. A final `notCompiled`, `outstanding`, or `timedOut` status is different: it proves no final shader verdict, not a permanent failure or what was in earlier pixels. Those captures remain successful without `allowFallback`, report `fallbackPossible:true`, keep the exact status in `subjects[]`, and add a warning. Selecting the engine Default Material intentionally reports `usingDefaultMaterial:true` but both fallback flags false. Preview debug modes that replace subject materials report `subjectMaterialsRendered:false` and do not attribute those debug pixels to a broken subject material.
+A known Default Material substitution is not visual evidence. A failed shader map with compile errors or an unassigned rendered slot therefore returns `success:false` with error code `MATERIAL_FALLBACK` by default, retaining `materialReadiness` in the error details. Pass `allowFallback:true` only when that known-fallback image is wanted; the normal image result is then retained, while `fallbackOccurred:true` and a reason-aware top-level `warnings[]` entry remain. A final `notCompiled`, `outstanding`, or `timedOut` status is different: it proves no final shader verdict, not a permanent failure or what was in earlier pixels. Those captures remain successful without `allowFallback`, report `fallbackPossible:true`, keep the exact status in `subjects[]`, and add a warning. A final `onDemand` status reports `fallbackPossible:true` and warns only when the post-capture wait had to drain compile jobs, i.e. the frame requested permutations that were still compiling when it was drawn; otherwise it carries no fallback flag and no warning. Selecting the engine Default Material intentionally reports `usingDefaultMaterial:true` but both fallback flags false. Preview debug modes that replace subject materials report `subjectMaterialsRendered:false` and do not attribute those debug pixels to a broken subject material.
 
 ## What it does not tell you
 

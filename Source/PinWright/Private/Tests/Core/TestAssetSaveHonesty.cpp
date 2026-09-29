@@ -33,6 +33,7 @@
 #include "State/SaveThrottler.h"
 #include "Tests/TestUtils.h"
 #include "UObject/Package.h"
+#include "UObject/StrongObjectPtr.h"
 
 namespace
 {
@@ -188,6 +189,17 @@ bool FTransientAssetIsNotPersistableTest::RunTest(const FString& Parameters)
         static_cast<int32>(ESaveLoadedAssetOutcome::NotPersistable));
     TestFalse(TEXT("a transient-package asset must NOT report persisted"),
         WasSavePersisted(Outcome));
+
+    // An RF_Transient object in an ordinary package is refused by the engine's
+    // SaveLoadedAsset with an `Error:` log line, so it must be classified before the engine
+    // is reached. The package is never saved, so nothing is written under /Engine.
+    UPackage* OrdinaryPackage = CreatePackage(*FString::Printf(
+        TEXT("/Engine/Transient/PwTransientObject_%s"), *FGuid::NewGuid().ToString(EGuidFormats::Digits)));
+    const TStrongObjectPtr<UMaterial> TransientObject(
+        NewObject<UMaterial>(OrdinaryPackage, NAME_None, RF_Public | RF_Transient));
+    TestEqual(TEXT("an RF_Transient object in an ordinary package classifies as NotPersistable"),
+        static_cast<int32>(SaveLoadedAssetThrottled(TransientObject.Get(), -1.0, /*bForce=*/true)),
+        static_cast<int32>(ESaveLoadedAssetOutcome::NotPersistable));
 
     // A null asset is a failure, not a silent success.
     TestFalse(TEXT("a null asset must NOT report persisted"),

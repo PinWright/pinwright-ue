@@ -61,6 +61,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMaterialShaderStateBrokenHlslTest,
 
 bool FMaterialShaderStateBrokenHlslTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     FString AssetPath;
     UMaterial* Material =
         PinWrightMaterialShaderStateTestFixtures::MakeBrokenHlslMaterial(
@@ -182,6 +183,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMaterialShaderStateValidMaterialTest,
 
 bool FMaterialShaderStateValidMaterialTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     FString AssetPath;
     UMaterial* Material = PinWrightMaterialShaderStateTestFixtures::MakeCleanMaterial(
         TEXT("ShaderStateValid"), AssetPath);
@@ -241,6 +243,83 @@ bool FMaterialShaderStateValidMaterialTest::RunTest(const FString& Parameters)
 
     // No remedy is published for a clean compile: a verb with nothing to warn about says nothing.
     TestFalse(TEXT("a completed compile carries no hint"), (*Block)->HasField(TEXT("hint")));
+
+    CleanupTestAsset(AssetPath);
+    return true;
+}
+
+// ---------------------------------------------------------------------------------------------
+// 2b. An undrawn material compiles on demand; it is not a Default Material substitution
+// ---------------------------------------------------------------------------------------------
+// B-material-readiness-false-notcompiled-warning: PostEditChange caches the shader map with
+// EMaterialShaderPrecompileMode::None, so a written but undrawn material holds an incomplete map
+// with nothing in flight - the editor's steady state, since from UE 5.5 every loaded material does
+// too. The non-blocking probe used to read that as `notCompiled` with rendersDefaultMaterial:true.
+// Both branches are asserted: `onDemand` and no substitution where shaders compile, `notCompiled`
+// and a substitution where shader compilation is off.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMaterialShaderStateOnDemandProbeTest,
+    "PinWright.material.shader_state.UndrawnMaterialProbesOnDemandNotDefaultMaterial",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMaterialShaderStateOnDemandProbeTest::RunTest(const FString& Parameters)
+{
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
+    using namespace PinWright::MaterialShaderState;
+
+    FString AssetPath;
+    UMaterial* Material = PinWrightMaterialShaderStateTestFixtures::MakeCleanMaterial(
+        TEXT("ShaderStateOnDemand"), AssetPath);
+    if (!TestNotNull(TEXT("Material created"), Material))
+    {
+        CleanupTestAsset(AssetPath);
+        return true;
+    }
+
+    // Drain anything the write left in flight without submitting a compile, so the probe below
+    // reads a settled state rather than `outstanding`.
+    ProbeAfterCapture(Material,
+        FPlatformTime::Seconds() + MaterialCompileErrorCollector::CompileWaitTimeoutSeconds);
+    const FState State = Probe(Material);
+
+    if (!GShaderCompilingManager || GShaderCompilingManager->IsShaderCompilationSkipped())
+    {
+        TestEqual(TEXT("with shader compilation off the probe reads notCompiled"),
+            FString(ToWire(State.Status)), FString(TEXT("notCompiled")));
+        TestTrue(TEXT("with shader compilation off the Default Material is drawn"),
+            State.bRendersDefaultMaterial);
+        CleanupTestAsset(AssetPath);
+        return true;
+    }
+
+    TestEqual(TEXT("an undrawn material on a compiling editor probes as onDemand"),
+        FString(ToWire(State.Status)), FString(TEXT("onDemand")));
+    TestFalse(TEXT("onDemand is not a success"), State.Succeeded());
+    TestFalse(TEXT("onDemand is not a failure"), State.Failed());
+    TestEqual(TEXT("onDemand collects no errors"), State.Errors.Num(), 0);
+    TestFalse(TEXT("onDemand is not a Default Material substitution"),
+        State.bRendersDefaultMaterial);
+    TestFalse(TEXT("RendersDefaultMaterial agrees with the probe"),
+        RendersDefaultMaterial(Material));
+
+    TSharedPtr<FJsonObject> Result;
+    const TSharedPtr<FJsonObject>* Block = PublishAndReadBlock(State, Result);
+    if (TestTrue(TEXT("response carries the shaderCompile block"), Block != nullptr))
+    {
+        TestEqual(TEXT("the wire spelling is onDemand"),
+            (*Block)->GetStringField(TEXT("status")), FString(TEXT("onDemand")));
+        TestFalse(TEXT("the wire flag is not a substitution"),
+            (*Block)->GetBoolField(TEXT("rendersDefaultMaterial")));
+        FString Hint;
+        TestTrue(TEXT("onDemand points at the verb that gives a full verdict"),
+            (*Block)->TryGetStringField(TEXT("hint"), Hint) &&
+            Hint.Contains(TEXT("compile_material")));
+    }
+
+    // The fold must still publish a block when every material is healthy.
+    FState Folded;
+    Folded.Accumulate(AssetPath, State);
+    TestEqual(TEXT("a single-material fold keeps the material's status"),
+        FString(ToWire(Folded.Status)), FString(TEXT("onDemand")));
 
     CleanupTestAsset(AssetPath);
     return true;
@@ -397,6 +476,63 @@ bool FMaterialShaderStateCaptureReadinessStructureTest::RunTest(const FString& P
             Uncertain->TryGetArrayField(TEXT("warnings"), UncertainWarnings) &&
             UncertainWarnings && UncertainWarnings->Num() > 0);
     }
+
+    // onDemand is not uncertainty on its own: nothing drawn was substituted, so the capture carries
+    // no fallback flag and no warning. It becomes possible fallback only when the post-capture
+    // wait had to drain permutations the frame requested (ProbeAfterCapture sets the flag).
+    FState OnDemandState;
+    OnDemandState.Status = EStatus::OnDemand;
+    FCaptureReadiness OnDemandReadiness;
+    OnDemandReadiness.AddSubject(TEXT("/Game/Test/M_OnDemand.M_OnDemand"), OnDemandState);
+    TSharedPtr<FJsonObject> OnDemand = MakeShared<FJsonObject>();
+    TestTrue(TEXT("onDemand is accepted without allowFallback"),
+        ApplyCaptureFallbackPolicy(OnDemand, OnDemandReadiness, false));
+    TestFalse(TEXT("onDemand with nothing drained carries no fallback warning"),
+        OnDemand->HasField(TEXT("warnings")));
+    const TSharedPtr<FJsonObject>* OnDemandBlock = nullptr;
+    if (TestTrue(TEXT("onDemand readiness is serialized"),
+            OnDemand->TryGetObjectField(TEXT("materialReadiness"), OnDemandBlock)) &&
+        OnDemandBlock)
+    {
+        TestFalse(TEXT("onDemand is not a possible fallback"),
+            (*OnDemandBlock)->GetBoolField(TEXT("fallbackPossible")));
+        TestFalse(TEXT("onDemand is not a known fallback"),
+            (*OnDemandBlock)->GetBoolField(TEXT("fallbackOccurred")));
+        TestFalse(TEXT("onDemand does not claim Default Material use"),
+            (*OnDemandBlock)->GetBoolField(TEXT("usingDefaultMaterial")));
+        TestFalse(TEXT("onDemand is not a full-map compile"),
+            (*OnDemandBlock)->GetBoolField(TEXT("compiled")));
+        const TArray<TSharedPtr<FJsonValue>>* OnDemandSubjects = nullptr;
+        const TSharedPtr<FJsonObject>* OnDemandSubject = nullptr;
+        if ((*OnDemandBlock)->TryGetArrayField(TEXT("subjects"), OnDemandSubjects) &&
+            OnDemandSubjects && OnDemandSubjects->Num() == 1 &&
+            (*OnDemandSubjects)[0]->TryGetObject(OnDemandSubject) && OnDemandSubject)
+        {
+            TestEqual(TEXT("onDemand keeps its wire spelling"),
+                (*OnDemandSubject)->GetStringField(TEXT("status")), FString(TEXT("onDemand")));
+        }
+    }
+
+    FState DrainedOnDemandState = OnDemandState;
+    DrainedOnDemandState.bWaited = true;
+    DrainedOnDemandState.bRendersDefaultMaterial = true;
+    FCaptureReadiness DrainedOnDemandReadiness;
+    DrainedOnDemandReadiness.AddSubject(
+        TEXT("/Game/Test/M_OnDemand.M_OnDemand"), DrainedOnDemandState);
+    TSharedPtr<FJsonObject> DrainedOnDemand = MakeShared<FJsonObject>();
+    TestTrue(TEXT("a drained onDemand capture is still accepted without allowFallback"),
+        ApplyCaptureFallbackPolicy(DrainedOnDemand, DrainedOnDemandReadiness, false));
+    const TSharedPtr<FJsonObject>* DrainedOnDemandBlock = nullptr;
+    if (DrainedOnDemand->TryGetObjectField(TEXT("materialReadiness"), DrainedOnDemandBlock) &&
+        DrainedOnDemandBlock)
+    {
+        TestTrue(TEXT("a drained onDemand capture reports possible fallback"),
+            (*DrainedOnDemandBlock)->GetBoolField(TEXT("fallbackPossible")));
+        TestFalse(TEXT("a drained onDemand capture is not a known fallback"),
+            (*DrainedOnDemandBlock)->GetBoolField(TEXT("fallbackOccurred")));
+    }
+    TestTrue(TEXT("a drained onDemand capture warns"),
+        DrainedOnDemand->HasField(TEXT("warnings")));
 
     FState IntentionalDefaultState;
     IntentionalDefaultState.Status = EStatus::Completed;
@@ -587,7 +723,7 @@ bool FMaterialShaderStateGraphWriteTest::RunTest(const FString& Parameters)
         TestTrue(TEXT("status is one of the documented spellings"),
             Status == TEXT("notCompiled") || Status == TEXT("outstanding") ||
             Status == TEXT("timedOut") || Status == TEXT("failed") ||
-            Status == TEXT("completed"));
+            Status == TEXT("completed") || Status == TEXT("onDemand"));
     }
 
     TestTrue(TEXT("shaderCompile carries succeeded"), (*Block)->HasField(TEXT("succeeded")));

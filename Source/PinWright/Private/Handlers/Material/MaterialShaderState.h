@@ -51,13 +51,17 @@
 //
 //   ProbeAndWait() - BLOCKING, opt-in. Forces every permutation through the platform shader
 //                    compiler and drains the result, via MaterialCompileErrorCollector. This is the
-//                    only way to get a FINAL answer, and the reason is not performance: in a
-//                    headless editor the permutation jobs are deferred until the material is first
-//                    DRAWN, so a material that can never compile reports `notCompiled` from a probe
-//                    forever. See the header comment on MaterialCompileErrorCollector.
+//                    only way to get a FINAL answer, and the reason is not performance: the
+//                    permutation jobs are deferred until the material is first DRAWN, so a
+//                    material whose broken HLSL nobody has drawn probes as `onDemand` forever. See
+//                    the header comment on MaterialCompileErrorCollector.
 //
-// WHY A PROBE'S `notCompiled` IS NOT A PASS. It means "the engine has not been asked yet". A caller
-// that needs "will this render" must either pass the verb's waitForShaderCompile flag or call
+// WHY A PROBE'S `onDemand` AND `notCompiled` ARE NOT PASSES. `onDemand` means the permutations
+// drawn so far compiled and nothing is pending, while the rest compile when first drawn (the
+// editor's normal state from UE 5.5, r.ShaderCompiler.JobCacheDDC); it is not a Default Material
+// substitution, but nothing verified the undrawn permutations. `notCompiled` means no map exists or
+// shader compilation is off, so nothing can compile and the renderer substitutes. A caller that
+// needs "will this render" must either pass the verb's waitForShaderCompile flag or call
 // material.authoring.compile_material. The `hint` field says so in every response that is not
 // `completed`, because the recurring failure was an author reading a success-shaped payload and
 // concluding the material was fine.
@@ -83,11 +87,17 @@
 //     full flag set with its property names is on material.authoring.get_material_info.
 namespace PinWright::MaterialShaderState
 {
-    // The five distinguishable states, spelled EXACTLY as material.authoring.compile_material's
-    // long-standing `compileStatus` field spells them, so one vocabulary spans the namespace
-    // instead of two that nearly agree. NotMeasured is the sixth and is not a compile state: it
-    // means nothing was looked at (no material, or an asset that has no shader of its own, such as
-    // a UMaterialFunction or a parameter collection).
+    // The five states material.authoring.compile_material's long-standing `compileStatus` field
+    // spells, in the same spelling, so one vocabulary spans the namespace instead of two that
+    // nearly agree. NotMeasured means nothing was looked at (no material, or an asset that has no
+    // shader of its own, such as a UMaterialFunction or a parameter collection).
+    //
+    // OnDemand is a probe-only state that compileStatus never carries, because a forced compile
+    // cannot end in it. The editor compiles single permutations when a pass first draws them
+    // (r.ShaderCompiler.JobCacheDDC, the engine default from UE 5.5, and any shader map cached
+    // with EMaterialShaderPrecompileMode::None on every engine), so the game-thread map stays
+    // incomplete while everything drawn so far renders from real shaders. Reading that as "no
+    // compile ran, renders the Default Material" was B-material-readiness-false-notcompiled-warning.
     enum class EStatus : uint8
     {
         NotMeasured,
@@ -95,7 +105,8 @@ namespace PinWright::MaterialShaderState
         Outstanding,
         TimedOut,
         Failed,
-        Completed
+        Completed,
+        OnDemand
     };
 
     // Wire spelling. `outstanding` covers the async-compiling case: a compile is in flight and the
@@ -109,6 +120,7 @@ namespace PinWright::MaterialShaderState
         case EStatus::TimedOut:     return TEXT("timedOut");
         case EStatus::Failed:       return TEXT("failed");
         case EStatus::Completed:    return TEXT("completed");
+        case EStatus::OnDemand:     return TEXT("onDemand");
         default:                    return TEXT("notMeasured");
         }
     }
@@ -138,18 +150,20 @@ namespace PinWright::MaterialShaderState
     // Ordering used to fold several materials into one verdict: the WORST wins. Completed is the
     // best and therefore the lowest, so an aggregate reports `completed` only when every material
     // in it did. A failure is worse than an expired wait, which is worse than work still in flight,
-    // which is worse than a compile that never ran, which is worse than not having looked.
+    // which is worse than a compile that never ran, which is worse than not having looked, which is
+    // worse than a map that compiles on demand with nothing pending.
     inline int32 Severity(EStatus Status)
     {
         switch (Status)
         {
         case EStatus::Completed:    return 0;
-        case EStatus::NotMeasured:  return 1;
-        case EStatus::NotCompiled:  return 2;
-        case EStatus::Outstanding:  return 3;
-        case EStatus::TimedOut:     return 4;
-        case EStatus::Failed:       return 5;
-        default:                    return 1;
+        case EStatus::OnDemand:     return 1;
+        case EStatus::NotMeasured:  return 2;
+        case EStatus::NotCompiled:  return 3;
+        case EStatus::Outstanding:  return 4;
+        case EStatus::TimedOut:     return 5;
+        case EStatus::Failed:       return 6;
+        default:                    return 2;
         }
     }
 
@@ -172,8 +186,10 @@ namespace PinWright::MaterialShaderState
 
         // The renderer will draw the engine Default Material for this material interface: either
         // the parent chain resolves to the default material, or the actual interface resource has
-        // no complete shader map. This is the fact a capture verb needs to stop reporting a
-        // plausible grey frame as evidence.
+        // no complete shader map for a reason other than on-demand compilation (see
+        // EStatus::OnDemand; after a capture, an on-demand map that had jobs in flight counts).
+        // This is the fact a capture verb needs to stop reporting a plausible grey frame as
+        // evidence.
         bool bRendersDefaultMaterial = false;
 
         // Which resource every field above was read off, and the asset that owns it. Emitted
@@ -216,7 +232,10 @@ namespace PinWright::MaterialShaderState
         // batch has a broken material.
         void Accumulate(const FString& AssetPath, const FState& Other)
         {
-            if (Severity(Other.Status) > Severity(Status))
+            // The first fold takes the material's status outright. A default FState starts at
+            // NotMeasured, which outranks Completed and OnDemand, so a worst-wins comparison alone
+            // left an all-healthy batch at NotMeasured and AddReport then published no block.
+            if (PerMaterial.Num() == 0 || Severity(Other.Status) > Severity(Status))
             {
                 Status = Other.Status;
             }
@@ -315,10 +334,24 @@ namespace PinWright::MaterialShaderState
         return MaterialInterface->GetPathName();
     }
 
-    // True when the renderer substitutes the engine Default Material for this material interface.
-    // FMaterialRenderProxy::GetMaterialWithFallback does so whenever the resource is absent or its
-    // render-thread shader map is incomplete, not only after a compiler error. The game-thread
-    // completeness flag is the safe mirror available to handlers.
+    // True when an incomplete map is incomplete only because permutations compile when first drawn:
+    // a shader map exists, the editor compiles shaders, nothing is in flight and nothing failed.
+    // Every drawn permutation then either renders from a real shader or shows up as an in-flight
+    // (Outstanding) or failed compile, so the gap is permutations nobody has drawn yet.
+    inline bool CompilesOnDemand(const FMaterialResource* Resource)
+    {
+        return Resource != nullptr &&
+            !Resource->IsGameThreadShaderMapComplete() &&
+            Resource->GetGameThreadShaderMap() != nullptr &&
+            Resource->IsCompilationFinished() &&
+            Resource->GetCompileErrors().Num() == 0 &&
+            GShaderCompilingManager != nullptr &&
+            !GShaderCompilingManager->IsShaderCompilationSkipped();
+    }
+
+    // True when the renderer substitutes the engine Default Material for this material interface:
+    // the resource is absent, its shader map failed or is still compiling, or no map can ever be
+    // compiled. An incomplete map that CompilesOnDemand is not a substitution; see EStatus::OnDemand.
     inline bool RendersDefaultMaterial(const UMaterialInterface* MaterialInterface)
     {
         const UMaterial* Base = ResolveBaseMaterial(MaterialInterface);
@@ -331,7 +364,8 @@ namespace PinWright::MaterialShaderState
             return true;
         }
         const FMaterialResource* Resource = ResolveMaterialResource(MaterialInterface);
-        return Resource == nullptr || !Resource->IsGameThreadShaderMapComplete();
+        return Resource == nullptr ||
+            (!Resource->IsGameThreadShaderMapComplete() && !CompilesOnDemand(Resource));
     }
 
     // The same question asked about ONE consumer class, which is the question every caller of
@@ -400,16 +434,29 @@ namespace PinWright::MaterialShaderState
         {
             State.Status = EStatus::Completed;
         }
+        else if (CompilesOnDemand(Resource))
+        {
+            // An incomplete map with nothing in flight, on an editor that compiles shaders: the
+            // on-demand model. Such a map comes from a cache with EMaterialShaderPrecompileMode::None
+            // and keeps its compiling id, so the mesh passes (GetIncompleteMaterialWithFallback +
+            // FMaterial::TryGetShaders) submit each missing permutation the moment a pass asks for
+            // it, which reads as Outstanding until it lands and as Failed if it breaks. Consumers
+            // that need the whole map (GetMaterialWithFallback: light functions, volumes, path
+            // tracing) submit every remaining job, which also reads as Outstanding. The map DDC
+            // saves a map only after its compile finalises (ShaderCompiler.cpp, MaterialShader.cpp),
+            // so a finished incomplete map is not a stale DDC load.
+            State.Status = EStatus::OnDemand;
+        }
         else
         {
-            // A shader map object exists but is not complete. FMaterial::BeginCompileShaderMap
-            // installs a zero-shader map when compilation is skipped, so this is "no compile ran",
-            // not "compiled and produced nothing".
+            // No shader map, or shader compilation is off for the whole editor. FMaterial::
+            // BeginCompileShaderMap installs a zero-shader map when compilation is skipped, so this
+            // is "no compile ran and none can", and the renderer draws the Default Material.
             State.Status = EStatus::NotCompiled;
         }
 
         State.bRendersDefaultMaterial = Base->IsDefaultMaterial() ||
-            !Resource->IsGameThreadShaderMapComplete();
+            (State.Status != EStatus::OnDemand && !Resource->IsGameThreadShaderMapComplete());
         return State;
     }
 
@@ -478,6 +525,13 @@ namespace PinWright::MaterialShaderState
         if (bTimedOut && State.Status == EStatus::Outstanding)
         {
             State.Status = EStatus::TimedOut;
+        }
+        // An on-demand map that still had jobs in flight after the capture: those permutations were
+        // missing when the frame was drawn, so the frame may show the Default Material for them.
+        // That is the only on-demand case in which rendering requested a missing permutation.
+        if (bWaited && State.Status == EStatus::OnDemand)
+        {
+            State.bRendersDefaultMaterial = true;
         }
         return State;
     }
@@ -637,9 +691,13 @@ namespace PinWright::MaterialShaderState
             {
                 State = Probe(Material);
             }
+            // An on-demand map keeps the flag its probe measured: true only when the capture had
+            // to wait on permutations the frame requested (ProbeAfterCapture).
             const UMaterial* Base = ResolveBaseMaterial(Material);
             State.bRendersDefaultMaterial = (Base && Base->IsDefaultMaterial()) ||
-                State.Status != EStatus::Completed;
+                (State.Status == EStatus::OnDemand
+                    ? State.bRendersDefaultMaterial
+                    : State.Status != EStatus::Completed);
 
             const int32 NewIndex = Readiness.Subjects.Num();
             Readiness.AddSubject(Material->GetPathName(), State, bIncludedByFallbackPolicy);
@@ -999,7 +1057,9 @@ namespace PinWright::MaterialShaderState
                    "true; see materialReadiness.subjects[].errors for the compile errors.")
             : (ReadinessReason == ECaptureReadinessReason::ShaderMapIncomplete
                 ? TEXT("The captured subject may have used the engine Default Material because "
-                       "its shader map was still incomplete after the bounded post-capture wait. "
+                       "its shader map was incomplete when the frame was drawn: still compiling "
+                       "after the bounded post-capture wait, or on-demand permutations the capture "
+                       "had to wait for (status onDemand). "
                        "No failed compile or confirmed substitution was measured, so the image is "
                        "retained without requiring allowFallback; see "
                        "materialReadiness.subjects[].status and fallbackPossible.")
@@ -1056,6 +1116,14 @@ namespace PinWright::MaterialShaderState
                 "list is NOT evidence that it compiles - a graph write is not a shader compile. "
                 "Call material.authoring.compile_material (or pass waitForShaderCompile:true "
                 "where the verb offers it) before trusting a render of this material.");
+        case EStatus::OnDemand:
+            return TEXT("This editor compiles shader permutations when a pass first draws them, "
+                "so the shader map is incomplete by design: every permutation drawn so far "
+                "compiled without error and nothing is pending, and this material does not render "
+                "the Default Material for them. Permutations nobody has drawn yet are unverified, "
+                "so an empty errors list is not a full verdict. Call "
+                "material.authoring.compile_material (or pass waitForShaderCompile:true where the "
+                "verb offers it) to compile every permutation and get one.");
         default:
             return FString();
         }
@@ -1113,8 +1181,9 @@ namespace PinWright::MaterialShaderState
     // three subject fields are omitted on the multi-material fold, where `materials[]` carries a
     // subject and usage set per row instead.
     //
-    // `status` is the single field to branch on and uses the same five spellings as
-    // material.authoring.compile_material's `compileStatus`. `succeeded` is true ONLY for
+    // `status` is the single field to branch on and uses the five spellings of
+    // material.authoring.compile_material's `compileStatus` plus the probe-only `onDemand`
+    // (see EStatus::OnDemand). `succeeded` is true ONLY for
     // `completed`: a probe that never triggered a compile reports an empty error list and is not a
     // success. `failed` is the permanent case, kept as its own boolean because the recurring
     // mis-read is treating a permanent failure as a transient "still warming up".
@@ -1214,7 +1283,8 @@ namespace PinWright::MaterialShaderState
             TEXT("boolean"),
             TEXT("Block until this material's shaders finish compiling and report the real verdict "
                  "in shaderCompile.status (default false, which reports the non-blocking probe - "
-                 "and in a headless editor an un-drawn material probes as notCompiled forever)"),
+                 "an un-drawn material probes as onDemand until something compiles or draws it, "
+                 "and as notCompiled where shader compilation is off)"),
             false,
             TEXT("false")};
     }

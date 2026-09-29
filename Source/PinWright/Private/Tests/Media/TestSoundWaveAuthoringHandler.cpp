@@ -15,6 +15,8 @@
 #include "Tests/TestUtils.h"
 #include "Tests/TestSkipReporting.h"
 
+#include "Audio.h"
+#include "Memory/SharedBuffer.h"
 #include "Sound/SoundWave.h"
 #include "Sound/SoundGroups.h"
 #include "Misc/PackageName.h"
@@ -33,6 +35,19 @@ namespace
         UPackage* Package = CreatePackage(*OutPackagePath);
         USoundWave* Wave = NewObject<USoundWave>(Package, FName(*AssetName),
             RF_Public | RF_Standalone);
+        if (Wave)
+        {
+            // A real (silent, mono, 16-bit) RIFF payload, as every imported wave has. Without it
+            // the compressionQuality refresh's derived-data build logs the engine's
+            // "failed to parse as a wave" Error for the empty payload, which no user wave hits.
+            Wave->NumChannels = 1;
+            TArray<int16> SilentPcm;
+            SilentPcm.AddZeroed(4800);
+            TArray<uint8> WavBytes;
+            SerializeWaveFile(WavBytes, reinterpret_cast<const uint8*>(SilentPcm.GetData()),
+                SilentPcm.Num() * static_cast<int32>(sizeof(int16)), 1, 48000);
+            Wave->RawData.UpdatePayload(FSharedBuffer::Clone(WavBytes.GetData(), WavBytes.Num()));
+        }
         return Wave;
     }
 }

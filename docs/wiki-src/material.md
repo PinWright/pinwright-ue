@@ -18,7 +18,7 @@ Material instance parameters (the runtime tweakable values) go through the typed
 
 ## A successful call says nothing about the shader
 
-`blocksCompiled`, `expressionsCreated`, `nodeId` and `"Nodes connected."` describe the **graph** write. A material with malformed Custom HLSL or a wrong `SamplerType` produces identical numbers, writes a valid `.uasset`, saves, reads back with the right domain and wired `mainInputs`, and renders the engine Default Material. Every verb here now publishes a measured `shaderCompile` block; branch on `shaderCompile.status`, and treat `notCompiled` as "nobody asked yet", not as a pass. Full contract, the five statuses and the two ways to force a real verdict: [`material.compile-state`](material.compile-state.md).
+`blocksCompiled`, `expressionsCreated`, `nodeId` and `"Nodes connected."` describe the **graph** write. A material with malformed Custom HLSL or a wrong `SamplerType` produces identical numbers, writes a valid `.uasset`, saves, reads back with the right domain and wired `mainInputs`, and renders the engine Default Material. Every verb here now publishes a measured `shaderCompile` block; branch on `shaderCompile.status`, and treat `onDemand` and `notCompiled` as "no full verdict yet", not as a pass. Full contract, the six statuses and the two ways to force a real verdict: [`material.compile-state`](material.compile-state.md).
 
 Workflow gotcha: most authoring methods do not auto-compile. End an edit batch with `call("material.authoring.compile_material", ...)` before reading shader-derived data or packaging.
 

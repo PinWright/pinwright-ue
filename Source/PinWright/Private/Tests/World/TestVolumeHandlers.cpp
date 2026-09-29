@@ -1053,6 +1053,18 @@ bool FVolumeCreateNavMeshBoundsVolumeMarksLevelPackageDirtyTest::RunTest(const F
         return true;
     }
 
+    // The suite's blank world (aa_suite_start) is not One-File-Per-Actor, so the spawned volume
+    // would share the level package and the assertion could not discriminate. Spawn under
+    // external actors so the volume gets its own package; the level's setting is restored on
+    // scope exit, after the volume below is destroyed.
+    ULevel* PersistentLevel = World->PersistentLevel;
+    const bool bLevelUsedExternalActors = PersistentLevel->IsUsingExternalActors();
+    PersistentLevel->SetUseExternalActors(true);
+    ON_SCOPE_EXIT
+    {
+        PersistentLevel->SetUseExternalActors(bLevelUsedExternalActors);
+    };
+
     UPackage* LevelPkg = World->PersistentLevel->GetPackage();
     const bool bLevelWasDirty = LevelPkg->IsDirty();
     LevelPkg->SetDirtyFlag(false);

@@ -22,8 +22,8 @@ struct FNiagaraGpuIncompatibleModule
 
 namespace NiagaraDecompileHelpers
 {
-    // Reads the fx.Niagara.OnDemandCompile CVar. UE 5.6 defaults this on, deferring
-    // Niagara compile until the editor opens the system or an FX component spawns it.
+    // True when fx.Niagara.OnDemandCompileEnabled defers Niagara compile on load (the editor
+    // default on every UE 5.x), until the editor opens the system or an FX component spawns it.
     PINWRIGHT_API bool IsNiagaraOnDemandCompileEnabled();
 
     // Collect all UNiagaraNodeFunctionCall nodes in Graph, sorted by NodePosY then

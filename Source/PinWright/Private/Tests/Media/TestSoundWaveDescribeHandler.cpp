@@ -7,6 +7,8 @@
 #include "Misc/ScopeExit.h"
 #include "Tests/TestUtils.h"
 
+#include "Audio.h"
+#include "Memory/SharedBuffer.h"
 #include "Sound/SoundWave.h"
 #include "Misc/PackageName.h"
 #include "UObject/Package.h"
@@ -31,6 +33,20 @@ bool FAudioAuthoringDescribeSoundWaveReturnsDumpShapeTest::RunTest(const FString
     }
 
     Wave->AddToRoot();
+
+    // A real (silent, mono, 16-bit) RIFF payload, as every imported wave has. The compressionQuality
+    // seed below refreshes derived data, which logs the engine's "failed to parse as a wave" Error
+    // on an empty payload.
+    {
+        Wave->NumChannels = 1;
+        TArray<int16> SilentPcm;
+        SilentPcm.AddZeroed(4800);
+        TArray<uint8> WavBytes;
+        SerializeWaveFile(WavBytes, reinterpret_cast<const uint8*>(SilentPcm.GetData()),
+            SilentPcm.Num() * static_cast<int32>(sizeof(int16)), 1, 48000);
+        Wave->RawData.UpdatePayload(FSharedBuffer::Clone(WavBytes.GetData(), WavBytes.Num()));
+    }
+
     ON_SCOPE_EXIT
     {
         Wave->RemoveFromRoot();
@@ -104,7 +120,7 @@ bool FAudioAuthoringDescribeSoundWaveReturnsDumpShapeTest::RunTest(const FString
         Capture.Result->HasTypedField<EJson::Number>(TEXT("pitch")));
 
     // Presence-and-type alone cannot fail on a describe that reports the wrong thing: this
-    // fixture is a bare NewObject<USoundWave>, so a BuildSoundWaveJson emitting hardcoded
+    // fixture is a NewObject<USoundWave> with default properties, so a BuildSoundWaveJson emitting hardcoded
     // defaults (or reading the wrong UProperty) satisfies every HasTypedField above. Assert the
     // VALUES seeded through the canonical writer instead, so describe is checked against what
     // was actually written rather than against its own choice of shape.

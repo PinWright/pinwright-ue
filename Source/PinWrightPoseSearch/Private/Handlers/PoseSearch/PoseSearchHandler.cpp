@@ -94,6 +94,17 @@ bool BuildCreatePaths(FHandlerContext& Ctx, FString& OutPackagePath, FString& Ou
         return false;
     }
 
+    // A bare mount root ("/Game") passes IsValidLongPackageName but names a content root, not an
+    // asset. The object path it composes ("/Game.Game") sends the ALREADY_EXISTS LoadObject into
+    // a LogPackageName "DoesPackageExist FAILED: '/Game/'" error before any refusal is reached.
+    if (FPackageName::GetLongPackagePath(OutPackagePath).IsEmpty())
+    {
+        Ctx.SendError(TEXT("INVALID_PATH"), FString::Printf(
+            TEXT("Invalid asset path: %s names a content root, not an asset; pass a path such as %s/Folder/AssetName."),
+            *AssetPath, *OutPackagePath));
+        return false;
+    }
+
     OutObjectPath = PoseSearchAssetObjectPath(OutPackagePath);
     return true;
 }

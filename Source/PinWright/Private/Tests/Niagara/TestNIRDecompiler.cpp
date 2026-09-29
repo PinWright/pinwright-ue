@@ -18,6 +18,7 @@
 #include "NIR/NIRDecompiler.h"
 #include "Compat/EngineVersionCompat.h"
 #include "Handlers/Asset/AssetDumpHandler.h"
+#include "Handlers/Niagara/NiagaraEditTypes.h"
 #include "Tests/Assets/AssetDumpTestHelpers.h"
 #include "Tests/Niagara/TestNIRFixtures.h"
 #include "Tests/TestSkipReporting.h"
@@ -43,6 +44,7 @@
 #include "NiagaraSystem.h"
 #include "UObject/Package.h"
 #include "UObject/UnrealType.h"
+#include "ViewModels/Stack/NiagaraParameterHandle.h"
 
 namespace
 {
@@ -898,15 +900,15 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FNiagaraNirCompileStateStaleAnnotationTest,
 
 bool FNiagaraNirCompileStateStaleAnnotationTest::RunTest(const FString& Parameters)
 {
-    IConsoleVariable* OnDemandCV = IConsoleManager::Get().FindConsoleVariable(TEXT("fx.Niagara.OnDemandCompile"));
+    IConsoleVariable* OnDemandCV = IConsoleManager::Get().FindConsoleVariable(TEXT("fx.Niagara.OnDemandCompileEnabled"));
     if (!OnDemandCV)
     {
         PinWrightTestSkip::SkipAssertions(*this, TEXT("cvar-absent"),
-            TEXT("fx.Niagara.OnDemandCompile CVar is not registered; skipping live-state exclusion test."));
+            TEXT("fx.Niagara.OnDemandCompileEnabled CVar is not registered; skipping live-state exclusion test."));
         return true;
     }
 
-    const bool bOriginal = OnDemandCV->GetBool();
+    const FString Original = OnDemandCV->GetString();
     OnDemandCV->Set(TEXT("1"), ECVF_SetByCode);
 
     FString ObjectPath;
@@ -914,7 +916,7 @@ bool FNiagaraNirCompileStateStaleAnnotationTest::RunTest(const FString& Paramete
     TestNotNull(TEXT("Transient Niagara System created"), System);
     if (!System)
     {
-        OnDemandCV->Set(bOriginal ? TEXT("1") : TEXT("0"), ECVF_SetByCode);
+        OnDemandCV->Set(*Original, ECVF_SetByCode);
         return false;
     }
 
@@ -923,7 +925,7 @@ bool FNiagaraNirCompileStateStaleAnnotationTest::RunTest(const FString& Paramete
     TestFalse(TEXT("authored NIR excludes compile-state-stale annotation"),
         Result.Text.Contains(TEXT("# compile-state-stale")));
 
-    OnDemandCV->Set(bOriginal ? TEXT("1") : TEXT("0"), ECVF_SetByCode);
+    OnDemandCV->Set(*Original, ECVF_SetByCode);
     System->RemoveFromRoot();
     return true;
 }
@@ -987,7 +989,7 @@ bool FNiagaraNirRapidIterationAuthoredOverrideTest::RunTest(const FString& Param
 // The fixtures load engine module scripts and dynamic-input scripts so the override
 // pin / override node scaffolding is created by the same editor pipeline that the
 // niagara.edit SetModuleInput handler uses. If a stock module/script is missing in
-// the test cooked build, the test logs a warning and passes (the override walker
+// the test cooked build, the test emits a PINWRIGHT_ASSERTIONS_SKIPPED marker (the override walker
 // is still tested by FNiagaraNirOverrideRecursionDepthTest's synthetic chain).
 // ---------------------------------------------------------------------------
 
@@ -995,7 +997,7 @@ namespace
 {
     UNiagaraScript* LoadNirOverrideTestModuleScript()
     {
-        return LoadObject<UNiagaraScript>(nullptr, TEXT("/Niagara/Modules/Spawn/SpawnRate.SpawnRate"));
+        return LoadObject<UNiagaraScript>(nullptr, TEXT("/Niagara/Modules/Emitter/SpawnRate.SpawnRate"));
     }
 
     UNiagaraScript* LoadNirOverrideTestDynamicInputScript()
@@ -1165,28 +1167,20 @@ bool FNiagaraNirOverrideRecursionDepthTest::RunTest(const FString& Parameters)
     int32 ChainDepth = 1;
     while (Current && ChainDepth < 35)
     {
-        // Discover the first non-parameter-map input pin name on the current
-        // dynamic-input call. This avoids hardcoding "A" — which would silently
-        // break if the engine renames Add_Float's input pin in a future build,
-        // letting the loop exit at depth 1 and the depth-32 guard never fire.
-        // Mirrors the parameter-map filter pattern in the production override-walk
-        // code (NIRGraphEmitter_Dataflow::IsParameterMapPin).
-        TArray<UEdGraphPin*> CurrentInputPins;
-        Current->GetInputPins(CurrentInputPins);
+        // Discover the current dynamic input's first float input through the stack
+        // enumeration production uses. A dynamic input's inputs are Module.* parameter-map
+        // reads with no pin on its call node, so a pin walk finds nothing and stops the
+        // chain at depth 1.
+        TArray<FNiagaraVariable> CurrentInputs;
+        NiagaraEdit::EnumerateModuleStackInputs(*Current, CurrentInputs);
         FName FirstInputName = NAME_None;
-        for (UEdGraphPin* Pin : CurrentInputPins)
+        for (const FNiagaraVariable& Input : CurrentInputs)
         {
-            if (!Pin)
+            if (Input.GetType() == FNiagaraTypeDefinition::GetFloatDef())
             {
-                continue;
+                FirstInputName = FNiagaraParameterHandle(Input.GetName()).GetName();
+                break;
             }
-            const FNiagaraTypeDefinition PinType = UEdGraphSchema_Niagara::PinToTypeDefinition(Pin);
-            if (PinType.IsValid() && PinType == FNiagaraTypeDefinition::GetParameterMapDef())
-            {
-                continue;
-            }
-            FirstInputName = Pin->PinName;
-            break;
         }
         if (FirstInputName.IsNone())
         {
@@ -1204,20 +1198,16 @@ bool FNiagaraNirOverrideRecursionDepthTest::RunTest(const FString& Parameters)
 
     const FNIRResult Result = NIRDecompiler::BuildNiagaraIrText(System);
     TestTrue(TEXT("NIR build succeeds"), Result.bSuccess);
-    if (ChainDepth >= 32)
+    // A chain shorter than the guard means the fixture measured nothing: fail, don't warn.
+    TestTrue(FString::Printf(TEXT("Authored a dynamic-input chain deeper than the depth-32 guard (got %d)"), ChainDepth),
+        ChainDepth > 32);
+    TestTrue(TEXT("NIR contains recursion-limit-reached marker"),
+        Result.Text.Contains(TEXT("# recursion-limit-reached")));
+    const bool bHasWarning = Result.Warnings.ContainsByPredicate([](const FString& W)
     {
-        TestTrue(TEXT("NIR contains recursion-limit-reached marker"),
-            Result.Text.Contains(TEXT("# recursion-limit-reached")));
-        const bool bHasWarning = Result.Warnings.ContainsByPredicate([](const FString& W)
-        {
-            return W.Contains(TEXT("recursion limit (32) reached"));
-        });
-        TestTrue(TEXT("FNIRResult.Warnings contains the depth-32 message"), bHasWarning);
-    }
-    else
-    {
-        AddWarning(FString::Printf(TEXT("Could only author %d-deep chain; depth guard not exercised."), ChainDepth));
-    }
+        return W.Contains(TEXT("recursion limit (32) reached"));
+    });
+    TestTrue(TEXT("FNIRResult.Warnings contains the depth-32 message"), bHasWarning);
 
     NIRTestFixtures::DestroyFixture(System);
     return true;

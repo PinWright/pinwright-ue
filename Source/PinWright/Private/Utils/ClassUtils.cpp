@@ -10,6 +10,8 @@
 #include "AssetRegistry/AssetData.h"
 #include "PinWrightSubsystem.h"
 #include "Utils/PathUtils.h"
+#include "Utils/PieState.h"
+#include "Misc/PackageName.h"
 
 #if __has_include("EditorAssetLibrary.h")
 #include "EditorAssetLibrary.h"
@@ -46,8 +48,25 @@ UClass* ResolveClassByName(const FString& ClassNameOrPath)
          ClassNameOrPath.Contains(TEXT("/"))) &&
         !ClassNameOrPath.StartsWith(TEXT("/Script/")))
     {
+        // UEditorAssetLibrary::LoadAsset logs an Error for every path the Asset Registry does not
+        // hold ("LoadAsset failed: ... could not be found in the Asset Registry") and another on
+        // every call during PIE, where it returns nothing. Ask the registry the same question
+        // first, quietly, so a miss falls through to the lookups below without an engine error in
+        // the caller's log. A package-existence probe is not enough: an earlier failed
+        // LoadObject on the same path leaves an empty in-memory UPackage behind.
+        FString ObjectPath = FPackageName::ExportTextPathToObjectPath(ClassNameOrPath);
+        if (!ObjectPath.Contains(TEXT(".")))
+        {
+            ObjectPath += TEXT(".") + FPackageName::GetShortName(ObjectPath);
+        }
+        const FString PackageName = FPackageName::ObjectPathToPackageName(ObjectPath);
+        const bool bRegistered = FPackageName::IsValidLongPackageName(PackageName)
+            && IAssetRegistry::GetChecked().GetAssetByObjectPath(FSoftObjectPath(ObjectPath)).IsValid();
         UObject* Loaded = nullptr;
-        Loaded = UEditorAssetLibrary::LoadAsset(ClassNameOrPath);
+        if (bRegistered && !PinWrightPieState::IsPlayInEditorActive())
+        {
+            Loaded = UEditorAssetLibrary::LoadAsset(ClassNameOrPath);
+        }
         if (Loaded)
         {
             if (UBlueprint* BP = Cast<UBlueprint>(Loaded))

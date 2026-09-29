@@ -43,7 +43,7 @@ All via `call("editor.console_command", {"command": "..."})`.
 
 | Command | Effect | Plugin wrapper |
 |---|---|---|
-| `Trace.File [path] [channels]` | **Canonical** start-to-`.utrace`. First arg is a path if it contains `/ \ . :`, else a channel set. | — |
+| `Trace.File [path] [channels]` | **Canonical** start-to-`.utrace`. First arg is a path if it contains `/ \ . :`, else a channel set. | `insights.start_session` (calls `FTraceAuxiliary::Start` directly with an auto-named file; refuses while a trace is open) |
 | `Trace.Send <host[:port]> [channels]` | Stream to a trace store / UnrealTraceServer. | — |
 | `Trace.Stop` | Stop the active trace. | `insights.stop_session` (calls `FTraceAuxiliary::Stop` directly) |
 | `Trace.Pause` / `Trace.Resume` | Snapshot-disable / re-enable the current channel set. | — |
@@ -55,7 +55,7 @@ All via `call("editor.console_command", {"command": "..."})`.
 | `Trace.Bookmark [name]` | Emit an instant marker. | — |
 | `Trace.RegionBegin [name]` / `Trace.RegionEnd [name]` | Open / close a named region. | — |
 
-Note: `insights.start_session` issues the **deprecated** `Trace.Start` (forwards to `Trace.File`, logs a warning each call) — functionally fine. There is no bare `Trace.Snapshot` and no `Trace.SendTo` in 5.7; use the names above.
+Note: there is no bare `Trace.Snapshot` and no `Trace.SendTo` in 5.7; use the names above.
 
 ## Launch args (relaunch-only)
 

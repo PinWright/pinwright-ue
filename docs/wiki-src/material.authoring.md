@@ -41,7 +41,7 @@ Convenience-node coverage: most simple helpers wrap the lower-level factory used
 
 ## Limitations and reliability notes
 
-- **A successful write verb is not a working shader, and until 2026-09 nothing in any response said so.** `nodeId`, `"Nodes connected."`, `blocksCompiled` and a clean `get_material_info` read-back are all produced identically by a material with malformed Custom HLSL or a mismatched `SamplerType` — which writes a valid `.uasset`, saves, and renders the engine Default Material. Every verb in this namespace now publishes a measured `shaderCompile` block; branch on `shaderCompile.status`, and read `notCompiled` as "no compile has run", never as a pass. `compile_material` is the verb that blocks and measures; `material.compile_mgir` and `material.graph.create_nodes` take `waitForShaderCompile: true` to fold that measurement into the write. Full contract: [`material.compile-state`](material.compile-state.md).
+- **A successful write verb is not a working shader, and until 2026-09 nothing in any response said so.** `nodeId`, `"Nodes connected."`, `blocksCompiled` and a clean `get_material_info` read-back are all produced identically by a material with malformed Custom HLSL or a mismatched `SamplerType` — which writes a valid `.uasset`, saves, and renders the engine Default Material. Every verb in this namespace now publishes a measured `shaderCompile` block; branch on `shaderCompile.status`, and read `onDemand` (only drawn permutations compiled) and `notCompiled` (nothing can compile) as unverified, never as a pass. `compile_material` is the verb that blocks and measures; `material.compile_mgir` and `material.graph.create_nodes` take `waitForShaderCompile: true` to fold that measurement into the write. Full contract: [`material.compile-state`](material.compile-state.md).
 
 - **A light function material that is not atlas-compatible modulates opaque surfaces and contributes nothing to volumetric fog, and every other read-back looks healthy.** `get_material_info` returns a measured `lightFunctionAtlas` block for `LightFunction`-domain materials — `compatible` read off the compiled shader map, `atlasGeneration` measuring `r.LightFunctionAtlas` — and `set_light_function_atlas_compatible` is the override. Any texcoord manipulation (any `TextureCoordinate` node at all) or world-position / scene-depth read excludes a material by construction, so most animated light functions need the override.
 
@@ -82,7 +82,7 @@ The eight verbs that split `name` + `path` share one destination resolver, so th
 ## See also
 
 - [`material.mgir`](material.mgir.md) for the one-call bulk text-IR path (`material.compile_mgir`) — see the Workflow note above.
-- [`material.compile-state`](material.compile-state.md) for the `shaderCompile` block every verb here publishes, the five statuses, and how to get a real verdict rather than a probe.
+- [`material.compile-state`](material.compile-state.md) for the `shaderCompile` block every verb here publishes, the six statuses, and how to get a real verdict rather than a probe.
 - [`material.graph`](material.graph.md) for node types not exposed here.
 - [`blueprint.graph`](blueprint.graph.md) for the analogous low-level graph model used in Blueprints.
 - [`niagara`](niagara.md) for assigning materials to Niagara particle renderers from the persistent Niagara workflow.
