@@ -34,6 +34,7 @@
 #include "Utils/ScreenshotUtils.h"
 #include "WidgetBlueprint.h"
 #include "Handlers/UI/WidgetAuthoringUtils.h"
+#include "Utils/RenderingAvailability.h"
 
 #if __has_include("Factories/WidgetBlueprintFactory.h")
 #  include "Factories/WidgetBlueprintFactory.h"
@@ -174,6 +175,11 @@ REGISTER_RPC_HANDLER("ui.screenshot", "ui", "Capture a screenshot of the active 
         RPC_PARAM_OPT("returnBase64", "boolean", "Whether to return base64-encoded image data (default true)")
     ))
 {
+    if (!PinWrightRendering::RequireRenderer(Ctx))
+    {
+        return true;
+    }
+
     // Delegate path+filename composition to MakeUiScreenshotPath (full contract in
     // ScreenshotUtils.h): .png is appended only when absent, so a caller-supplied ".png"
     // is no longer doubled to ".png.png" (E-ui-screenshot-doubles-png-extension). Filename

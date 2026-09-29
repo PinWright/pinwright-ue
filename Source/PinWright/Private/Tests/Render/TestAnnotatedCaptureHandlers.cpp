@@ -146,6 +146,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRenderCaptureAnnotatedInvalidDimensionsTest,
 
 bool FRenderCaptureAnnotatedInvalidDimensionsTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
     Payload->SetNumberField(TEXT("width"), 0);
     Payload->SetNumberField(TEXT("height"), 128);
@@ -165,6 +166,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRenderCaptureAnnotatedInvalidProjectionModeTes
 
 bool FRenderCaptureAnnotatedInvalidProjectionModeTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
     Payload->SetStringField(TEXT("projectionMode"), TEXT("fisheye"));
 
@@ -185,6 +187,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRenderCaptureAnnotatedInvalidGridTest,
 
 bool FRenderCaptureAnnotatedInvalidGridTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
     TSharedPtr<FJsonObject> Grid = MakeShared<FJsonObject>();
     Grid->SetNumberField(TEXT("spacing"), 0.0);
@@ -235,6 +238,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRenderCaptureAnnotatedKnownParamsAcceptedTest,
 
 bool FRenderCaptureAnnotatedKnownParamsAcceptedTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     DispatcherTestHelpers::FSinkPtr Sink;
     FRpcDispatcher Dispatcher;
     DispatcherTestHelpers::MakeDispatcher(Sink, Dispatcher);
@@ -299,6 +303,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRenderCaptureAnnotatedActorLabelsDefaultOffTes
 
 bool FRenderCaptureAnnotatedActorLabelsDefaultOffTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
     Payload->SetNumberField(TEXT("width"), 128.0);
     Payload->SetNumberField(TEXT("height"), 128.0);
@@ -346,6 +351,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRenderCaptureAnnotatedActorLabelsAcceptedTest,
 
 bool FRenderCaptureAnnotatedActorLabelsAcceptedTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     // (a) declared-param check through the real dispatcher (the direct invoke path skips it).
     {
         DispatcherTestHelpers::FSinkPtr Sink;
@@ -411,8 +417,6 @@ bool FRenderCaptureAnnotatedActorLabelsAcceptedTest::RunTest(const FString& Para
 
     // (b) an unresolvable className is CLASS_NOT_FOUND, raised before any capture happens.
     {
-        bSuppressLogErrors = true;
-
         TSharedPtr<FJsonObject> LabelArgs = MakeShared<FJsonObject>();
         LabelArgs->SetStringField(TEXT("className"), TEXT("PW_NoSuchActorClass_ZZZ"));
 
@@ -433,8 +437,6 @@ bool FRenderCaptureAnnotatedActorLabelsAcceptedTest::RunTest(const FString& Para
 
     // (c) a negative threshold is a caller error, rejected before any viewport work.
     {
-        bSuppressLogErrors = true;
-
         TSharedPtr<FJsonObject> LabelArgs = MakeShared<FJsonObject>();
         LabelArgs->SetNumberField(TEXT("minScreenArea"), -1.0);
 
@@ -463,6 +465,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRenderCaptureAnnotatedBoundsOverActorTest,
 
 bool FRenderCaptureAnnotatedBoundsOverActorTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
     if (!World)
     {

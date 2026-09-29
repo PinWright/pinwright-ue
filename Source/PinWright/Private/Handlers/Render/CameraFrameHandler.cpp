@@ -76,6 +76,7 @@
 #include "Misc/FileHelper.h"
 #include "Modules/ModuleManager.h"
 #include "Slate/SceneViewport.h"
+#include "Utils/RenderingAvailability.h"
 
 // The shot-planning helpers this file used to define inline (ComputeFitDistance,
 // PlaceOrbitCamera, SnapOrbitAnglesToOrthographicAxis, AddShotFields, ...) now live in
@@ -263,6 +264,11 @@ REGISTER_RPC_HANDLER("camera.frame_actor", "camera",
         RPC_PARAM_OPT("inline", "boolean", "When true, also embed base64 PNG bytes in a 'base64' field (default false).")
     ))
 {
+    if (!PinWrightRendering::RequireRenderer(Ctx))
+    {
+        return true;
+    }
+
     using namespace PinWrightCameraFrame;
 
     const TSharedPtr<FJsonObject>& Payload = Ctx.GetRawPayload();
@@ -707,6 +713,11 @@ REGISTER_RPC_HANDLER("camera.orbit_shots", "camera",
         RPC_PARAM_OPT("inline", "boolean", "When true, also embed base64 PNG bytes per shot (default false).")
     ))
 {
+    if (!PinWrightRendering::RequireRenderer(Ctx))
+    {
+        return true;
+    }
+
     using namespace PinWrightCameraFrame;
 
     const TSharedPtr<FJsonObject>& Payload = Ctx.GetRawPayload();

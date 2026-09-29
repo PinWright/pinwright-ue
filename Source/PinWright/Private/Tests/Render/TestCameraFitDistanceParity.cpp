@@ -242,6 +242,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPwOrbitPaddingDefaultMatchesWeldedConstantTest
 
 bool FPwOrbitPaddingDefaultMatchesWeldedConstantTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     using namespace PinWrightCameraFrame;
 
     // The DISTANCE the welded 1.15f produced, computed from the helper at assert time rather than
@@ -389,6 +390,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPwOrbitPaddingActuallyMovesTheCameraTest,
 
 bool FPwOrbitPaddingActuallyMovesTheCameraTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     using namespace PinWrightCameraFrame;
 
     const float ExpectedRatio = 2.0f / GPwFitWeldedPadding;
@@ -496,6 +498,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPwFrameActorExplicitDistanceSkipsTheFitTest,
 
 bool FPwFrameActorExplicitDistanceSkipsTheFitTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     using namespace PinWrightCameraFrame;
 
     const float FitDistance = ResolveCameraDistance(false, 0.0f, false, 0.0f,
@@ -712,6 +715,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPwOrbitPreviewSceneRigOnLevelTargetRefusedTest
 
 bool FPwOrbitPreviewSceneRigOnLevelTargetRefusedTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     // A bare `point` target, so this needs no world, no actor and no viewport: the refusal is
     // decidable from the payload and is answered above the viewport acquisition, which is what
     // makes it assertable with no GPU.

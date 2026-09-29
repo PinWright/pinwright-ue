@@ -1796,6 +1796,8 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FLandscapeSculptMissingLocationTest,
 
 bool FLandscapeSculptMissingLocationTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
+
     // `location` is NOT an RPC_PARAM_REQ - LandscapeHandler.cpp:754-772 declares every
     // parameter optional - so the dispatcher's required-param gate never fires for this
     // verb and the EnvironmentHandlersDispatcherGate fixture above does not apply. The
@@ -2716,6 +2718,8 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FLandscapeEditHollowEmitsNoComponentsDiagnostic
 
 bool FLandscapeEditHollowEmitsNoComponentsDiagnosticTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
+
     UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
     if (!World)
     {
@@ -2918,12 +2922,36 @@ bool FEnvironmentControlSetTimeOfDayEchoesStoredPitchTest::RunTest(const FString
 // requested value. The fix assigns the UPROPERTY directly after the setter and
 // discloses `mobility` / `requiresLightingRebuild` additively.
 //
-// Both tests target the level's OWN light, resolved exactly the way the handler
-// resolves it (first valid actor in TActorIterator order) so test and handler cannot
-// disagree about the target. Spawning a fixture would not work: the handler would
-// still pick the level's first light, not ours. Mobility, intensity and the package
-// dirty flag are all restored on scope exit.
+// Both tests target the first valid light in TActorIterator order, the handler's own
+// resolution, so test and handler cannot disagree about the target. The suite runs on a
+// blank world (aa_suite_start), so when no light of that class exists a labelled fixture
+// light is spawned first; with an existing one, a spawned fixture would not be the
+// handler's target, so the existing light is used. FScopedEditorWorldActorGuard destroys
+// the fixture; mobility, intensity and the package dirty flag are restored on scope exit.
 // ============================================================================
+
+template <typename TLight>
+static TLight* FindOrSpawnFirstLight(UWorld* World, const TCHAR* LabelPrefix)
+{
+    auto FindFirst = [World]() -> TLight*
+    {
+        for (TActorIterator<TLight> It(World); It; ++It)
+        {
+            if (IsValid(*It))
+            {
+                return *It;
+            }
+        }
+        return nullptr;
+    };
+    if (TLight* Existing = FindFirst())
+    {
+        return Existing;
+    }
+    SpawnActorInActiveWorld<TLight>(TLight::StaticClass(), FVector::ZeroVector, FRotator::ZeroRotator,
+        FString::Printf(TEXT("%s_%s"), LabelPrefix, *FGuid::NewGuid().ToString(EGuidFormats::Digits)));
+    return FindFirst();
+}
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEnvironmentSetSkylightIntensityAppliesOnStaticMobilityTest,
     "PinWright.environment.control.set_skylight_intensity.AppliesOnStaticMobility",
@@ -2939,24 +2967,13 @@ bool FEnvironmentSetSkylightIntensityAppliesOnStaticMobilityTest::RunTest(const 
         return true;
     }
 
-    // Same resolution order as the handler.
-    ASkyLight* SkyActor = nullptr;
-    for (TActorIterator<ASkyLight> It(World); It; ++It)
+    FScopedEditorWorldActorGuard WorldGuard;
+
+    ASkyLight* SkyActor = FindOrSpawnFirstLight<ASkyLight>(World, TEXT("PW_SkylightStaticMobility"));
+    if (!TestTrue(TEXT("a skylight exists or the fixture skylight spawned"),
+            SkyActor && SkyActor->GetLightComponent()))
     {
-        if (ASkyLight* Sky = *It)
-        {
-            if (IsValid(Sky))
-            {
-                SkyActor = Sky;
-                break;
-            }
-        }
-    }
-    if (!SkyActor || !SkyActor->GetLightComponent())
-    {
-        PinWrightTestSkip::SkipAssertions(*this, TEXT("fixture-missing"),
-            TEXT("No ASkyLight in the editor world — skipping Static-mobility skylight test"));
-        return true;
+        return false;
     }
 
     USkyLightComponent* SkyComp = SkyActor->GetLightComponent();
@@ -3027,27 +3044,15 @@ bool FEnvironmentSetSunIntensityAppliesOnMovableMobilityTest::RunTest(const FStr
         return true;
     }
 
-    // Same resolution order as the handler.
-    ADirectionalLight* SunLight = nullptr;
-    for (TActorIterator<ADirectionalLight> It(World); It; ++It)
-    {
-        if (ADirectionalLight* Light = *It)
-        {
-            if (IsValid(Light))
-            {
-                SunLight = Light;
-                break;
-            }
-        }
-    }
+    FScopedEditorWorldActorGuard WorldGuard;
+
+    ADirectionalLight* SunLight = FindOrSpawnFirstLight<ADirectionalLight>(World, TEXT("PW_SunMovableMobility"));
     UDirectionalLightComponent* LightComp = SunLight
         ? Cast<UDirectionalLightComponent>(SunLight->GetLightComponent())
         : nullptr;
-    if (!LightComp)
+    if (!TestNotNull(TEXT("a directional light exists or the fixture light spawned"), LightComp))
     {
-        PinWrightTestSkip::SkipAssertions(*this, TEXT("fixture-missing"),
-            TEXT("No ADirectionalLight in the editor world — skipping Movable-mobility sun test"));
-        return true;
+        return false;
     }
 
     UPackage* Pkg = SunLight->GetPackage();

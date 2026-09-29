@@ -179,6 +179,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAnnotatedAssetOverlayGeometryTest,
 
 bool FAnnotatedAssetOverlayGeometryTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     constexpr int32 ImageSize = 256;
     constexpr int32 Centre = ImageSize / 2;                  // 128
     // (Width/2) * (500 cm / 1000 cm) / tan(FOV/2 = 45 deg) = 128 * 0.5 = 64 px.
@@ -475,6 +476,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAnnotatedAssetLevelOverlaysRefusedTest,
 
 bool FAnnotatedAssetLevelOverlaysRefusedTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     const auto MakeAssetSubject = []()
     {
         TSharedPtr<FJsonObject> Subject = MakeShared<FJsonObject>();

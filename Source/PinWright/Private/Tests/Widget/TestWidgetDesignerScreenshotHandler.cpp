@@ -3,6 +3,7 @@
 #include "Misc/AutomationTest.h"
 #include "Dom/JsonObject.h"
 #include "Tests/TestUtils.h"
+#include "Tests/TestSkipReporting.h"
 
 #include "Tests/Widget/WidgetTestFixtures.h"
 #include "Blueprint/UserWidget.h"
@@ -107,6 +108,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWidgetScreenshotDesignerRequiresWidgetPathTest
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FWidgetScreenshotDesignerRequiresWidgetPathTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     FTestResponseCapture Capture;
     const bool bFound = InvokeHandlerWithCapture(TEXT("widget.screenshot_designer"),
         MakeShared<FJsonObject>(), Capture);
@@ -153,6 +155,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWidgetScreenshotDesignerWindowCapturesAfterOpe
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FWidgetScreenshotDesignerWindowCapturesAfterOpenAssetTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     const FString WidgetPath = MakeWidgetDesignerScreenshotAssetPath(TEXT("WBP_DesignerScreenshot"));
     UWidgetBlueprint* WBP = MakeWidgetDesignerScreenshotBlueprint(WidgetPath);
     TestNotNull(TEXT("widget blueprint allocated"), WBP);
@@ -229,6 +232,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWidgetScreenshotDesignerPreviewSelfOpensDesign
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FWidgetScreenshotDesignerPreviewSelfOpensDesignerTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     const FString WidgetPath = MakeWidgetDesignerScreenshotAssetPath(TEXT("WBP_DesignerPreviewSelfOpen"));
     UWidgetBlueprint* WBP = MakeWidgetDesignerScreenshotBlueprint(WidgetPath);
     TestNotNull(TEXT("widget blueprint allocated"), WBP);
@@ -359,6 +363,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWidgetScreenshotDesignerTransientOverridesReve
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FWidgetScreenshotDesignerTransientOverridesRevertTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     // Capture-and-revert: hide=["Child0"] flips bHiddenInDesigner on the preview's
     // Child0 for the screenshot, then ON_SCOPE_EXIT in the handler reverts it.
     // Asserts:
@@ -490,6 +495,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWidgetScreenshotDesignerPreviewMatchesCanvasBo
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FWidgetScreenshotDesignerPreviewMatchesCanvasBoundsTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     const FString WidgetPath = MakeWidgetDesignerScreenshotAssetPath(TEXT("WBP_DesignerPreviewChrome"));
     UWidgetBlueprint* WBP = MakeWidgetDesignerScreenshotBlueprint(WidgetPath);
     TestNotNull(TEXT("widget blueprint allocated"), WBP);
@@ -700,6 +706,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FWidgetScreenshotDesignerMaxSizePreviewTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     // Three-pass test: landscape (800x400, max_size=1024 → 1024x512), portrait (400x800,
     // max_size=1024 → 512x1024), and default (omit max_size, expect 1024 default applied).
     // ±4px tolerance on the shorter axis to absorb FMath::RoundToInt rounding.

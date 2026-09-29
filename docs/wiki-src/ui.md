@@ -10,6 +10,10 @@ Only three method families here are plugin-gated: `ui.activatable_*` (push/pop),
 
 `ui.screenshot` is a near-duplicate of `editor.screenshot`, kept for symmetry within this namespace. Prefer the canonical `editor.*` form unless you need this method's `ui.*`-runtime behavior (see its method page).
 
+## No renderer (headless mode)
+
+`ui.screenshot` needs a GPU renderer. In an editor launched with `-NullRHI` (mode `headless`, or a commandlet) it refuses with `RENDERING_UNAVAILABLE` before reading any parameter; the error data carries `method` and `renderingModes: ["offscreen", "visible"]`. Relaunch in mode `offscreen` or `visible`.
+
 ## See also
 
 - `call("widget")` — author and edit the widget blueprint asset itself.

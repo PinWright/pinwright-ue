@@ -143,6 +143,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEditorScreenshotLevelViewportFallbackTest,
 
 bool FEditorScreenshotLevelViewportFallbackTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     // This test exercises the no-game-viewport fallback; it only makes sense
     // when there is genuinely no game/PIE viewport bound (the normal editor state).
     if (GEngine && GEngine->GameViewport)
@@ -197,6 +198,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEditorScreenshotGameViewportSyncTest,
 
 bool FEditorScreenshotGameViewportSyncTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     // Only meaningful when a game/PIE viewport is actually bound — that is the
     // branch this regression covers. Skip otherwise (the LevelViewportFallback
     // test above covers the no-game-viewport path).

@@ -49,6 +49,7 @@
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
 #include "UObject/Package.h"
+#include "Utils/RenderingAvailability.h"
 
 // No file-scope `using namespace` anywhere in this file: Unity merges translation units, so a
 // using-directive outside a function body leaks into every .cpp compiled after it in the same
@@ -222,6 +223,11 @@ REGISTER_RPC_HANDLER("render.capture_ortho_tiles", "render",
             " from governing the pixels - the response says so and names the mode as the cause.")
     ))
 {
+    if (!PinWrightRendering::RequireRenderer(Ctx))
+    {
+        return true;
+    }
+
     using namespace PinWrightImage;
     using namespace PinWrightOrthoTiles;
     using namespace PinWrightTileGrid;

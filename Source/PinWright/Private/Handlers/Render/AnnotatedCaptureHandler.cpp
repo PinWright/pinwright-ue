@@ -68,6 +68,7 @@
 #include "Misc/FileHelper.h"
 #include "Modules/ModuleManager.h"
 #include "Slate/SceneViewport.h"
+#include "Utils/RenderingAvailability.h"
 
 // Uniquely-named namespace (not anonymous) so a Unity-build TU merge cannot ODR-clash
 // these overlay constants and paint adapters with same-named symbols elsewhere (same guard
@@ -213,6 +214,11 @@ REGISTER_RPC_HANDLER("render.capture_annotated", "render",
         RPC_PARAM_OPT("inline", "boolean", "When true, also embed base64 PNG bytes of the annotated image in a 'base64' field. Default false.")
     ))
 {
+    if (!PinWrightRendering::RequireRenderer(Ctx))
+    {
+        return true;
+    }
+
     using namespace PinWrightRenderCapture;
     using namespace PinWrightAnnotatedCapture;
 

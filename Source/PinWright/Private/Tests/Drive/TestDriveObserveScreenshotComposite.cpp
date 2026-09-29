@@ -21,6 +21,7 @@
 #include "Widgets/Colors/SColorBlock.h"
 #include "Widgets/SViewport.h"
 #include "Tests/AutomationEditorCommon.h"
+#include "Tests/Drive/HostNeutralPie.h"
 #include "Tests/TestSkipReporting.h"
 #include "Utils/PieState.h"
 
@@ -178,6 +179,12 @@ bool FCleanupOwnedPieDriveObserveComposite::Update()
     {
         return true;
     }
+    // Measured from the stop request, not from RunTest: a PIE start stalled by an engine ensure
+    // report (33 s observed) must not spend the stop budget.
+    if (State->CleanupDeadline == 0.0)
+    {
+        State->CleanupDeadline = FPlatformTime::Seconds() + 15.0;
+    }
     if (FPlatformTime::Seconds() >= State->CleanupDeadline)
     {
         Test->AddError(TEXT("Timed out waiting for the owned PIE session to stop."));
@@ -202,6 +209,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveObserveScreenshotCompositeTest,
 
 bool FDriveObserveScreenshotCompositeTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     using namespace DriveObserveCompositeTestHelpers;
     if (!GEditor || !FSlateApplication::IsInitialized())
     {
@@ -222,13 +230,9 @@ bool FDriveObserveScreenshotCompositeTest::RunTest(const FString& Parameters)
         return true;
     }
 
-    // Starting PIE boots the host's game, whose startup may log errors (network, streaming)
-    // unrelated to the capture; the assertions below carry the verdict.
-    bSuppressLogErrors = true;
     const TSharedRef<FState> State = MakeShared<FState>();
     State->Deadline = FPlatformTime::Seconds() + 20.0;
-    State->CleanupDeadline = State->Deadline + 15.0;
-    ADD_LATENT_AUTOMATION_COMMAND(FStartPIECommand(false));
+    ADD_LATENT_AUTOMATION_COMMAND(FStartHostNeutralPieCommand(this));
     ADD_LATENT_AUTOMATION_COMMAND(FRunOwnedPieDriveObserveComposite(this, State));
     ADD_LATENT_AUTOMATION_COMMAND(FEndPlayMapCommand());
     ADD_LATENT_AUTOMATION_COMMAND(FCleanupOwnedPieDriveObserveComposite(this, State));

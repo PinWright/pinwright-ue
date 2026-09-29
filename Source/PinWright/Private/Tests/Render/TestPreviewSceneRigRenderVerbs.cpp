@@ -21,7 +21,8 @@
 // assertions in 3 of 3 runs because another project's editor held the GPU, and the suite totals
 // looked identical either way. Every assertion below runs against the registered param specs, the
 // shared parser, the dispatcher's param gate, or a handler refusal that fires before any viewport
-// is acquired. There is no device to be denied and nothing to skip.
+// is acquired. There is no device to be denied; the handler-refusal tests skip only under
+// -NullRHI, where the renderer guard answers RENDERING_UNAVAILABLE before those refusals.
 #include "Misc/AutomationTest.h"
 
 #include "Dom/JsonObject.h"
@@ -33,6 +34,7 @@
 #include "Tests/Infra/DispatcherTestHelpers.h"
 #include "Tests/Infra/ParamSpecTestHelpers.h"
 #include "Tests/TestUtils.h"
+#include "Tests/TestSkipReporting.h"
 
 // Defined in Handlers/Render/RenderHandler.cpp, declared here rather than in a header because the
 // design record (docs/preview-scene-rig.md, section 7) gives this chunk exactly four files and no
@@ -162,6 +164,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPreviewSceneRigReachesParserTest,
 
 bool FPreviewSceneRigReachesParserTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     {
         TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
         Payload->SetStringField(TEXT("assetPath"), PWR2MissingAssetPath());
@@ -337,6 +340,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPreviewSceneRigAnnotatedLevelPathTest,
 
 bool FPreviewSceneRigAnnotatedLevelPathTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     // No subject at all -- the level viewport, this verb's default.
     {
         FTestResponseCapture Capture;
@@ -403,6 +407,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPreviewSceneRigAnimationPreviewParseTest,
 
 bool FPreviewSceneRigAnimationPreviewParseTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     {
         TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
         Payload->SetStringField(TEXT("assetPath"), PWR2MissingAssetPath());

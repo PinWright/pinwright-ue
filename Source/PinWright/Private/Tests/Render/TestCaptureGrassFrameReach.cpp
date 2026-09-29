@@ -360,6 +360,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCaptureGrassOrthographicPoseDrivesBuildTest,
 
 bool FCaptureGrassOrthographicPoseDrivesBuildTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
     if (!World)
     {
@@ -539,6 +540,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCaptureGrassOrthoTilesPublishGrassTest,
 
 bool FCaptureGrassOrthoTilesPublishGrassTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     const FString Prefix = FString::Printf(TEXT("pw_grass_reach_%s"),
         *FGuid::NewGuid().ToString(EGuidFormats::Short));
 

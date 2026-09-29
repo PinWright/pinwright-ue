@@ -119,8 +119,8 @@ namespace
         OutMaster = nullptr;
         OutInstance = nullptr;
         const FString Unique = FGuid::NewGuid().ToString(EGuidFormats::Digits);
-        OutMasterPath = FString::Printf(TEXT("/Game/__PW_GatewayTests/PWThumbM%s_%s"), NameSuffix, *Unique);
-        OutInstancePath = FString::Printf(TEXT("/Game/__PW_GatewayTests/PWThumbI%s_%s"), NameSuffix, *Unique);
+        OutMasterPath = FString::Printf(TEXT("/Game/PinWrightTests/__PW_GatewayTests/PWThumbM%s_%s"), NameSuffix, *Unique);
+        OutInstancePath = FString::Printf(TEXT("/Game/PinWrightTests/__PW_GatewayTests/PWThumbI%s_%s"), NameSuffix, *Unique);
 
         UPackage* MasterPkg = CreatePackage(*OutMasterPath);
         if (!Test.TestNotNull(TEXT("master package created"), MasterPkg))
@@ -377,6 +377,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGenerateThumbnailParamValidationTest,
 
 bool FGenerateThumbnailParamValidationTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     // An unknown primitive is rejected before anything is loaded or rendered.
     {
         TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
@@ -439,6 +440,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGenerateThumbnailWritesPngAndLeavesAssetCleanT
 
 bool FGenerateThumbnailWritesPngAndLeavesAssetCleanTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     const FString AssetPath = TEXT("/Engine/EngineMeshes/Cube");
     UObject* Asset = LoadObject<UObject>(nullptr, *AssetPath);
     if (!Asset)
@@ -723,6 +725,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGenerateThumbnailHandlerFrameEvidenceTest,
 
 bool FGenerateThumbnailHandlerFrameEvidenceTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     // Synthetic engine content, not host content: the defect was found on a project material but
     // has nothing to do with one.
     const FString AssetPath = TEXT("/Engine/EngineMeshes/Cube");
@@ -910,6 +913,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGenerateThumbnailForcedPlaneReportedTest,
 
 bool FGenerateThumbnailForcedPlaneReportedTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     FString MasterPath;
     FString InstancePath;
     UMaterial* Master = nullptr;
@@ -988,6 +992,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGenerateThumbnailPlaneFramingTest,
 
 bool FGenerateThumbnailPlaneFramingTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     const FString AssetPath = TEXT("/Engine/EngineMaterials/DefaultMaterial");
     if (!UEditorAssetLibrary::DoesAssetExist(AssetPath))
     {

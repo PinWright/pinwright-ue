@@ -299,6 +299,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEightIdenticalPosesAdjacentMaxDeltaTest,
 
 bool FEightIdenticalPosesAdjacentMaxDeltaTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     using namespace PinWrightCaptureSubject;
     using namespace PoseListCaptureStabilityTestLocal;
 
@@ -329,7 +330,7 @@ bool FEightIdenticalPosesAdjacentMaxDeltaTest::RunTest(const FString& Parameters
     }
 
     const FString MeshPackagePath = FString::Printf(
-        TEXT("/Game/__PW_GatewayTests/PWPoseRepeatability_%s"),
+        TEXT("/Game/PinWrightTests/__PW_GatewayTests/PWPoseRepeatability_%s"),
         *FGuid::NewGuid().ToString(EGuidFormats::Digits));
     UPackage* MeshPackage = CreatePackage(*MeshPackagePath);
     if (!TestNotNull(TEXT("the unique preview mesh package is created"), MeshPackage))

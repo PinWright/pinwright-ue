@@ -41,6 +41,7 @@
 #include "Handlers/HandlerRegistration.h"
 #include "Handlers/ParamSpec.h"
 #include "Tests/Infra/DispatcherTestHelpers.h"
+#include "Tests/TestSkipReporting.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 
@@ -161,10 +162,13 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FNestedParamKeyGateRefusesTest,
 
 bool FNestedParamKeyGateRefusesTest::RunTest(const FString& Parameters)
 {
-    // The gate logs its refusal through LogRpcDispatcher at Warning, exactly as the three passes
-    // above it do. UAutomationControllerSettings::bElevateLogWarningsToErrors defaults to TRUE, so
-    // a warning raised inside a running test is promoted to an error.
-    bSuppressLogWarnings = true;
+    // The provoked refusal's own log lines, declared with exact counts (docs/rpc-design.md s12).
+    AddExpectedMessagePlain(TEXT("'grid.between' is not a key of 'grid'"),
+        ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 2);
+    AddExpectedMessagePlain(TEXT("'states[1].animation' is not a key of 'states[1]'"),
+        ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
+    AddExpectedMessagePlain(TEXT("'keep_out.radius' is not a key of 'keep_out'"),
+        ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
 
     // The ticket's instance #3, in fixture form: `grid.between` / `grid.lines` / `grid.origin` were
     // invented by reading a description written as a JSON-shaped brace of English, and the verb read
@@ -367,10 +371,11 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FNestedParamKeyGateOrderingTest,
 
 bool FNestedParamKeyGateOrderingTest::RunTest(const FString& Parameters)
 {
-    // The gate logs its refusal through LogRpcDispatcher at Warning, exactly as the three passes
-    // above it do. UAutomationControllerSettings::bElevateLogWarningsToErrors defaults to TRUE, so
-    // a warning raised inside a running test is promoted to an error.
-    bSuppressLogWarnings = true;
+    // The provoked refusal's own log lines, declared with exact counts (docs/rpc-design.md s12).
+    AddExpectedMessagePlain(TEXT("[_test.nested_param_gate] Unknown parameter(s): nosuchparam"),
+        ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
+    AddExpectedMessagePlain(TEXT("[_test.nested_param_gate] Parameter type mismatch: 'grid' is declared object and was sent as string"),
+        ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
 
     FRpcDispatcher Dispatcher;
     DispatcherTestHelpers::FSinkPtr Sink;
@@ -421,10 +426,13 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FNestedParamKeyGateRealVerbsTest,
 
 bool FNestedParamKeyGateRealVerbsTest::RunTest(const FString& Parameters)
 {
-    // The gate logs its refusal through LogRpcDispatcher at Warning, exactly as the three passes
-    // above it do. UAutomationControllerSettings::bElevateLogWarningsToErrors defaults to TRUE, so
-    // a warning raised inside a running test is promoted to an error.
-    bSuppressLogWarnings = true;
+    // The provoked refusal's own log lines, declared with exact counts (docs/rpc-design.md s12).
+    AddExpectedMessagePlain(TEXT("[material.authoring.create_material_instance] Unknown nested key(s): 'parameters.r' is not a key of 'parameters'"),
+        ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
+    AddExpectedMessagePlain(TEXT("Failed to find object 'MaterialInstanceConstant /Game/PinWrightNestedGateProbe/MI_DoesNotExist'"),
+        ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
+    AddExpectedMessagePlain(TEXT("Failed to find object 'Object /Game/PinWrightNestedGateProbe/MI_DoesNotExist'"),
+        ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
 
     FRpcDispatcher Dispatcher;
     DispatcherTestHelpers::FSinkPtr Sink;
@@ -532,6 +540,12 @@ bool FNestedParamKeyGateAdoptionRatchetTest::RunTest(const FString& Parameters)
         // properties bag, whose caller-selected keys deliberately remain open one level below.
         TEXT("input.add_mapping:modifiers"),
         TEXT("input.add_mapping:triggers"),
+        // New verbs, closed from their first release: curve key entries and key selectors.
+        TEXT("animation.authoring.set_curve_keys:keys"),
+        TEXT("animation.authoring.remove_curve_key:keys"),
+        // New batch forms, closed from their first release: per-actor transform/nudge entries.
+        TEXT("actor.set_transform:actors"),
+        TEXT("actor.nudge:actors"),
         // The gate fixture in this file.
         TEXT("_test.nested_param_gate:grid"),
         TEXT("_test.nested_param_gate:states"),
@@ -611,7 +625,24 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FNestedInputClosureConfirmedCasesTest,
 
 bool FNestedInputClosureConfirmedCasesTest::RunTest(const FString& Parameters)
 {
-    bSuppressLogWarnings = true;
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
+    // The provoked refusal's own log lines, declared with exact counts (docs/rpc-design.md s12).
+    AddExpectedMessagePlain(TEXT("[animation.create_state_machine] Unknown nested key(s): 'states[0].animation' is not a key of 'states[0]'"),
+        ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
+    AddExpectedMessagePlain(TEXT("Failed to find object 'AnimBlueprint /Game/DoesNotExist/ABP_Missing'"),
+        ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
+    AddExpectedMessagePlain(TEXT("[material.authoring.create_material_instance] Unknown nested key(s): 'parameters.r' is not a key of 'parameters'"),
+        ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
+    AddExpectedMessagePlain(TEXT("Failed to find object 'Material /Game/DoesNotExist/M_Missing'"),
+        ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
+    AddExpectedMessagePlain(TEXT("Failed to find object 'Object /Game/DoesNotExist/M_Missing'"),
+        ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
+    AddExpectedMessagePlain(TEXT("[render.capture_annotated] Unknown nested key(s): 'grid.between' is not a key of 'grid'"),
+        ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
+    AddExpectedMessagePlain(TEXT("Failed to find object 'Blueprint /Game/DoesNotExist/BP_Missing'"),
+        ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
+    AddExpectedMessagePlain(TEXT("Failed to find object 'EnvQuery /Game/DoesNotExist/EQS_Missing'"),
+        ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 2);
 
     FRpcDispatcher Dispatcher;
     DispatcherTestHelpers::FSinkPtr Sink;

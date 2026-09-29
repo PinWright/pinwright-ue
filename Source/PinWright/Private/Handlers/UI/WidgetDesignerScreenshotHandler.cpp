@@ -26,6 +26,7 @@
 #include "WidgetBlueprintEditor.h"
 #include "Widgets/SWindow.h"
 #include "Widgets/SWidget.h"
+#include "Utils/RenderingAvailability.h"
 
 using namespace WidgetAuthoringHelpers;
 using WidgetDesignerCaptureInternal::FindWidgetEditorHostWindow;
@@ -100,6 +101,11 @@ REGISTER_RPC_HANDLER("widget.screenshot_designer", "widget",
         RPC_PARAM_OPT("closeAfterCapture", "boolean", "Close the Widget Blueprint editor after the capture. Defaults to TRUE, which closes only a Designer this call opened; pass true explicitly to close one that was already open, or false to leave it open for an iteration loop. Same three-state rule and the same deferred close as render.capture_asset_preview: the close is QUEUED onto the next editor tick rather than run inside this call, so the response reports assetEditorClosed:false with assetEditorCloseDeferred:true and the window is gone a tick later. Leaving a Designer open across a later blueprint.compile / blueprint.compile_bpir of the same widget used to kill the editor; that is guarded on the compile side now, but a capture verb still owes the caller the state it found.")
     ))
 {
+    if (!PinWrightRendering::RequireRenderer(Ctx))
+    {
+        return true;
+    }
+
     const FString WidgetPath = Ctx.GetString(TEXT("widgetPath"));
     if (WidgetPath.IsEmpty())
     {

@@ -8,7 +8,8 @@
 // RHI-guard pattern as TestRenderHandlers.cpp: a success asserts the PNG path exists on disk;
 // a failure must be TYPED (NO_ACTIVE_LEVEL_VIEWPORT / CAPTURE_FAILED / ...) and the pixel/shape
 // assertions are skipped. Argument-validation and unknown-param tests need no viewport and run
-// deterministically.
+// deterministically. Every test that reaches a handler body skips under -NullRHI: the renderer
+// guard answers RENDERING_UNAVAILABLE before argument validation.
 #include "Misc/AutomationTest.h"
 #include "Handlers/HandlerContext.h"
 #include "Handlers/HandlerRegistration.h"
@@ -142,6 +143,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCameraFrameActorMissingActorTest,
 
 bool FCameraFrameActorMissingActorTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
     FTestResponseCapture Capture;
     TestTrue(TEXT("camera.frame_actor handler found"),
@@ -158,6 +160,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCameraFrameActorUnknownActorTest,
 
 bool FCameraFrameActorUnknownActorTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
     Payload->SetStringField(TEXT("actorName"),
         FString::Printf(TEXT("PW_NoSuchActor_%s"), *FGuid::NewGuid().ToString(EGuidFormats::Digits)));
@@ -207,6 +210,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCameraFrameActorCapturesSpawnedActorTest,
 
 bool FCameraFrameActorCapturesSpawnedActorTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
     if (!World)
     {
@@ -310,6 +314,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCameraOrbitShotsMissingTargetTest,
 
 bool FCameraOrbitShotsMissingTargetTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
     FTestResponseCapture Capture;
     TestTrue(TEXT("camera.orbit_shots handler found"),
@@ -326,6 +331,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCameraOrbitShotsPointRequiresRadiusTest,
 
 bool FCameraOrbitShotsPointRequiresRadiusTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
     TSharedPtr<FJsonObject> Point = MakeShared<FJsonObject>();
     Point->SetNumberField(TEXT("x"), 0.0);
@@ -376,6 +382,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCameraOrbitShotsDefaultSetTest,
 
 bool FCameraOrbitShotsDefaultSetTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
     if (!World)
     {
@@ -485,6 +492,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCameraOrbitShotsExplicitCountTest,
 
 bool FCameraOrbitShotsExplicitCountTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
     if (!World)
     {
@@ -566,6 +574,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCameraOrbitShotsDistinctShotPathsTest,
 
 bool FCameraOrbitShotsDistinctShotPathsTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
     if (!World)
     {
@@ -654,6 +663,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCameraOrbitShotsViewsExclusiveTest,
 
 bool FCameraOrbitShotsViewsExclusiveTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     // views and count/angles are two different answers to "which poses". Silently ranking one
     // over the other is how a verb ends up with parameters that contradict each other, so the
     // combination is rejected outright. No viewport needed: validation happens before capture.
@@ -691,6 +701,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCameraOrbitShotsInvalidViewsAndProjectionTest,
 
 bool FCameraOrbitShotsInvalidViewsAndProjectionTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     TSharedPtr<FJsonObject> BadViews = MakeShared<FJsonObject>();
     BadViews->SetStringField(TEXT("actorName"), TEXT("AnyActor"));
     BadViews->SetStringField(TEXT("views"), TEXT("cube"));
@@ -719,6 +730,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCameraOrbitShotsSixSidesTest,
 
 bool FCameraOrbitShotsSixSidesTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
     if (!World)
     {
@@ -836,6 +848,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCameraOrbitShotsOrthographicCountTest,
 
 bool FCameraOrbitShotsOrthographicCountTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
     if (!World)
     {
@@ -926,6 +939,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCameraOrbitShotsLegacyDefaultsUnchangedTest,
 
 bool FCameraOrbitShotsLegacyDefaultsUnchangedTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
     if (!World)
     {

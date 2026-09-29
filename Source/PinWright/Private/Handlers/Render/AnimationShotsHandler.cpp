@@ -78,6 +78,7 @@
 #include "Misc/ScopeExit.h"
 #include "MovieScene.h"
 #include "Slate/SceneViewport.h"
+#include "Utils/RenderingAvailability.h"
 
 // File-unique named namespace so Unity merges cannot collide these with the same-shaped helpers
 // in sibling Render/*.cpp files.
@@ -187,6 +188,11 @@ REGISTER_RPC_HANDLER("camera.animation_shots", "camera",
         RPC_PARAM_OPT("inline", "boolean", "When true, also embed base64 PNG bytes per shot (default false).")
     ))
 {
+    if (!PinWrightRendering::RequireRenderer(Ctx))
+    {
+        return true;
+    }
+
     using namespace PinWrightCameraFrame;
     using namespace PinWrightAnimationShots;
 

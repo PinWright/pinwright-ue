@@ -256,6 +256,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveElementFactoryDesktopGeometryTest,
 
 bool FDriveElementFactoryDesktopGeometryTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     using namespace DriveElementFactoryTest;
 
     if (!RequireSlate(*this))

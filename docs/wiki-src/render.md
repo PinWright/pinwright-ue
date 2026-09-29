@@ -288,6 +288,10 @@ A tool result larger than the display threshold (10,000 characters by default) i
 
 Capture verbs in this namespace and most camera capture verbs default to **768 x 768**. `camera.orbit_shots` preserves **1024** for existing `count`, `angles` and canonical shapes, and **640** for `views:"sides"`; see [camera](camera.md). Square is only the omitted-size default on the shared paths: an explicit non-square `width` / `height` remains valid.
 
+## No renderer (headless mode)
+
+`render.capture_mesh`, `render.capture_asset_preview`, `render.capture_open_level`, `render.capture_animation_preview`, `render.capture_annotated`, `render.capture_ortho_tiles`, `render.detect_z_fighting`, `render.lumen_update_scene` need a GPU renderer. In an editor launched with `-NullRHI` (mode `headless`, or a commandlet) they refuse with `RENDERING_UNAVAILABLE` before reading any parameter; the error data carries `method` and `renderingModes: ["offscreen", "visible"]`. Relaunch in mode `offscreen` or `visible`.
+
 ## See also
 
 - [`render.capture-subjects`](render.capture-subjects.md)

@@ -28,6 +28,7 @@
 // same live registry the handler writes to (FPluginState::Get().GetJobRegistry()).
 #include "State/JobRegistry.h"
 #include "State/PluginState.h"
+#include "PinWrightProjectSettings.h"
 #include "Editor.h"
 #include "Engine/World.h"
 #include "Engine/StaticMeshActor.h"
@@ -731,6 +732,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPerfRunBenchmarkMeasuresOrRefusesTest,
 
 bool FPerfRunBenchmarkMeasuresOrRefusesTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
     Payload->SetNumberField(TEXT("duration"), 0.05);
 
@@ -824,6 +826,77 @@ bool FPerfRunBenchmarkMeasuresOrRefusesTest::RunTest(const FString& Parameters)
     return true;
 }
 
+// Board B-editor-background-throttle-stalls-rpcs: a benchmark taken under the editor's 3 FPS
+// background throttle must say so. The benchmark job itself makes the agent active, so with the
+// project setting on, the subsystem's throttle guard (ticked by the same core-ticker pumping that
+// drives the sampler) must be observed holding on some frames, and a held frame is never a
+// throttled one (the guard's delegate answers "do not throttle").
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPerfRunBenchmarkReportsThrottleStateTest,
+    "PinWright.performance.run_benchmark.ReportsBackgroundThrottleState",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FPerfRunBenchmarkReportsThrottleStateTest::RunTest(const FString& Parameters)
+{
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
+    TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+    // Long enough for the subsystem's 0.1 s tick to run several times inside the window.
+    Payload->SetNumberField(TEXT("duration"), 0.3);
+
+    FTestResponseCapture Capture;
+    if (!TestTrue(TEXT("performance.run_benchmark is registered"),
+            InvokeHandlerWithCapture(TEXT("performance.run_benchmark"), Payload, Capture))
+        || !TestTrue(TEXT("the call returns a job ticket"),
+            Capture.bWasCalled && Capture.bSuccess && Capture.Result.IsValid()))
+    {
+        return false;
+    }
+    FString TicketId;
+    FJobTicket Ticket;
+    if (!TestTrue(TEXT("the running response carries ticket_id"),
+            Capture.Result->TryGetStringField(TEXT("ticket_id"), TicketId))
+        || !TestTrue(TEXT("the benchmark job reaches a terminal state"),
+            PinWrightPumpBenchmarkJobToTerminal(TicketId, Ticket, 20.0)))
+    {
+        return false;
+    }
+    if (Ticket.Status != TEXT("completed") || !Ticket.Result.IsValid())
+    {
+        PinWrightTestSkip::SkipAssertions(*this, TEXT("benchmark-not-measured"),
+            FString::Printf(TEXT("Benchmark job ended '%s' (%s); no result to read the throttle block from."),
+                *Ticket.Status, *Ticket.Error));
+        return true;
+    }
+
+    const TSharedPtr<FJsonObject>* Throttle = nullptr;
+    if (!TestTrue(TEXT("completed benchmark publishes backgroundThrottle"),
+            Ticket.Result->TryGetObjectField(TEXT("backgroundThrottle"), Throttle)))
+    {
+        return false;
+    }
+
+    double FrameCount = 0.0;
+    Ticket.Result->TryGetNumberField(TEXT("frameCount"), FrameCount);
+    double Throttled = -1.0, Background = -1.0, GuardHeld = -1.0, SettingOn = -1.0;
+    TestTrue(TEXT("throttledFrames is published"), (*Throttle)->TryGetNumberField(TEXT("throttledFrames"), Throttled));
+    TestTrue(TEXT("backgroundFrames is published"), (*Throttle)->TryGetNumberField(TEXT("backgroundFrames"), Background));
+    TestTrue(TEXT("guardHeldFrames is published"), (*Throttle)->TryGetNumberField(TEXT("guardHeldFrames"), GuardHeld));
+    TestTrue(TEXT("throttleCPUWhenNotForegroundFrames is published"),
+        (*Throttle)->TryGetNumberField(TEXT("throttleCPUWhenNotForegroundFrames"), SettingOn));
+    for (const double Count : { Throttled, Background, GuardHeld, SettingOn })
+    {
+        TestTrue(TEXT("each throttle count lies within [0, frameCount]"), Count >= 0.0 && Count <= FrameCount);
+    }
+    TestTrue(TEXT("a frame the guard held is never a throttled frame"), Throttled + GuardHeld <= FrameCount);
+    TestTrue(TEXT("a frame the guard held reads the throttle flag cleared"), SettingOn + GuardHeld <= FrameCount);
+
+    if (GetDefault<UPinWrightProjectSettings>()->bDisableBackgroundThrottleWhileAgentActive)
+    {
+        TestTrue(TEXT("with the setting on, the running benchmark job makes the guard hold on some frames"),
+            GuardHeld > 0.0);
+    }
+    return true;
+}
+
 // A window of zero or negative length cannot be measured, so it is refused up front rather than
 // started as a job that would have to invent a result.
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPerfRunBenchmarkRejectsEmptyWindowTest,
@@ -832,6 +905,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPerfRunBenchmarkRejectsEmptyWindowTest,
 
 bool FPerfRunBenchmarkRejectsEmptyWindowTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     FTestResponseCapture Capture;
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
     Payload->SetNumberField(TEXT("duration"), 0.0);

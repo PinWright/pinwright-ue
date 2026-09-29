@@ -25,6 +25,7 @@
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "Tests/TestUtils.h"
+#include "Tests/TestSkipReporting.h"
 #include "Tests/Infra/DispatcherTestHelpers.h"
 
 #include "Editor.h"
@@ -131,6 +132,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FOrthoTilesAxesRequiredTest,
 
 bool FOrthoTilesAxesRequiredTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     TSharedPtr<FJsonObject> Payload = OrthoBasePayload();
     Payload->RemoveField(TEXT("axes"));
 
@@ -152,6 +154,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FOrthoTilesExposureRequiredTest,
 
 bool FOrthoTilesExposureRequiredTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     TSharedPtr<FJsonObject> Payload = OrthoBasePayload();
     Payload->RemoveField(TEXT("exposure"));
 
@@ -172,6 +175,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FOrthoTilesGridSelectorIsExclusiveTest,
 
 bool FOrthoTilesGridSelectorIsExclusiveTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     {
         TSharedPtr<FJsonObject> Payload = OrthoBasePayload();
         Payload->RemoveField(TEXT("cmPerPixel"));
@@ -228,6 +232,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FOrthoTilesKnownParamsAcceptedTest,
 
 bool FOrthoTilesKnownParamsAcceptedTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     DispatcherTestHelpers::FSinkPtr Sink;
     FRpcDispatcher Dispatcher;
     DispatcherTestHelpers::MakeDispatcher(Sink, Dispatcher);
@@ -286,6 +291,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FOrthoTilesTileCountCeilingRefusedTest,
 
 bool FOrthoTilesTileCountCeilingRefusedTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     // 100 x 100 tiles of 64 px at 1 cm/px = 10000 tiles, well past the 64-tile ceiling but only
     // 41 MP, so the TILE-COUNT ceiling is the one that has to bind.
     TSharedPtr<FJsonObject> Payload = OrthoBasePayload();
@@ -332,6 +338,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FOrthoTilesPixelCeilingRefusedTest,
 
 bool FOrthoTilesPixelCeilingRefusedTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     // 8 x 8 = 64 tiles (exactly at the tile ceiling, so it cannot be what binds) of 8192 px =
     // 4295 MP, sixteen times the pixel budget.
     TSharedPtr<FJsonObject> Payload = OrthoBasePayload();
@@ -776,6 +783,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FOrthoTilesDoesNotDirtyLevelTest,
 
 bool FOrthoTilesDoesNotDirtyLevelTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     const int32 DirtyBefore = OrthoCountDirtyLevelPackages();
     if (DirtyBefore < 0)
     {

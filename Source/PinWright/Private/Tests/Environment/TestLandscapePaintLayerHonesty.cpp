@@ -442,6 +442,8 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FLandscapePaintValidLayerChangesWeightmapTest,
 
 bool FLandscapePaintValidLayerChangesWeightmapTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
+
     UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
     if (!World)
     {
@@ -682,6 +684,8 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FLandscapePaintRegionLeavesOtherLayersOutsideRe
 
 bool FLandscapePaintRegionLeavesOtherLayersOutsideRegionTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
+
     UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
     if (!World)
     {
@@ -1042,6 +1046,8 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FLandscapePaintOrphanedAllocationRefusedTest,
 
 bool FLandscapePaintOrphanedAllocationRefusedTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
+
     UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
     if (!World)
     {
@@ -1134,6 +1140,8 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FLandscapePaintOrphanedAllocationOptInReportsLo
 
 bool FLandscapePaintOrphanedAllocationOptInReportsLossTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
+
     UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
     if (!World)
     {
@@ -1264,6 +1272,8 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FLandscapePaintFirstAllocationBlastRadiusTest,
 
 bool FLandscapePaintFirstAllocationBlastRadiusTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
+
     UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
     if (!World)
     {

@@ -87,6 +87,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCaptureNativeRasterMatchesDecodedPngTest,
 
 bool FCaptureNativeRasterMatchesDecodedPngTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     using namespace PinWrightCaptureSubject;
 
     if (!FApp::CanEverRender() || !GDynamicRHI || !FSlateApplication::IsInitialized())

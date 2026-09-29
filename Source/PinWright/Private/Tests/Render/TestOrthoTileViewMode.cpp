@@ -30,6 +30,7 @@
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "Tests/TestUtils.h"
+#include "Tests/TestSkipReporting.h"
 
 #include "Editor.h"
 #include "Engine/World.h"
@@ -386,6 +387,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FOrthoTilesUnlitActuallyClearsTheLightingFlagTe
 
 bool FOrthoTilesUnlitActuallyClearsTheLightingFlagTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     using namespace PinWrightOrthoTiles;
 
     PinWrightRenderCapture::FViewModePin Pin;
@@ -495,6 +497,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FOrthoTilesUnlitDoesNotReadAsAFaultTest,
 
 bool FOrthoTilesUnlitDoesNotReadAsAFaultTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     using namespace PinWrightOrthoTiles;
 
     const FString UnlitKey = PinWrightViewModes::GetKey(VMI_Unlit);
@@ -586,6 +589,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FOrthoTilesUnreachableFamiliesAreRefusedSpecifi
 
 bool FOrthoTilesUnreachableFamiliesAreRefusedSpecificallyTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     using namespace PinWrightOrthoTiles;
 
     FString BufferCode;

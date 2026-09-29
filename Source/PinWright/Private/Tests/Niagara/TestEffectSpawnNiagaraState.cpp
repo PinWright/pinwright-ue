@@ -95,6 +95,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEffectSpawnNiagaraReportsMeasuredStateTest,
 
 bool FEffectSpawnNiagaraReportsMeasuredStateTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     using namespace PinWrightEffectSpawnStateTest;
 
     UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
@@ -337,6 +338,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEffectSpawnNiagaraDrainsQueuedCompileTest,
 
 bool FEffectSpawnNiagaraDrainsQueuedCompileTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     using namespace PinWrightEffectSpawnStateTest;
 
 #if UE_VERSION_OLDER_THAN(5, 4, 0)

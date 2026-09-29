@@ -90,6 +90,7 @@
 #include "Misc/ScopeExit.h"
 #include "SEditorViewport.h"
 #include "Slate/SceneViewport.h"
+#include "Utils/RenderingAvailability.h"
 
 // File-unique named namespace so Unity merges cannot collide these with the same-shaped helpers
 // in sibling Render/*.cpp files. The collision this was originally made for - two copies of one
@@ -224,6 +225,11 @@ REGISTER_RPC_HANDLER("render.capture_animation_preview", "render",
         RPC_PARAM_OPT("inline", "boolean", "When true, also embed base64 PNG bytes per shot (default false).")
     ))
 {
+    if (!PinWrightRendering::RequireRenderer(Ctx))
+    {
+        return true;
+    }
+
     using namespace PinWrightCameraFrame;
     using namespace PinWrightAnimationPreview;
 

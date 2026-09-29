@@ -76,6 +76,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMeshPreviewCaptureCubePixelsTest,
 
 bool FMeshPreviewCaptureCubePixelsTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     return RunCubeCaptureAssertions(*this, 1.0f);
 }
 
@@ -85,5 +86,6 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMeshPreviewCaptureFiveCentimeterCubePixelsTest
 
 bool FMeshPreviewCaptureFiveCentimeterCubePixelsTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     return RunCubeCaptureAssertions(*this, 0.05f);
 }

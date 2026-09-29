@@ -115,6 +115,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FTextureCreatePlatformMipMatchesPixelFormatTest
 
 bool FTextureCreatePlatformMipMatchesPixelFormatTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     using namespace TextureCreatePlatformMipHelpers;
 
     const FString AssetName = MakePlatformMipAssetName();

@@ -30,6 +30,7 @@
 //    verdict; a failed one must carry a TYPED code from a known list. An empty or unknown code
 //    still fails the assertion, so "the capture silently did nothing" cannot pass as a skip.
 #include "Misc/AutomationTest.h"
+#include "Tests/AutomationSuiteMaintenance.h"
 
 #include "Animation/AnimData/IAnimationDataController.h"
 #include "Animation/AnimSequence.h"
@@ -306,7 +307,7 @@ namespace
     {
         const FString SeqName = FString::Printf(TEXT("MCP_AnimShotsSeq_%s"),
             *FGuid::NewGuid().ToString(EGuidFormats::Digits));
-        const FString DestFolder = TEXT("/Game/MCP_AnimShotsProbe");
+        const FString DestFolder = FString(PinWrightSuiteMaintenance::ScratchRootPackagePath()) / TEXT("MCP_AnimShotsProbe");
         OutFullPath = FString::Printf(TEXT("%s/%s"), *DestFolder, *SeqName);
 
         TSharedPtr<FJsonObject> CreatePayload = MakeShared<FJsonObject>();
@@ -419,6 +420,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCameraAnimationShotsRequiresSequenceTest,
 
 bool FCameraAnimationShotsRequiresSequenceTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     // Scrubbing a sequence is the ONLY thing that makes a bound skeletal mesh evaluate in the
     // editor, so a burst with no sequence cannot animate anything. Refusing it is what stops a
     // caller collecting N identical bind-pose images and calling it a review.
@@ -445,6 +447,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCameraAnimationShotsRejectsUnknownUpdateMethod
 
 bool FCameraAnimationShotsRejectsUnknownUpdateMethodTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     // The burst shares sequencer.set_playhead's update-method vocabulary through one production
     // parser (SequencePlayheadUtils::ParseUpdateMethod). This pins that it is REJECTING by name
     // rather than falling back to scrub, and — because this rejection is reached with a
@@ -475,6 +478,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCameraAnimationShotsRejectsViewsWithCountTest,
 
 bool FCameraAnimationShotsRejectsViewsWithCountTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     // `views` and `count` are two different answers to "which angles". Silently ranking one
     // over the other is how a verb ends up with parameters that contradict each other depending
     // on a mode flag, and the caller never learns which plan ran.
@@ -503,6 +507,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCameraAnimationShotsRejectsOversizedBurstTest,
 
 bool FCameraAnimationShotsRejectsOversizedBurstTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     // Five instants from six sides is thirty viewport captures. The ceiling is on the PRODUCT of
     // the two axes, not on either one, and it must be a typed refusal rather than a silent clip:
     // a burst quietly truncated to 24 would drop instants the caller believes it is comparing.
@@ -566,6 +571,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCameraAnimationShotsReportsEvidenceTest,
 
 bool FCameraAnimationShotsReportsEvidenceTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     // A StaticMeshActor fixture is deliberate: the verb must reject it with
     // ACTOR_NO_SKELETAL_MESH_COMPONENT, because a rig assembled from StaticMeshActors cannot
     // animate by design, and mistaking one for a broken rig is a diagnosis this project has
@@ -714,6 +720,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRenderAnimationPreviewRejectsStaticMeshTest,
 
 bool FRenderAnimationPreviewRejectsStaticMeshTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     // The engine cube is not skinned and has no Persona editor. The rejection must happen before
     // any asset editor is opened, and must name the verb that DOES handle static meshes — half
     // of the two-way pointer between the capture surfaces.
@@ -747,6 +754,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRenderAssetPreviewNamesAnimationVerbTest,
 
 bool FRenderAssetPreviewNamesAnimationVerbTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     // The other half of the two-way pointer. Before this, capture_asset_preview said only
     // "Static Mesh asset editors only", from which an agent reasonably concludes that isolated
     // capture of a skinned asset does not exist — and goes and dirties a level instead.
@@ -785,6 +793,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRenderAnimationPreviewRejectsMissingAnimationT
 
 bool FRenderAnimationPreviewRejectsMissingAnimationTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     // An unresolvable animation must be a typed lookup failure. Falling back to "no animation"
     // would silently downgrade a motion review to a bind-pose capture that still reported success.
     if (!UEditorAssetLibrary::DoesAssetExist(PWAnimCapEngineCubePath))
@@ -816,6 +825,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRenderAnimationPreviewRejectsViewsWithAnglesTe
 
 bool FRenderAnimationPreviewRejectsViewsWithAnglesTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     // Reached with an assetPath that resolves to nothing, which also pins that the view plan is
     // validated BEFORE the asset is loaded and the Persona editor opened — a malformed request
     // must not leave an asset editor tab open on its way to being rejected.
@@ -848,6 +858,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRenderAnimationPreviewRejectsMissingAssetTest,
 
 bool FRenderAnimationPreviewRejectsMissingAssetTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
     Payload->SetStringField(TEXT("assetPath"), PWAnimCapMissingPath(TEXT("Mesh")));
 
@@ -869,6 +880,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRenderAnimationPreviewBurstWritesDistinctPoseI
 
 bool FRenderAnimationPreviewBurstWritesDistinctPoseImagesTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     // This is the reported five-frame, two-angle burst through the registered handler. It uses
     // the legacy top-level fields because that is the real caller path that stayed broken while
     // the old structured Tutorial fixture passed.

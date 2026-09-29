@@ -468,6 +468,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEditorSimulateInputMouseClickHonestSuccessTest
 
 bool FEditorSimulateInputMouseClickHonestSuccessTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     if (!FSlateApplication::IsInitialized())
     {
         AddError(TEXT("Slate application not initialized; cannot exercise editor.simulate_input mouse_click."));
@@ -1252,6 +1253,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEditorSetCameraForceRedrawTest,
 
 bool FEditorSetCameraForceRedrawTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     const FVector ExpectedLocation(1000.0, 2000.0, 500.0);
     const FRotator ExpectedRotation(-30.0, 45.0, 0.0);
 
@@ -1621,7 +1623,7 @@ bool FEditorCreateUtilityWidgetCreatesAssetTest::RunTest(const FString& Paramete
 {
     const FString Guid = FGuid::NewGuid().ToString(EGuidFormats::Digits).Left(8);
     const FString AssetName = FString::Printf(TEXT("U_McpTransientUtilWidget_%s"), *Guid);
-    const FString Folder = TEXT("/Game/__McpTest__");
+    const FString Folder = TEXT("/Game/PinWrightTests/__McpTest__");
     const FString PackagePath = Folder / AssetName;
     const FString FullObjectPath = FString::Printf(TEXT("%s.%s"), *PackagePath, *AssetName);
 
@@ -1661,7 +1663,7 @@ bool FEditorCreateUtilityWidgetSaveWritesToDiskTest::RunTest(const FString& Para
 {
     const FString AssetName = FString::Printf(TEXT("U_McpTransientUtilWidgetSave_%s"),
         *FGuid::NewGuid().ToString(EGuidFormats::Digits));
-    const FString Folder = TEXT("/Game/__McpTest__");
+    const FString Folder = TEXT("/Game/PinWrightTests/__McpTest__");
     const FString PackagePath = Folder / AssetName;
 
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
@@ -1713,7 +1715,7 @@ bool FEditorCreateUtilityWidgetSaveFalseIsMemoryOnlyTest::RunTest(const FString&
 {
     const FString AssetName = FString::Printf(TEXT("U_McpTransientUtilWidgetSaveFalse_%s"),
         *FGuid::NewGuid().ToString(EGuidFormats::Digits));
-    const FString Folder = TEXT("/Game/__McpTest__");
+    const FString Folder = TEXT("/Game/PinWrightTests/__McpTest__");
     const FString PackagePath = Folder / AssetName;
 
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
@@ -1773,7 +1775,7 @@ bool FEditorCreateUtilityWidgetInvalidParentRefusedTest::RunTest(const FString& 
 {
     const FString AssetName = FString::Printf(TEXT("U_McpTransientUtilWidgetInvalidParent_%s"),
         *FGuid::NewGuid().ToString(EGuidFormats::Digits));
-    const FString Folder = TEXT("/Game/__McpTest__");
+    const FString Folder = TEXT("/Game/PinWrightTests/__McpTest__");
     const FString PackagePath = Folder / AssetName;
 
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
@@ -1832,6 +1834,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEditorSetWindowStateRestoresMaximizedTest,
 
 bool FEditorSetWindowStateRestoresMaximizedTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     if (!FSlateApplication::IsInitialized())
     {
         AddError(TEXT("Slate application not initialized; cannot exercise editor.set_window_state."));

@@ -49,7 +49,7 @@ namespace
     UMaterial* LFAtlasDescribe_CreateTexCoordLightFunction(FAutomationTestBase& Test,
         FString& OutAssetPath)
     {
-        OutAssetPath = FString::Printf(TEXT("/Game/__PW_GatewayTests/LFAtlasDescribe_%s"),
+        OutAssetPath = FString::Printf(TEXT("/Game/PinWrightTests/__PW_GatewayTests/LFAtlasDescribe_%s"),
             *FGuid::NewGuid().ToString(EGuidFormats::Digits));
 
         UPackage* Pkg = CreatePackage(*OutAssetPath);
@@ -151,6 +151,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FActorDescribeLightFunctionAtlasTest,
 
 bool FActorDescribeLightFunctionAtlasTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     if constexpr (!PinWright::LightFunctionAtlas::bSupportedOnThisEngine)
     {
         PinWrightTestSkip::SkipAssertions(*this, TEXT("engine-has-no-atlas-override"),

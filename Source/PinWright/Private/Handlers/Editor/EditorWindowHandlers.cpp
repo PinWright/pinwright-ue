@@ -38,6 +38,7 @@
 #include "Widgets/SWidget.h"
 #include "Widgets/SWindow.h"
 #include "Widgets/Docking/SDockTab.h"
+#include "Utils/RenderingAvailability.h"
 
 // Named (not anonymous) helper namespace: Unity merges .cpp files into one TU, so the shared
 // helpers below live in a uniquely-named namespace to dodge ODR collisions with same-named
@@ -1009,6 +1010,11 @@ REGISTER_RPC_HANDLER("editor.screenshot_window", "editor",
             "Output filename inside Saved/Screenshots/EditorWindow. The .png extension is appended if missing.")
     ))
 {
+    if (!PinWrightRendering::RequireRenderer(Ctx))
+    {
+        return true;
+    }
+
     if (!GEditor)
     {
         Ctx.SendError(TEXT("EDITOR_NOT_AVAILABLE"), TEXT("Editor not available"));

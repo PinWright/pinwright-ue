@@ -43,6 +43,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FUiScreenshotIncludesViewportUmgOverlayTest,
 
 bool FUiScreenshotIncludesViewportUmgOverlayTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     if (!GEngine || !GEngine->GameViewport || !GEngine->GameViewport->Viewport)
     {
         PinWrightTestSkip::SkipAssertions(*this, TEXT("no-game-viewport"),

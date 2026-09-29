@@ -55,6 +55,7 @@
 #include "UObject/UnrealType.h"
 #include "Utils/PackageDirtyUtils.h"
 #include "Utils/ScopedLandscapeLayerDialog.h"
+#include "Utils/RenderingAvailability.h"
 
 #if __has_include("Subsystems/EditorActorSubsystem.h")
 #include "Subsystems/EditorActorSubsystem.h"
@@ -960,6 +961,12 @@ REGISTER_RPC_HANDLER("landscape.sculpt", "landscape", "Sweep a sculpt brush (Rai
         RPC_PARAM_OPT("allowNoChange", "boolean", "Accept a call that changed no vertex as a success instead of refusing it with LANDSCAPE_SCULPT_NO_CHANGE. Defaults to false.")
     ))
 {
+  // Edit-layer landscapes merge heights on the GPU (ALandscape::CanUpdateLayersContent is
+  // false without a renderer), so a write never reaches the heightmap this verb verifies.
+  if (!PinWrightRendering::RequireRenderer(Ctx)) {
+    return true;
+  }
+
   auto* Payload = Ctx.GetRawPayload().Get();
   if (!Payload) {
     Ctx.SendError(ErrorCodes::ERR_INVALID_PAYLOAD, TEXT("landscape.sculpt payload missing"));
@@ -1839,6 +1846,12 @@ REGISTER_RPC_HANDLER("landscape.edit", "landscape", "Bulk-modify a landscape's h
         RPC_PARAM_OPT("skipFlush", "boolean", "Defer the GPU heightmap flush so multiple edit calls are batched. Defaults to false.")
     ))
 {
+  // Edit-layer landscapes merge heights on the GPU (ALandscape::CanUpdateLayersContent is
+  // false without a renderer), so a write never reaches the heightmap this verb verifies.
+  if (!PinWrightRendering::RequireRenderer(Ctx)) {
+    return true;
+  }
+
   auto* Payload = Ctx.GetRawPayload().Get();
   if (!Payload) {
     Ctx.SendError(ErrorCodes::ERR_INVALID_PAYLOAD, TEXT("modify_heightmap payload missing"));

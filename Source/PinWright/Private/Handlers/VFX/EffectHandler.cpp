@@ -86,6 +86,7 @@
 #if __has_include("Components/DirectionalLightComponent.h")
 #include "Components/DirectionalLightComponent.h"
 #endif
+#include "Utils/RenderingAvailability.h"
 
 // ---------------------------------------------------------------------------
 // Static helpers
@@ -1010,6 +1011,11 @@ REGISTER_RPC_HANDLER("effect.step_and_capture", "effect",
         RPC_PARAM_OPT("subject", "object", "Optional world or actor framing subject, matching render.capture_open_level.")
     ))
 {
+    if (!PinWrightRendering::RequireRenderer(Ctx))
+    {
+        return true;
+    }
+
     const TSharedPtr<FJsonObject>& Payload = Ctx.GetRawPayload();
     FString SystemName = Ctx.GetString(TEXT("systemName"));
     if (SystemName.IsEmpty())

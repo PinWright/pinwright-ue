@@ -11,6 +11,7 @@
 #include "Utils/ScreenshotUtils.h"
 #include "WidgetBlueprint.h"
 #include "WidgetBlueprintEditor.h"
+#include "Utils/RenderingAvailability.h"
 
 namespace WidgetDesignerCaptureUtil
 {
@@ -129,6 +130,14 @@ bool CapturePreviewToPng(
     if (!WidgetBlueprint)
     {
         OutError = TEXT("WIDGET_BLUEPRINT_NULL");
+        return false;
+    }
+
+    // No renderer (-NullRHI, mode 'headless'): the designer preview never paints, so there is
+    // nothing to read back. asset.dump records this under `skipped` for preview.png.
+    if (!PinWrightRendering::IsAvailable())
+    {
+        OutError = TEXT("RENDERING_UNAVAILABLE: no GPU renderer (-NullRHI); run the editor in mode 'offscreen' or 'visible'");
         return false;
     }
 

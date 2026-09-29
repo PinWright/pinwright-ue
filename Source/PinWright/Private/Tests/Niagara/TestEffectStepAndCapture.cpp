@@ -22,7 +22,6 @@
 #include "Framework/Application/SlateApplication.h"
 #include "GameFramework/WorldSettings.h"
 #include "HAL/FileManager.h"
-#include "HAL/PlatformTime.h"
 #include "IImageWrapper.h"
 #include "IImageWrapperModule.h"
 #include "Interfaces/IPluginManager.h"
@@ -39,6 +38,7 @@
 #include "NiagaraEmitterHandle.h"
 #include "NiagaraRendererProperties.h"
 #include "NiagaraSystem.h"
+#include "ShaderCompiler.h"
 
 #include <limits>
 
@@ -182,6 +182,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEffectStepAndCaptureContractTest,
 
 bool FEffectStepAndCaptureContractTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     using namespace PinWrightEffectStepCaptureTest;
 
     TestTrue(TEXT("effect.step_and_capture is registered"),
@@ -364,6 +365,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEffectStepAndCaptureShortBurstEarlySamplePixel
 
 bool FEffectStepAndCaptureShortBurstEarlySamplePixelsTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     using namespace PinWrightEffectStepCaptureTest;
 
     if (!FApp::CanEverRender())
@@ -402,6 +404,84 @@ bool FEffectStepAndCaptureShortBurstEarlySamplePixelsTest::RunTest(const FString
         return false;
     }
     TestFalse(TEXT("the baseline starts with the burst inactive"), Component->IsActive());
+
+    // COMPILE THE RENDERER MATERIALS BEFORE ANY CAPTURE, so the pixel verdict below judges the
+    // verb and not a shader map that happened to be cold.
+    //
+    // A post-capture read of the shader map cannot decide this on UE 5.5+. With
+    // r.ShaderCompiler.JobCacheDDC on (the engine default from 5.5), material PostLoad compiles
+    // nothing and the renderer compiles single permutations on demand, so the game-thread shader
+    // map stays incomplete for the life of the editor even while the permutations actually drawn
+    // render correctly: the stock SimpleExplosion materials read `notCompiled` after three
+    // successful captures on a real D3D11 RHI. ProbeAndWait submits every remaining permutation
+    // and drains it under MaterialCompileErrorCollector's bounded, pumping wait, which turns that
+    // permanent `notCompiled` into a measured `completed` or `failed`.
+    TSet<UMaterialInterface*> RendererMaterials;
+    for (const FNiagaraEmitterHandle& EmitterHandle : System->GetEmitterHandles())
+    {
+        if (!EmitterHandle.GetIsEnabled())
+        {
+            continue;
+        }
+        const FVersionedNiagaraEmitterData* EmitterData = EmitterHandle.GetEmitterData();
+        if (!EmitterData)
+        {
+            continue;
+        }
+        for (const UNiagaraRendererProperties* Renderer : EmitterData->GetRenderers())
+        {
+            if (!Renderer || !Renderer->GetIsEnabled())
+            {
+                continue;
+            }
+            TArray<UMaterialInterface*> UsedMaterials;
+            Renderer->GetUsedMaterials(nullptr, UsedMaterials);
+            for (UMaterialInterface* Material : UsedMaterials)
+            {
+                if (Material)
+                {
+                    RendererMaterials.Add(Material);
+                }
+            }
+        }
+    }
+    if (!TestTrue(TEXT("the SimpleExplosion fixture has enabled renderer materials"),
+            RendererMaterials.Num() > 0))
+    {
+        return false;
+    }
+
+    // The only host excused: one whose shader compiler is off, where no wait can produce a map.
+    if (!GShaderCompilingManager || GShaderCompilingManager->IsShaderCompilationSkipped())
+    {
+        PinWrightTestSkip::SkipAssertions(*this, TEXT("shader-compile-unavailable"),
+            TEXT("Shader compilation is skipped on this host, so the Niagara renderer materials "
+                 "cannot be compiled and no burst pixels can be judged."));
+        return true;
+    }
+
+    TArray<FString> UnreadyRendererMaterials;
+    for (UMaterialInterface* Material : RendererMaterials)
+    {
+        const PinWright::MaterialShaderState::FState ShaderState =
+            PinWright::MaterialShaderState::ProbeAndWait(Material);
+        if (ShaderState.Status != PinWright::MaterialShaderState::EStatus::Completed)
+        {
+            UnreadyRendererMaterials.Add(FString::Printf(TEXT("%s status=%s waited=%.1fs"),
+                *Material->GetPathName(),
+                PinWright::MaterialShaderState::ToWire(ShaderState.Status),
+                ShaderState.WaitedSeconds));
+        }
+    }
+    if (UnreadyRendererMaterials.Num() > 0)
+    {
+        UnreadyRendererMaterials.Sort();
+        AddError(FString::Printf(
+            TEXT("A forced, bounded compile did not produce complete shader maps for the Niagara "
+                 "renderer materials on a host that compiles shaders: %s"),
+            *FString::Join(UnreadyRendererMaterials, TEXT(", "))));
+        return false;
+    }
 
     FString BaselinePath;
     FString BurstPath;
@@ -547,65 +627,6 @@ bool FEffectStepAndCaptureShortBurstEarlySamplePixelsTest::RunTest(const FString
 
     TestTrue(TEXT("simulatedSeconds approximately equals the requested early sample"),
         FMath::IsNearlyEqual(ReportedSimulatedSeconds, SampleSeconds, 1e-6));
-
-    TSet<UMaterialInterface*> RendererMaterials;
-    for (const FNiagaraEmitterHandle& EmitterHandle : System->GetEmitterHandles())
-    {
-        if (!EmitterHandle.GetIsEnabled())
-        {
-            continue;
-        }
-        const FVersionedNiagaraEmitterData* EmitterData = EmitterHandle.GetEmitterData();
-        if (!EmitterData)
-        {
-            continue;
-        }
-        for (const UNiagaraRendererProperties* Renderer : EmitterData->GetRenderers())
-        {
-            if (!Renderer || !Renderer->GetIsEnabled())
-            {
-                continue;
-            }
-            TArray<UMaterialInterface*> UsedMaterials;
-            Renderer->GetUsedMaterials(nullptr, UsedMaterials);
-            for (UMaterialInterface* Material : UsedMaterials)
-            {
-                if (Material)
-                {
-                    RendererMaterials.Add(Material);
-                }
-            }
-        }
-    }
-    if (!TestTrue(TEXT("the SimpleExplosion fixture has enabled renderer materials"),
-            RendererMaterials.Num() > 0))
-    {
-        return false;
-    }
-
-    const double ShaderWaitDeadline = FPlatformTime::Seconds() +
-        MaterialCompileErrorCollector::CompileWaitTimeoutSeconds;
-    TArray<FString> UnreadyRendererMaterials;
-    for (UMaterialInterface* Material : RendererMaterials)
-    {
-        const PinWright::MaterialShaderState::FState ShaderState =
-            PinWright::MaterialShaderState::ProbeAfterCapture(Material, ShaderWaitDeadline);
-        if (ShaderState.Status != PinWright::MaterialShaderState::EStatus::Completed)
-        {
-            UnreadyRendererMaterials.Add(FString::Printf(TEXT("%s status=%s"),
-                *Material->GetPathName(),
-                PinWright::MaterialShaderState::ToWire(ShaderState.Status)));
-        }
-    }
-    if (UnreadyRendererMaterials.Num() > 0)
-    {
-        UnreadyRendererMaterials.Sort();
-        PinWrightTestSkip::SkipAssertions(*this, TEXT("shader-compile-unavailable"),
-            FString::Printf(
-                TEXT("niagara renderer material shader map not compiled on this host: %s"),
-                *FString::Join(UnreadyRendererMaterials, TEXT(", "))));
-        return true;
-    }
 
     TArray<FColor> BaselinePixels;
     TArray<FColor> BurstPixels;

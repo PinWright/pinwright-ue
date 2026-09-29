@@ -169,6 +169,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWidgetDesignerPreviewSingleSrgbEncodeTest,
 
 bool FWidgetDesignerPreviewSingleSrgbEncodeTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     if (!FApp::CanEverRender() || !FSlateApplication::IsInitialized())
     {
         PinWrightTestSkip::SkipAssertions(*this, TEXT("no-slate-renderer"),

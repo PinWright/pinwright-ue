@@ -308,6 +308,8 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FLandscapeSculptSubCellCentreTest,
 
 bool FLandscapeSculptSubCellCentreTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
+
     TestTrue(TEXT("landscape.sculpt handler registered"), IsHandlerRegistered(TEXT("landscape.sculpt")));
 
     UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
@@ -588,6 +590,8 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FLandscapeSculptModifiedCountTest,
 
 bool FLandscapeSculptModifiedCountTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
+
     TestTrue(TEXT("landscape.sculpt handler registered"), IsHandlerRegistered(TEXT("landscape.sculpt")));
 
     UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
@@ -752,6 +756,8 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FLandscapeSculptUnknownToolModeTest,
 
 bool FLandscapeSculptUnknownToolModeTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
+
     TestTrue(TEXT("landscape.sculpt handler registered"), IsHandlerRegistered(TEXT("landscape.sculpt")));
 
     // The toolMode check runs before the async token is minted, so this needs no world,

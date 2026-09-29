@@ -562,6 +562,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCaptureSubjectAnimationPosedBoundsAreNotUsedTe
 
 bool FCaptureSubjectAnimationPosedBoundsAreNotUsedTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     using namespace PinWrightCaptureSubjectAnimationTests;
     using namespace PinWrightCaptureSubjectAnimation;
 
@@ -696,6 +697,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCaptureSubjectAnimationScrubPosesTheComponentT
 
 bool FCaptureSubjectAnimationScrubPosesTheComponentTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     using namespace PinWrightCaptureSubjectAnimationTests;
     using namespace PinWrightCaptureSubjectAnimation;
 
@@ -829,6 +831,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCaptureSubjectAnimationSampledUnionTest,
 
 bool FCaptureSubjectAnimationSampledUnionTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     using namespace PinWrightCaptureSubjectAnimationTests;
     using namespace PinWrightCaptureSubjectAnimation;
 
@@ -1053,6 +1056,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCaptureSubjectAnimationResolveOpensPersonaTest
 
 bool FCaptureSubjectAnimationResolveOpensPersonaTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     using namespace PinWrightCaptureSubjectAnimationTests;
 
     if (!LoadObject<UAnimSequence>(nullptr, FixtureAnimationPath))

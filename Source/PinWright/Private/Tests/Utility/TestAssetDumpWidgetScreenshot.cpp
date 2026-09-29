@@ -18,6 +18,7 @@
 #include "Subsystems/AssetEditorSubsystem.h"
 #include "WidgetBlueprint.h"
 #include "Tests/TestUtils.h"
+#include "Tests/TestSkipReporting.h"
 #include "Kismet2/KismetEditorUtilities.h"
 
 namespace
@@ -100,6 +101,8 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpWidgetScreenshotOptInProducesPngTest,
 
 bool FAssetDumpWidgetScreenshotOptInProducesPngTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
+
     const FString AssetPath = WidgetTestFixtures::MakeWidgetDesignerScreenshotAssetPath(
         TEXT("WBP_AssetDumpScreenshotOptIn"));
     UWidgetBlueprint* WBP = WidgetTestFixtures::MakeWidgetDesignerScreenshotBlueprint(AssetPath);

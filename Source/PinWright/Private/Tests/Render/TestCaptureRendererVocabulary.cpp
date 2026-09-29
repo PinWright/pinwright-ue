@@ -37,6 +37,7 @@
 #include "Handlers/HandlerRegistration.h"
 #include "Handlers/Render/CaptureRendererNames.h"
 #include "Tests/TestUtils.h"
+#include "Tests/TestSkipReporting.h"
 
 #include "Dom/JsonObject.h"
 #include "HAL/FileManager.h"
@@ -458,6 +459,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCaptureVocabOrthoTilesPublishTheValuesTest,
 
 bool FCaptureVocabOrthoTilesPublishTheValuesTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     const FString Prefix = FString::Printf(TEXT("pw_capvocab_ortho_%s"),
         *FGuid::NewGuid().ToString(EGuidFormats::Short));
 
@@ -553,6 +555,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCaptureVocabZFightingPublishesTheValuesTest,
 
 bool FCaptureVocabZFightingPublishesTheValuesTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     TSharedPtr<FJsonObject> Location = MakeShared<FJsonObject>();
     Location->SetNumberField(TEXT("x"), 0.0);
     Location->SetNumberField(TEXT("y"), 0.0);

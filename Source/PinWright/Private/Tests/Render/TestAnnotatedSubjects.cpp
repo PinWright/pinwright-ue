@@ -242,6 +242,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAnnotatedSubjectsAssetKindServedTest,
 
 bool FAnnotatedSubjectsAssetKindServedTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     TSharedPtr<FJsonObject> Subject = MakeShared<FJsonObject>();
     Subject->SetStringField(TEXT("kind"), TEXT("staticMesh"));
     Subject->SetStringField(TEXT("path"), TEXT("/Engine/BasicShapes/Cube.Cube"));
@@ -314,6 +315,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAnnotatedSubjectsOmittedWithoutArgumentTest,
 
 bool FAnnotatedSubjectsOmittedWithoutArgumentTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
     Payload->SetNumberField(TEXT("width"), 256.0);
     Payload->SetNumberField(TEXT("height"), 256.0);
@@ -375,6 +377,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAnnotatedSubjectsStatsNotDiscardedTest,
 
 bool FAnnotatedSubjectsStatsNotDiscardedTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
     Payload->SetNumberField(TEXT("width"), 256.0);
     Payload->SetNumberField(TEXT("height"), 256.0);
@@ -517,6 +520,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAnnotatedSubjectsActorSubjectFramingTest,
 
 bool FAnnotatedSubjectsActorSubjectFramingTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
     if (!World)
     {

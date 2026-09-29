@@ -208,6 +208,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCompileMaterialRefreshesLandscapeConsumersTest
 
 bool FCompileMaterialRefreshesLandscapeConsumersTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     // The landscape registration + component-MIC pipeline needs a real editor world. The
     // world is an environment precondition, not the fixture.
     UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
@@ -228,9 +229,9 @@ bool FCompileMaterialRefreshesLandscapeConsumersTest::RunTest(const FString& Par
 
     const FString Suffix = FGuid::NewGuid().ToString(EGuidFormats::Digits);
     const FString UsedMaterialPath =
-        FString::Printf(TEXT("/Game/__PW_GatewayTests/LsUsed_%s"), *Suffix);
+        FString::Printf(TEXT("/Game/PinWrightTests/__PW_GatewayTests/LsUsed_%s"), *Suffix);
     const FString UnusedMaterialPath =
-        FString::Printf(TEXT("/Game/__PW_GatewayTests/LsUnused_%s"), *Suffix);
+        FString::Printf(TEXT("/Game/PinWrightTests/__PW_GatewayTests/LsUnused_%s"), *Suffix);
     const FString LandscapeLabel = FString::Printf(TEXT("PW_ConsumerRefresh_%s"), *Suffix);
 
     ON_SCOPE_EXIT
@@ -465,7 +466,7 @@ bool FCompileMgirRefreshesLandscapeConsumersTest::RunTest(const FString& Paramet
 
     const FString Suffix = FGuid::NewGuid().ToString(EGuidFormats::Digits);
     const FString UsedMaterialPath =
-        FString::Printf(TEXT("/Game/__PW_GatewayTests/MgirLsUsed_%s"), *Suffix);
+        FString::Printf(TEXT("/Game/PinWrightTests/__PW_GatewayTests/MgirLsUsed_%s"), *Suffix);
     const FString LandscapeLabel = FString::Printf(TEXT("PW_MgirConsumerRefresh_%s"), *Suffix);
 
     ON_SCOPE_EXIT

@@ -26,6 +26,7 @@
 #include "UObject/SoftObjectPath.h"
 #include "UObject/StrongObjectPtr.h"
 #include "UObject/UObjectGlobals.h"
+#include "Utils/RenderingAvailability.h"
 
 #if __has_include("MoviePipelineQueueSubsystem.h") && \
     __has_include("MoviePipelinePIEExecutor.h") && \
@@ -761,6 +762,10 @@ REGISTER_RPC_HANDLER("mrq.run_jobs", "mrq",
         RPC_PARAM_OPT("allowUnrenderableFrames", "bool", "Allow a near-uniform decoded sample to complete successfully (default false)")
     ))
 {
+    if (!PinWrightRendering::RequireRenderer(Ctx))
+    {
+        return true;
+    }
 #if MCP_HAS_MRQ
     if (!GEditor)
     {

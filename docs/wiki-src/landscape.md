@@ -182,6 +182,10 @@ It reports two independent scalars over a heightmap region, plus per-check findi
 
 **Not a replacement for looking at the terrain.** It is a cheap finding, not a verdict: it makes a bad outline cheap to catch before a capture burst is worth running. Terrain can pass every check here and still be wrong.
 
+## No renderer (headless mode)
+
+`landscape.sculpt`, `landscape.edit` need a GPU renderer. In an editor launched with `-NullRHI` (mode `headless`, or a commandlet) they refuse with `RENDERING_UNAVAILABLE` before reading any parameter; the error data carries `method` and `renderingModes: ["offscreen", "visible"]`. Relaunch in mode `offscreen` or `visible`. Edit-layer heights are merged on the GPU (`ALandscape::CanUpdateLayersContent()` is false without a renderer), so a write would never reach the heightmap these verbs verify.
+
 ## See also
 
 - [`level-building`](level-building.md) — the guide for taking a level from nothing to playable: massing geometry, conforming it to terrain, and driving it from re-runnable build scripts.

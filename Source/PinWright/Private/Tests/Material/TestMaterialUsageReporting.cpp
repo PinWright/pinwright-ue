@@ -295,6 +295,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMaterialUsageSkeletalContradictionTest,
 
 bool FMaterialUsageSkeletalContradictionTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     FString AssetPath;
     UMaterial* Material =
         PinWrightMaterialShaderStateTestFixtures::MakeCleanMaterial(

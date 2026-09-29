@@ -10,15 +10,14 @@
 // interactive Sequencer, so unattended coverage asserts typed editor refusal and exact
 // no-mutation behavior instead of pretending a transient runtime hierarchy proves the bake.
 //
-// LOG ERRORS ARE SUPPRESSED, DELIBERATELY. UControlRigSequencerEditorLibrary::BakeToControlRig
-// asks GetSequencerFromAsset() for an open Level Sequence editor before choosing its
-// player, and that helper logs `LogControlRig Error: Can not open Sequencer for the
-// LevelSequence None` whenever none is open - which is always, under automation. The bake
-// then takes the transient-ULevelSequencePlayer path and succeeds. AddExpectedError cannot
-// express "zero or more" before UE 5.6 (see TestRemoveTrackCameraCut.cpp), so the two
-// headless tests use the suite's other established idiom, bSuppressLogErrors. The closed-
-// editor space-bake tests expect a log-clean refusal and suppress nothing.
+// THE ONE EXPECTED ENGINE ERROR. UControlRigSequencerEditorLibrary::BakeToControlRig asks
+// GetSequencerFromAsset() for an open Level Sequence editor before choosing its player, and that
+// helper logs `LogControlRig Error: Can not open Sequencer for the LevelSequence None` whenever
+// none is open. The bake then takes the transient-ULevelSequencePlayer path and succeeds. The
+// round-trip test declares that line exactly once, only when no Level Sequence is current; every
+// other test here is log-clean and suppresses nothing.
 #include "Misc/AutomationTest.h"
+#include "Tests/AutomationSuiteMaintenance.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "EditorAssetLibrary.h"
@@ -27,6 +26,7 @@
 #include "Tests/TestWorldUtils.h"
 
 #include "LevelSequence.h"
+#include "LevelSequenceEditorBlueprintLibrary.h"
 #include "MovieScene.h"
 #include "Channels/MovieSceneChannelProxy.h"
 #include "Channels/MovieSceneFloatChannel.h"
@@ -80,7 +80,7 @@ namespace
     {
         const FString SeqName = FString::Printf(TEXT("MCP_CRBakeSeq_%s"),
             *FGuid::NewGuid().ToString(EGuidFormats::Digits));
-        const FString DestFolder = TEXT("/Game/MCP_CRBakeProbe");
+        const FString DestFolder = FString(PinWrightSuiteMaintenance::ScratchRootPackagePath()) / TEXT("MCP_CRBakeProbe");
         OutFullPath = FString::Printf(TEXT("%s/%s"), *DestFolder, *SeqName);
 
         TSharedPtr<FJsonObject> CreatePayload = MakeShared<FJsonObject>();
@@ -225,8 +225,6 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSequencerBakeControlRigRoundTripTest,
 bool FSequencerBakeControlRigRoundTripTest::RunTest(const FString& Parameters)
 {
     FScopedEditorWorldActorGuard WorldGuard;
-    // See the file header: the engine's headless bake logs one benign LogControlRig error.
-    bSuppressLogErrors = true;
 
     // Host-independent half of the capability assertion: both bake verbs must be registered.
     TestTrue(TEXT("sequencer.bake_to_controlrig handler registered"),
@@ -310,6 +308,13 @@ bool FSequencerBakeControlRigRoundTripTest::RunTest(const FString& Parameters)
     BakePayload->SetStringField(TEXT("sequence"), SeqPath);
     BakePayload->SetStringField(TEXT("binding"), BindingId);
     FTestResponseCapture BakeCapture;
+    // See the file header: with no Level Sequence editor open, the engine's
+    // GetSequencerFromAsset logs exactly this once per bake before taking the player path.
+    if (!ULevelSequenceEditorBlueprintLibrary::GetCurrentLevelSequence())
+    {
+        AddExpectedErrorPlain(TEXT("Can not open Sequencer for the LevelSequence None"),
+            EAutomationExpectedErrorFlags::Contains, 1);
+    }
     TestTrue(TEXT("sequencer.bake_to_controlrig invoked (handler present)"),
         InvokeHandlerWithCapture(TEXT("sequencer.bake_to_controlrig"), BakePayload, BakeCapture));
     if (!TestTrue(TEXT("bake_to_controlrig reported success"), BakeCapture.bSuccess))
@@ -388,7 +393,8 @@ bool FSequencerBakeControlRigRoundTripTest::RunTest(const FString& Parameters)
     }
 
     // --- export_anim_sequence: evaluated performance -> AnimSequence asset ------------
-    const FString ExportPath = FString::Printf(TEXT("/Game/MCP_CRBakeProbe/MCP_CRBakeAnim_%s"),
+    const FString ExportPath = FString::Printf(TEXT("%s/MCP_CRBakeProbe/MCP_CRBakeAnim_%s"),
+        PinWrightSuiteMaintenance::ScratchRootPackagePath(),
         *FGuid::NewGuid().ToString(EGuidFormats::Digits));
     ON_SCOPE_EXIT { CleanupTestAsset(ExportPath); };
 
@@ -444,7 +450,6 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSequencerBakeControlRigRefusesNonSkeletalTest,
 bool FSequencerBakeControlRigRefusesNonSkeletalTest::RunTest(const FString& Parameters)
 {
     FScopedEditorWorldActorGuard WorldGuard;
-    bSuppressLogErrors = true;
 
     FString SeqPath;
     ULevelSequence* Sequence = BakeCRCreateProbeSequence(*this, SeqPath);
@@ -495,7 +500,8 @@ bool FSequencerBakeControlRigRefusesNonSkeletalTest::RunTest(const FString& Para
 
     // The export verb shares the same precondition and must refuse identically, without
     // creating the destination asset.
-    const FString ExportPath = FString::Printf(TEXT("/Game/MCP_CRBakeProbe/MCP_CRBakeNoAnim_%s"),
+    const FString ExportPath = FString::Printf(TEXT("%s/MCP_CRBakeProbe/MCP_CRBakeNoAnim_%s"),
+        PinWrightSuiteMaintenance::ScratchRootPackagePath(),
         *FGuid::NewGuid().ToString(EGuidFormats::Digits));
     TSharedPtr<FJsonObject> ExportPayload = MakeShared<FJsonObject>();
     ExportPayload->SetStringField(TEXT("sequence"), SeqPath);

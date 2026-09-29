@@ -44,6 +44,7 @@
 // `Content/Python/check_suite_log.py` reconciles into its own `skipped` outcome, as a WARNING and
 // never a failure.
 #include "Misc/AutomationTest.h"
+#include "Tests/AutomationSuiteMaintenance.h"
 
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
@@ -53,6 +54,7 @@
 #include "Misc/ScopeExit.h"
 
 #include "Editor.h"
+#include "Subsystems/AssetEditorSubsystem.h"
 #include "Engine/World.h"
 #include "Animation/SkeletalMeshActor.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -191,6 +193,18 @@ namespace
         {
             // ActorGuard destructs after this body, removing the spawned actor and restoring the
             // level's dirty flag. The sequence asset is ours to delete.
+            //
+            // camera.animation_shots opens the sequence in Sequencer and leaves it open (it reports
+            // `opened`). A level Sequencer still open when a later test stops PIE re-evaluates its
+            // bindings from EndPlayMap after the PIE world context is gone and trips
+            // ensure(UE::GetPlayInEditorID() == INDEX_NONE), so close it before the detach.
+            if (Sequence && GEditor)
+            {
+                if (UAssetEditorSubsystem* AssetEditors = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>())
+                {
+                    AssetEditors->CloseAllEditorsForAsset(Sequence);
+                }
+            }
             if (!SequencePath.IsEmpty())
             {
                 CleanupTestAsset(SequencePath);
@@ -207,7 +221,7 @@ namespace
         {
             const FString SeqName = FString::Printf(TEXT("MCP_AnimShotsSubjSeq_%s"),
                 *FGuid::NewGuid().ToString(EGuidFormats::Digits));
-            const FString DestFolder = TEXT("/Game/MCP_AnimShotsSubjProbe");
+            const FString DestFolder = FString(PinWrightSuiteMaintenance::ScratchRootPackagePath()) / TEXT("MCP_AnimShotsSubjProbe");
 
             TSharedPtr<FJsonObject> CreatePayload = MakeShared<FJsonObject>();
             CreatePayload->SetStringField(TEXT("name"), SeqName);
@@ -420,6 +434,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCameraAnimationShotsStaticMeshNoTimeAxisTest,
 
 bool FCameraAnimationShotsStaticMeshNoTimeAxisTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     // A static mesh has no time axis, so a burst of N instants of one is not a thing that exists.
     // What matters is WHICH refusal the caller gets: before `subject` was declared, the payload
     // died on the dispatcher's unknown-argument gate as UNKNOWN_PARAMS, which says nothing about
@@ -466,6 +481,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCameraAnimationShotsBurstShapeTest,
 
 bool FCameraAnimationShotsBurstShapeTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     FPWAnimSubjMovingFixture Fixture;
     if (!Fixture.IsReady())
     {
@@ -670,6 +686,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCameraAnimationShotsOneCameraTest,
 
 bool FCameraAnimationShotsOneCameraTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     FPWAnimSubjMovingFixture Fixture;
     if (!Fixture.IsReady())
     {

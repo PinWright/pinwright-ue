@@ -9,6 +9,7 @@
 #include "Handlers/ParamSpec.h"
 #include "Dom/JsonObject.h"
 #include "Tests/TestUtils.h"
+#include "Tests/TestSkipReporting.h"
 #include "EditorAssetLibrary.h"
 #include "WidgetBlueprint.h"
 #include "Blueprint/WidgetTree.h"
@@ -105,6 +106,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FUiScreenshotValidParamsNoCrashTest,
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FUiScreenshotValidParamsNoCrashTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     TestTrue(TEXT("ui.screenshot found"), InvokeHandler(TEXT("ui.screenshot"), MakeShared<FJsonObject>()));
     return true;
 }
@@ -881,7 +883,7 @@ namespace
     FString MakeUniqueWidgetAssetPath(const FString& Prefix)
     {
         return FString::Printf(
-            TEXT("/Game/__PW_GatewayTests/%s_%s"),
+            TEXT("/Game/PinWrightTests/__PW_GatewayTests/%s_%s"),
             *Prefix,
             *FGuid::NewGuid().ToString(EGuidFormats::Digits));
     }

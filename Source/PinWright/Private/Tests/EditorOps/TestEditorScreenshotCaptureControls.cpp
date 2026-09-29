@@ -77,6 +77,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEditorScreenshotRejectsPartialFixedSizeTest,
 
 bool FEditorScreenshotRejectsPartialFixedSizeTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
     Payload->SetNumberField(TEXT("width"), 1920);
 
@@ -146,6 +147,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEditorScreenshotFixedSizePieUmgCompositeTest,
 
 bool FEditorScreenshotFixedSizePieUmgCompositeTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     if (!GEngine || !GEngine->GameViewport || !GEngine->GameViewport->Viewport)
     {
         PinWrightTestSkip::SkipAssertions(*this, TEXT("no-game-viewport"),

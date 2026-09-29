@@ -153,6 +153,10 @@ colour, sky, floor, and backdrop are scoped to the call and read once per set. I
 `camera.frame_actor`**: the same `R` places the camera at `R` versus roughly `2.5·R` at fov 50.
 Both expose `padding` for margin and `radius` / `distance` for an explicit distance that skips fit.
 
+## No renderer (headless mode)
+
+`camera.frame_actor`, `camera.orbit_shots`, `camera.animation_shots` need a GPU renderer. In an editor launched with `-NullRHI` (mode `headless`, or a commandlet) they refuse with `RENDERING_UNAVAILABLE` before reading any parameter; the error data carries `method` and `renderingModes: ["offscreen", "visible"]`. Relaunch in mode `offscreen` or `visible`.
+
 ## See also
 
 - [`render.capture-subjects`](render.capture-subjects.md) — the `subject` descriptor shared by every capture verb, and what each kind can and cannot do.

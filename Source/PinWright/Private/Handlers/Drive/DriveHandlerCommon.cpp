@@ -8,6 +8,7 @@
 #include "Handlers/Drive/DriveSetOfMarkRenderer.h"
 #include "Handlers/HandlerContext.h"
 #include "Handlers/ErrorCodes.h"
+#include "Utils/RenderingAvailability.h"
 
 #include "JournalRecorder.h"
 #include "JournalLiveTail.h"
@@ -347,7 +348,9 @@ bool FDriveHandlerCommon::BuildObservation(
     // Screenshot is best-effort: a capture failure leaves the screenshot unset and
     // the observation still succeeds with its element list. The surface + window
     // selector pick the capture source (game viewport vs. the selected editor window).
-    if (bScreenshot)
+    // Without a renderer (-NullRHI, mode 'headless') the readback is all zeros, so no capture is
+    // attempted and the screenshot stays unset rather than marking up a black frame.
+    if (bScreenshot && PinWrightRendering::IsAvailable())
     {
         FDriveScreenshot Screenshot;
         FString ScreenshotErrorCode;

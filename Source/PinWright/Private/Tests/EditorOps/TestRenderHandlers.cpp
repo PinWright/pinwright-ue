@@ -285,6 +285,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRenderLumenUpdateSceneRunsRealCommandTest,
 
 bool FRenderLumenUpdateSceneRunsRealCommandTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     if (!GEditor || !GEditor->GetEditorWorldContext().World())
     {
         PinWrightTestSkip::SkipAssertions(*this, TEXT("no-editor-world"),
@@ -354,6 +355,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRenderCaptureAssetPreviewMissingAssetPathTest,
 
 bool FRenderCaptureAssetPreviewMissingAssetPathTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
     FTestResponseCapture Capture;
     TestTrue(TEXT("render.capture_asset_preview handler found"), InvokeHandlerWithCapture(TEXT("render.capture_asset_preview"), Payload, Capture));
@@ -369,6 +371,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRenderCaptureAssetPreviewInvalidDimensionsTest
 
 bool FRenderCaptureAssetPreviewInvalidDimensionsTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
     Payload->SetStringField(TEXT("assetPath"), TEXT("/Engine/BasicShapes/Cube.Cube"));
     Payload->SetNumberField(TEXT("width"), 0);
@@ -388,6 +391,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRenderCaptureAssetPreviewMissingAssetTest,
 
 bool FRenderCaptureAssetPreviewMissingAssetTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
     Payload->SetStringField(TEXT("assetPath"), TEXT("/Game/NoSuchMesh.NoSuchMesh"));
 
@@ -405,6 +409,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRenderCaptureAssetPreviewKnownMeshNoActorSpawn
 
 bool FRenderCaptureAssetPreviewKnownMeshNoActorSpawnTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     const int32 ActorCountBefore = CountEditorWorldActors();
 
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
@@ -498,6 +503,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRenderCaptureAssetPreviewRendersNonBlankTest,
 
 bool FRenderCaptureAssetPreviewRendersNonBlankTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
     Payload->SetStringField(TEXT("assetPath"), TEXT("/Engine/BasicShapes/Cube.Cube"));
     Payload->SetNumberField(TEXT("width"), 256);
@@ -605,6 +611,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRenderCaptureOpenLevelOpaqueAlphaTest,
 
 bool FRenderCaptureOpenLevelOpaqueAlphaTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
     Payload->SetNumberField(TEXT("width"), 256);
     Payload->SetNumberField(TEXT("height"), 256);
@@ -671,6 +678,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRenderCaptureOpenLevelInvalidDimensionsTest,
 
 bool FRenderCaptureOpenLevelInvalidDimensionsTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
     Payload->SetNumberField(TEXT("width"), 256);
     Payload->SetNumberField(TEXT("height"), -1);
@@ -689,6 +697,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRenderCaptureOpenLevelInvalidProjectionModeTes
 
 bool FRenderCaptureOpenLevelInvalidProjectionModeTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
     Payload->SetStringField(TEXT("projectionMode"), TEXT("fisheye"));
 
@@ -706,6 +715,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRenderCaptureOpenLevelArbitraryOrthoRotationTe
 
 bool FRenderCaptureOpenLevelArbitraryOrthoRotationTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
     Payload->SetStringField(TEXT("projectionMode"), TEXT("orthographic"));
     TSharedPtr<FJsonObject> Rotation = MakeShared<FJsonObject>();
@@ -735,6 +745,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRenderCaptureOpenLevelTopDownOrthoAcceptedTest
 
 bool FRenderCaptureOpenLevelTopDownOrthoAcceptedTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
     Payload->SetNumberField(TEXT("width"), 256);
     Payload->SetNumberField(TEXT("height"), 256);
@@ -797,6 +808,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRenderCaptureOpenLevelPerspectiveNoActorSpawnT
 
 bool FRenderCaptureOpenLevelPerspectiveNoActorSpawnTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     const int32 ActorCountBefore = CountEditorWorldActors();
 
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
@@ -857,6 +869,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRenderCaptureOpenLevelPopulatedLitVarianceTest
 
 bool FRenderCaptureOpenLevelPopulatedLitVarianceTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
     if (!World)
     {

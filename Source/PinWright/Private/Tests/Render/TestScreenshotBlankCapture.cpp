@@ -105,6 +105,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FUiScreenshotNeverWritesBlankFrameTest,
 
 bool FUiScreenshotNeverWritesBlankFrameTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     using namespace ScreenshotBlankCaptureTestHelpers;
 
     // A GUID-unique name so a stale file from an earlier run can never be mistaken for

@@ -512,9 +512,8 @@ bool FMRQCreateJobPreflightDisclosesResolvedConfigTest::RunTest(const FString& P
     }
     const int32 InitialJobs = Queue->GetJobs().Num();
 
-    // The happy path logs nothing; this covers the fallback below, where a host that cannot
-    // resolve the in-memory fixture would otherwise be BOTH skipped and red from the loader's own
-    // warnings. Every assertion here reads the captured response, never a log.
+    // The happy path logs nothing; a refusal is asserted below from the captured response, so the
+    // loader's own warnings would only duplicate that red. Every assertion reads the response.
     bSuppressLogs = true;
 
     const FString Stamp = FGuid::NewGuid().ToString(EGuidFormats::Digits);
@@ -558,11 +557,35 @@ bool FMRQCreateJobPreflightDisclosesResolvedConfigTest::RunTest(const FString& P
     PresetOutput->OutputDirectory.Path = ExpectedDirectory;
     PresetOutput->FileNameFormat = ExpectedFileName;
 
+    // create_job resolves sequencePath and levelPath before queueing and refuses a missing one
+    // with ASSET_NOT_FOUND, so the job needs a real sequence and map. In-memory fixtures, the
+    // same shape as DisclosesPreviouslyQueuedJobs below.
+    const FString TargetPackageName = FString::Printf(TEXT("/Temp/PinWrightTests/Preflight_%s"), *Stamp);
+    UPackage* SequencePackage = CreatePackage(*FString::Printf(TEXT("%s_Sequence"), *TargetPackageName));
+    ULevelSequence* Sequence = SequencePackage
+        ? NewObject<ULevelSequence>(SequencePackage, ULevelSequence::StaticClass(),
+            *FString::Printf(TEXT("Sequence_%s"), *Stamp), RF_Public | RF_Standalone | RF_Transient)
+        : nullptr;
+    if (Sequence)
+    {
+        Sequence->Initialize();
+    }
+    TStrongObjectPtr<ULevelSequence> SequenceGuard(Sequence);
+    UPackage* MapPackage = CreatePackage(*FString::Printf(TEXT("%s_Map"), *TargetPackageName));
+    UWorld* TransientMap = MapPackage
+        ? UWorld::CreateWorld(EWorldType::Editor, /*bInformEngineOfWorld=*/false,
+            FName(*FString::Printf(TEXT("Map_%s"), *Stamp)), MapPackage)
+        : nullptr;
+    FScopedTransientWorldGuard MapGuard(TransientMap);
+    if (!TestNotNull(TEXT("in-memory sequence fixture created"), Sequence)
+        || !TestNotNull(TEXT("transient map fixture created"), TransientMap))
+    {
+        return true;
+    }
+
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
-    Payload->SetStringField(TEXT("sequencePath"),
-        FString::Printf(TEXT("/Game/PinWrightTests/Seq_%s.Seq_%s"), *Stamp, *Stamp));
-    Payload->SetStringField(TEXT("levelPath"),
-        FString::Printf(TEXT("/Game/PinWrightTests/Map_%s.Map_%s"), *Stamp, *Stamp));
+    Payload->SetStringField(TEXT("sequencePath"), Sequence->GetPathName());
+    Payload->SetStringField(TEXT("levelPath"), TransientMap->GetPathName());
     Payload->SetStringField(TEXT("presetPath"), FString::Printf(TEXT("%s.%s"), *PackageName, *AssetName));
 
     FTestResponseCapture Capture;
@@ -573,16 +596,10 @@ bool FMRQCreateJobPreflightDisclosesResolvedConfigTest::RunTest(const FString& P
         PWMrqTrimQueueTo(Queue, InitialJobs);
     };
 
-    if (!Capture.bSuccess)
+    // Every input is a fixture this test built, so a refusal is a red, not a host limitation.
+    if (!TestTrue(FString::Printf(TEXT("mrq.create_job queued the fixture job (error [%s] %s)"),
+            *Capture.ErrorCode, *Capture.Message), Capture.bSuccess))
     {
-        // A transient in-memory package is resolvable by StaticFindObject on every host this has
-        // been exercised on, but the loader's behaviour is not this test's subject. Marked as a
-        // skip rather than asserted, so a host where it does not resolve is visible in the log
-        // instead of being a red that says nothing about the pre-flight block.
-        PinWrightTestSkip::SkipAssertions(*this, TEXT("mrq_in_memory_preset_unresolvable"),
-            FString::Printf(TEXT("mrq.create_job refused the in-memory fixture preset [%s], so the "
-                "pre-flight disclosure was not compared against a known configuration."),
-                *Capture.ErrorCode));
         return true;
     }
     if (!TestTrue(TEXT("response has a result object"), Capture.Result.IsValid()))
@@ -921,6 +938,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMRQRunJobsRejectsEmptySelectionTest,
 
 bool FMRQRunJobsRejectsEmptySelectionTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     UMoviePipelineQueueSubsystem* QSS = GEditor
         ? GEditor->GetEditorSubsystem<UMoviePipelineQueueSubsystem>() : nullptr;
     UMoviePipelineQueue* Queue = QSS ? QSS->GetQueue() : nullptr;
@@ -963,6 +981,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMRQRunJobsRejectsInvalidExecutorClassesTest,
 
 bool FMRQRunJobsRejectsInvalidExecutorClassesTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     UMoviePipelineQueueSubsystem* QSS = GEditor
         ? GEditor->GetEditorSubsystem<UMoviePipelineQueueSubsystem>() : nullptr;
     UMoviePipelineQueue* Queue = QSS ? QSS->GetQueue() : nullptr;
@@ -1030,6 +1049,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMRQRunJobsUnrenderableFramesFailTerminalJobTes
 
 bool FMRQRunJobsUnrenderableFramesFailTerminalJobTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     UMoviePipelineQueueSubsystem* QSS = GEditor
         ? GEditor->GetEditorSubsystem<UMoviePipelineQueueSubsystem>() : nullptr;
     UMoviePipelineQueue* Queue = QSS ? QSS->GetQueue() : nullptr;
@@ -1197,6 +1217,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMRQRunJobsExecutorFailureIsTerminalTest,
 
 bool FMRQRunJobsExecutorFailureIsTerminalTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     UMoviePipelineQueueSubsystem* QSS = GEditor
         ? GEditor->GetEditorSubsystem<UMoviePipelineQueueSubsystem>() : nullptr;
     UMoviePipelineQueue* Queue = QSS ? QSS->GetQueue() : nullptr;
@@ -1384,6 +1405,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMRQRunJobsSelectionBehaviorTest,
 
 bool FMRQRunJobsSelectionBehaviorTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     UMoviePipelineQueueSubsystem* QSS = GEditor
         ? GEditor->GetEditorSubsystem<UMoviePipelineQueueSubsystem>() : nullptr;
     UMoviePipelineQueue* Queue = QSS ? QSS->GetQueue() : nullptr;

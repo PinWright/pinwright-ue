@@ -28,6 +28,7 @@
 #include "Misc/AutomationTest.h"
 #include "Dom/JsonObject.h"
 #include "Tests/TestUtils.h"
+#include "Tests/TestSkipReporting.h"
 
 #include "Tests/Widget/WidgetPreviewAlphaFixtures.h"
 #include "Tests/Widget/WidgetTestFixtures.h"
@@ -44,6 +45,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWidgetDesignerPreviewResponsePublishesMeasured
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FWidgetDesignerPreviewResponsePublishesMeasuredAlphaFactsTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     using namespace WidgetPreviewAlphaFixtures;
 
     const FString WidgetPath = WidgetTestFixtures::MakeWidgetDesignerScreenshotAssetPath(
@@ -151,6 +153,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWidgetDesignerWindowResponseOmitsAlphaFactsTes
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FWidgetDesignerWindowResponseOmitsAlphaFactsTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     using namespace WidgetPreviewAlphaFixtures;
 
     const FString WidgetPath = WidgetTestFixtures::MakeWidgetDesignerScreenshotAssetPath(

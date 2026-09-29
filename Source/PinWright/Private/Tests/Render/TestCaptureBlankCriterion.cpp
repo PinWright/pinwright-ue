@@ -266,6 +266,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCaptureBlankCriterionLiveStatsPublishedTest,
 
 bool FCaptureBlankCriterionLiveStatsPublishedTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
     Payload->SetNumberField(TEXT("width"), 256);
     Payload->SetNumberField(TEXT("height"), 256);

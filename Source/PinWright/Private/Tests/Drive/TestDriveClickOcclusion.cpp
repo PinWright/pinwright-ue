@@ -239,6 +239,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveClickUncoveredTargetIsClickedTest,
 
 bool FDriveClickUncoveredTargetIsClickedTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     using namespace DriveClickOcclusionTest;
 
     TSharedPtr<FFixture> Fixture = BuildFixture(*this, /*bCovered=*/false);

@@ -67,6 +67,7 @@
 #define MCP_VP_HAS_LEVEL_EDITOR_MODULE 0
 #endif
 #include "GameFramework/Actor.h"
+#include "Utils/RenderingAvailability.h"
 
 // Forces the active level-editor viewport to render synchronously into its
 // framebuffer so a subsequent screenshot observes the just-set camera pose
@@ -719,6 +720,11 @@ REGISTER_RPC_HANDLER("editor.screenshot", "editor", "Capture a PNG screenshot in
         RPC_PARAM_OPT("exposure", "object|number", PINWRIGHT_EXPOSURE_PARAM_DESC)
     ))
 {
+  if (!PinWrightRendering::RequireRenderer(Ctx))
+  {
+    return true;
+  }
+
   const FString RequestedFilename = Ctx.GetString(TEXT("filename"));
   const TSharedPtr<FJsonObject> Payload = Ctx.GetRawPayload();
   const bool bHasWidth = Payload.IsValid() && Payload->HasField(TEXT("width"));

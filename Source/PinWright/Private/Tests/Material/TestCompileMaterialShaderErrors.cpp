@@ -47,6 +47,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCompileMaterialShaderErrorDetectionTest,
 
 bool FCompileMaterialShaderErrorDetectionTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     FString AssetPath;
     UMaterial* Material =
         PinWrightMaterialShaderStateTestFixtures::MakeBrokenHlslMaterial(

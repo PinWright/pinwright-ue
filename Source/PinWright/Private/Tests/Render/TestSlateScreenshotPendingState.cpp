@@ -49,6 +49,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlateScreenshotLeavesNoPendingRendererStateTes
 
 bool FSlateScreenshotLeavesNoPendingRendererStateTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     if (!FSlateApplication::IsInitialized())
     {
         PinWrightTestSkip::SkipAssertions(*this, TEXT("slate-application-not-initialized"),

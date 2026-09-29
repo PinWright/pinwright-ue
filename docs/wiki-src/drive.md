@@ -57,6 +57,10 @@ Journal conditions read the running session's event tail. To inspect that tail d
 
 Web is v1 and partial. Supported on `surface=web`: `drive.observe`, `drive.expect`, `drive.click`, `drive.type`, `drive.wait_for`. The remaining action verbs — `drive.scroll`, `drive.drag`, `drive.hover`, `drive.key` — have no web mapping yet and return `SURFACE_NOT_SUPPORTED` rather than silently dropping the request. Web targets a browser by `browser_index` (default 0) instead of `instance_name`/`root_index`; with no live CEF browser the call returns `WEB_BROWSER_NOT_FOUND` synchronously.
 
+## No renderer (headless mode)
+
+Under `-NullRHI` (mode `headless`) `drive.observe` and the action verbs' `observation` return elements (and journal) but no `screenshot`: no capture is attempted, because the readback would be an all-black frame. Use mode `offscreen` or `visible` for Set-of-Mark screenshots. The `web` surface is unchanged.
+
 ## See also
 
 - `call("ui")` — runtime UMG ops on a live widget instance (create a HUD, push/pop activatable stacks, set live text/visibility). `drive.*` reads and drives whatever UI is already on screen; `ui.*` puts specific widgets there.

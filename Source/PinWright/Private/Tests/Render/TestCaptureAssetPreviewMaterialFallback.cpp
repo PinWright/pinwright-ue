@@ -70,7 +70,7 @@ namespace
             return false;
         }
 
-        OutInstancePath = FString::Printf(TEXT("/Game/__PW_GatewayTests/PWThumbFallbackMI_%s"),
+        OutInstancePath = FString::Printf(TEXT("/Game/PinWrightTests/__PW_GatewayTests/PWThumbFallbackMI_%s"),
             *FGuid::NewGuid().ToString(EGuidFormats::Digits));
         UPackage* InstancePackage = CreatePackage(*OutInstancePath);
         UMaterialInstanceConstantFactoryNew* Factory =
@@ -310,6 +310,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGenerateThumbnailMaterialFallbackPolicyTest,
 
 bool FGenerateThumbnailMaterialFallbackPolicyTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     FString MaterialPath;
     UMaterial* Material = nullptr;
     if (!PWMtlFallbackRequireBrokenMaterial(*this, TEXT("PWThumbFallback"),
@@ -425,6 +426,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGenerateThumbnailMaterialInstanceFallbackPolic
 
 bool FGenerateThumbnailMaterialInstanceFallbackPolicyTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     FString MasterPath;
     FString InstancePath;
     UMaterial* Master = nullptr;
@@ -441,8 +443,19 @@ bool FGenerateThumbnailMaterialInstanceFallbackPolicyTest::RunTest(const FString
         return true;
     }
 
+    // ProbeAndWait, not Probe: the instance permutation's jobs can still be in flight (some are
+    // submitted on demand by the render thread), and a snapshot then reads `outstanding`.
     const PinWright::MaterialShaderState::FState InstanceState =
-        PinWright::MaterialShaderState::Probe(Instance);
+        PinWright::MaterialShaderState::ProbeAndWait(Instance);
+    // The wait's contract: it returns only when the work is done or its timeout expired (reported
+    // as timedOut). `outstanding` from it is the early-exit race of
+    // B-material-compile-wait-exits-before-ondemand-jobs, never a host limitation.
+    if (InstanceState.Status == PinWright::MaterialShaderState::EStatus::Outstanding)
+    {
+        AddError(FString::Printf(TEXT("ProbeAndWait returned 'outstanding' without timing out after %.2fs."),
+            InstanceState.WaitedSeconds));
+        return false;
+    }
     if (InstanceState.Status != PinWright::MaterialShaderState::EStatus::Failed)
     {
         PinWrightTestSkip::SkipAssertions(*this, TEXT("shader-compile-unavailable"),
@@ -479,6 +492,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRenderCaptureAssetPreviewMaterialFallbackPolic
 
 bool FRenderCaptureAssetPreviewMaterialFallbackPolicyTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     FString MaterialPath;
     UMaterial* Material = nullptr;
     if (!PWMtlFallbackRequireBrokenMaterial(*this, TEXT("PWPreviewFallback"),
@@ -508,7 +522,7 @@ bool FRenderCaptureAssetPreviewMaterialFallbackPolicyTest::RunTest(const FString
         return true;
     }
 
-    const FString MeshPath = FString::Printf(TEXT("/Game/__PW_GatewayTests/PWPreviewMesh_%s"),
+    const FString MeshPath = FString::Printf(TEXT("/Game/PinWrightTests/__PW_GatewayTests/PWPreviewMesh_%s"),
         *FGuid::NewGuid().ToString(EGuidFormats::Digits));
     UPackage* MeshPackage = CreatePackage(*MeshPath);
     UStaticMesh* Mesh = MeshPackage

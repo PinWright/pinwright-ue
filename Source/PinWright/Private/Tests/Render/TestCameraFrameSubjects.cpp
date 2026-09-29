@@ -144,6 +144,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCameraOrbitPoseBoundIsTheVerbsOwnTest,
 
 bool FCameraOrbitPoseBoundIsTheVerbsOwnTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     TestEqual(TEXT("camera.orbit_shots' own ceiling is still 24"),
         PinWrightCameraFrame::GMaxOrbitShots, 24);
     TestEqual(TEXT("the shared primitive's default ceiling is still 8"),
@@ -197,6 +198,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCameraOrbitSetStillAllowsTwentyFourTest,
 
 bool FCameraOrbitSetStillAllowsTwentyFourTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
     if (!World)
     {
@@ -346,6 +348,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCameraFrameNoTargetNamesSubjectTest,
 
 bool FCameraFrameNoTargetNamesSubjectTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
     FTestResponseCapture Capture;
     TestTrue(TEXT("camera.frame_actor handler found"),
@@ -379,6 +382,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCameraFrameSubjectAndActorNameRefusedTest,
 
 bool FCameraFrameSubjectAndActorNameRefusedTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     TSharedPtr<FJsonObject> SubjectObj = MakeShared<FJsonObject>();
     SubjectObj->SetStringField(TEXT("kind"), TEXT("staticMesh"));
     SubjectObj->SetStringField(TEXT("path"), PWCamSubjEngineCubePath);
@@ -406,6 +410,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCameraOrbitSubjectAndLegacyTargetRefusedTest,
 
 bool FCameraOrbitSubjectAndLegacyTargetRefusedTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     TSharedPtr<FJsonObject> SubjectObj = MakeShared<FJsonObject>();
     SubjectObj->SetStringField(TEXT("kind"), TEXT("staticMesh"));
     SubjectObj->SetStringField(TEXT("path"), PWCamSubjEngineCubePath);
@@ -446,6 +451,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCameraFrameSingleStillInheritsWarmupTest,
 
 bool FCameraFrameSingleStillInheritsWarmupTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
     if (!World)
     {
@@ -566,6 +572,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCameraOrbitAssetSubjectSixSidesTest,
 
 bool FCameraOrbitAssetSubjectSixSidesTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     UStaticMesh* CubeMesh = LoadObject<UStaticMesh>(nullptr, PWCamSubjEngineCubePath);
     if (!CubeMesh)
     {

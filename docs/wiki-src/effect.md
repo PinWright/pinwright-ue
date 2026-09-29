@@ -36,6 +36,10 @@ This is a single-instant placed-world capture. For isolated asset-preview time s
 
 Particle authoring helpers such as `effect.add_*` are not part of the persistent Niagara asset workflow. Niagara systems, emitters, renderers, parameters, stack entries, and graph edits go through the read-first `niagara.*` workflow: `asset.dump` or `niagara.inspect`, then one individual `niagara.*` edit RPC, then `niagara.validate`.
 
+## No renderer (headless mode)
+
+`effect.step_and_capture` needs a GPU renderer. In an editor launched with `-NullRHI` (mode `headless`, or a commandlet) it refuses with `RENDERING_UNAVAILABLE` before reading any parameter; the error data carries `method` and `renderingModes: ["offscreen", "visible"]`. Relaunch in mode `offscreen` or `visible`.
+
 ## See also
 
 - [`niagara`](niagara.md) for persistent Niagara systems, emitters, renderers, parameters, stack entries, and graph edits.

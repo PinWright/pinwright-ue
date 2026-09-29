@@ -107,6 +107,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetPreviewTimeArgsAreDeclaredTest,
 
 bool FAssetPreviewTimeArgsAreDeclaredTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     // UNABLE TO FAIL IF only the schema half ran: RPC_PARAMS is a declaration, and a declaration
     // proves what someone typed, not what the dispatcher does with it. The behaviour half below is
     // what makes this test mean "a caller can send this".
@@ -163,6 +164,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetPreviewTimeAndTimesRefusedTest,
 
 bool FAssetPreviewTimeAndTimesRefusedTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     TSharedPtr<FJsonObject> Payload = PWSubjTimeCubePayload();
     Payload->SetNumberField(TEXT("time"), 0.25);
     Payload->SetArrayField(TEXT("times"), {PWSubjTimeNumber(1.0)});
@@ -198,6 +200,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetPreviewMalformedInstantsTest,
 
 bool FAssetPreviewMalformedInstantsTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     struct FCase
     {
         const TCHAR* What;
@@ -269,6 +272,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetPreviewInstantsMultiplyTheCeilingTest,
 
 bool FAssetPreviewInstantsMultiplyTheCeilingTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     // Five instants x the six axis-aligned views = 30, over the 24-shot ceiling. Neither factor
     // exceeds it alone: `views:"sides"` is 6 and five instants is 5, so this can only be refused by
     // a check that multiplies.
@@ -336,6 +340,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetPreviewNoTimeAxisRefusalTest,
 
 bool FAssetPreviewNoTimeAxisRefusalTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     TSharedPtr<FJsonObject> Payload = PWSubjTimeCubePayload();
     Payload->SetNumberField(TEXT("time"), 0.5);
 

@@ -52,6 +52,7 @@
 #include "UObject/Package.h"
 #include "UObject/SavePackage.h"
 #include "UObject/StrongObjectPtr.h"
+#include "Utils/RenderingAvailability.h"
 
 namespace
 {
@@ -1227,6 +1228,11 @@ REGISTER_RPC_HANDLER("asset.generate_thumbnail", "asset", "Render an asset's thu
         PinWright::MaterialShaderState::AllowFallbackParamSpec()
     ))
 {
+    if (!PinWrightRendering::RequireRenderer(Ctx))
+    {
+        return true;
+    }
+
     FString AssetPath = Ctx.GetString(TEXT("assetPath"));
     if (AssetPath.IsEmpty())
     {

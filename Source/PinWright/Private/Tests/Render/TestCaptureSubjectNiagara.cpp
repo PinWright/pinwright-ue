@@ -219,6 +219,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 
 bool FCaptureSubjectNiagaraAdvancesByTickCountTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     using namespace PinWrightCaptureSubjectNiagara;
 
     FLiveNiagaraComponentFixture Fixture;
@@ -684,6 +685,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 
 bool FCaptureSubjectNiagaraSimulatedTracksMeasuredAgeTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     using namespace PinWrightCaptureSubjectNiagara;
 
     FLiveNiagaraComponentFixture Fixture;

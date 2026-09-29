@@ -109,6 +109,8 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMaterialAuthoringConfigureLayerBlendLandscapeE
 
 bool FMaterialAuthoringConfigureLayerBlendLandscapeEndToEndTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
+
     UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
     if (!World)
     {
@@ -129,7 +131,7 @@ bool FMaterialAuthoringConfigureLayerBlendLandscapeEndToEndTest::RunTest(const F
     const FString OtherLayer = TEXT("PW_E2ERock");
 
     const FString Suffix = FGuid::NewGuid().ToString(EGuidFormats::Digits);
-    const FString AssetPath = FString::Printf(TEXT("/Game/__PW_GatewayTests/E2ELayerBlend_%s"), *Suffix);
+    const FString AssetPath = FString::Printf(TEXT("/Game/PinWrightTests/__PW_GatewayTests/E2ELayerBlend_%s"), *Suffix);
 
     ON_SCOPE_EXIT
     {

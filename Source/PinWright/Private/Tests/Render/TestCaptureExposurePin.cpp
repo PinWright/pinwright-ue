@@ -832,6 +832,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCaptureOpenLevelOmittedExposureUnchangedTest,
 
 bool FCaptureOpenLevelOmittedExposureUnchangedTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     FEditorViewportClient* Client = ExposurePinActiveLevelViewportClient();
     const FExposureSettings Before = Client ? Client->ExposureSettings : FExposureSettings();
 
@@ -896,6 +897,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCaptureOpenLevelPinnedExposureIsRestoredTest,
 
 bool FCaptureOpenLevelPinnedExposureIsRestoredTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     FEditorViewportClient* Client = ExposurePinActiveLevelViewportClient();
     const FExposureSettings Before = Client ? Client->ExposureSettings : FExposureSettings();
     const bool bEyeAdaptationBefore = Client ? (Client->EngineShowFlags.EyeAdaptation != 0) : true;
@@ -991,6 +993,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCaptureAssetPreviewPinnedCapturesReproduceTest
 
 bool FCaptureAssetPreviewPinnedCapturesReproduceTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     // CALIBRATION. Every number below was measured on this exact fixture -- an FAdvancedPreviewScene
     // holding /Engine/BasicShapes/Cube, captured at 128x128 -- on 2026-08-18. Re-measure them if
     // the fixture changes; do not adjust them to make a run pass.
@@ -1354,6 +1357,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCaptureAssetPreviewAutoThenPinReproducesTest,
 
 bool FCaptureAssetPreviewAutoThenPinReproducesTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     // CALIBRATION, measured 2026-08-19 in an interactive editor on the same fixture section 5
     // uses (/Engine/BasicShapes/Cube at 128x128), decoded meanAbsDiff over RGB in 0-255 units:
     //

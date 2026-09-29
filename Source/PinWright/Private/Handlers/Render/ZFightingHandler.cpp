@@ -32,6 +32,7 @@
 #include "LevelEditor.h"
 #include "Misc/FileHelper.h"
 #include "Modules/ModuleManager.h"
+#include "Utils/RenderingAvailability.h"
 
 // Names from PinWrightZFighting are qualified throughout rather than pulled in with a
 // using-directive: this module builds with Unity enabled, where a file-scope using-directive
@@ -188,6 +189,11 @@ REGISTER_RPC_HANDLER("render.detect_z_fighting", "render",
         RPC_PARAM_OPT("filename", "filepath", "Output filename for the mask inside Saved/Screenshots/ZFighting. The .png extension is appended if missing.")
     ))
 {
+    if (!PinWrightRendering::RequireRenderer(Ctx))
+    {
+        return true;
+    }
+
     if (!GEditor)
     {
         Ctx.SendError(ErrorCodes::ERR_EDITOR_NOT_AVAILABLE, TEXT("Editor not available"));

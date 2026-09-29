@@ -159,6 +159,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAnimPreviewMissingSubjectTest,
 
 bool FAnimPreviewMissingSubjectTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     using namespace PinWrightAnimPreviewSubjectTests;
 
     // `assetPath` stopped being a REQUIRED param spec so that `subject.path` could carry it. That
@@ -189,6 +190,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAnimPreviewUnknownDistributionTest,
 
 bool FAnimPreviewUnknownDistributionTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     using namespace PinWrightAnimPreviewSubjectTests;
 
     // A typo that quietly becomes the default is indistinguishable from the default having been
@@ -222,6 +224,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAnimPreviewSubjectBesideAssetPathTest,
 
 bool FAnimPreviewSubjectBesideAssetPathTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     using namespace PinWrightAnimPreviewSubjectTests;
 
     // A `subject` object does NOT absorb the legacy key beside it. Presented together they are
@@ -271,6 +274,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAnimPreviewSubjectKindNotServedTest,
 
 bool FAnimPreviewSubjectKindNotServedTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     using namespace PinWrightAnimPreviewSubjectTests;
 
     // An explicit kind this verb cannot serve is a TYPED refusal that names the verb which can -
@@ -316,6 +320,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAnimPreviewColdFirstFrameTest,
 
 bool FAnimPreviewColdFirstFrameTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     using namespace PinWrightAnimPreviewSubjectTests;
 
     // The first capture into a freshly opened preview window is measurably dark - ~0.9 stop in the
@@ -422,6 +427,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAnimPreviewAnglesAndViewsTest,
 
 bool FAnimPreviewAnglesAndViewsTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     using namespace PinWrightAnimPreviewSubjectTests;
 
     // `angles` and `views` are ARGUMENTS of this verb and have never been RESPONSE keys. A refactor

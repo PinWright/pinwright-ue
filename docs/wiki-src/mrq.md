@@ -154,6 +154,10 @@ Everything in the table above is a property of the **file**, and that was the ne
 
 Per job, `shots[]` carries each shot's `name` and its pipeline `state` (`Uninitialized` / `WarmingUp` / `MotionBlur` / `Rendering` / `CoolingDown` / `Finished`) at the moment it reported its work finished. A shot that is not `Finished` did not produce every frame it was asked for, and a warning says so — the frame count, the file list and `jobSucceeded` all describe a partial render in that case.
 
+## No renderer (headless mode)
+
+`mrq.run_jobs` needs a GPU renderer. In an editor launched with `-NullRHI` (mode `headless`, or a commandlet) it refuses with `RENDERING_UNAVAILABLE` before reading any parameter; the error data carries `method` and `renderingModes: ["offscreen", "visible"]`. Relaunch in mode `offscreen` or `visible`. The queue verbs (`mrq.create_job`, `mrq.list_jobs`, ...) are unaffected.
+
 ## See also
 
 - [`sequencer`](sequencer.md) — Movie Render Queue consumes `ULevelSequence` assets authored through this namespace.

@@ -252,6 +252,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCaptureGrassRequestedPoseDrivesTheBuildTest,
 
 bool FCaptureGrassRequestedPoseDrivesTheBuildTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
     if (!World)
     {

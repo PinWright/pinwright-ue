@@ -82,6 +82,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FLandscapeSculptRefreshesBoundsTest,
 
 bool FLandscapeSculptRefreshesBoundsTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     // The edit-layer readback + regeneration this test drives requires a real
     // editor world (the automation suite runs in an editor context). The world is
     // an environment precondition, not the test fixture — the fixture (the

@@ -183,6 +183,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEditorSetWindowStateRestoresMinimizedTest,
 
 bool FEditorSetWindowStateRestoresMinimizedTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     if (!FSlateApplication::IsInitialized())
     {
         AddError(TEXT("Slate application not initialized; cannot exercise editor.set_window_state."));

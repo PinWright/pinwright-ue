@@ -78,6 +78,7 @@
 #include "UObject/StrongObjectPtr.h"
 #include "Widgets/SWindow.h"
 #include "Widgets/SWidget.h"
+#include "Utils/RenderingAvailability.h"
 
 // ---- the asset-editor viewport walk is GONE FROM HERE, and that is the point ----
 //
@@ -366,6 +367,11 @@ REGISTER_RPC_HANDLER("render.capture_mesh", "render", "Capture a Static Mesh or 
         RPC_PARAM_DEF("padding", "number", "Bounds-fit margin multiplier. Default 1.25.", "1.25")
     ))
 {
+    if (!PinWrightRendering::RequireRenderer(Ctx))
+    {
+        return true;
+    }
+
     const TSharedPtr<FJsonObject>& Payload = Ctx.GetRawPayload();
     const FString AssetPath = Ctx.GetString(TEXT("assetPath"));
     if (AssetPath.IsEmpty())
@@ -662,6 +668,11 @@ REGISTER_RPC_HANDLER("render.capture_asset_preview", "render", "Open an asset ed
         PinWright::MaterialShaderState::AllowFallbackParamSpec()
     ))
 {
+    if (!PinWrightRendering::RequireRenderer(Ctx))
+    {
+        return true;
+    }
+
     using namespace PinWrightCameraFrame;
 
     const TSharedPtr<FJsonObject>& Payload = Ctx.GetRawPayload();
@@ -2248,6 +2259,11 @@ REGISTER_RPC_HANDLER("render.capture_open_level", "render", "Capture the active 
             "Both `framing` and the `subject` block are present only when a subject was resolved.")
     ))
 {
+    if (!PinWrightRendering::RequireRenderer(Ctx))
+    {
+        return true;
+    }
+
     return PinWrightOpenLevelCapture::Handle(Ctx);
 }
 
@@ -2727,6 +2743,11 @@ REGISTER_RPC_HANDLER("render.nanite_rebuild_mesh", "render", "Enable Nanite and 
 REGISTER_RPC_HANDLER("render.lumen_update_scene", "render", "Trigger a Lumen scene recapture",
     RPC_NO_PARAMS)
 {
+    if (!PinWrightRendering::RequireRenderer(Ctx))
+    {
+        return true;
+    }
+
     if (GEditor)
     {
         UWorld* World = GEditor->GetEditorWorldContext().World();

@@ -154,6 +154,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetPreviewUndeclaredParamsResolvedTest,
 
 bool FAssetPreviewUndeclaredParamsResolvedTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     const TCHAR* Method = TEXT("render.capture_asset_preview");
 
     // --- the schema half ---
@@ -226,6 +227,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetPreviewNoTargetIsInvalidArgumentTest,
 
 bool FAssetPreviewNoTargetIsInvalidArgumentTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     // `assetPath` moved from RPC_PARAM_REQ to RPC_PARAM_OPT because `subject` can now stand in for
     // it, and the dispatcher's required-param gate can only speak for ONE slot. The refusal moved
     // into the handler body, which also CLOSES a drift: the direct-invocation test
@@ -255,6 +257,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetPreviewSubjectPathReplacesAssetPathTest,
 
 bool FAssetPreviewSubjectPathReplacesAssetPathTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     // The failure direction is the point. If `subject.path` were ignored the verb would answer
     // INVALID_ARGUMENT ("assetPath required"); reaching ASSET_NOT_FOUND proves the path was read
     // out of the subject object and carried into the asset lookup.
@@ -281,6 +284,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetPreviewLevelSubjectKindsRefusedTest,
 
 bool FAssetPreviewLevelSubjectKindsRefusedTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     // Plan decision 6: a capability a verb cannot serve is a TYPED refusal that names where the
     // capability lives, never silence and never a generic argument error. subject:{kind:"actor"}
     // carries no path, so the refusal has to beat the missing-path check to be useful at all.
@@ -315,6 +319,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetPreviewUnservedClassNamesSiblingsTest,
 
 bool FAssetPreviewUnservedClassNamesSiblingsTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     // The verb is no longer Static-Mesh-only, so its rejection message had to be rewritten. This
     // pins the half of that message that is load-bearing: the pointer at
     // render.capture_animation_preview, which is the only discovery path between the two capture
@@ -358,6 +363,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetPreviewShotPlanRefusalsTest,
 
 bool FAssetPreviewShotPlanRefusalsTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     if (!UEditorAssetLibrary::DoesAssetExist(PWAssetSubjEngineCubePath))
     {
         PinWrightTestSkip::SkipAssertions(*this, TEXT("fixture-missing"),
@@ -446,6 +452,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FOpenLevelAssetSubjectRefusedTest,
 
 bool FOpenLevelAssetSubjectRefusedTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     // This verb is domain-named: its registration string says it captures the OPEN LEVEL, so
     // serving an asset subject would make the name lie (plan §4.3). The refusal has to happen
     // before the capture, and it has to name render.capture_asset_preview.
@@ -506,6 +513,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetPreviewSkeletalMeshSixSidesTest,
 
 bool FAssetPreviewSkeletalMeshSixSidesTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     // Two things at once, and both used to be impossible on this verb: a SKELETAL MESH is served
     // at all (it used to be a hard UNSUPPORTED_ASSET_EDITOR), and it is served through the shared
     // pose-list primitive, so `views:"sides"` produces the same six axis-aligned poses
@@ -521,6 +529,10 @@ bool FAssetPreviewSkeletalMeshSixSidesTest::RunTest(const FString& Parameters)
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
     Payload->SetStringField(TEXT("assetPath"), PWAssetSubjSkeletalCubePath);
     Payload->SetStringField(TEXT("views"), TEXT("sides"));
+    // SkeletalCube ships with no material, so its rendered slot is unassigned and the verb refuses
+    // with MATERIAL_FALLBACK on every host unless the fallback image is accepted explicitly. The
+    // material is not what this test measures.
+    Payload->SetBoolField(TEXT("allowFallback"), true);
     // Fixed, and the same size the sibling render tests use. A capture size that VARIES within an
     // editor session trips FViewport::GetHitProxy's ProxyMap assertion, which has already cost
     // unsaved level state on this project.
@@ -650,6 +662,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetPreviewNiagaraCapturedTest,
 
 bool FAssetPreviewNiagaraCapturedTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     // The cheapest win in the convergence and the one that used to look impossible.
     // SNiagaraSystemViewport really does derive from SEditorViewport and publishes
     // GetViewportClient / GetSceneViewport through UnrealEd's public header; what hid it was the

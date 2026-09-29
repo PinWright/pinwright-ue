@@ -407,6 +407,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCaptureOpenLevelReportsViewDistanceTest,
 
 bool FCaptureOpenLevelReportsViewDistanceTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     const float ScaleBeforeCall = ReadViewDistanceScaleCVar();
 
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
@@ -535,6 +536,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCaptureOpenLevelExplicitViewDistanceScaleTest,
 
 bool FCaptureOpenLevelExplicitViewDistanceScaleTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     const float ScaleBeforeCall = ReadViewDistanceScaleCVar();
 
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
@@ -592,6 +594,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCaptureOpenLevelPerspectiveLeavesViewDistanceA
 
 bool FCaptureOpenLevelPerspectiveLeavesViewDistanceAloneTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
     Payload->SetNumberField(TEXT("width"), 128);
     Payload->SetNumberField(TEXT("height"), 128);
@@ -1157,6 +1160,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCaptureOpenLevelHismFoliagePixelRecoveryTest,
 
 bool FCaptureOpenLevelHismFoliagePixelRecoveryTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     UWorld* World = ViewDistanceTestEditorWorld();
     if (!World)
     {

@@ -225,6 +225,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRenderDetectZFightingRejectsPowerOfTwoRatioTes
 
 bool FRenderDetectZFightingRejectsPowerOfTwoRatioTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     if (!GEditor || !GEditor->GetEditorWorldContext().World())
     {
         PinWrightTestSkip::SkipAssertions(*this, TEXT("no-editor-world"),
@@ -266,6 +267,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRenderDetectZFightingCoplanarFixtureTest,
 
 bool FRenderDetectZFightingCoplanarFixtureTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
     if (!World)
     {
@@ -357,6 +359,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRenderDetectZFightingSeparatedFixtureTest,
 
 bool FRenderDetectZFightingSeparatedFixtureTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
     if (!World)
     {
@@ -420,6 +423,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRenderDetectZFightingResolutionComparisonTest,
 
 bool FRenderDetectZFightingResolutionComparisonTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
     if (!World)
     {

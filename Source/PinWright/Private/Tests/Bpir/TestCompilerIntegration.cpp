@@ -491,7 +491,7 @@ bool FCompilerIntegrationInvalidFunctionTest::RunTest(const FString& Parameters)
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCompilerIntegrationInsertCodeAfterNodeTest,
     "PinWright.bpir.compiler.integration.InsertCodeAfterNode",
-    EAutomationTestFlags::EditorContext | EAutomationTestFlags::NonNullRHI | EAutomationTestFlags::EngineFilter)
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 bool FCompilerIntegrationInsertCodeAfterNodeTest::RunTest(const FString& Parameters)
 {
@@ -545,7 +545,7 @@ bool FCompilerIntegrationInsertCodeAfterNodeTest::RunTest(const FString& Paramet
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCompilerIntegrationInsertCodeExecChainTest,
     "PinWright.bpir.compiler.integration.InsertCodeAfterNode_ExecChain",
-    EAutomationTestFlags::EditorContext | EAutomationTestFlags::NonNullRHI | EAutomationTestFlags::EngineFilter)
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 bool FCompilerIntegrationInsertCodeExecChainTest::RunTest(const FString& Parameters)
 {
@@ -651,7 +651,7 @@ bool FCompilerIntegrationInsertCodeExecChainTest::RunTest(const FString& Paramet
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCompilerIntegrationUnresolvedWarningsTest,
     "PinWright.bpir.compiler.integration.UnresolvedExpressionWarnings",
-    EAutomationTestFlags::EditorContext | EAutomationTestFlags::NonNullRHI | EAutomationTestFlags::EngineFilter)
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 bool FCompilerIntegrationUnresolvedWarningsTest::RunTest(const FString& Parameters)
 {
@@ -680,7 +680,7 @@ bool FCompilerIntegrationUnresolvedWarningsTest::RunTest(const FString& Paramete
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCompilerIntegrationMultipleBodyStatementsTest,
     "PinWright.bpir.compiler.integration.MultipleBodyStatements",
-    EAutomationTestFlags::EditorContext | EAutomationTestFlags::NonNullRHI | EAutomationTestFlags::EngineFilter)
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 bool FCompilerIntegrationMultipleBodyStatementsTest::RunTest(const FString& Parameters)
 {
@@ -1860,7 +1860,7 @@ bool FCompilerIntegrationCompileMultiEntryBlocksTest::RunTest(const FString& Par
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCompilerIntegrationInsertAfterNodeSpecificPinTest,
     "PinWright.bpir.compiler.integration.InsertAfterNode_SpecificPin",
-    EAutomationTestFlags::EditorContext | EAutomationTestFlags::NonNullRHI | EAutomationTestFlags::EngineFilter)
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 bool FCompilerIntegrationInsertAfterNodeSpecificPinTest::RunTest(const FString& Parameters)
 {
@@ -1943,7 +1943,7 @@ bool FCompilerIntegrationInsertAfterNodeSpecificPinTest::RunTest(const FString& 
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCompilerIntegrationInsertAfterNodeBadPinNameTest,
     "PinWright.bpir.compiler.integration.InsertAfterNode_BadPinName",
-    EAutomationTestFlags::EditorContext | EAutomationTestFlags::NonNullRHI | EAutomationTestFlags::EngineFilter)
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 bool FCompilerIntegrationInsertAfterNodeBadPinNameTest::RunTest(const FString& Parameters)
 {
@@ -1981,7 +1981,7 @@ bool FCompilerIntegrationInsertAfterNodeBadPinNameTest::RunTest(const FString& P
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCompilerIntegrationInsertBeforeNodeTest,
     "PinWright.bpir.compiler.integration.InsertBeforeNode",
-    EAutomationTestFlags::EditorContext | EAutomationTestFlags::NonNullRHI | EAutomationTestFlags::EngineFilter)
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 bool FCompilerIntegrationInsertBeforeNodeTest::RunTest(const FString& Parameters)
 {
@@ -2083,7 +2083,7 @@ bool FCompilerIntegrationInsertBeforeNodeTest::RunTest(const FString& Parameters
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCompilerIntegrationInsertBeforeNodeEventNodeTest,
     "PinWright.bpir.compiler.integration.InsertBeforeNode_EventNode",
-    EAutomationTestFlags::EditorContext | EAutomationTestFlags::NonNullRHI | EAutomationTestFlags::EngineFilter)
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 bool FCompilerIntegrationInsertBeforeNodeEventNodeTest::RunTest(const FString& Parameters)
 {
@@ -2390,7 +2390,7 @@ bool FCompilerObjectReturnPropertyAccess::RunTest(const FString& Parameters)
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCompilerInsertAfterSequenceAutoCreatePinTest,
     "PinWright.bpir.compiler.integration.InsertAfterSequenceNode_AutoCreatePin",
-    EAutomationTestFlags::EditorContext | EAutomationTestFlags::NonNullRHI | EAutomationTestFlags::EngineFilter)
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 bool FCompilerInsertAfterSequenceAutoCreatePinTest::RunTest(const FString& Parameters)
 {

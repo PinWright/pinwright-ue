@@ -55,6 +55,7 @@
 
 #include "CoreMinimal.h"
 #include "Misc/AutomationTest.h"
+#include "Utils/RenderingAvailability.h"
 
 namespace PinWrightTestSkip
 {
@@ -91,5 +92,23 @@ namespace PinWrightTestSkip
         const FString& Detail)
     {
         Test.AddWarning(FormatSkipMessage(Test.GetTestFullName(), ReasonSlug, Detail));
+    }
+
+    // The one NullRHI skip for renderer-dependent tests (captures, screenshots, thumbnails,
+    // readbacks, benchmarks, movie renders). Call first thing in RunTest:
+    //     if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
+    // Emits reason=null-rhi and returns true when the editor has no renderer (mode `headless`,
+    // -NullRHI); returns false and emits nothing otherwise, so a rendering host runs every
+    // assertion unchanged. Same predicate as the handler guard PinWrightRendering::RequireRenderer.
+    inline bool SkipIfRenderingUnavailable(FAutomationTestBase& Test)
+    {
+        if (PinWrightRendering::IsAvailable())
+        {
+            return false;
+        }
+        SkipAssertions(Test, TEXT("null-rhi"),
+            TEXT("this editor has no GPU renderer (-NullRHI / mode 'headless'); run in mode ")
+            TEXT("'offscreen' or 'visible' to measure it."));
+        return true;
     }
 }

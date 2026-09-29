@@ -26,6 +26,10 @@ Widget Blueprint asset-path fields use canonical `widgetPath`; dispatcher aliase
 `widget.export_xml` accept legacy snake-case aliases in asset mode; live mode rejects all asset-path
 fields.
 
+## No renderer (headless mode)
+
+`widget.screenshot_designer` needs a GPU renderer. In an editor launched with `-NullRHI` (mode `headless`, or a commandlet) it refuses with `RENDERING_UNAVAILABLE` before reading any parameter; the error data carries `method` and `renderingModes: ["offscreen", "visible"]`. Relaunch in mode `offscreen` or `visible`.
+
 ## See also
 
 - [`widget.iteration-loop`](widget.iteration-loop.md) — the inspect → plan → edit → save → verify discipline and the tools-at-a-glance table.

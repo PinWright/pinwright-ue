@@ -43,7 +43,7 @@ namespace
     UMaterial* LFAtlas_CreateMaterial(FAutomationTestBase& Test, const TCHAR* NameStem,
         EMaterialDomain Domain, bool bManipulateTexCoords, FString& OutAssetPath)
     {
-        OutAssetPath = FString::Printf(TEXT("/Game/__PW_GatewayTests/%s_%s"),
+        OutAssetPath = FString::Printf(TEXT("/Game/PinWrightTests/__PW_GatewayTests/%s_%s"),
             NameStem, *FGuid::NewGuid().ToString(EGuidFormats::Digits));
 
         UPackage* Pkg = CreatePackage(*OutAssetPath);
@@ -136,6 +136,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMaterialLightFunctionAtlasReadbackTest,
 
 bool FMaterialLightFunctionAtlasReadbackTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     if constexpr (!PinWright::LightFunctionAtlas::bSupportedOnThisEngine)
     {
         PinWrightTestSkip::SkipAssertions(*this, TEXT("engine-has-no-atlas-override"),
@@ -232,6 +233,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMaterialLightFunctionAtlasOverrideTest,
 
 bool FMaterialLightFunctionAtlasOverrideTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     if constexpr (!PinWright::LightFunctionAtlas::bSupportedOnThisEngine)
     {
         PinWrightTestSkip::SkipAssertions(*this, TEXT("engine-has-no-atlas-override"),

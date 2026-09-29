@@ -276,6 +276,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWidgetScreenshotDesignerClosesDesignerItOpened
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FWidgetScreenshotDesignerClosesDesignerItOpenedTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     const FString WidgetPath = WidgetTestFixtures::MakeWidgetDesignerScreenshotAssetPath(TEXT("WBP_CaptureClosesDesigner"));
     UWidgetBlueprint* WBP = WidgetTestFixtures::MakeWidgetDesignerScreenshotBlueprint(WidgetPath);
     TestNotNull(TEXT("widget blueprint allocated"), WBP);
@@ -351,6 +352,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWidgetScreenshotDesignerLeavesPreexistingDesig
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FWidgetScreenshotDesignerLeavesPreexistingDesignerOpenTest::RunTest(const FString& Parameters)
 {
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
     const FString WidgetPath = WidgetTestFixtures::MakeWidgetDesignerScreenshotAssetPath(TEXT("WBP_CaptureKeepsDesigner"));
     UWidgetBlueprint* WBP = WidgetTestFixtures::MakeWidgetDesignerScreenshotBlueprint(WidgetPath);
     TestNotNull(TEXT("widget blueprint allocated"), WBP);
