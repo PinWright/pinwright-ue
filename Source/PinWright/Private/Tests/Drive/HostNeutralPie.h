@@ -15,6 +15,7 @@
 // APlayerController, ADefaultPawn and AHUD. Level-placed actors of a host map still begin play.
 
 #include "CoreMinimal.h"
+#include "DynamicRHI.h"
 #include "Editor/UnrealEdEngine.h"
 #include "GameFramework/GameModeBase.h"
 #include "HAL/IConsoleManager.h"
@@ -31,12 +32,29 @@
 // this Error once because GEngine is a UEditorEngine, not a UGameEngine (RTCInputHandler.cpp).
 // Declared as exactly one expected error per PIE start, only when that path is live, so every
 // owned-PIE test measures the same thing and no test needs a blanket bSuppressLogErrors.
-inline void ExpectHostPieStartErrors(FAutomationTestBase& Test)
+//
+// "Live" mirrors the plugin's own gates. The editor module binds its PostPIEStarted hook only in
+// InitEditorStreaming, which runs from PixelStreaming2RTC's OnReady; the RTC module never becomes
+// ready unless the dynamic RHI is D3D11, D3D12, Vulkan or Metal (PixelStreaming2RTCModule.cpp,
+// StartupModule, OpenGL on Android only). Under -NullRHI it returns there, so a headless suite
+// logs nothing. Then OnBeginPIE returns early unless the AutoStreamPIE CVar is on.
+inline bool IsPixelStreamingPieStreamerLive()
 {
+    const ERHIInterfaceType RHIType = GDynamicRHI ? RHIGetInterfaceType() : ERHIInterfaceType::Hidden;
+    const bool bSupportedRHI = RHIType == ERHIInterfaceType::D3D11
+        || RHIType == ERHIInterfaceType::D3D12
+        || RHIType == ERHIInterfaceType::Vulkan
+        || RHIType == ERHIInterfaceType::Metal;
     const IConsoleVariable* AutoStreamPie =
         IConsoleManager::Get().FindConsoleVariable(TEXT("PixelStreaming2.Editor.AutoStreamPIE"));
-    if (FModuleManager::Get().IsModuleLoaded(TEXT("PixelStreaming2Editor"))
-        && AutoStreamPie && AutoStreamPie->GetBool())
+    return bSupportedRHI
+        && FModuleManager::Get().IsModuleLoaded(TEXT("PixelStreaming2Editor"))
+        && AutoStreamPie && AutoStreamPie->GetBool();
+}
+
+inline void ExpectHostPieStartErrors(FAutomationTestBase& Test)
+{
+    if (IsPixelStreamingPieStreamerLive())
     {
         Test.AddExpectedErrorPlain(TEXT("Cannot set target window - GEngine is not valid."),
             EAutomationExpectedErrorFlags::Contains, 1);

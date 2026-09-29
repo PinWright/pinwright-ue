@@ -12,6 +12,7 @@
 
 #include "HAL/IConsoleManager.h"
 #include "NiagaraEmitter.h"
+#include "NiagaraScript.h"
 #include "NiagaraSystem.h"
 #include "UObject/Package.h"
 #include "Misc/Guid.h"
@@ -281,7 +282,17 @@ bool FNiagaraDumpDeferredIssueClearsAfterCompileTest::RunTest(const FString& Par
     TSharedPtr<FJsonObject> CompileJson = NiagaraDumpBuilder::BuildCompileDiagnosticsJson(System);
     OnDemandCV->Set(*Original, ECVF_SetByCode);
 
-    TestTrue(TEXT("premise: the engine reports the compiled system ready to run"), System->IsReadyToRun());
+    // Premise: the compile landed on the system scripts. Not UNiagaraSystem::IsReadyToRun(): its
+    // IsReadyToRunInternal returns false whenever !FApp::CanEverRender() (-NullRHI), so it would
+    // fail headless although the compile landed; the gate under test does not depend on rendering.
+    const auto IsCompiledOk = [](const UNiagaraScript* Script)
+    {
+        const ENiagaraScriptCompileStatus Status = Script ? Script->GetLastCompileStatus() : ENiagaraScriptCompileStatus::NCS_Unknown;
+        return Status == ENiagaraScriptCompileStatus::NCS_UpToDate
+            || Status == ENiagaraScriptCompileStatus::NCS_UpToDateWithWarnings;
+    };
+    TestTrue(TEXT("premise: the forced compile left both system scripts up to date"),
+        IsCompiledOk(System->GetSystemSpawnScript()) && IsCompiledOk(System->GetSystemUpdateScript()));
     TestTrue(TEXT("compileDeferredOnLoad still reports the session fact"),
         CompileJson.IsValid() && CompileJson->GetBoolField(TEXT("compileDeferredOnLoad")));
     TestFalse(TEXT("no COMPILE_DEFERRED_ON_LOAD issue for a system compiled in this session"),
