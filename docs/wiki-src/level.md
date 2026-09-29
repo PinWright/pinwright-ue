@@ -153,7 +153,7 @@ The same error code covers a second, unrelated blocker: a **dead world that is s
 
 **Two things that check does not promise.** It is not side-effect free: reaching the verdict broadcasts the engine's cleanse notification for each dead world (holders drop their references, and asset editors open on them close), flushes async loading and asset compilation, and runs one full-purge garbage collection — the map swap itself does not happen, but the editor is not untouched. And it **cannot see the outgoing world**: at the moment of the check that world still owns its world context, so neither the engine's predicate nor this one counts it, and whether it survives its own teardown is only decidable by performing that teardown. A green pre-flight therefore means "no *other* dead world is resident", not "this swap is safe" — the outgoing direction is a residual risk no refusal here covers. If the probe cannot run at all (a collect already in flight, or a synchronous load on the call stack) the verb refuses with the retryable `EDITOR_NOT_READY` and `probeUnavailableReason` rather than swapping blind.
 
-To open a map in a **fresh** editor rather than swapping the live world, use the stdio proxy's `editor_start` / `editor_restart` tools with `map: "/Game/Maps/MyLevel"` — see [`unattended`](unattended.md).
+To open a map in a **fresh** editor rather than swapping the live world, use the stdio proxy's `editor_start` / `editor_restart` tools with `map: "/Game/Maps/MyLevel"` (plus the required `mode` and `reason`) — see [`unattended`](unattended.md).
 
 ### level.save
 

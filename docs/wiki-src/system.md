@@ -1,6 +1,6 @@
 # system
 
-Process- and engine-level controls: UBT, automation tests, GEngine console commands and search, and
+Process- and engine-level controls: Live Coding, automation tests, GEngine console commands and search, and
 the long-running job queue. Methods live at `system.*`; read-only inspection is
 `call("system.inspect")`, and headless operation is `call("unattended")`.
 
@@ -15,6 +15,11 @@ the long-running job queue. Methods live at `system.*`; read-only inspection is
   `call("system.inspect.list_subsystems")`, inspect its surface with
   `call("system.inspect.inspect_class")`, then invoke it through `call("object.call_function")`.
   The latter builds a real parameter frame and serializes return values and out-params.
+- **Building C++** — no verb spawns UBT: a build of the editor target cannot link while that
+  editor runs. For the running editor use `system.live_coding_compile` (check
+  `system.live_coding_status` first). For a full build, close the editor and run
+  `Engine/Build/BatchFiles/Build.bat` (`Build.sh` on Linux)
+  `-Project="<path>.uproject" -TargetType=Editor <Platform> Development` from your own shell.
 
 ## Long-running jobs
 
@@ -85,7 +90,6 @@ only, so cross-session lines would reference dangling IDs; every session starts 
 | Method | Bound to |
 |---|---|
 | `system.run_tests` | `IAutomationControllerManager::OnTestsComplete` (exact names); filter mode also polls the controller state; or a bounded child process per isolated group |
-| `system.run_ubt` | poll proc handle |
 | `level.build_lighting` | `FEditorDelegates::OnLightingBuildSucceeded/Failed/Kept` |
 | `lighting.build_lighting` | same lighting delegates |
 | `level.build_navigation`, `navigation.rebuild_navigation` | poll `UNavigationSystemV1::IsNavigationBuildInProgress` |
@@ -145,9 +149,10 @@ Cost is at most one 0.1 s pass, only while a world ticks. Response, ticket, and 
 unchanged. `open <map>` can no longer trip `Assertion failed: !LevelList.Contains(TickTaskLevel)`,
 the same crash gated by `level.load`.
 
-This does not make commands safe and refuses none. A long synchronous operation still holds the game
-thread with no progress or cancel—the `call("python")` freeze through another verb—and shutdown
-commands still shut down. Prefer `level.load` over `open`, `editor.quit` (refuses unsaved work) over
+This does not make commands safe, and the safe point itself refuses nothing; the lines both verbs
+refuse are listed under `call("system.console_command")`. A long synchronous operation still holds
+the game thread with no progress or cancel—the `call("python")` freeze through another verb—and a
+shutdown line run with `force: true` still shuts down. Prefer `level.load` over `open`, `editor.quit` (refuses unsaved work) over
 `quit`, and `editor.set_view_mode` over `viewmode`. A success means the line was *consumed*, not that
 its effect succeeded; search unfamiliar names first.
 
@@ -191,6 +196,17 @@ client that launched its own editor can be driving a different, already-running 
 compile stamp, `executable_path`, `command_line`, and the port it is actually serving on
 (`bound_http_port`, omitted when nothing is bound) beside the port it was configured for
 (`configured_http_port`).
+
+`log_file` is the absolute path of the log this process is writing, read after the engine opened
+it: a second editor of the same project that found `<Project>.log` locked writes
+`<Project>_2.log` and reports that, and a `-abslog=` launch reports its own path. Read it here
+instead of guessing `Saved/Logs/<Project>.log`, which may belong to the other editor. Omitted when
+no such file exists on disk. It is not assertable.
+
+`launch_reason` and `launched_by` echo the `-PinWrightLaunchReason=` / `-PinWrightLaunchedBy=`
+switches PinWright's launch tools append (`launched_by` is `editor_start`, `editor_restart` or
+`editor_run_tests`), so they say why and how an editor was started; both are omitted for
+an editor started any other way. They are caller-supplied, not measured, and not assertable.
 
 Pin it by putting the reserved `_expect_editor` key **inside `args`**, the same place `_format` and
 `wait` live. The dispatcher consumes and strips it, so it is never a handler parameter and works on
@@ -302,7 +318,7 @@ says so instead of reporting a cancellation that did not happen.**
 Cancellation works only where the handler registered a callback: `asset.dump`, `asset.dump_folder`,
 `localization.gather`, `localization.compile`, `pcg.generate` (UE 5.4+), and
 `render.nanite_rebuild_mesh`; `system.run_tests` also registers one when `isolateGroups:true`.
-Other ticketed verbs—level/lighting builds, `system.run_ubt`, in-process `system.run_tests`,
+Other ticketed verbs—level/lighting builds, in-process `system.run_tests`,
 `mrq.run_jobs`, `performance.*`, `blueprint.build_api_index`, `editor.screenshot`,
 `level.save` / `save_as`, and `navigation.rebuild_navigation`—cannot stop their work.
 
@@ -365,3 +381,23 @@ can tell in advance which lines will be refused.
 one-shot levers carry it too — `r.LumenScene.SurfaceCache.Reset`, for one — and are refused
 alongside the quality CVars, because a console set pins them just the same. `force: true` is the
 intended answer for those: you are accepting a pin on a CVar nobody drives from the panel.
+
+**Lines that bypass a typed verb's checks are refused too.** The first command word is matched
+the way the engine's exec handlers match it (`FParse::Command`: case-insensitive, leading
+whitespace skipped, the word ends at the first non-alphanumeric character):
+
+- `QUIT_EDITOR` / `CLOSE_SLATE_MAINFRAME` → `EDITOR_QUIT_USE_TYPED_VERB`. Use `editor.quit`, which
+  refuses on `EDITOR_IN_USE` / `UNSAVED_CHANGES`, ends PIE and closes asset editors before
+  shutdown, and terminates running jobs.
+- `PY` → `PYTHON_USE_TYPED_VERB`. Use `python.execute`: same safe-point deferral, plus the private
+  scope with `sys.modules` restore, captured log output, the PIE-active warning and the
+  leaked-callback report.
+- `EXECFILE` → `EXECFILE_SEND_LINES_INDIVIDUALLY`. The file's lines run through `Exec` past both
+  guards; send them one call at a time.
+- `DEBUG` + a crash, hang or memory subcommand → `DEBUG_COMMAND_CRASHES_PROCESS`,
+  `DEBUG_COMMAND_HANGS_PROCESS` or `DEBUG_COMMAND_EXHAUSTS_MEMORY`. These engine fault-injection
+  commands kill or wedge the shared editor. `DEBUG HITCH` / `DEBUG RENDERHITCH` are allowed.
+
+The error payload carries `refusedCommand`, `useVerb` when there is one, and
+`forceOverrides: true`; `force: true` runs the line anyway. Subcommand lists and the rest of the
+contract: `call("editor.console_command")`.

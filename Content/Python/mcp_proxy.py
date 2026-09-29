@@ -19,8 +19,10 @@ mere MCP liveness is not enough to run an operation during cold startup. An edit
 whose ping answers WITHOUT that bit is running a compiled plugin older than this
 proxy - a terminal EDITOR_PLUGIN_OUTDATED condition, never a retryable startup delay.
 `initialize` and `tools/list` are answered locally so the client connects and sees
-the tools even before the editor is running. Proxy-local `editor_start` and
-`editor_prepare_tests` performs command preparation without requiring the in-editor endpoint.
+the tools even before the editor is running. The proxy-local lifecycle tools (`editor_start`,
+`editor_restart`, `editor_run_tests`, `editor_test_status`, `editor_list`, `editor_build`,
+`editor_build_status`) need no in-editor
+endpoint; the launch and supervision half lives in pinwright_supervisor.py.
 
 The editor publishes its actually-bound port to <Project>/Saved/PinWright/gateway-port.
 The proxy re-reads that file before every forwarded call and rebuilds the loopback URL
@@ -48,11 +50,13 @@ import argparse
 import calendar
 import errno
 import glob
+import html
 import http.client
 import json
 import os
 import queue
 import re
+import shlex
 import signal
 import subprocess
 import sys
@@ -63,6 +67,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+
+import pinwright_supervisor
 
 PROTOCOL_VERSION = "2025-06-18"
 SERVER_NAME = "pinwright"
@@ -170,15 +176,20 @@ EDITOR_START_TOOL = {
     "name": "editor_start",
     "description": (
         "Start the Unreal editor for this project. Use this when a 'call' fails because the "
-        "editor is not running. wait='ready' (default) blocks until the editor reports operational "
-        "readiness (not just a transport ping) and "
-        "leaves it running; the default visible mode opens the .uproject through its registered "
-        "OS association (on Linux, which has none, it spawns the resolved editor directly). "
-        "wait='exit' runs an explicit direct process to completion and returns "
-        "the exit code. Every mode runs the engine this project's EngineAssociation resolves to, "
-        "and fails if an editor is already answering PinWright MCP. Pass map to boot straight "
-        "into a level - the most reliable way to open a specific map, because it loads during "
-        "editor startup instead of swapping the live world."
+        "editor is not running. mode and reason are required and have no default. mode is one "
+        "of visible (a normal window, uncapped, normal priority), offscreen (no window, real RHI, "
+        "modal-suppressed) or headless (no window, -NullRHI: no GPU rendering, so render, "
+        "capture and screenshot verbs cannot produce pixels); offscreen and headless run under "
+        "PinWright's capped supervisor (memory cap, below-normal priority). reason travels on "
+        "the editor's command line "
+        "(-PinWrightLaunchReason) and is shown by editor_list and system.identity. Every launch "
+        "is a direct, detached spawn of the editor this project's EngineAssociation resolves to, "
+        "so it outlives this proxy and the MCP client, and fails if an editor is already "
+        "answering PinWright MCP. wait='ready' (default) blocks until the editor reports "
+        "operational readiness (not just a transport ping) and leaves it running; wait='exit' "
+        "blocks until the process terminates and returns the exit code. Pass map to boot "
+        "straight into a level - the most reliable way to open a specific map, because it loads "
+        "during editor startup instead of swapping the live world."
     ),
     "inputSchema": {
         "type": "object",
@@ -188,23 +199,37 @@ EDITOR_START_TOOL = {
                 "description": (
                     "Level to open at startup, e.g. /Game/Maps/MyLevel (a bare short name or a "
                     ".umap path also works). Placed as the first token after the .uproject, the "
-                    "only position the engine reads it from. Because a command line cannot be "
-                    "delivered through the OS file association, passing map forces a direct "
-                    "spawn, and unattended_script defaults to true for that spawn so a startup "
-                    "modal (e.g. 'Wait for ZenServer?') cannot wedge the boot before any RPC "
-                    "could reach it; pass unattended_script:false to opt out."
+                    "only position the engine reads it from. unattended_script defaults to true "
+                    "when map is given, so a startup modal (e.g. 'Wait for ZenServer?') cannot "
+                    "wedge the boot before any RPC could reach it; pass unattended_script:false "
+                    "to opt out."
                 ),
             },
-            "visible": {
-                "type": "boolean",
+            "mode": {
+                "type": "string",
+                "enum": ["visible", "offscreen", "headless"],
                 "description": (
-                    "true (default) = normal editor window; false = windowless/offscreen "
-                    "headless run (-RenderOffScreen -unattended -RunningUnattendedScript, "
-                    "hidden window). A windowless launch ALWAYS suppresses modal dialogs: "
-                    "there is no window in which one could be seen or answered, and "
-                    "-unattended without -RunningUnattendedScript both wedges on a startup "
-                    "modal and makes saving cancel silently. unattended_script cannot turn "
-                    "that off; pass visible:true if you want dialogs to open."
+                    "Required, no default. visible = a normal editor window with a real RHI; "
+                    "dialogs open, uncapped, normal priority (Linux needs a display). "
+                    "offscreen = no window, real RHI (-RenderOffScreen -unattended "
+                    "-RunningUnattendedScript), modal dialogs suppressed, capped, below-normal "
+                    "priority; the mode for unattended work that renders. headless = no window and "
+                    "no GPU rendering (-NullRHI plus the offscreen flags), capped, below-normal "
+                    "priority; the cheapest mode for work that never renders or reads pixels. "
+                    "offscreen and headless ALWAYS suppress modal dialogs: there is no window in "
+                    "which one could be answered, and -unattended without -RunningUnattendedScript "
+                    "both wedges on a startup modal and makes saving cancel silently. "
+                    "unattended_script cannot turn that off; use mode visible if you want dialogs."
+                ),
+            },
+            "reason": {
+                "type": "string",
+                "description": (
+                    "Required, no default: why this editor is being started. One line after "
+                    "whitespace is collapsed, non-empty, at most 300 characters (longer is "
+                    "refused, never truncated). Passed to the editor as "
+                    "-PinWrightLaunchReason and shown by editor_list, so anyone can see why "
+                    "each editor is running."
                 ),
             },
             "wait": {
@@ -227,17 +252,17 @@ EDITOR_START_TOOL = {
             "unattended_script": {
                 "type": "boolean",
                 "description": (
-                    "Governs the VISIBLE path only: false by default, true by default when map "
+                    "Governs mode visible only: false by default, true by default when map "
                     "is given. true adds -RunningUnattendedScript, which suppresses ALL modal "
                     "dialogs for the whole session, not just during RPCs. It stays opt-in for a "
                     "visible editor because it auto-answers dialogs with engine defaults and a "
-                    "human may be sharing that window. visible:false always carries the switch "
-                    "regardless of this parameter - a windowless editor has no window to share, "
-                    "and a modal there is unrecoverable. Forces a direct spawn instead of the OS "
-                    "file association."
+                    "human may be sharing that window. offscreen and headless always carry the "
+                    "switch regardless of this parameter - a windowless editor has no window to share, "
+                    "and a modal there is unrecoverable."
                 ),
             },
         },
+        "required": ["mode", "reason"],
     },
 }
 
@@ -266,10 +291,18 @@ EDITOR_RESTART_TOOL = {
                     "resolution as editor_start's map."
                 ),
             },
-            "visible": {
-                "type": "boolean",
-                "description": ("Passed through to the start half; true (default) = normal "
-                                "window. false is windowless and always modal-suppressed."),
+            "mode": {
+                "type": "string",
+                "enum": ["visible", "offscreen", "headless"],
+                "description": ("Required, no default; passed through to the start half. Same "
+                                "values as editor_start's mode: visible (window), offscreen "
+                                "(no window, real RHI), headless (no window, -NullRHI)."),
+            },
+            "reason": {
+                "type": "string",
+                "description": ("Required, no default: why the editor is being restarted. "
+                                "Same rules as editor_start's reason; carried on the new "
+                                "editor's command line and shown by editor_list."),
             },
             "save": {
                 "type": "boolean",
@@ -292,10 +325,11 @@ EDITOR_RESTART_TOOL = {
                 "description": (
                     "Passed through to the start half. Defaults exactly as editor_start does: "
                     "true when map is given, false otherwise - and, exactly as there, it "
-                    "governs the visible path only (visible:false is always suppressed)."
+                    "governs mode visible only (offscreen and headless are always suppressed)."
                 ),
             },
         },
+        "required": ["mode", "reason"],
     },
 }
 
@@ -316,14 +350,20 @@ _CLIENT_ID = uuid.uuid4().hex
 # a slow shutdown (package flush, source control, subsystem teardown), not a normal wait.
 _EDITOR_STOP_TIMEOUT = 120.0
 
-# Proxy-local tool: prepare a copyable Unreal automation command while no editor endpoint exists.
-EDITOR_PREPARE_TESTS_TOOL = {
-    "name": "editor_prepare_tests",
+# Proxy-local tool: run automation tests in a fresh editor under the capped, detached supervisor.
+# Returns once the first test has started; the run outlives this proxy and editor_test_status
+# follows it by its log.
+EDITOR_RUN_TESTS_TOOL = {
+    "name": "editor_run_tests",
     "description": (
-        "Prepare one Unreal automation command for this project and return its exact launch "
-        "argv plus a checker follow-up. The filter is mandatory. This tool validates the live "
-        "editor precondition and resolves the project's EngineAssociation, but it does not "
-        "compile, launch, wait for, kill, or evaluate tests."
+        "Run Unreal automation tests for this project in a fresh editor launched through "
+        "PinWright's capped, detached supervisor, and return as soon as the first test has "
+        "started (the run keeps going and outlives this proxy). Returns pid, logPath, runId, "
+        "startedTests and project; poll editor_test_status with logPath for progress and, once "
+        "finished, the check_suite_log verdict. filter, reason and mode are required with no "
+        "default. Refuses while an editor of this project is answering PinWright MCP. A startup "
+        "failure (the editor exits before its first test, blocks on a modal, or starts no test "
+        "within the startup deadline) returns a typed error."
     ),
     "inputSchema": {
         "type": "object",
@@ -332,8 +372,115 @@ EDITOR_PREPARE_TESTS_TOOL = {
                 "type": "string",
                 "description": "Automation test filter to pass to Automation RunTests.",
             },
+            "reason": {
+                "type": "string",
+                "description": (
+                    "Why this test run is being started; same rules as editor_start's reason. "
+                    "Carried on the test editor's command line and shown by editor_list."
+                ),
+            },
+            "mode": {
+                "type": "string",
+                "enum": ["visible", "offscreen", "headless"],
+                "description": (
+                    "Required, no default. visible = the GUI editor binary with a window, real "
+                    "RHI; offscreen = no window, real RHI (-RenderOffscreen); headless = no "
+                    "window, -NullRHI (no GPU rendering; renderer-dependent tests cannot measure "
+                    "anything, so take a full-suite verdict in offscreen). offscreen and headless "
+                    "use the -Cmd console binary on Windows and the plain UnrealEditor binary on "
+                    "Linux. Every mode is modal-suppressed (-unattended -RunningUnattendedScript)."
+                ),
+            },
         },
-        "required": ["filter"],
+        "required": ["filter", "reason", "mode"],
+        "additionalProperties": False,
+    },
+}
+
+# Proxy-local tool: non-blocking status of an editor_run_tests run, keyed by its log. Nothing is
+# stored on disk for it: "running" means an Unreal editor whose -Abslog is that log is alive.
+EDITOR_TEST_STATUS_TOOL = {
+    "name": "editor_test_status",
+    "description": (
+        "Non-blocking status of a test run started by editor_run_tests: running (an Unreal editor "
+        "whose -Abslog is this log is alive) or finished, tests started/succeeded/failed so far "
+        "and the last test, and once finished the check_suite_log.py verdict (state, reason). "
+        "Pass the logPath editor_run_tests returned, or its runId (this project's runs only)."
+    ),
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "logPath": {"type": "string", "description": "logPath returned by editor_run_tests."},
+            "runId": {"type": "string",
+                      "description": "runId returned by editor_run_tests; alternative to logPath."},
+        },
+        "additionalProperties": False,
+    },
+}
+
+# Proxy-local tool: read-only census of every Unreal editor process on the machine, any
+# checkout, any engine. Proxy-local so it answers while no editor (or a wedged one) is running.
+EDITOR_LIST_TOOL = {
+    "name": "editor_list",
+    "description": (
+        "List every running Unreal editor process on this machine - all checkouts and engines, "
+        "including commandlets (UnrealEditor-Cmd), -game runs and headless workers - with its "
+        "project (.uproject, name, checkout directory), inferred mode, map, -Abslog path, "
+        "PinWright gateway port, start time, and why it was launched. reason and launchedBy come "
+        "from the -PinWrightLaunchReason / -PinWrightLaunchedBy switches PinWright's launch "
+        "tools (editor_start, editor_restart, editor_run_tests) put on the "
+        "editor's command line; editors started any other way, including other repos' tooling, "
+        "report reason:null, launchedBy:'unknown'. Read-only: never signals or stops anything."
+    ),
+    "inputSchema": {"type": "object", "properties": {}},
+}
+
+# Proxy-local tool: build this project's editor target through the capped, detached supervisor.
+# Proxy-local because the build needs every editor of this project closed (the link replaces its
+# DLLs), so no in-editor RPC could run it.
+EDITOR_BUILD_TOOL = {
+    "name": "editor_build",
+    "description": (
+        "Build this project's <Project>Editor target (Development, host platform: Win64 or "
+        "Linux) with -WaitMutex -NoHotReloadFromIDE through PinWright's capped, detached "
+        "supervisor at below-normal priority, using the engine this project's EngineAssociation "
+        "resolves to. Returns at once with logPath and pid; poll editor_build_status with "
+        "logPath. reason is required and is written as the first line of the build log. Refuses "
+        "with BUILD_BLOCKED_BY_EDITOR, naming the pids, while an Unreal editor of THIS checkout "
+        "is running (the link replaces its DLLs); editors of other checkouts do not block. For a "
+        "one-file compile check, run Build.bat / Build.sh with -SingleFile from a shell instead: "
+        "it writes no binaries."
+    ),
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "reason": {
+                "type": "string",
+                "description": (
+                    "Required, no default: why this build is being run; same rules as "
+                    "editor_start's reason. Recorded in the log header and the result."
+                ),
+            },
+        },
+        "required": ["reason"],
+        "additionalProperties": False,
+    },
+}
+
+# Proxy-local tool: non-blocking status of an editor_build run, keyed by its log.
+EDITOR_BUILD_STATUS_TOOL = {
+    "name": "editor_build_status",
+    "description": (
+        "Non-blocking status of a build started by editor_build: running, succeeded, failed or "
+        "lost (the supervisor died without a result), UnrealBuildTool's 'Result:' line, the exit "
+        "code, and every compiler / linker / UBT error line in the log (the whole log is read)."
+    ),
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "logPath": {"type": "string", "description": "logPath returned by editor_build."},
+        },
+        "required": ["logPath"],
         "additionalProperties": False,
     },
 }
@@ -392,6 +539,23 @@ def _wants_stream(msg):
     args = arguments.get("args") if isinstance(arguments, dict) else None
     wait = args.get("wait") if isinstance(args, dict) else None
     return wait is not False
+
+
+def _normalize_string_args(msg):
+    """Some MCP clients serialize the nested `args` object as a JSON string. Replace
+    it in place with the parsed object when it parses to one, so the streaming gate
+    sees args.wait and the editor receives an object. Any other string is left for
+    the editor to reject with -32602. Mirrors McpRequestCore.cpp."""
+    params = msg.get("params")
+    arguments = params.get("arguments") if isinstance(params, dict) else None
+    if not isinstance(arguments, dict) or not isinstance(arguments.get("args"), str):
+        return
+    try:
+        parsed = json.loads(arguments["args"])
+    except ValueError:
+        return
+    if isinstance(parsed, dict):
+        arguments["args"] = parsed
 
 
 def _loopback_port(url):
@@ -676,13 +840,6 @@ def resolve_editor_exe(explicit, ue_root_env, python_exe, engine_assoc, exists_f
     )[1]
 
 
-def _association_open_supported():
-    """Whether the default visible launch may delegate to the OS .uproject open action. Linux has
-    no dependable one (only if UnrealVersionSelector registered its xdg-mime type; otherwise
-    xdg-open hands the file to whatever opens JSON), so there the resolved editor is spawned."""
-    return os.name == "nt" or sys.platform == "darwin"
-
-
 _LOCAL_DISPLAY_RE = re.compile(r"^:\d+(\.\d+)?$")
 
 
@@ -725,15 +882,6 @@ def _visible_launch_env():
     if not sys.platform.startswith("linux") or os.environ.get("DISPLAY"):
         return {}
     return _borrow_session_display()
-
-
-def _open_uproject(uproject):
-    """Invoke the platform's registered .uproject open action, like a normal double-click."""
-    if os.name == "nt":
-        os.startfile(uproject, "open")
-        return
-    command = ["open", uproject] if sys.platform == "darwin" else ["xdg-open", uproject]
-    _reap_on_exit(subprocess.Popen(command, start_new_session=True))
 
 
 def _reap_on_exit(proc):
@@ -864,6 +1012,26 @@ def _log_duration_seconds(text):
     return span if span >= 0 else None
 
 
+_LOG_OPEN_RE = re.compile(r"Log file open, (\d{2})/(\d{2})/(\d{2}) (\d{2}):(\d{2}):(\d{2})")
+
+
+def _log_opened_at(text):
+    """Epoch seconds of UE's first-line `Log file open, MM/DD/YY HH:MM:SS` header, or None.
+
+    The header is LOCAL time (FPlatformTime::StrDate/StrTime), unlike the UTC line stamps, so
+    time.mktime turns it into the same clock filesystem mtimes use. It is truncated to the second,
+    so it never lands after anything the run itself wrote.
+    """
+    match = _LOG_OPEN_RE.search(text[:4096])
+    if not match:
+        return None
+    month, day, year, hour, minute, second = (int(part) for part in match.groups())
+    try:
+        return time.mktime((2000 + year, month, day, hour, minute, second, 0, 0, -1))
+    except (OverflowError, ValueError):
+        return None
+
+
 def parse_automation_log(log_path):
     """Parse established UE automation completion and crash markers as fallback evidence."""
     result = {
@@ -891,6 +1059,9 @@ def parse_automation_log(log_path):
         # arguments. Printed beside the verdict so "the grep found it" can be refuted in place.
         "bareQueuePhrase": 0,
         "durationSeconds": None,
+        # When the run's log was opened (epoch seconds, from its header): the start of the window
+        # a crash report must fall in to be this run's.
+        "openedAt": None,
         "fatal": False,
         "fatalMarker": None,
         "skipped": 0,
@@ -961,7 +1132,7 @@ def parse_automation_log(log_path):
     # The engine's two OOM strings. The first is FMalloc's allocation failure
     # (`Ran out of memory allocating <N> bytes`); the second is the pre-reserved backup pool being
     # spent to service it. Either one means the process hit a wall -- the host's, or the
-    # per-process Job Object cap scripts/Run-SuiteCapped.ps1 applies. Counting them is what makes
+    # per-process Job Object cap pinwright_supervisor.py applies. Counting them is what makes
     # an OOM its own verdict instead of a truncation with no explanation.
     oom_markers = len(re.findall(r"Ran out of memory allocating", text, re.IGNORECASE)) \
         + len(re.findall(r"from backup pool to handle out of memory", text, re.IGNORECASE))
@@ -998,6 +1169,7 @@ def parse_automation_log(log_path):
         "markerLineNumber": marker["markerLineNumber"],
         "bareQueuePhrase": marker["bareQueuePhrase"],
         "durationSeconds": _log_duration_seconds(text),
+        "openedAt": _log_opened_at(text),
         "fatal": fatal,
         "fatalMarker": fatal_match.group(1) if fatal_match else None,
         "skipped": len(skip_markers),
@@ -1070,12 +1242,14 @@ STATE_ERROR_CODES = {
 
 # What a crash-report scan reports when it was never run. `scanned` False is not "no crashes":
 # the verdict must be able to say "I did not look" rather than implying an empty result.
-NO_CRASH_EVIDENCE = {"scanned": False, "dir": None, "crashes": [], "ensures": [], "window": None}
+NO_CRASH_EVIDENCE = {"scanned": False, "dir": None, "crashes": [], "ensures": [], "window": None,
+                     "pid": None}
 
-# How far outside the log's own span a crash report still counts as this run's. The report is
-# written as the process dies, so it lands at or just after the log's last write; the slack
-# absorbs report-writing time and filesystem timestamp granularity without reaching back into a
-# previous run.
+# How far past the log's last write a crash report still counts as this run's. The report is
+# written as the process dies, so it lands at or just after that write; the slack absorbs
+# report-writing time and filesystem timestamp granularity. It extends the END only: the same
+# slack before the run's start attributed an earlier editor's assert, written 90 s before this
+# log opened, to a clean 9/9 run.
 CRASH_WINDOW_SLACK_SECONDS = 300
 
 
@@ -1097,47 +1271,73 @@ def _crash_dir_for_log(log_path):
         current = parent
 
 
-def _read_crash_context(path, limit=8192):
-    """Read the head of a CrashContext.runtime-xml and return (is_ensure, crash_type).
+def _read_crash_context(path, limit=16384):
+    """Read the head of a CrashContext.runtime-xml and return
+    (is_ensure, crash_type, pid, abslog).
 
-    Head only: the file embeds a full callstack and can run to hundreds of KB, and both fields
-    sit in the first dozen lines. Unreadable or unrecognized reports are reported as NOT ensures
-    -- an unclassifiable crash report must not be silently discarded as noise.
+    Head only: the file embeds a full callstack and can run to hundreds of KB, and every field
+    read here sits in the first few dozen lines. Unreadable or unrecognized reports are reported
+    as NOT ensures -- an unclassifiable crash report must not be silently discarded as noise.
+    pid is None when the report records no <ProcessId>; abslog is the `-Abslog=` value of its
+    XML-escaped <CommandLine>, or None when the crashed process was launched without one.
     """
     try:
         with open(path, encoding="utf-8", errors="replace") as fh:
             head = fh.read(limit)
     except Exception:
-        return False, None
+        return False, None, None, None
     crash_type = re.search(r"<CrashType>([^<]*)</CrashType>", head)
     is_ensure = bool(re.search(r"<IsEnsure>\s*true\s*</IsEnsure>", head, re.IGNORECASE))
-    return is_ensure, crash_type.group(1) if crash_type else None
+    pid = re.search(r"<ProcessId>\s*(\d+)\s*</ProcessId>", head)
+    command_line = re.search(r"<CommandLine>(.*?)</CommandLine>", head, re.DOTALL)
+    abslog = None
+    if command_line:
+        match = re.search(r'-abslog=(?:"([^"]*)"|(\S+))', html.unescape(command_line.group(1)),
+                          re.IGNORECASE)
+        if match:
+            abslog = (match.group(1) or match.group(2)).strip()
+    return (is_ensure, crash_type.group(1) if crash_type else None,
+            int(pid.group(1)) if pid else None, abslog)
 
 
 def scan_crash_reports(log_path, crashes_dir=None, duration_seconds=None,
-                       slack_seconds=CRASH_WINDOW_SLACK_SECONDS):
+                       slack_seconds=CRASH_WINDOW_SLACK_SECONDS, started_at=None, pid=None):
     """Answer "did the editor actually crash?" from Saved/Crashes rather than from log length.
 
-    The window is anchored on the LOG FILE's mtime (end) and reaches back over the run's own
-    duration (from the log's first/last timestamps) plus slack. Anchoring on file times keeps the
-    comparison timezone-free: UE writes log timestamps in UTC and filesystem times are local, and
-    a silent five-hour offset would make every window either empty or absurd.
+    Every editor of the project writes into the same Saved/Crashes, so a report counts only when
+    it is THIS run's: its CrashContext mtime falls in the run's window; when its <CommandLine>
+    carries `-Abslog=`, that path is this log (normcase, so case-insensitive on Windows) -- which
+    identifies the run even when its pid is unknown; and, when both the run's editor pid and the
+    report's <ProcessId> are known, the two match.
+
+    The window runs from the run's start to the LOG FILE's mtime plus slack. The start is
+    `started_at` (the log header's open time, local clock like every mtime); without it, the
+    mtime minus the run's own duration (from the log's first/last UTC stamps, which are only
+    ever subtracted from each other, so no timezone offset enters); without that, the mtime
+    minus the slack. No slack is added before the start: a report written before the run
+    began belongs to another process.
 
     Ensure reports are counted SEPARATELY, never as crashes. An ensure writes a full crash report
     and lets the run continue; every report in the window of the two truncations examined here
     was `IsEnsure=true`, and treating those as crashes is what produced a mis-filed crash ticket.
 
-    Returns a dict: scanned, dir, window (start, end), crashes (non-ensure reports, each with
-    name/type/time) and ensures (names only -- context for "truncated, not crashed").
+    Returns a dict: scanned, dir, window (start, end), pid, crashes (non-ensure reports, each
+    with name/type/time) and ensures (names only -- context for "truncated, not crashed").
     """
     directory = crashes_dir or _crash_dir_for_log(log_path)
     if not directory or not os.path.isdir(directory):
         return dict(NO_CRASH_EVIDENCE, dir=directory)
     try:
-        end = os.path.getmtime(log_path) + slack_seconds
+        mtime = os.path.getmtime(log_path)
     except OSError:
         return dict(NO_CRASH_EVIDENCE, dir=directory)
-    start = end - slack_seconds - (duration_seconds or 0.0) - slack_seconds
+    end = mtime + slack_seconds
+    if started_at is not None:
+        start = started_at
+    elif duration_seconds is not None:
+        start = mtime - duration_seconds
+    else:
+        start = mtime - slack_seconds
 
     crashes = []
     ensures = []
@@ -1155,13 +1355,17 @@ def scan_crash_reports(log_path, crashes_dir=None, duration_seconds=None,
             continue
         if not (start <= stamp <= end):
             continue
-        is_ensure, crash_type = _read_crash_context(context)
+        is_ensure, crash_type, report_pid, report_log = _read_crash_context(context)
+        if report_log is not None and not _same_path(report_log, log_path):
+            continue  # the crashed editor wrote a different log: another run, whatever the pid
+        if pid is not None and report_pid is not None and report_pid != pid:
+            continue  # another editor of this project crashed inside our window
         if is_ensure:
             ensures.append(entry.name)
         else:
             crashes.append({"name": entry.name, "type": crash_type, "time": stamp})
     crashes.sort(key=lambda item: item["time"])
-    return {"scanned": True, "dir": directory, "window": (start, end),
+    return {"scanned": True, "dir": directory, "window": (start, end), "pid": pid,
             "crashes": crashes, "ensures": sorted(ensures)}
 
 
@@ -1442,10 +1646,10 @@ def classify_log_state(report_result, log_result, crash_result=None):
 # no other effect anywhere in the engine (its only two references are the ctor and that branch).
 _ALWAYS_FLAGS = ["-AutoDeclinePackageRecovery"]
 
-# Windowless flag set: render offscreen under a hidden window, never -NullRHI (some paths need a
-# real RHI); -nocefaccelpaint is required under -unattended or CEF web widgets assert (harmless
+# Offscreen flag set (mode offscreen, and the base of mode headless): render offscreen under a
+# hidden window with a real RHI; -nocefaccelpaint is required under -unattended or CEF web widgets assert (harmless
 # for projects without CEF, so the proxy stays game-agnostic). The mcp-version-matrix skill
-# documents its own launcher's argv, which is a different (older) list - not this one.
+# documents its own suite argv, which is a different (older) list - not this one.
 #
 # -unattended and -RunningUnattendedScript are BOTH here, and neither is in _ALWAYS_FLAGS. They
 # are not interchangeable and shipping -unattended without the other is the worst of the three
@@ -1475,7 +1679,7 @@ _ALWAYS_FLAGS = ["-AutoDeclinePackageRecovery"]
 #     editor.quit does its own explicit save first.)
 #
 # Why this is not the "human might be sharing the window" case that keeps -RunningUnattendedScript
-# opt-in on a VISIBLE launch: visible=False has no window. _spawn_kwargs hides it (CREATE_NO_WINDOW
+# opt-in on a VISIBLE launch: offscreen and headless have no window. _spawn_kwargs hides it (CREATE_NO_WINDOW
 # + SW_HIDE) and -RenderOffScreen keeps it off the screen, so there is no surface on which any
 # dialog can be seen, let alone answered. The editor is still SHARED - one loopback port per
 # project, several agent proxies on it, which is why editor.quit has an EDITOR_IN_USE guard keyed
@@ -1500,9 +1704,17 @@ _ALWAYS_FLAGS = ["-AutoDeclinePackageRecovery"]
 # flag only extends the interval to the windows no RPC covers: startup, deferred continuations,
 # python callbacks. Those are exactly the windows in which a windowless editor cannot be rescued.
 # (Also: the switch is parsed inside #if !UE_BUILD_SHIPPING, so it is a no-op in a Shipping build.
-# Editor targets are never Shipping, so this launcher is unaffected.)
-_HEADLESS_FLAGS = ["-RenderOffScreen", "-unattended", "-RunningUnattendedScript", "-nopause",
-                   "-nosplash", "-nocefaccelpaint"]
+# Editor targets are never Shipping, so these launches are unaffected.)
+_OFFSCREEN_FLAGS = ["-RenderOffScreen", "-unattended", "-RunningUnattendedScript", "-nopause",
+                    "-nosplash", "-nocefaccelpaint"]
+
+# Mode headless = -NullRHI on top of the offscreen set. -RenderOffScreen stays: it is what selects
+# the null platform application (Windows/LinuxPlatformApplicationMisc::CreateApplication) and
+# SDL's 'dummy' video driver on Linux, so without it a NullRHI editor still opens OS windows and
+# still needs an X display. -NullRHI only replaces the renderer.
+_NULLRHI_FLAG = "-NullRHI"
+
+LAUNCH_MODES = ("visible", "offscreen", "headless")
 
 # Suite launches only: a DDC cache graph with no ZenLocal store. Two independent reasons, and the
 # second is the one that makes it more than an optimization.
@@ -1513,7 +1725,7 @@ _HEADLESS_FLAGS = ["-RenderOffScreen", "-unattended", "-RunningUnattendedScript"
 #     graph comes up with no writable node, and the editor dies with
 #     `Unable to use default cache graph 'InstalledDerivedDataBackendGraph'`. The version-matrix
 #     workflow already passes this flag for exactly that reason - see the T1 step of
-#     .polyskill/skills/mcp-version-matrix/mcp-version-matrix.workflow.js:213-214, which is where
+#     .polyskill/skills/mcp-version-matrix/mcp-version-matrix.workflow.js (T1 step), which is where
 #     that failure was first diagnosed. Keep the two rationales in sync; do not drop either.
 #
 # WHAT IT REMOVES. The graph names the stores the DDC mounts ([DerivedDataCacheGraphs] in
@@ -1593,29 +1805,35 @@ def normalize_start_map(value):
     return token, None
 
 
-def build_editor_command(exe, uproject, visible, extra_args, unattended_script=False,
-                         map_name=None):
-    """Assemble the argv list to spawn the editor. visible=True is a normal interactive window;
-    visible=False adds the repo's windowless/offscreen flag set, which already carries
-    -RunningUnattendedScript alongside -unattended (see _HEADLESS_FLAGS: the two must never be
-    separated). Every launch gets _ALWAYS_FLAGS. unattended_script=True adds
+def build_editor_command(exe, uproject, mode, extra_args, unattended_script=False,
+                         map_name=None, identity_args=()):
+    """Assemble the argv list to spawn the editor. mode 'visible' is a normal interactive window;
+    'offscreen' adds the windowless flag set, which already carries -RunningUnattendedScript
+    alongside -unattended (see _OFFSCREEN_FLAGS: the two must never be separated); 'headless'
+    adds -NullRHI in front of that same set. Every launch gets _ALWAYS_FLAGS. unattended_script=True adds
     -RunningUnattendedScript to a VISIBLE launch, which suppresses ALL modal dialogs for the whole
     session; it stays opt-in there because it auto-answers with engine defaults and a human may be
     sharing that window. It is not an opt-OUT for a windowless launch - there is no window in which
     a dialog could be answered, and unattended_script=False must not be able to assemble
     -unattended alone. map_name, when given, is placed as the FIRST token after the .uproject and
     BEFORE every switch - the only position the engine reads it from (see normalize_start_map for
-    the parse). extra_args (list, may be None) is appended last so an operator override always
+    the parse). identity_args (pinwright_supervisor.launch_identity_args: the launch reason and
+    launched-by switches) precede extra_args, which is appended last so an operator override always
     wins. New parameters are keyword-defaulted so older 4-positional call sites still work. Pure -
     no spawning - so it is unit-testable."""
     argv = [exe, uproject]
     if map_name:
         argv.append(map_name)
     argv += _ALWAYS_FLAGS
-    if not visible:
-        argv += _HEADLESS_FLAGS
+    if mode not in LAUNCH_MODES:
+        raise ValueError("mode must be one of %s, got %r" % (LAUNCH_MODES, mode))
+    if mode == "headless":
+        argv.append(_NULLRHI_FLAG)
+    if mode != "visible":
+        argv += _OFFSCREEN_FLAGS
     if unattended_script and "-RunningUnattendedScript" not in argv:
         argv.append("-RunningUnattendedScript")
+    argv += list(identity_args)
     if extra_args:
         argv += list(extra_args)
     return argv
@@ -1628,7 +1846,7 @@ def _startup_modal_hint(cmdline):
     dismiss one - the ZenServer long-wait prompt is a native FPlatformMisc::MessageBoxExt, not a
     Slate modal, so the in-editor suppression scope never sees it either. Naming the hazard and
     the one lever that works is all this layer can honestly do. Suppressed when the launch
-    already carried the lever - which, since -RunningUnattendedScript joined _HEADLESS_FLAGS, is
+    already carried the lever - which, since -RunningUnattendedScript joined _OFFSCREEN_FLAGS, is
     every windowless launch. That is the right silence: the advice this hint gives ("dismiss it in
     the editor window") has no meaning for a process with no window, and a windowless launch now
     carries every off switch the prompt has. A windowless timeout with all levers pulled is some
@@ -1652,6 +1870,29 @@ def _abslog_path(extra_args):
     return None
 
 
+def _visible_via_supervisor():
+    """Whether a visible editor is started through the (uncapped) supervisor. Windows: yes, so it
+    is created through WMI and survives a tree kill of the MCP client. Linux: no; the direct spawn
+    in its own session keeps its desktop-display borrowing."""
+    return os.name == "nt"
+
+
+def _stamp_detach(result, run):
+    """Put on a tool result how the capped supervisor was started and whether the run outlives
+    the MCP client. A run that does not also says so in the text, not only in a field."""
+    detached = getattr(run, "detached", None)
+    if not isinstance(detached, bool):
+        return result
+    note = getattr(run, "detach_note", None)
+    structured = result.get("structuredContent")
+    if isinstance(structured, dict):
+        structured.update({"detached": detached, "detachNote": note,
+                           "launchMechanism": getattr(run, "launch_mechanism", None)})
+    if not detached:
+        result["content"][0]["text"] += " NOT DETACHED: %s." % note
+    return result
+
+
 def _spawn_kwargs(visible):
     """Popen kwargs to launch the editor DETACHED (so it survives the proxy) and, when not
     visible, with no window - the cross-platform equivalent of -WindowStyle Hidden."""
@@ -1671,6 +1912,264 @@ def _spawn_kwargs(visible):
             "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
 
 
+# ---------------------------------------------------------------------------------------------
+# editor_list / editor_test_status: a machine-wide census of Unreal editor processes. Everything
+# comes from each process's own command line and start time; PinWright keeps no launch registry
+# on disk, so an editor another tool started is listed exactly as faithfully, only without a
+# reason.
+# ---------------------------------------------------------------------------------------------
+
+# Windows: one CIM query. ConvertTo-Json -InputObject @(...) keeps a JSON array for 0 or 1 rows,
+# and StartMs is computed in PowerShell so the proxy never parses a DMTF or /Date()/ timestamp.
+_WINDOWS_EDITOR_QUERY = (
+    "[Console]::OutputEncoding = [Text.Encoding]::UTF8; "
+    "ConvertTo-Json -Compress -InputObject @(Get-CimInstance Win32_Process "
+    "-Filter \"Name like 'UnrealEditor%'\" | Select-Object ProcessId, ExecutablePath, "
+    "CommandLine, @{n='StartMs'; e={ if ($_.CreationDate) { "
+    "[DateTimeOffset]::new($_.CreationDate).ToUnixTimeMilliseconds() } }})"
+)
+
+
+def _windows_editor_processes(run=subprocess.run):
+    """Raw rows for every UnrealEditor* process on this Windows machine, any user session the
+    caller can see. Raises RuntimeError when the query itself fails, so a failed census is never
+    reported as 'no editors'."""
+    completed = run(
+        ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", _WINDOWS_EDITOR_QUERY],
+        capture_output=True, timeout=60,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    if completed.returncode != 0:
+        raise RuntimeError("process query exited %s: %s" % (
+            completed.returncode, completed.stderr.decode("utf-8", "replace").strip()))
+    text = completed.stdout.decode("utf-8-sig", "replace").strip()
+    rows = json.loads(text) if text else []
+    if isinstance(rows, dict):
+        rows = [rows]
+    processes = []
+    for row in rows:
+        command_line = row.get("CommandLine") or ""
+        processes.append({
+            "pid": int(row["ProcessId"]),
+            "exe": row.get("ExecutablePath"),
+            "commandLine": command_line,
+            "argv": pinwright_supervisor.split_windows_command_line(command_line),
+            "startMs": row.get("StartMs"),
+            # Another process's working directory is not readable without debugging it.
+            "cwd": None,
+        })
+    return processes
+
+
+def _readlink(path):
+    try:
+        target = os.readlink(path)
+    except (OSError, AttributeError, NotImplementedError):
+        return None
+    # A binary replaced by a rebuild while it runs reads back as "<path> (deleted)".
+    return target[:-len(" (deleted)")] if target.endswith(" (deleted)") else target
+
+
+def _linux_editor_processes(proc_root="/proc", clk_tck=None):
+    """Raw rows for every UnrealEditor* process visible under proc_root. The image is identified
+    by /proc/<pid>/exe (argv[0] when unreadable), so a renamed argv[0] cannot hide an editor."""
+    processes = []
+    for name in sorted(os.listdir(proc_root)):
+        if not name.isdigit():
+            continue
+        base = os.path.join(proc_root, name)
+        try:
+            with open(os.path.join(base, "cmdline"), "rb") as fh:
+                raw = fh.read()
+        except OSError:
+            continue
+        if not raw:
+            continue  # kernel thread or zombie
+        argv = [part.decode("utf-8", "replace") for part in raw.rstrip(b"\0").split(b"\0")]
+        exe = _readlink(os.path.join(base, "exe")) or argv[0]
+        if not os.path.basename(exe).startswith("UnrealEditor"):
+            continue
+        processes.append({
+            "pid": int(name),
+            "exe": exe,
+            "commandLine": " ".join(shlex.quote(arg) for arg in argv),
+            "argv": argv,
+            "startMs": pinwright_supervisor.proc_start_ms(int(name), proc_root, clk_tck),
+            "cwd": _readlink(os.path.join(base, "cwd")),
+        })
+    return processes
+
+
+def _editor_processes():
+    return _windows_editor_processes() if os.name == "nt" else _linux_editor_processes()
+
+
+def _process_project(argv, exe, cwd):
+    """(uproject or None, project name or None, map or None) read the way the engine reads its own
+    command line (LaunchEngineLoop.cpp ParseGameProjectFromCommandLine): -project=<path>, else the
+    first token after the executable when it is not a switch. A .uproject path is taken as given
+    when absolute, else against the process's working directory and then the binary's directory
+    (whichever holds the file); a bare name maps to <RootDir>/<Name>/<Name>.uproject."""
+    args = argv[1:]
+    token = next((arg.split("=", 1)[1] for arg in args if arg.lower().startswith("-project=")),
+                 None)
+    positional = token is None
+    if positional and args and not args[0].startswith("-"):
+        token = args[0]
+    if not token:
+        return None, None, None
+    map_name = (args[1] if positional and len(args) > 1 and not args[1].startswith("-")
+                else None)
+    token = token.strip().strip('"')
+    if token.lower().endswith(".uproject"):
+        name = os.path.splitext(os.path.basename(token))[0]
+        if os.path.isabs(token):
+            return os.path.normpath(token), name, map_name
+        candidates = [os.path.join(base, token)
+                      for base in (cwd, os.path.dirname(exe) if exe else None) if base]
+    else:
+        name = token
+        root = _engine_root_from_editor_exe(exe) if exe else None
+        candidates = [os.path.join(root, name, name + ".uproject")] if root else []
+    for candidate in candidates:
+        if os.path.isfile(candidate):
+            return os.path.normpath(os.path.abspath(candidate)), name, map_name
+    return None, name, map_name
+
+
+def _read_gateway_port(checkout_root):
+    try:
+        with open(os.path.join(checkout_root, "Saved", "PinWright", "gateway-port"),
+                  encoding="utf-8") as fh:
+            return int(fh.read().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def _same_path(a, b):
+    return bool(a and b) and (os.path.normcase(os.path.normpath(os.path.abspath(a)))
+                              == os.path.normcase(os.path.normpath(os.path.abspath(b))))
+
+
+def _utc_iso_from_ms(start_ms):
+    if not isinstance(start_ms, (int, float)):
+        return None
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(start_ms / 1000.0))
+
+
+def _log_launch_mode(log_path, limit=1 << 16):
+    """Launch mode read from the 'Command Line:' line the engine writes near the top of its log,
+    so a finished run still says which mode produced its verdict. None when not found."""
+    try:
+        with open(log_path, encoding="utf-8", errors="replace") as fh:
+            head = fh.read(limit)
+    except OSError:
+        return None
+    match = re.search(r"Command Line:(.*)", head)
+    if not match:
+        return None
+    return pinwright_supervisor.infer_mode(pinwright_supervisor.split_windows_command_line(
+        "exe " + match.group(1).strip())[1:])
+
+
+def describe_editor_process(row, this_project=None):
+    """One editor_list entry from a raw process row. Project, mode, map, log, reason and launch tool
+    all come from the command line; reason/launchedBy are the PinWright launch switches."""
+    argv = row.get("argv") or []
+    exe = row.get("exe") or (argv[0] if argv else None)
+    project, name, map_name = _process_project(argv, exe, row.get("cwd"))
+    reason, launched_by = pinwright_supervisor.parse_launch_identity(argv)
+    checkout_root = os.path.dirname(project) if project else None
+    return {
+        "pid": row["pid"],
+        "exe": exe,
+        "engineRoot": _engine_root_from_editor_exe(exe) if exe else None,
+        "commandLine": row.get("commandLine"),
+        "startTime": _utc_iso_from_ms(row.get("startMs")),
+        "startMs": row.get("startMs"),
+        "project": project,
+        "projectName": name,
+        "checkoutRoot": checkout_root,
+        "projectSource": "commandLine" if project else "unresolved",
+        "mode": pinwright_supervisor.infer_mode(argv[1:]),
+        "map": map_name,
+        "logPath": _abslog_path(argv[1:]),
+        "isThisProject": _same_path(project, this_project),
+        "gatewayPort": _read_gateway_port(checkout_root) if checkout_root else None,
+        "reason": reason,
+        "launchedBy": launched_by or "unknown",
+    }
+
+
+# Error lines a build log carries: MSVC compiler/linker/MSBuild codes (error C4930, error LNK1104,
+# error MSB3073), clang/gcc 'file:line: error:' and 'fatal error:', UBT's own 'ERROR:' lines, and
+# the two build blockers that name the wrong culprit (a live Live Coding session, a locked DLL).
+_BUILD_ERROR_RE = re.compile(
+    r"(\berror\s+[A-Z]{1,3}\d{3,5}\b|:\s*(fatal\s+)?error\s*:|^\s*(fatal\s+)?error\s*:"
+    r"|^\s*ERROR\b|Unable to build while Live Coding is active|cannot open (output )?file)",
+    re.IGNORECASE)
+_UBT_RESULT_RE = re.compile(r"^\s*Result:\s*(Succeeded|Failed\b.*)$")
+_BUILD_ERROR_LINE_LIMIT = 200
+
+
+def scan_build_log(log_path):
+    """{'exists', 'ubtResult', 'errors', 'errorCount'} from one streaming pass over the whole build
+    log. errors keeps the first _BUILD_ERROR_LINE_LIMIT distinct lines; errorCount counts all."""
+    result = {"exists": False, "ubtResult": None, "errors": [], "errorCount": 0}
+    try:
+        fh = open(log_path, encoding="utf-8", errors="replace")
+    except OSError:
+        return result
+    result["exists"] = True
+    seen = set()
+    with fh:
+        for raw in fh:
+            line = raw.rstrip("\r\n")
+            match = _UBT_RESULT_RE.match(line)
+            if match:
+                result["ubtResult"] = match.group(1).strip()
+            if _BUILD_ERROR_RE.search(line):
+                result["errorCount"] += 1
+                text = line.strip()
+                if text not in seen and len(result["errors"]) < _BUILD_ERROR_LINE_LIMIT:
+                    seen.add(text)
+                    result["errors"].append(text)
+    return result
+
+
+def _supervised_child_pid(supervisor_log_path):
+    """The child pid a supervisor logged ('started pid N'), or None."""
+    try:
+        with open(supervisor_log_path, encoding="utf-8", errors="replace") as fh:
+            match = re.search(r"started pid (\d+)", fh.read())
+    except OSError:
+        return None
+    return int(match.group(1)) if match else None
+
+
+_START_MODE_HELP = (
+    "Pass mode as one of: "
+    "'visible' - a normal editor window with a real RHI, dialogs shown, uncapped, for a person "
+    "to watch or use; "
+    "'offscreen' - no window, real RHI (-RenderOffScreen -unattended -RunningUnattendedScript), "
+    "dialogs suppressed, capped, for unattended work that renders or captures; "
+    "'headless' - no window and no GPU rendering (-NullRHI plus the offscreen flags), capped, "
+    "for unattended work that never renders or reads pixels."
+)
+_RUN_TESTS_MODE_HELP = (
+    "Pass mode as one of: "
+    "'visible' - the GUI editor binary with a window and a real RHI; "
+    "'offscreen' - no window, real RHI (-RenderOffscreen), the mode for a full-suite verdict; "
+    "'headless' - no window, -NullRHI, cheapest, but renderer-dependent tests cannot measure "
+    "anything there."
+)
+
+# How long editor_run_tests waits for the first 'Test Started'. The slowest healthy boot measured
+# on the development host is 395.1 s (docs/defect-backlog.md); 600 s is that plus half again, so a
+# healthy cold boot is never reported as a failure while a wedged one is still caught.
+TEST_START_TIMEOUT = 600.0
+
+
 class Proxy:
     def __init__(self, url, list_timeout, call_timeout, probe_timeout, token_file, port_file,
                  editor_exe=None, start_timeout=180.0, uproject=None):
@@ -1684,11 +2183,10 @@ class Proxy:
         self.editor_exe = editor_exe  # explicit override for editor_start; None => auto-detect
         self.uproject = uproject  # explicit override; None => port-file/script resolution
         self.start_timeout = start_timeout  # wait=ready ceiling for editor_start
+        self.test_start_timeout = TEST_START_TIMEOUT  # first-test ceiling for editor_run_tests
         self.stream_max_seconds = STREAM_MAX_SECONDS  # overall ceiling per streamed relay
         self._token_warned = False
         self._port_warned = False
-        self._owned_child = None
-        self._owned_child_lock = threading.Lock()
         self._shutdown_requested = threading.Event()
 
     def _read_token(self):
@@ -1990,7 +2488,7 @@ class Proxy:
             )
             return self._start_result(
                 "EDITOR_ALREADY_RUNNING: An Unreal editor is already answering PinWright MCP "
-                "at %s. Close that editor before running editor_start or editor_prepare_tests; "
+                "at %s. Close that editor before running editor_start or editor_run_tests; "
                 "PinWright will not launch a second editor.%s" % (url, suffix),
                 {"error": "EDITOR_ALREADY_RUNNING", "url": url,
                  "port": _loopback_port(url)},
@@ -2036,16 +2534,51 @@ class Proxy:
             % (uproject, ENGINE_ROOT_ENV, sys.executable, override_note),
             {"error": "EDITOR_EXE_NOT_FOUND", "uproject": uproject}, is_error=True)
 
-    def _editor_start(self, args):
-        """Launch the editor for this project (visible or windowless) and block on the selected
-        completion condition. The engine is resolved from the project's EngineAssociation for
-        EVERY mode. The default interactive mode delegates the .uproject to the OS association;
-        explicit modes directly own the spawned editor child."""
+    @staticmethod
+    def _launch_intent(args, mode_help):
+        """(error_result, mode, reason) for a launch. mode and reason have no default on any
+        launch path: an omitted mode must never start an editor nobody asked for, and every
+        editor PinWright starts carries why on its own command line (-PinWrightLaunchReason).
+        mode_help names what each mode launches for this tool."""
+        def refuse(code, text, param):
+            return (Proxy._start_result("%s: %s" % (code, text),
+                                        {"error": code, "param": param}, is_error=True),
+                    None, None)
+
+        if not isinstance(args, dict):
+            return refuse("INVALID_ARGUMENTS", "arguments must be an object.", None)
+        if "mode" not in args:
+            return refuse("MISSING_REQUIRED_PARAM",
+                          "mode is required and has no default. %s" % mode_help, "mode")
+        mode = args["mode"]
+        if mode not in LAUNCH_MODES:
+            return refuse("INVALID_MODE",
+                          "mode must be 'visible', 'offscreen' or 'headless', got %r. %s"
+                          % (mode, mode_help), "mode")
+        if "reason" not in args:
+            return refuse("MISSING_REQUIRED_PARAM",
+                          "reason is required and has no default: say why this editor is being "
+                          "launched (one line, at most %d characters). It is passed to the "
+                          "editor as -PinWrightLaunchReason and shown by editor_list."
+                          % pinwright_supervisor.REASON_MAX_CHARS, "reason")
+        reason, reason_error = pinwright_supervisor.normalize_reason(args["reason"])
+        if reason_error is not None:
+            return refuse("INVALID_REASON", reason_error, "reason")
+        return None, mode, reason
+
+    def _editor_start(self, args, launched_by="editor_start"):
+        """Launch the editor for this project and block on the selected completion condition. The
+        engine is resolved from the project's EngineAssociation and spawned directly and DETACHED
+        in every mode, so the editor outlives this proxy and the MCP client: mode visible as a
+        plain uncapped window at normal priority, offscreen and headless under pinwright_supervisor's
+        capped supervisor. The launch reason and launching tool ride on the editor's command line."""
+        intent_error, mode, reason = self._launch_intent(args, _START_MODE_HELP)
+        if intent_error is not None:
+            return intent_error
         guard_result = self._editor_process_guard()
         if guard_result is not None:
             return guard_result
 
-        visible = args.get("visible", True)
         extra_args = args.get("extra_args") or []
         wait = args.get("wait", "ready")
         if wait not in ("ready", "exit"):
@@ -2065,12 +2598,11 @@ class Proxy:
         # off switches are -unattended, a commandlet, or GIsRunningUnattendedScript
         # (ZenServerInterface.cpp:2400). -unattended is confined to windowless launches, where it
         # now travels with -RunningUnattendedScript for both reasons at once: alone it suppresses
-        # neither Slate modals nor the PR_Cancelled save path (_HEADLESS_FLAGS has the citations).
+        # neither Slate modals nor the PR_Cancelled save path (_OFFSCREEN_FLAGS has the citations).
         # This parameter therefore only decides the VISIBLE path, where a human may be at the
         # window: default it on for map launches, off otherwise.
         unattended_script = bool(args.get("unattended_script", start_map is not None))
 
-        # Resolve only the project before the normal OS-association launch.
         uproject = resolve_uproject(
             self.uproject, self.port_file, __file__, os.path.exists
         )
@@ -2079,11 +2611,8 @@ class Proxy:
                 "EDITOR_START_FAILED: no .uproject found near %s" % os.path.abspath(__file__),
                 {"error": "UPROJECT_NOT_FOUND"}, is_error=True)
 
-        # Resolve the engine BEFORE the mode branch, so no argument combination can change which
-        # engine runs: the project's EngineAssociation decides it for every mode. The association
-        # launch delegates the spawn to the OS (same association, same registry/manifest sources),
-        # so this resolution is also its precondition - an unresolvable association would otherwise
-        # leave the version selector waiting on a modal engine picker until the readiness timeout.
+        # The project's EngineAssociation decides the engine for every mode; an unresolvable
+        # association is a hard stop, never a silent fallback to another engine.
         assoc = _read_engine_association(uproject)
         engine_root, exe = resolve_editor(
             self.editor_exe, os.environ.get("UE_ROOT"), sys.executable, assoc,
@@ -2093,58 +2622,70 @@ class Proxy:
         if exe is None:
             return self._engine_unresolved_result(uproject, assoc)
 
-        # unattended_script and map exclude the association path for the same reason extra_args
-        # does: the OS "open" verb takes no command line, so neither could be delivered.
-        association_mode = (_association_open_supported() and visible is True
-                            and wait == "ready" and not extra_args
-                            and not unattended_script and start_map is None)
-        if association_mode:
-            try:
-                _open_uproject(uproject)
-            except Exception as exc:
-                return self._start_result(
-                    "EDITOR_PROJECT_OPEN_FAILED: the registered open action could not open "
-                    "%s (%s)" % (uproject, exc),
-                    {"error": "EDITOR_PROJECT_OPEN_FAILED", "uproject": uproject,
-                     "association": "open"},
-                    is_error=True,
-                )
-            return self._wait_for_association_ready(uproject, engine_root)
-
-        # Explicit modes cannot be represented by a file association and directly own a child.
-        # Spawn detached (survives the proxy); hide the window for windowless runs.
-        cmd = build_editor_command(exe, uproject, visible, extra_args, unattended_script,
-                                   map_name=start_map)
+        visible = mode == "visible"
+        cmd = build_editor_command(
+            exe, uproject, mode, extra_args, unattended_script, map_name=start_map,
+            identity_args=pinwright_supervisor.launch_identity_args(reason, launched_by))
         cmdline = subprocess.list2cmdline(cmd)
-        spawn_kwargs = _spawn_kwargs(visible)
-        if visible:
+        supervised = not visible or _visible_via_supervisor()
+        if not supervised:
+            spawn_kwargs = _spawn_kwargs(True)
             display_env = _visible_launch_env()
             if display_env is None:
                 return self._start_result(
                     "EDITOR_NO_DISPLAY: a visible editor needs an X display, but this proxy has "
                     "no DISPLAY and no local desktop session of this user was found. Log in to "
                     "the desktop, set DISPLAY and XAUTHORITY in the MCP client's environment, or "
-                    "start windowless with visible:false.",
+                    "start without a window with mode offscreen or headless.",
                     {"error": "EDITOR_NO_DISPLAY", "commandLine": cmdline}, is_error=True)
             if display_env:
                 log("visible launch borrows %s from the desktop session"
                     % ", ".join("%s=%s" % item for item in sorted(display_env.items())))
                 spawn_kwargs["env"] = dict(os.environ, **display_env)
-        try:
-            proc = self._track_owned_child(
-                subprocess.Popen(cmd, **spawn_kwargs)
-            )
-        except Exception as exc:
-            return self._start_result(
-                "EDITOR_START_FAILED: could not spawn %s (%s)" % (exe, exc),
-                {"error": "CREATEPROC_FAILED", "commandLine": cmdline}, is_error=True)
+            try:
+                proc = subprocess.Popen(cmd, **spawn_kwargs)
+            except Exception as exc:
+                return self._start_result(
+                    "EDITOR_START_FAILED: could not spawn %s (%s)" % (exe, exc),
+                    {"error": "CREATEPROC_FAILED", "commandLine": cmdline}, is_error=True)
+        else:
+            # offscreen and headless editors run under the capped supervisor (memory cap,
+            # below-normal priority, kill-on-close for the editor's own children); the switches
+            # are already in cmd, which the supervisor detects and does not repeat. A visible
+            # Windows editor goes through it UNCAPPED at normal priority, only so that it is
+            # started through WMI and survives the MCP client's tree kill; with no job, the
+            # editor also outlives the supervisor itself.
+            try:
+                proc = pinwright_supervisor.spawn_supervised(
+                    cmd, kind="editor", reason=reason, launched_by=launched_by,
+                    mode=mode, log_path=_abslog_path(extra_args),
+                    # A session editor has no natural end; only suites get the 2-hour ceiling.
+                    timeout_minutes=None, capped=not visible,
+                    priority="Normal" if visible else "BelowNormal")
+            except pinwright_supervisor.SupervisorVersionMismatch as exc:
+                return self._start_result(str(exc), {
+                    "error": pinwright_supervisor.VERSION_MISMATCH, "commandLine": cmdline},
+                    is_error=True)
+            except Exception as exc:
+                return self._start_result(
+                    "EDITOR_START_FAILED: the %ssupervisor could not start %s (%s)"
+                    % ("" if visible else "capped ", exe, exc),
+                    {"error": "CREATEPROC_FAILED", "commandLine": cmdline}, is_error=True)
 
         if wait == "exit":
             result = self._wait_for_exit(proc, cmdline, extra_args)
         else:
             result = self._wait_for_ready(proc, cmdline, extra_args)
-        self._release_owned_child(proc)
-        _reap_on_exit(proc)
+        if supervised:
+            _stamp_detach(result, proc)
+        else:
+            _reap_on_exit(proc)
+        structured = result.get("structuredContent")
+        if isinstance(structured, dict):
+            structured.update({
+                "reason": reason, "launchedBy": launched_by, "mode": mode,
+                "capped": bool(getattr(proc, "capped", False)),
+            })
         return result
 
     def _editor_restart(self, args):
@@ -2159,6 +2700,12 @@ class Proxy:
             return self._start_result(
                 "INVALID_ARGUMENTS: editor_restart arguments must be an object.",
                 {"error": "INVALID_ARGUMENTS"}, is_error=True)
+
+        # Refuse a missing mode or reason BEFORE stopping anything, like a bad map below: a
+        # refused start must not cost the caller a running editor.
+        intent_error = self._launch_intent(args, _START_MODE_HELP)[0]
+        if intent_error is not None:
+            return intent_error
 
         save = bool(args.get("save", False))
         discard = bool(args.get("discard", False))
@@ -2206,9 +2753,10 @@ class Proxy:
                     is_error=True)
             stopped = True
 
-        start_args = {k: args[k] for k in ("map", "visible", "extra_args", "unattended_script")
+        start_args = {k: args[k] for k in ("map", "mode", "reason", "extra_args",
+                                           "unattended_script")
                       if k in args}
-        result = self._editor_start(start_args)
+        result = self._editor_start(start_args, launched_by="editor_restart")
         structured = result.get("structuredContent")
         if isinstance(structured, dict):
             structured["restarted"] = True
@@ -2271,13 +2819,12 @@ class Proxy:
                 return False
 
     @staticmethod
-    def _validate_test_arguments(args):
-        """None when acceptable, else (errorCode, message)."""
-        if not isinstance(args, dict):
-            return "INVALID_FILTER", "arguments must be an object"
-        unknown = sorted(set(args) - {"filter"})
+    def _validate_test_filter(args):
+        """None when acceptable, else (errorCode, message). Runs after _launch_intent, so args is
+        an object carrying mode and reason."""
+        unknown = sorted(set(args) - {"filter", "reason", "mode"})
         if unknown:
-            return "INVALID_FILTER", "unknown argument field(s): %s" % ", ".join(unknown)
+            return "INVALID_ARGUMENTS", "unknown argument field(s): %s" % ", ".join(unknown)
         if "filter" not in args:
             return "INVALID_FILTER", "filter is required"
         test_filter = args.get("filter")
@@ -2294,6 +2841,11 @@ class Proxy:
         return None
 
     @staticmethod
+    def _test_run_log_path(uproject, run_id):
+        return os.path.join(os.path.dirname(os.path.abspath(uproject)), "Saved", "PinWright",
+                            "test-runs", run_id, "automation.log")
+
+    @staticmethod
     def _test_run_paths(uproject):
         run_root = os.path.abspath(os.path.join(
             os.path.dirname(uproject), "Saved", "PinWright", "test-runs"
@@ -2308,7 +2860,7 @@ class Proxy:
             "logPath": os.path.join(run_dir, "automation.log"),
         }
 
-    def _prepare_tests_guard(self):
+    def _run_tests_guard(self):
         observation = self._editor_process_observation()
         state = observation["state"]
         if observation["status"] in ("clear", "not_probed"):
@@ -2323,7 +2875,7 @@ class Proxy:
             )
             return observation, self._start_result(
                 "EDITOR_ALREADY_RUNNING: An Unreal editor is already answering PinWright MCP "
-                "at %s. Close that editor before preparing tests.%s" % (url, suffix),
+                "at %s. Close that editor before running tests.%s" % (url, suffix),
                 {"error": "EDITOR_ALREADY_RUNNING", "editorGuard": observation},
                 is_error=True,
             )
@@ -2337,21 +2889,25 @@ class Proxy:
         result["structuredContent"]["editorGuard"] = observation
         return observation, result
 
-    def _editor_prepare_tests(self, args):
-        """Resolve and return the automation launch/checker commands without running them."""
-        editor_guard, guard_result = self._prepare_tests_guard()
+    def _editor_run_tests(self, args):
+        """Launch the automation suite under the capped, detached supervisor and return once the
+        first test has started, or with a typed startup error. The run outlives this proxy;
+        editor_test_status follows it by its log."""
+        intent_error, mode, reason = self._launch_intent(args, _RUN_TESTS_MODE_HELP)
+        visible = mode == "visible"
+        if intent_error is not None:
+            return intent_error
+        validation_error = self._validate_test_filter(args)
+        if validation_error:
+            code, detail = validation_error
+            return self._start_result("%s: %s." % (code, detail), {"error": code},
+                                      is_error=True)
+        test_filter = args["filter"].strip()
+
+        editor_guard, guard_result = self._run_tests_guard()
         if guard_result is not None:
             return guard_result
 
-        validation_error = self._validate_test_arguments(args)
-        if validation_error:
-            code, detail = validation_error
-            return self._start_result(
-                "%s: %s." % (code, detail),
-                {"error": code, "editorGuard": editor_guard},
-                is_error=True,
-            )
-        test_filter = args["filter"].strip()
         uproject = resolve_uproject(
             self.uproject, self.port_file, __file__, os.path.exists
         )
@@ -2378,20 +2934,30 @@ class Proxy:
             result["structuredContent"]["editorGuard"] = editor_guard
             return result
 
-        editor_cmd = os.path.abspath(_editor_cmd_from_editor(editor_exe))
-        if os.name != "nt" and not os.path.isfile(editor_cmd):
-            # -Cmd is Windows' console-subsystem twin (TargetRules.bBuildAdditionalConsoleApp);
-            # elsewhere the editor binary is itself a console program (UAT's LinuxHostPlatform
-            # maps the -Cmd console twin back onto the plain UnrealEditor binary).
-            editor_cmd = os.path.abspath(editor_exe)
-        if not os.path.isfile(editor_cmd):
+        try:
+            exe = os.path.abspath(pinwright_supervisor.suite_executable(editor_exe, mode))
+        except Exception:
+            exe = os.path.abspath(_editor_cmd_from_editor(editor_exe))
+        if not os.path.isfile(exe):
             return self._start_result(
-                "EDITOR_COMMAND_NOT_FOUND: Unreal's commandlet editor was not found at %s."
-                % editor_cmd,
+                "EDITOR_COMMAND_NOT_FOUND: the %s editor binary was not found at %s."
+                % (mode, exe),
                 {"error": "EDITOR_COMMAND_NOT_FOUND", "uproject": uproject,
                  "engineAssociation": association, "editorGuard": editor_guard},
                 is_error=True,
             )
+
+        env = None
+        if visible:
+            display_env = _visible_launch_env()
+            if display_env is None:
+                return self._start_result(
+                    "EDITOR_NO_DISPLAY: a visible test editor needs an X display, but this proxy "
+                    "has no DISPLAY and no local desktop session of this user was found. Run "
+                    "the tests with mode offscreen or headless.",
+                    {"error": "EDITOR_NO_DISPLAY", "uproject": uproject}, is_error=True)
+            if display_env:
+                env = dict(os.environ, **display_env)
 
         try:
             paths = self._test_run_paths(uproject)
@@ -2404,114 +2970,336 @@ class Proxy:
                 is_error=True,
             )
 
-        launch_argv = [
-            uproject,
-            "-ExecCmds=Automation RunTests %s,Quit" % test_filter,
-            "-TestExit=Automation Test Queue Empty",
-            "-unattended",
-            "-nopause",
-            "-nosplash",
-            "-nosound",
-            "-RenderOffscreen",
-            "-nocefaccelpaint",
-            "-RunningUnattendedScript",
-            _DDC_GRAPH_FLAG,
-            "-ReportExportPath=%s" % paths["reportDir"],
-            "-Abslog=%s" % paths["logPath"],
-        ]
-        checker_executable = os.path.abspath(sys.executable)
-        checker_script = os.path.abspath(os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), "check_suite_log.py"
-        ))
-        checker_argv = [checker_script, paths["logPath"]]
-        structured = {
-            "status": "COMMAND_READY",
+        argv = [exe] + pinwright_supervisor.suite_argv(
+            uproject, test_filter, paths["logPath"], mode, report_dir=paths["reportDir"])
+        base = {
             "filter": test_filter,
-            "uproject": uproject,
-            "engineAssociation": association,
+            "project": uproject,
+            "runId": os.path.basename(paths["runDir"]),
+            "logPath": paths["logPath"],
+            "reportDir": paths["reportDir"],
+            "reason": reason,
+            "launchedBy": "editor_run_tests",
+            "mode": mode,
             "engineRoot": os.path.abspath(engine_root) if engine_root else None,
             "editorGuard": editor_guard,
-            "logPath": paths["logPath"],
-            "launch": {
-                "executable": editor_cmd,
-                "argv": launch_argv,
-                "logPath": paths["logPath"],
-            },
-            "checker": {
-                "executable": checker_executable,
-                "argv": checker_argv,
-                "script": checker_script,
-                "logPath": paths["logPath"],
-            },
         }
-        return self._start_result(
-            "COMMAND_READY: Unreal automation command prepared for filter %r. "
-            "Run launch.argv, then checker.argv." % test_filter,
-            structured,
-            is_error=False,
-        )
-    def _wait_for_association_ready(self, uproject, engine_root=None):
-        """Wait for MCP readiness after shell dispatch; no child process is owned. engine_root is
-        the association-resolved engine reported back as the one this project opens with."""
+        try:
+            run = pinwright_supervisor.spawn_supervised(
+                argv, kind="suite", reason=reason, launched_by="editor_run_tests",
+                mode=base["mode"], log_path=paths["logPath"], env=env)
+        except pinwright_supervisor.SupervisorVersionMismatch as exc:
+            return self._start_result(
+                str(exc), dict(base, error=pinwright_supervisor.VERSION_MISMATCH), is_error=True)
+        except Exception as exc:
+            return self._start_result(
+                "EDITOR_START_FAILED: the capped supervisor could not start %s (%s)" % (exe, exc),
+                dict(base, error="CREATEPROC_FAILED"), is_error=True)
+        base.update({"pid": run.pid, "capped": bool(getattr(run, "capped", False))})
+        return _stamp_detach(self._wait_for_tests_started(run, base), run)
+
+    def _wait_for_tests_started(self, run, base):
+        """Block until the first 'Test Started' line lands in the run's log, or report why it
+        never will. The run is never stopped here: every error leaves it to its own timeout and
+        names the pid, so the caller decides."""
+        log_path = base["logPath"]
         start = time.monotonic()
-        deadline = start + self.start_timeout
-        while True:
-            try:
+        deadline = start + self.test_start_timeout
+
+        def failure(code, text, **extra):
+            structured = dict(base, error=code, leftRunning=run.poll() is None, **extra)
+            return self._start_result("%s: %s" % (code, text), structured, is_error=True)
+
+        try:
+            while True:
+                progress = pinwright_supervisor.scan_test_progress(log_path)
+                if progress["started"]:
+                    elapsed = round(time.monotonic() - start, 1)
+                    structured = dict(base, status="TESTS_STARTED",
+                                      startedTests=progress["started"],
+                                      lastTest=progress["lastTest"], elapsedSeconds=elapsed)
+                    return self._start_result(
+                        "TESTS_STARTED: editor pid %d started %d test(s) after %.1fs. The run "
+                        "continues detached; poll editor_test_status with logPath %s."
+                        % (run.pid, progress["started"], elapsed, log_path),
+                        structured, is_error=False)
+                code = run.poll()
+                if code is not None:
+                    return failure(
+                        "EDITOR_EXITED_BEFORE_TESTS",
+                        "the test editor (pid %d) exited with code %s before its first test. "
+                        "Log: %s" % (run.pid, code, log_path), exitCode=code)
                 url = self._resolve_url()
-                if url is not None:
-                    state, detail = self._probe_state(url)
-                    if state == "protocol_stale":
-                        # Fail fast rather than polling to start_timeout: an editor whose
-                        # compiled plugin predates the readiness protocol can never
-                        # report alive, and EDITOR_START_TIMEOUT would hide the cause.
-                        return self._editor_unavailable_result(
-                            "EDITOR_PLUGIN_OUTDATED", url=url
-                        )
-                    if state == "blocked_on_modal":
-                        # Same fail-fast reason: a startup modal (e.g. Restore Packages)
-                        # holds the game thread until a human clears it, so polling to
-                        # start_timeout would just reproduce the hang and report it as a
-                        # slow start.
-                        return self._editor_unavailable_result(
-                            "EDITOR_BLOCKED_ON_MODAL", url=url, detail=detail
-                        )
-                    if state == "alive":
-                        elapsed = round(time.monotonic() - start, 1)
-                        return self._start_result(
-                            "The registered open action launched %s with engine %s, and PinWright "
-                            "reports operational readiness at %s after %.1fs."
-                            % (uproject, engine_root, url, elapsed),
-                            {"success": True, "uproject": uproject, "association": "open",
-                             "engineRoot": engine_root, "url": url, "port": _loopback_port(url),
-                             "elapsedSeconds": elapsed},
-                            is_error=False,
-                        )
+                if url is not None and self._probe_state(url)[0] == "blocked_on_modal":
+                    return failure(
+                        "EDITOR_BLOCKED_ON_MODAL",
+                        "the test editor (pid %d) is blocked on a modal dialog before its first "
+                        "test; no RPC can dismiss it. It was left running." % run.pid, url=url)
                 if time.monotonic() >= deadline:
-                    return self._start_result(
-                        "EDITOR_START_TIMEOUT: the registered open action was invoked for %s, "
-                        "but PinWright did not report operational readiness within %.0fs. The editor may still be "
-                        "starting.%s" % (uproject, self.start_timeout, _startup_modal_hint("")),
-                        {"error": "EDITOR_START_TIMEOUT", "uproject": uproject,
-                         "association": "open", "engineRoot": engine_root},
-                        is_error=True,
-                    )
+                    return failure(
+                        "EDITOR_TESTS_NOT_STARTED",
+                        "no test started within %.0fs (pid %d). It was left running; poll "
+                        "editor_test_status with logPath %s, or stop it."
+                        % (self.test_start_timeout, run.pid, log_path))
                 if self._shutdown_requested.wait(1.0):
-                    return self._start_result(
-                        "EDITOR_START_INTERRUPTED: the MCP client disconnected while waiting "
-                        "for the shell-opened editor. PinWright does not own that process and "
-                        "did not terminate it.",
-                        {"error": "EDITOR_START_INTERRUPTED", "uproject": uproject,
-                         "association": "open", "cleanupAttempted": False},
-                        is_error=True,
-                    )
-            except KeyboardInterrupt:
-                return self._start_result(
-                    "EDITOR_START_INTERRUPTED: waiting for the shell-opened editor was "
-                    "interrupted. PinWright does not own that process and did not terminate it.",
-                    {"error": "EDITOR_START_INTERRUPTED", "uproject": uproject,
-                     "association": "open", "cleanupAttempted": False},
-                    is_error=True,
-                )
+                    return failure(
+                        "EDITOR_RUN_INTERRUPTED",
+                        "the MCP client disconnected before the first test; the run continues "
+                        "detached (pid %d)." % run.pid)
+        except KeyboardInterrupt:
+            return failure("EDITOR_RUN_INTERRUPTED",
+                           "waiting for the first test was interrupted; the run continues "
+                           "detached (pid %d)." % run.pid)
+
+    def _editor_test_status(self, args):
+        """Non-blocking status of an editor_run_tests run, keyed by its log. Nothing is stored
+        for a run: it is running while an Unreal editor whose -Abslog is that log is alive, and
+        its verdict comes from the log through check_suite_log's classifier."""
+        def refuse(code, text):
+            return self._start_result("%s: %s" % (code, text), {"error": code}, is_error=True)
+
+        if not isinstance(args, dict):
+            return refuse("INVALID_ARGUMENTS", "arguments must be an object.")
+        unknown = sorted(set(args) - {"logPath", "runId"})
+        if unknown:
+            return refuse("INVALID_ARGUMENTS",
+                          "unknown argument field(s): %s." % ", ".join(unknown))
+        log_path, run_id = args.get("logPath"), args.get("runId")
+        if (log_path is None) == (run_id is None):
+            return refuse("MISSING_REQUIRED_PARAM",
+                          "pass exactly one of logPath or runId (both from editor_run_tests).")
+        if run_id is not None:
+            if not isinstance(run_id, str) or not re.fullmatch(r"[0-9a-f]{32}", run_id):
+                return refuse("INVALID_RUN_ID", "runId must be the 32-hex id editor_run_tests "
+                                                "returned, got %r." % (run_id,))
+            uproject = resolve_uproject(self.uproject, self.port_file, __file__, os.path.exists)
+            if uproject is None:
+                return refuse("EDITOR_PROJECT_NOT_FOUND",
+                              "no host .uproject could be resolved to locate runId %s." % run_id)
+            log_path = self._test_run_log_path(uproject, run_id)
+        elif not isinstance(log_path, str) or not log_path.strip():
+            return refuse("INVALID_LOG_PATH", "logPath must be a non-empty string.")
+        log_path = os.path.abspath(log_path.strip())
+
+        try:
+            rows = _editor_processes()
+        except Exception as exc:
+            return refuse("EDITOR_LIST_FAILED",
+                          "could not enumerate Unreal editor processes (%s)." % exc)
+        owners = [row for row in rows
+                  if _same_path(_abslog_path((row.get("argv") or [])[1:]), log_path)]
+        progress = pinwright_supervisor.scan_test_progress(log_path)
+        if not owners and not progress["exists"]:
+            return refuse("TEST_RUN_NOT_FOUND",
+                          "no log at %s and no Unreal editor is writing it." % log_path)
+
+        status = "running" if owners else "finished"
+        structured = {
+            "logPath": log_path,
+            "status": status,
+            "mode": (pinwright_supervisor.infer_mode((owners[0].get("argv") or [])[1:]) if owners
+                     else _log_launch_mode(log_path)),
+            "pid": owners[0]["pid"] if owners else None,
+            "started": progress["started"],
+            "succeeded": progress["succeeded"],
+            "failed": progress["failed"],
+            "lastTest": progress["lastTest"],
+        }
+        try:
+            with open(log_path + ".result.txt", encoding="utf-8-sig") as fh:
+                structured["supervisorResult"] = fh.readline().strip() or None
+        except OSError:
+            structured["supervisorResult"] = None
+        text = "%s (mode %s): %d started, %d succeeded, %d failed." % (
+            status.upper(), structured["mode"] or "unknown", progress["started"],
+            progress["succeeded"], progress["failed"])
+        if status == "finished":
+            import check_suite_log  # lazy: check_suite_log imports this module
+            verdict = check_suite_log.check_log(log_path)
+            structured["verdict"] = {"state": verdict["state"], "reason": verdict["reason"],
+                                     "warnings": verdict["warnings"]}
+            text += " Verdict: %s (%s)." % (verdict["state"], verdict["reason"])
+        return self._start_result(text, structured, is_error=False)
+
+    def _editor_list(self, args):
+        """Every Unreal editor process on this machine, any checkout or engine, described from
+        its own command line. Read-only."""
+        try:
+            rows = _editor_processes()
+        except Exception as exc:
+            return self._start_result(
+                "EDITOR_LIST_FAILED: could not enumerate Unreal editor processes (%s)." % exc,
+                {"error": "EDITOR_LIST_FAILED"}, is_error=True)
+        this_project = resolve_uproject(self.uproject, self.port_file, __file__, os.path.exists)
+        this_project = os.path.abspath(this_project) if this_project else None
+        editors = sorted((describe_editor_process(row, this_project) for row in rows),
+                         key=lambda entry: (entry["startMs"] or 0, entry["pid"]))
+        lines = ["%d Unreal editor process(es) running." % len(editors)]
+        for entry in editors:
+            lines.append("- pid %d, %s, %s%s: %s" % (
+                entry["pid"], entry["mode"], entry["project"] or entry["projectName"]
+                or "<no project>", " (this project)" if entry["isThisProject"] else "",
+                entry["reason"] if entry["reason"] is not None
+                else "reason unknown (not launched by PinWright)"))
+        return self._start_result(
+            "\n".join(lines),
+            {"editors": editors, "count": len(editors), "thisProject": this_project},
+            is_error=False)
+
+    def _editor_build(self, args):
+        """Start a Development editor-target build of this project under the capped, detached
+        supervisor and return at once. Refuses while an editor of this checkout runs."""
+        def refuse(code, text, **extra):
+            return self._start_result("%s: %s" % (code, text), dict(error=code, **extra),
+                                      is_error=True)
+
+        if not isinstance(args, dict):
+            return refuse("INVALID_ARGUMENTS", "arguments must be an object.")
+        unknown = sorted(set(args) - {"reason"})
+        if unknown:
+            return refuse("INVALID_ARGUMENTS",
+                          "unknown argument field(s): %s. editor_build takes only reason; it "
+                          "launches no editor, so it has no mode." % ", ".join(unknown))
+        if "reason" not in args:
+            return refuse("MISSING_REQUIRED_PARAM",
+                          "reason is required and has no default: say why this build is being "
+                          "run (one line, at most %d characters)."
+                          % pinwright_supervisor.REASON_MAX_CHARS, param="reason")
+        reason, reason_error = pinwright_supervisor.normalize_reason(args["reason"])
+        if reason_error is not None:
+            return refuse("INVALID_REASON", reason_error, param="reason")
+
+        uproject = resolve_uproject(self.uproject, self.port_file, __file__, os.path.exists)
+        if uproject is None:
+            return refuse("EDITOR_PROJECT_NOT_FOUND", "no host .uproject could be resolved.")
+        uproject = os.path.abspath(uproject)
+        checkout_root = os.path.dirname(uproject)
+
+        # The link replaces this checkout's editor DLLs, so any editor of this checkout blocks it.
+        # Editors of other checkouts load other DLLs and do not.
+        try:
+            rows = _editor_processes()
+        except Exception as exc:
+            return refuse("EDITOR_LIST_FAILED",
+                          "could not enumerate Unreal editor processes to check that no editor "
+                          "of this project is running (%s)." % exc)
+        blockers = [entry for entry in (describe_editor_process(row, uproject) for row in rows)
+                    if _same_path(entry["checkoutRoot"], checkout_root)]
+        if blockers:
+            pids = [entry["pid"] for entry in blockers]
+            return refuse(
+                "BUILD_BLOCKED_BY_EDITOR",
+                "%d Unreal editor process(es) of this project are running (pid %s); the link "
+                "replaces their DLLs. Close them first (editor.quit), then retry."
+                % (len(pids), ", ".join(str(pid) for pid in pids)),
+                pids=pids, editors=blockers)
+
+        association = _read_engine_association(uproject)
+        engine_root, editor_exe = resolve_editor(
+            self.editor_exe, os.environ.get("UE_ROOT"), sys.executable, association,
+            os.path.exists, uproject=uproject,
+            engine_root_override=os.environ.get(ENGINE_ROOT_ENV),
+        )
+        if editor_exe is None:
+            return self._engine_unresolved_result(uproject, association)
+        engine_root = engine_root or _engine_root_from_editor_exe(editor_exe)
+        if os.name == "nt":
+            script = os.path.join(engine_root, "Engine", "Build", "BatchFiles", "Build.bat")
+            platform = "Win64"
+        else:
+            script = os.path.join(engine_root, "Engine", "Build", "BatchFiles", "Linux",
+                                  "Build.sh")
+            platform = "Linux"
+        if not os.path.isfile(script):
+            return refuse("BUILD_SCRIPT_NOT_FOUND",
+                          "the engine's build script was not found at %s." % script,
+                          engineRoot=engine_root)
+
+        target = os.path.splitext(os.path.basename(uproject))[0] + "Editor"
+        build_id = uuid.uuid4().hex
+        build_dir = os.path.join(checkout_root, "Saved", "PinWright", "builds", build_id)
+        log_path = os.path.join(build_dir, "build.log")
+        # -Log gives UBT its own log file: its default, Engine/Programs/UnrealBuildTool/Log.txt,
+        # is shared by every build on that engine, and a second build holding it makes UBT exit
+        # before it ever reaches -WaitMutex (GlobalOptions.cs LogFileName).
+        argv = [script, target, platform, "Development", "-Project=" + uproject,
+                "-WaitMutex", "-NoHotReloadFromIDE", "-Log=" + os.path.join(build_dir, "ubt.log")]
+        # The reason stays off UnrealBuildTool's command line: UBT hands unrecognised switches to
+        # the target rules as additional arguments (TargetDescriptor.cs ParseCommandLine ->
+        # UEBuildTarget.cs CreateTargetRules), so a per-build string would become part of the
+        # target's inputs. It is the log's first line instead.
+        header = "PinWright editor_build: reason=%s; target=%s %s Development; project=%s" % (
+            reason, target, platform, uproject)
+        base = {"logPath": log_path, "buildId": build_id, "reason": reason, "target": target,
+                "platform": platform, "configuration": "Development", "project": uproject,
+                "engineRoot": engine_root, "commandLine": subprocess.list2cmdline(argv)}
+        try:
+            run = pinwright_supervisor.spawn_supervised(
+                argv, kind="command", reason=reason, launched_by="editor_build", mode=None,
+                output_path=log_path, output_header=header)
+        except pinwright_supervisor.SupervisorVersionMismatch as exc:
+            return self._start_result(
+                str(exc), dict(base, error=pinwright_supervisor.VERSION_MISMATCH), is_error=True)
+        except Exception as exc:
+            return refuse("BUILD_START_FAILED",
+                          "the capped supervisor could not start the build (%s)." % exc, **base)
+        base.update({"status": "BUILD_STARTED", "pid": run.pid,
+                     "capped": bool(getattr(run, "capped", False))})
+        return _stamp_detach(self._start_result(
+            "BUILD_STARTED: %s %s Development (pid %d). Poll editor_build_status with logPath %s."
+            % (target, platform, run.pid, log_path), base, is_error=False), run)
+
+    def _editor_build_status(self, args):
+        """Non-blocking state of an editor_build run, from its log, its supervisor log and the
+        supervisor's result line."""
+        def refuse(code, text):
+            return self._start_result("%s: %s" % (code, text), {"error": code}, is_error=True)
+
+        if not isinstance(args, dict):
+            return refuse("INVALID_ARGUMENTS", "arguments must be an object.")
+        unknown = sorted(set(args) - {"logPath"})
+        if unknown:
+            return refuse("INVALID_ARGUMENTS",
+                          "unknown argument field(s): %s." % ", ".join(unknown))
+        log_path = args.get("logPath")
+        if log_path is None:
+            return refuse("MISSING_REQUIRED_PARAM", "logPath (from editor_build) is required.")
+        if not isinstance(log_path, str) or not log_path.strip():
+            return refuse("INVALID_LOG_PATH", "logPath must be a non-empty string.")
+        log_path = os.path.abspath(log_path.strip())
+
+        scan = scan_build_log(log_path)
+        result_line, verdict, exit_code = pinwright_supervisor.read_result(log_path + ".result.txt")
+        child_pid = _supervised_child_pid(log_path + ".supervisor.log")
+        if not scan["exists"] and result_line is None and child_pid is None:
+            return refuse("BUILD_NOT_FOUND", "no build log at %s." % log_path)
+
+        if result_line is not None:
+            succeeded = exit_code == 0 and (scan["ubtResult"] in (None, "Succeeded"))
+            status = "succeeded" if succeeded else "failed"
+        elif child_pid is not None and pinwright_supervisor.process_start_ms(child_pid) is not None:
+            status = "running"
+        elif scan["ubtResult"] is not None:
+            # UBT finished; the supervisor is still writing its result line.
+            status = "succeeded" if scan["ubtResult"] == "Succeeded" else "failed"
+        else:
+            status = "lost"
+        structured = {
+            "logPath": log_path,
+            "status": status,
+            "pid": child_pid,
+            "ubtResult": scan["ubtResult"],
+            "exitCode": exit_code,
+            "verdict": verdict,
+            "supervisorResult": result_line,
+            "errorCount": scan["errorCount"],
+            "errors": scan["errors"],
+        }
+        text = "%s: UBT result %s, %d error line(s)." % (
+            status.upper(), scan["ubtResult"] or "not yet written", scan["errorCount"])
+        if scan["errors"]:
+            text += "\n" + "\n".join(scan["errors"][:20])
+        return self._start_result(text, structured, is_error=False)
 
     def _wait_for_ready(self, proc, cmdline, extra_args):
         """Block until the editor reports operational readiness or start_timeout elapses. Poll the child so a
@@ -2578,100 +3366,53 @@ class Proxy:
                 if self._shutdown_requested.wait(1.0):
                     return self._start_result(
                         "EDITOR_START_INTERRUPTED: the MCP client disconnected while waiting "
-                        "for editor pid %d; PinWright attempted to clean up only the direct "
-                        "child it started." % proc.pid,
+                        "for editor pid %d; the editor runs detached and was left running."
+                        % proc.pid,
                         {"error": "EDITOR_START_INTERRUPTED", "pid": proc.pid,
-                         "commandLine": cmdline, "cleanupSucceeded": proc.poll() is not None},
+                         "commandLine": cmdline, "leftRunning": proc.poll() is None},
                         is_error=True,
                     )
         except KeyboardInterrupt:
-            cleaned = self._cleanup_owned_child()
             return self._start_result(
-                "EDITOR_START_INTERRUPTED: waiting for editor pid %d was interrupted; owned "
-                "child cleanup %s." % (proc.pid, "succeeded" if cleaned else "failed"),
+                "EDITOR_START_INTERRUPTED: waiting for editor pid %d was interrupted; the "
+                "editor runs detached and was left running." % proc.pid,
                 {"error": "EDITOR_START_INTERRUPTED", "pid": proc.pid,
-                 "commandLine": cmdline, "cleanupSucceeded": cleaned},
+                 "commandLine": cmdline, "leftRunning": proc.poll() is None},
                 is_error=True,
             )
 
-    def _track_owned_child(self, proc):
-        """Atomically track one directly spawned child or clean it if shutdown already won."""
-        with self._owned_child_lock:
-            if self._owned_child is not None:
-                raise RuntimeError("proxy already owns a child process")
-            if not self._shutdown_requested.is_set():
-                self._owned_child = proc
-                return proc
-        self._cleanup_child(proc)
-        raise RuntimeError("proxy is shutting down")
-
-    def _release_owned_child(self, proc):
-        with self._owned_child_lock:
-            if self._owned_child is proc:
-                self._owned_child = None
-
     def request_shutdown(self):
-        """Mark the transport closed and clean up only a directly owned child."""
+        """Mark the transport closed so blocking waits return. Every editor this proxy starts is
+        detached, so nothing is terminated."""
         self._shutdown_requested.set()
-        return self._cleanup_owned_child()
 
     def shutdown_requested(self):
         return self._shutdown_requested.is_set()
 
-    def _take_owned_child(self):
-        with self._owned_child_lock:
-            proc = self._owned_child
-            self._owned_child = None
-        return proc
-
-    def _cleanup_owned_child(self):
-        """Clean up the currently tracked direct child, if any, and release ownership."""
-        proc = self._take_owned_child()
-        if proc is None:
-            return True
-        try:
-            if proc.poll() is not None:
-                return True
-        except Exception:
-            pass
-        return self._cleanup_child(proc)
-
-    @staticmethod
-    def _cleanup_child(proc):
-        """Best-effort bounded cleanup for a process spawned directly by this proxy."""
-        try:
-            if os.name == "nt" and hasattr(proc, "send_signal"):
-                try:
-                    proc.send_signal(signal.CTRL_BREAK_EVENT)
-                except Exception:
-                    proc.terminate()
-            else:
-                proc.terminate()
-            try:
-                proc.wait(timeout=5.0)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait(timeout=5.0)
-            return True
-        except Exception:
-            return False
-
     def _wait_for_exit(self, proc, cmdline, extra_args):
-        """Wait without a duration cutoff for a directly owned run-to-completion child."""
+        """Wait without a duration cutoff for a run-to-completion editor. The editor is detached,
+        so a client disconnect ends only this wait, never the editor."""
         log_path = _abslog_path(extra_args)
         start = time.monotonic()
-        try:
-            code = proc.wait()
-        except KeyboardInterrupt:
-            cleaned = self._cleanup_owned_child()
+
+        def left_running(text):
             return self._start_result(
-                "EDITOR_RUN_INTERRUPTED: waiting for editor pid %d was interrupted; owned child "
-                "cleanup %s." % (proc.pid, "succeeded" if cleaned else "failed"),
-                {"error": "EDITOR_RUN_INTERRUPTED", "pid": proc.pid,
-                 "commandLine": cmdline, "logPath": log_path,
-                 "cleanupSucceeded": cleaned},
+                "EDITOR_RUN_INTERRUPTED: %s editor pid %d; it runs detached and was left running."
+                % (text, proc.pid),
+                {"error": "EDITOR_RUN_INTERRUPTED", "pid": proc.pid, "commandLine": cmdline,
+                 "logPath": log_path, "leftRunning": True},
                 is_error=True,
             )
+
+        try:
+            while True:
+                code = proc.poll()
+                if code is not None:
+                    break
+                if self._shutdown_requested.wait(1.0):
+                    return left_running("the MCP client disconnected while waiting for")
+        except KeyboardInterrupt:
+            return left_running("waiting was interrupted for")
         duration = round(time.monotonic() - start, 1)
         return self._start_result(
             "Editor (pid %d) exited with code %s after %.1fs.%s"
@@ -2817,7 +3558,9 @@ class Proxy:
             # are discoverable at cold-start and survive an editor refresh.
             return _result(msg_id, {
                 "tools": self.refresh_tools()
-                + [EDITOR_START_TOOL, EDITOR_RESTART_TOOL, EDITOR_PREPARE_TESTS_TOOL]
+                + [EDITOR_START_TOOL, EDITOR_RESTART_TOOL, EDITOR_RUN_TESTS_TOOL,
+                   EDITOR_TEST_STATUS_TOOL, EDITOR_LIST_TOOL, EDITOR_BUILD_TOOL,
+                   EDITOR_BUILD_STATUS_TOOL]
             })
 
         # Lifecycle tools are proxy-LOCAL because there is no editor endpoint to forward to at
@@ -2828,8 +3571,16 @@ class Proxy:
                 return _result(msg_id, self._editor_start(params.get("arguments") or {}))
             if params.get("name") == "editor_restart":
                 return _result(msg_id, self._editor_restart(params.get("arguments") or {}))
-            if params.get("name") == "editor_prepare_tests":
-                return _result(msg_id, self._editor_prepare_tests(params.get("arguments")))
+            if params.get("name") == "editor_run_tests":
+                return _result(msg_id, self._editor_run_tests(params.get("arguments") or {}))
+            if params.get("name") == "editor_test_status":
+                return _result(msg_id, self._editor_test_status(params.get("arguments") or {}))
+            if params.get("name") == "editor_list":
+                return _result(msg_id, self._editor_list(params.get("arguments") or {}))
+            if params.get("name") == "editor_build":
+                return _result(msg_id, self._editor_build(params.get("arguments") or {}))
+            if params.get("name") == "editor_build_status":
+                return _result(msg_id, self._editor_build_status(params.get("arguments") or {}))
 
         # tools/call and any other request -> forward to the editor. Resolve the
         # target fresh (the editor may have rebound since the last call), then
@@ -2883,6 +3634,8 @@ class Proxy:
             return _error(
                 msg_id, -32603, self._editor_not_running_text(probe_detail)
             )
+        if method == "tools/call":
+            _normalize_string_args(msg)
         try:
             if method == "tools/call" and _wants_stream(msg):
                 relayed = self._post_stream(msg, url)
@@ -2964,9 +3717,9 @@ def _build_argument_parser():
     return parser
 
 
-_LOCAL_TOOL_NAMES = (
-    EDITOR_START_TOOL["name"], EDITOR_RESTART_TOOL["name"], EDITOR_PREPARE_TESTS_TOOL["name"]
-)
+_LOCAL_TOOL_NAMES = tuple(tool["name"] for tool in (
+    EDITOR_START_TOOL, EDITOR_RESTART_TOOL, EDITOR_RUN_TESTS_TOOL, EDITOR_TEST_STATUS_TOOL,
+    EDITOR_LIST_TOOL, EDITOR_BUILD_TOOL, EDITOR_BUILD_STATUS_TOOL))
 
 
 def _forwards_concurrently(msg):
@@ -2985,8 +3738,8 @@ def serve_stdio(proxy, input_stream, output_stream):
     This calling thread parses requests and serves them in order, except forwarded
     tools/call requests, which each run on a daemon thread (_forwards_concurrently)
     and write their own response. The reader thread does no request work; on EOF
-    it only marks shutdown and cleans the proxy's currently owned direct child so
-    an unbounded child wait can return.
+    it only marks shutdown so a blocking editor wait returns. Editors are detached
+    and keep running.
     """
     eof = object()
     input_lines = queue.Queue()

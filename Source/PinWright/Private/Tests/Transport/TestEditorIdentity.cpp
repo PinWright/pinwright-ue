@@ -32,6 +32,7 @@
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "HAL/PlatformProcess.h"
+#include "Misc/FileHelper.h"
 #include "Misc/Guid.h"
 #include "Misc/Paths.h"
 
@@ -403,6 +404,53 @@ bool FPwEditorIdentityComparisonTest::RunTest(const FString& Parameters)
         TestTrue(TEXT("refusal names the answering instance"),
             Verdict.Message.Contains(TEXT("11112222")));
     }
+
+    return true;
+}
+
+// ============================================================================
+// log_file names the file THIS process writes, not a sibling editor's log
+// ============================================================================
+
+// Existence alone would pass on a stale `<Project>.log` left by another editor while this one
+// writes `<Project>_2.log`, so the test logs a fresh marker and requires it in the named file.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPwEditorIdentityLogFileTest,
+    "PinWright.transport.identity.LogFileIsTheOneThisProcessWrites",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FPwEditorIdentityLogFileTest::RunTest(const FString& Parameters)
+{
+    FRpcDispatcher Dispatcher;
+    DispatcherTestHelpers::FSinkPtr Sink;
+    DispatcherTestHelpers::MakeDispatcher(Sink, Dispatcher);
+
+    bool bSuccess = false;
+    TSharedPtr<FJsonObject> Result;
+    FString ErrorCode;
+    DispatcherTestHelpers::Dispatch(Dispatcher, Sink, TEXT("system.identity"),
+        TEXT("id-logfile"), MakeShared<FJsonObject>(), bSuccess, Result, ErrorCode);
+
+    TestTrue(TEXT("system.identity answers"), bSuccess);
+    const FString LogFile = PinWrightEditorIdentityTest::ReadStringField(Result, TEXT("log_file"));
+    if (!TestFalse(TEXT("system.identity reports log_file"), LogFile.IsEmpty()))
+    {
+        return true;
+    }
+    TestFalse(TEXT("log_file is absolute"), FPaths::IsRelative(LogFile));
+    TestTrue(TEXT("log_file exists on disk"), FPaths::FileExists(LogFile));
+
+    const FString Marker = FString::Printf(TEXT("PwIdentityLogFileMarker-%s"),
+        *FGuid::NewGuid().ToString(EGuidFormats::Digits));
+    UE_LOG(LogTemp, Display, TEXT("%s"), *Marker);
+    // Drains the redirector and the async file writer to the OS before the read below.
+    GLog->Flush();
+
+    FString Contents;
+    // The editor holds the log open for writing, so the reader must share write access.
+    TestTrue(TEXT("log_file is readable while the editor writes it"),
+        FFileHelper::LoadFileToString(
+            Contents, *LogFile, FFileHelper::EHashOptions::None, FILEREAD_AllowWrite));
+    TestTrue(TEXT("a line this process just logged is in log_file"), Contents.Contains(Marker));
 
     return true;
 }

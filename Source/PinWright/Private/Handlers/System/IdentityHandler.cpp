@@ -3,10 +3,14 @@
 #include "Handlers/HandlerRegistration.h"
 #include "Handlers/HandlerContext.h"
 #include "Handlers/ParamSpec.h"
+#include "Handlers/System/LaunchIdentity.h"
 #include "PinWrightSettings.h"
 #include "PinWrightSubsystem.h"
 #include "Transport/EditorIdentity.h"
 #include "Dom/JsonObject.h"
+#include "HAL/PlatformOutputDevices.h"
+#include "Misc/CommandLine.h"
+#include "Misc/Paths.h"
 
 // ---- system.identity ----
 //
@@ -22,7 +26,8 @@
 REGISTER_RPC_HANDLER("system.identity", "system",
     "Identity of the editor PROCESS answering this call - pid, a per-boot instance GUID, project "
     "file, engine version, plugin build stamp, executable and command line - plus the port it is "
-    "serving on. Two editors of the same project derive the SAME MCP port, so read this from the "
+    "serving on and the log file it writes (`log_file`), plus `launch_reason` and `launched_by` "
+    "when a PinWright proxy tool started it (omitted otherwise). Two editors of the same project derive the SAME MCP port, so read this from the "
     "editor you launched and then pass the fields you pinned as `_expect_editor` on later calls; "
     "a mismatch is refused instead of silently executed on the other editor",
     RPC_NO_PARAMS)
@@ -35,6 +40,23 @@ REGISTER_RPC_HANDLER("system.identity", "system",
     // They disagree in exactly the case this whole feature exists for.
     const int32 ConfiguredPort = UPinWrightSettings::ResolveHttpPort(GetDefault<UPinWrightSettings>());
     Result->SetNumberField(TEXT("configured_http_port"), ConfiguredPort);
+
+    // The log file this process is writing, read live rather than cached in Measured(). The
+    // engine overwrites its cached name when the file actually opens
+    // (FGenericPlatformOutputDevices::OnLogFileOpened, 5.3-5.8), so an editor that found
+    // `<Project>.log` locked by another editor of the same project and fell back to
+    // `<Project>_2.log` reports the `_2` file, and `-abslog=` launches report that path. Omitted
+    // when no such file exists on disk, rather than naming a path nothing writes.
+    const FString LogFile =
+        FPaths::ConvertRelativePathToFull(FPlatformOutputDevices::GetAbsoluteLogFilename());
+    if (FPaths::FileExists(LogFile))
+    {
+        Result->SetStringField(TEXT("log_file"), LogFile);
+    }
+
+    // Echoed from -PinWrightLaunchReason= / -PinWrightLaunchedBy=, which PinWright's launch tools
+    // append; omitted for an editor started any other way.
+    PinWrightLaunchIdentity::WriteLaunchFields(FCommandLine::Get(), *Result);
 
     if (UPinWrightSubsystem* Subsystem = Ctx.GetSubsystem())
     {

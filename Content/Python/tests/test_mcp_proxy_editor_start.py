@@ -29,10 +29,13 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import mcp_proxy  # noqa: E402  (module handle for the few private helpers tested directly)
+import pinwright_supervisor  # noqa: E402
 from mcp_proxy import (
-    EDITOR_PREPARE_TESTS_TOOL,
+    EDITOR_LIST_TOOL,
     EDITOR_RESTART_TOOL,
+    EDITOR_RUN_TESTS_TOOL,
     EDITOR_START_TOOL,
+    EDITOR_TEST_STATUS_TOOL,
     MCP_INSTRUCTIONS_TEMPLATE,
     Proxy,
     _abslog_path,
@@ -51,6 +54,18 @@ from mcp_proxy import (
 )
 
 
+# Every launch verb requires an explicit mode and reason; tests that are not about those two
+# parameters pass these.
+REASON = "unit test: proxy lifecycle"
+START = {"mode": "visible", "reason": REASON}
+
+
+def _start_args(**overrides):
+    args = dict(START)
+    args.update(overrides)
+    return args
+
+
 def _same(a, b):
     """Path equality tolerant of slash/case differences on the running platform."""
     if a is None or b is None:
@@ -60,25 +75,36 @@ def _same(a, b):
 
 class BuildEditorCommandTest(unittest.TestCase):
     def test_visible_gets_only_the_always_flags(self):
-        cmd = build_editor_command("Editor.exe", "P.uproject", visible=True, extra_args=[])
+        cmd = build_editor_command("Editor.exe", "P.uproject", mode="visible", extra_args=[])
         self.assertEqual(cmd, ["Editor.exe", "P.uproject", "-AutoDeclinePackageRecovery"])
 
-    def test_invisible_has_headless_flags_and_no_nullrhi(self):
-        cmd = build_editor_command("Editor.exe", "P.uproject", visible=False, extra_args=[])
+    def test_offscreen_has_the_windowless_flags_and_a_real_rhi(self):
+        cmd = build_editor_command("Editor.exe", "P.uproject", mode="offscreen", extra_args=[])
         for flag in ("-RenderOffScreen", "-unattended", "-RunningUnattendedScript", "-nopause",
                      "-nosplash", "-nocefaccelpaint"):
             self.assertIn(flag, cmd)
-        # Deliberately never -NullRHI (some paths need a real RHI).
         self.assertNotIn("-NullRHI", cmd)
         self.assertNotIn("-nullrhi", cmd)
 
+    def test_headless_is_nullrhi_on_top_of_the_offscreen_flags(self):
+        # -NullRHI only replaces the renderer; -RenderOffScreen is what selects the null platform
+        # application (no OS window) and SDL's dummy driver (no X display) on Linux.
+        cmd = build_editor_command("Editor.exe", "P.uproject", mode="headless", extra_args=[])
+        self.assertEqual(cmd, ["Editor.exe", "P.uproject", "-AutoDeclinePackageRecovery",
+                               "-NullRHI"] + mcp_proxy._OFFSCREEN_FLAGS)
+
+    def test_unknown_mode_is_refused_by_the_builder(self):
+        for mode in (True, False, "windowless", None):
+            with self.subTest(mode=mode), self.assertRaises(ValueError):
+                build_editor_command("Editor.exe", "P.uproject", mode=mode, extra_args=[])
+
     def test_extra_args_appended_verbatim(self):
-        cmd = build_editor_command("Editor.exe", "P.uproject", visible=True,
+        cmd = build_editor_command("Editor.exe", "P.uproject", mode="visible",
                                    extra_args=["-windowed", "-resx=1280"])
         self.assertEqual(cmd[-2:], ["-windowed", "-resx=1280"])
 
     def test_none_extra_args_tolerated(self):
-        cmd = build_editor_command("Editor.exe", "P.uproject", visible=True, extra_args=None)
+        cmd = build_editor_command("Editor.exe", "P.uproject", mode="visible", extra_args=None)
         self.assertEqual(cmd, ["Editor.exe", "P.uproject", "-AutoDeclinePackageRecovery"])
 
     # The startup map is read by FParse::Token as the FIRST token of the remaining command line
@@ -86,7 +112,7 @@ class BuildEditorCommandTest(unittest.TestCase):
     # immediately after the .uproject, before every switch - is therefore the only position that
     # works. Counterfactual: append the map anywhere after _ALWAYS_FLAGS and this fails.
     def test_map_is_the_first_token_after_the_uproject(self):
-        cmd = build_editor_command("Editor.exe", "P.uproject", visible=False,
+        cmd = build_editor_command("Editor.exe", "P.uproject", mode="offscreen",
                                    extra_args=["-windowed"], unattended_script=True,
                                    map_name="/Game/Maps/MyLevel")
         self.assertEqual(cmd[:3], ["Editor.exe", "P.uproject", "/Game/Maps/MyLevel"])
@@ -95,9 +121,9 @@ class BuildEditorCommandTest(unittest.TestCase):
 
     def test_no_map_leaves_the_command_line_byte_identical(self):
         self.assertEqual(
-            build_editor_command("Editor.exe", "P.uproject", visible=True, extra_args=[],
+            build_editor_command("Editor.exe", "P.uproject", mode="visible", extra_args=[],
                                  map_name=None),
-            build_editor_command("Editor.exe", "P.uproject", visible=True, extra_args=[]))
+            build_editor_command("Editor.exe", "P.uproject", mode="visible", extra_args=[]))
 
 
 class NormalizeStartMapTest(unittest.TestCase):
@@ -355,8 +381,9 @@ class EngineRootOverrideTest(unittest.TestCase):
                                    return_value=("not_running", "refused")), \
                     mock.patch("mcp_proxy.resolve_editor",
                                return_value=(None, None)) as resolve:
-                start = proxy._editor_start({})
-                prepare = proxy._editor_prepare_tests({"filter": "X"})
+                start = proxy._editor_start(_start_args())
+                prepare = proxy._editor_run_tests(
+                    {"filter": "X", "mode": "offscreen", "reason": REASON})
         for call in resolve.call_args_list:
             self.assertEqual(call.kwargs["engine_root_override"], self.OVERRIDE)
         self.assertEqual(resolve.call_count, 2)
@@ -523,13 +550,16 @@ class _CapturedOutput(io.StringIO):
 
 
 def _pin_desktop_launch_platform(test):
-    """Pin the launch path of platforms with a .uproject open action and a display, and hide any
-    operator engine override, so these tests read the same on every host. Linux's direct-spawn
-    path is covered by LinuxLaunchTest."""
-    for name, value in (("_association_open_supported", True), ("_visible_launch_env", {})):
-        patcher = mock.patch("mcp_proxy." + name, return_value=value)
-        patcher.start()
-        test.addCleanup(patcher.stop)
+    """Pin a host with a display and hide any operator engine override, so these tests read the
+    same on every host. Linux's display borrowing is covered by LinuxLaunchTest."""
+    patcher = mock.patch("mcp_proxy._visible_launch_env", return_value={})
+    patcher.start()
+    test.addCleanup(patcher.stop)
+    # The direct visible spawn is the platform-neutral baseline these tests pin; the Windows
+    # supervised visible launch has its own test.
+    direct = mock.patch("mcp_proxy._visible_via_supervisor", return_value=False)
+    direct.start()
+    test.addCleanup(direct.stop)
     environ = mock.patch.dict(os.environ)
     environ.start()
     test.addCleanup(environ.stop)
@@ -561,40 +591,6 @@ class ProxyEditorStartTest(unittest.TestCase):
             fh.write('{"EngineAssociation": "5.8"}')
         return path
 
-    def test_default_uses_registered_open_after_resolving_the_project_engine(self):
-        with tempfile.TemporaryDirectory() as temp:
-            project = self._project(temp)
-            proxy = self._proxy(uproject=project)
-            events = []
-
-            def probe(_url):
-                events.append("ping")
-                return ("not_running", "connection refused") if len(events) == 1 else (
-                    "alive", None)
-
-            def shell_open(path):
-                events.append(("open", path))
-
-            with mock.patch.object(proxy, "_probe_state", side_effect=probe), \
-                    mock.patch("mcp_proxy._open_uproject", side_effect=shell_open), \
-                    mock.patch("mcp_proxy.resolve_editor",
-                               return_value=("C:\\UE_5.8", "Editor.exe")) as resolve, \
-                    mock.patch("mcp_proxy.build_editor_command",
-                               side_effect=AssertionError("must not build direct command")), \
-                    mock.patch("mcp_proxy.subprocess.Popen",
-                               side_effect=AssertionError("must not spawn direct process")):                result = proxy._editor_start({})
-
-            # The association mode resolves the engine too, so it cannot diverge from the
-            # direct-spawn mode: the project's EngineAssociation is the only input.
-            self.assertEqual(resolve.call_args.args[3], "5.8")
-            self.assertFalse(result["isError"])
-            self.assertEqual(events[0], "ping")
-            self.assertEqual(events[1], ("open", os.path.normpath(project)))
-            self.assertEqual(events[2], "ping")
-            self.assertEqual(result["structuredContent"]["association"], "open")
-            self.assertEqual(result["structuredContent"]["engineRoot"], "C:\\UE_5.8")
-            self.assertNotIn("pid", result["structuredContent"])
-
     def test_unresolvable_association_fails_loudly_and_launches_nothing(self):
         with tempfile.TemporaryDirectory() as temp:
             project = self._project(temp)
@@ -602,11 +598,11 @@ class ProxyEditorStartTest(unittest.TestCase):
             with mock.patch.object(
                     proxy, "_probe_state", return_value=("not_running", "refused")), \
                     mock.patch("mcp_proxy._association_engine_roots", return_value=[]), \
-                    mock.patch("mcp_proxy._open_uproject",
-                               side_effect=AssertionError("must not open the project")), \
+                    mock.patch("mcp_proxy.pinwright_supervisor.spawn_supervised",
+                               side_effect=AssertionError("must not spawn any editor")), \
                     mock.patch("mcp_proxy.subprocess.Popen",
                                side_effect=AssertionError("must not spawn any editor")):
-                result = proxy._editor_start({})
+                result = proxy._editor_start(_start_args())
             self.assertTrue(result["isError"])
             self.assertEqual(
                 result["structuredContent"]["error"], "EDITOR_ENGINE_NOT_FOUND"
@@ -630,27 +626,11 @@ class ProxyEditorStartTest(unittest.TestCase):
                                return_value=engine_root) as resolved, \
                     mock.patch("mcp_proxy.subprocess.Popen",
                                return_value=process) as popen:
-                result = proxy._editor_start({
-                    "extra_args": ["-relay=tcp://127.0.0.1:7788"],
-                })
+                result = proxy._editor_start(_start_args(
+                    extra_args=["-relay=tcp://127.0.0.1:7788"]))
             self.assertEqual(resolved.call_args.args[0], "5.8")
             self.assertTrue(_same(popen.call_args.args[0][0], _editor_exe_under(engine_root)))
             self.assertFalse(result["isError"])
-
-    def test_shell_dispatch_failure_is_clear(self):
-        with tempfile.TemporaryDirectory() as temp:
-            proxy = self._proxy(uproject=self._project(temp))
-            with mock.patch.object(
-                    proxy, "_probe_state", return_value=("not_running", "refused")), \
-                    mock.patch("mcp_proxy.resolve_editor",
-                               return_value=("C:\\UE_5.8", "Editor.exe")), \
-                    mock.patch("mcp_proxy._open_uproject",
-                               side_effect=OSError("association unavailable")):
-                result = proxy._editor_start({})
-            self.assertTrue(result["isError"])
-            self.assertEqual(
-                result["structuredContent"]["error"], "EDITOR_PROJECT_OPEN_FAILED"
-            )
 
     def test_every_wait_mode_rejects_live_editor_before_resolution(self):
         for wait in ("ready", "exit", "invalid"):
@@ -660,7 +640,7 @@ class ProxyEditorStartTest(unittest.TestCase):
                         proxy, "_probe_state", return_value=("alive", None)), \
                         mock.patch("mcp_proxy.resolve_uproject",
                                    side_effect=AssertionError("project resolved")):
-                    result = proxy._editor_start({"wait": wait})
+                    result = proxy._editor_start(_start_args(wait=wait))
                 self.assertTrue(result["isError"])
                 self.assertEqual(
                     result["structuredContent"]["error"], "EDITOR_ALREADY_RUNNING"
@@ -674,7 +654,7 @@ class ProxyEditorStartTest(unittest.TestCase):
                 return_value=("unresponsive", "ping timed out")), \
                 mock.patch("mcp_proxy.resolve_uproject",
                            side_effect=AssertionError("project resolved")):
-            result = proxy._editor_start({"wait": "exit"})
+            result = proxy._editor_start(_start_args(wait="exit"))
         self.assertEqual(result["structuredContent"]["error"], "EDITOR_UNRESPONSIVE")
 
     def test_stale_plugin_guard_does_not_spawn_second_editor(self):
@@ -691,14 +671,14 @@ class ProxyEditorStartTest(unittest.TestCase):
                                    side_effect=AssertionError("project resolved")), \
                         mock.patch("mcp_proxy.subprocess.Popen",
                                    side_effect=AssertionError("second editor spawned")):
-                    result = proxy._editor_start({"wait": wait})
+                    result = proxy._editor_start(_start_args(wait=wait))
                 self.assertTrue(result["isError"])
                 self.assertEqual(
                     result["structuredContent"]["error"], "EDITOR_PLUGIN_OUTDATED")
                 self.assertFalse(result["structuredContent"]["retryable"])
                 self.assertEqual(result["structuredContent"]["url"], self.URL)
 
-    def test_direct_headless_exit_uses_unbounded_wait(self):
+    def test_windowless_exit_runs_under_the_capped_supervisor(self):
         with tempfile.TemporaryDirectory() as temp:
             project = self._project(temp)
             proxy = self._proxy(uproject=project)
@@ -708,19 +688,28 @@ class ProxyEditorStartTest(unittest.TestCase):
                     mock.patch("mcp_proxy.resolve_editor",
                                return_value=("C:\\UE_5.8", "Editor.exe")), \
                     mock.patch("mcp_proxy.subprocess.Popen",
-                               return_value=process) as popen:
+                               side_effect=AssertionError("windowless must be supervised")), \
+                    mock.patch("mcp_proxy.pinwright_supervisor.spawn_supervised",
+                               return_value=process) as supervised:
                 result = proxy._editor_start({
-                    "visible": False,
+                    "mode": "offscreen",
+                    "reason": REASON,
                     "wait": "exit",
                     "extra_args": ["-Abslog=C:/logs/test.log"],
                 })
-            command = popen.call_args.args[0]
+            command = supervised.call_args.args[0]
             self.assertIn("-RenderOffScreen", command)
             self.assertIn("-Abslog=C:/logs/test.log", command)
-            self.assertEqual(process.wait_calls, [((), {})])
+            self.assertEqual(supervised.call_args.kwargs["kind"], "editor")
+            self.assertEqual(supervised.call_args.kwargs["mode"], "offscreen")
+            self.assertEqual(supervised.call_args.kwargs["reason"], REASON)
+            self.assertEqual(supervised.call_args.kwargs["launched_by"], "editor_start")
+            self.assertEqual(supervised.call_args.kwargs["log_path"], "C:/logs/test.log")
+            self.assertIsNone(supervised.call_args.kwargs["timeout_minutes"])
             self.assertFalse(result["isError"])
+            self.assertEqual(result["structuredContent"]["mode"], "offscreen")
 
-    def test_extra_args_force_direct_ready_mode(self):
+    def test_visible_ready_spawns_the_editor_directly(self):
         with tempfile.TemporaryDirectory() as temp:
             project = self._project(temp)
             proxy = self._proxy(uproject=project)
@@ -733,12 +722,64 @@ class ProxyEditorStartTest(unittest.TestCase):
                                    side_effect=lambda _url: next(probes)), \
                     mock.patch("mcp_proxy.resolve_editor",
                                return_value=("C:\\UE_5.8", "Editor.exe")), \
+                    mock.patch("mcp_proxy.pinwright_supervisor.spawn_supervised",
+                               side_effect=AssertionError("visible is not supervised")), \
                     mock.patch("mcp_proxy.subprocess.Popen",
                                return_value=process) as popen:
-                result = proxy._editor_start({"extra_args": ["-windowed"]})
+                result = proxy._editor_start(_start_args(extra_args=["-windowed"]))
             self.assertEqual(popen.call_args.args[0][-1], "-windowed")
             self.assertFalse(result["isError"])
             self.assertEqual(result["structuredContent"]["pid"], process.pid)
+            self.assertEqual(result["structuredContent"]["reason"], REASON)
+            self.assertEqual(result["structuredContent"]["launchedBy"], "editor_start")
+            self.assertEqual(result["structuredContent"]["mode"], "visible")
+            self.assertFalse(result["structuredContent"]["capped"])
+
+    def test_a_proxy_supervisor_skew_on_start_is_typed(self):
+        with tempfile.TemporaryDirectory() as temp:
+            project = self._project(temp)
+            proxy = self._proxy(uproject=project)
+            with mock.patch.object(
+                    proxy, "_probe_state", return_value=("not_running", "refused")), \
+                    mock.patch("mcp_proxy.resolve_editor",
+                               return_value=("C:\\UE_5.8", "Editor.exe")), \
+                    mock.patch("mcp_proxy.pinwright_supervisor.spawn_supervised",
+                               side_effect=pinwright_supervisor.SupervisorVersionMismatch(
+                                   pinwright_supervisor._mismatch_text(1))):
+                result = proxy._editor_start(_start_args(mode="offscreen"))
+        self.assertEqual(result["structuredContent"]["error"], "SUPERVISOR_VERSION_MISMATCH")
+        self.assertIn("Restart the MCP server", result["content"][0]["text"])
+
+    def test_windows_visible_goes_through_the_uncapped_supervisor_and_reports_detach(self):
+        # Windows: the visible editor is started by the supervisor, itself created through WMI,
+        # so it survives the MCP client's tree kill. Uncapped, normal priority, same argv.
+        with tempfile.TemporaryDirectory() as temp:
+            project = self._project(temp)
+            proxy = self._proxy(uproject=project)
+            process = _CompletedProcess(code=None)
+            process.detached, process.launch_mechanism = True, "wmi-win32-process-create"
+            process.detach_note = None
+            probes = iter([("not_running", "refused"), ("alive", None)])
+            with mock.patch("mcp_proxy._visible_via_supervisor", return_value=True), \
+                    mock.patch.object(proxy, "_probe_state",
+                                      side_effect=lambda _url: next(probes)), \
+                    mock.patch("mcp_proxy.resolve_editor",
+                               return_value=("C:\\UE_5.8", "Editor.exe")), \
+                    mock.patch("mcp_proxy.pinwright_supervisor.spawn_supervised",
+                               return_value=process) as supervised, \
+                    mock.patch("mcp_proxy.subprocess.Popen",
+                               side_effect=AssertionError("not a direct spawn")):
+                result = proxy._editor_start(_start_args(extra_args=["-windowed"]))
+        kwargs = supervised.call_args.kwargs
+        self.assertEqual(supervised.call_args.args[0][-1], "-windowed")
+        self.assertEqual((kwargs["kind"], kwargs["mode"], kwargs["capped"], kwargs["priority"]),
+                         ("editor", "visible", False, "Normal"))
+        self.assertIsNone(kwargs["timeout_minutes"])
+        self.assertFalse(result["isError"])
+        structured = result["structuredContent"]
+        self.assertEqual((structured["mode"], structured["capped"], structured["detached"],
+                          structured["launchMechanism"]),
+                         ("visible", False, True, "wmi-win32-process-create"))
 
     def test_direct_ready_early_exit_reports_abslog_path(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -750,9 +791,8 @@ class ProxyEditorStartTest(unittest.TestCase):
                     mock.patch("mcp_proxy.resolve_editor",
                                return_value=("C:\\UE_5.8", "Editor.exe")), \
                     mock.patch("mcp_proxy.subprocess.Popen", return_value=process):
-                result = proxy._editor_start({
-                    "extra_args": ["-Abslog=C:/logs/early-exit.log"],
-                })
+                result = proxy._editor_start(_start_args(
+                    extra_args=["-Abslog=C:/logs/early-exit.log"]))
         self.assertEqual(
             result["structuredContent"]["error"], "EDITOR_EXITED_BEFORE_READY"
         )
@@ -770,40 +810,24 @@ class ProxyEditorStartTest(unittest.TestCase):
                     mock.patch("mcp_proxy.resolve_editor",
                                return_value=("C:\\UE_5.8", "Editor.exe")), \
                     mock.patch("mcp_proxy.subprocess.Popen", return_value=process):
-                result = proxy._editor_start({
-                    "extra_args": ["-Abslog=C:/logs/ready-timeout.log"],
-                })
+                result = proxy._editor_start(_start_args(
+                    extra_args=["-Abslog=C:/logs/ready-timeout.log"]))
         self.assertEqual(result["structuredContent"]["error"], "EDITOR_START_TIMEOUT")
         self.assertEqual(
             result["structuredContent"]["logPath"], "C:/logs/ready-timeout.log"
         )
 
-    def test_association_readiness_timeout_reports_project_without_pid(self):
-        with tempfile.TemporaryDirectory() as temp:
-            project = self._project(temp)
-            proxy = self._proxy(uproject=project, start_timeout=0.0)
-            with mock.patch.object(
-                    proxy, "_probe_state", return_value=("not_running", "refused")), \
-                    mock.patch("mcp_proxy.resolve_editor",
-                               return_value=("C:\\UE_5.8", "Editor.exe")), \
-                    mock.patch("mcp_proxy._open_uproject"):
-                result = proxy._editor_start({})
-            self.assertEqual(result["structuredContent"]["error"], "EDITOR_START_TIMEOUT")
-            self.assertEqual(result["structuredContent"]["uproject"],
-                             os.path.normpath(project))
-            self.assertEqual(result["structuredContent"]["engineRoot"], "C:\\UE_5.8")
-            self.assertNotIn("pid", result["structuredContent"])
+    def test_interruption_leaves_the_detached_editor_running(self):
+        class _Interrupting(_CompletedProcess):
+            def poll(self):
+                raise KeyboardInterrupt()
 
-    def test_interruption_cleans_up_only_owned_direct_child(self):
-        process = _InterruptedProcess()
-        proxy = self._proxy()
-        proxy._track_owned_child(process)
-        result = proxy._wait_for_exit(process, "Editor.exe P.uproject", [])
+        process = _Interrupting(code=None)
+        result = self._proxy()._wait_for_exit(process, "Editor.exe P.uproject", [])
         self.assertEqual(result["structuredContent"]["error"], "EDITOR_RUN_INTERRUPTED")
-        self.assertTrue(result["structuredContent"]["cleanupSucceeded"])
-        self.assertTrue(process.terminated)
-        self.assertEqual(process.wait_calls[0], ((), {}))
-        self.assertEqual(process.wait_calls[1], ((), {"timeout": 5.0}))
+        self.assertTrue(result["structuredContent"]["leftRunning"])
+        self.assertFalse(process.terminated)
+        self.assertFalse(process.killed)
 
     # ---- start-into-map -----------------------------------------------------
     #
@@ -811,7 +835,8 @@ class ProxyEditorStartTest(unittest.TestCase):
     # asserted below is the one the real build_editor_command produced.
 
     def _spawn_argv(self, args):
-        """Run the real _editor_start against a fake dead endpoint and return the spawned argv."""
+        """Run the real _editor_start against a fake dead endpoint and return the spawned argv,
+        whether it went to a direct Popen (visible) or to the capped supervisor (windowless)."""
         with tempfile.TemporaryDirectory() as temp:
             project = self._project(temp)
             proxy = self._proxy(uproject=project, start_timeout=0.0)
@@ -819,33 +844,21 @@ class ProxyEditorStartTest(unittest.TestCase):
                     proxy, "_probe_state", return_value=("not_running", "refused")), \
                     mock.patch("mcp_proxy.resolve_editor",
                                return_value=("C:\\UE_5.8", "Editor.exe")), \
+                    mock.patch("mcp_proxy.pinwright_supervisor.spawn_supervised",
+                               return_value=_BlockedProcess()) as supervised, \
                     mock.patch("mcp_proxy.subprocess.Popen",
                                return_value=_BlockedProcess()) as popen:
-                proxy._editor_start(args)
-            return popen.call_args.args[0]
+                # wait='ready' against a zero start timeout returns at once; the argv is the
+                # same for either wait mode.
+                proxy._editor_start(_start_args(**dict(args, wait="ready")))
+            spawner = popen if popen.called else supervised
+            self.assertEqual(popen.called + supervised.called, 1)
+            return spawner.call_args.args[0]
 
     def test_map_lands_immediately_after_the_uproject_on_the_real_launch(self):
         command = self._spawn_argv({"map": "/Game/Maps/Blockout"})
         self.assertEqual(command[2], "/Game/Maps/Blockout")
         self.assertEqual(command[3], "-AutoDeclinePackageRecovery")
-
-    def test_map_forces_a_direct_spawn_instead_of_the_os_association(self):
-        # The OS "open" verb carries no command line, so a map can only be delivered by a
-        # direct spawn. Counterfactual: leave `start_map is None` out of the association_mode
-        # predicate and _open_uproject runs while build_editor_command never does.
-        with tempfile.TemporaryDirectory() as temp:
-            project = self._project(temp)
-            proxy = self._proxy(uproject=project, start_timeout=0.0)
-            with mock.patch.object(
-                    proxy, "_probe_state", return_value=("not_running", "refused")), \
-                    mock.patch("mcp_proxy.resolve_editor",
-                               return_value=("C:\\UE_5.8", "Editor.exe")), \
-                    mock.patch("mcp_proxy._open_uproject",
-                               side_effect=AssertionError("must not use the OS association")), \
-                    mock.patch("mcp_proxy.subprocess.Popen",
-                               return_value=_BlockedProcess()) as popen:
-                proxy._editor_start({"map": "/Game/Maps/MyLevel"})
-            self.assertIn("/Game/Maps/MyLevel", popen.call_args.args[0])
 
     def test_map_defaults_modal_suppression_on(self):
         # A startup modal (e.g. 'Wait for ZenServer?') fires before PinWright loads, so no RPC
@@ -859,14 +872,14 @@ class ProxyEditorStartTest(unittest.TestCase):
     def test_windowless_launch_gets_modal_suppression_without_asking(self):
         # Was pinned the other way as "backwards compatibility". The rationale for keeping
         # -RunningUnattendedScript opt-in is "it auto-answers dialogs with engine defaults, so a
-        # human must not be sharing the window" - and visible:false HAS no window. What it does
+        # human must not be sharing the window" - and mode offscreen HAS no window. What it does
         # have is -unattended, which sets FApp::IsUnattended() but leaves
         # GIsRunningUnattendedScript false - and GIsRunningUnattendedScript is the only global
         # FSlateApplication::AddModalWindow consults (SlateApplication.cpp:2134). So the old
         # behaviour shipped the one state the engine handles worst: a startup modal owns the
         # game thread forever, in a process with no window in which anyone could see or clear
         # it. a proxy-owned automation launch already hit exactly this wedge (25 minutes, zero tests, 0.8% CPU).
-        command = self._spawn_argv({"visible": False, "wait": "exit"})
+        command = self._spawn_argv({"mode": "offscreen", "wait": "exit"})
         self.assertIn("-unattended", command)
         self.assertIn("-RunningUnattendedScript", command)
 
@@ -874,18 +887,18 @@ class ProxyEditorStartTest(unittest.TestCase):
         # The half of the old rationale that is untouched: a visible editor can be handed to a
         # person, so nothing auto-answers its dialogs unless the caller asks (unattended_script)
         # or the call shape implies an agent-driven boot (map).
-        command = self._spawn_argv({"visible": True, "wait": "exit"})
+        command = self._spawn_argv({"mode": "visible", "wait": "exit"})
         self.assertNotIn("-RunningUnattendedScript", command)
         self.assertNotIn("-unattended", command)
 
     def test_windowless_opt_out_cannot_strip_the_switch_off_a_windowless_launch(self):
-        # Deliberate compatibility break, and the reason the flag belongs in _HEADLESS_FLAGS
+        # Deliberate compatibility break, and the reason the flag belongs in _OFFSCREEN_FLAGS
         # rather than in the unattended_script default: unattended_script:false must not be able
         # to assemble -unattended WITHOUT -RunningUnattendedScript. That combination wedges on a
         # startup modal AND makes FEditorFileUtils::PromptForCheckoutAndSave return PR_Cancelled
         # and save nothing (FileHelpers.cpp:4664). Opting out of modal suppression is only
-        # meaningful where a modal can be answered, i.e. visible:true.
-        command = self._spawn_argv({"visible": False, "wait": "exit",
+        # meaningful where a modal can be answered, i.e. mode visible.
+        command = self._spawn_argv({"mode": "offscreen", "wait": "exit",
                                     "unattended_script": False})
         self.assertIn("-unattended", command)
         self.assertIn("-RunningUnattendedScript", command)
@@ -899,19 +912,109 @@ class ProxyEditorStartTest(unittest.TestCase):
                     proxy, "_probe_state", return_value=("not_running", "refused")), \
                     mock.patch("mcp_proxy.subprocess.Popen",
                                side_effect=AssertionError("must not spawn")), \
-                    mock.patch("mcp_proxy._open_uproject",
-                               side_effect=AssertionError("must not open")):
-                result = proxy._editor_start({"map": "-NotAMap"})
+                    mock.patch("mcp_proxy.pinwright_supervisor.spawn_supervised",
+                               side_effect=AssertionError("must not spawn")):
+                result = proxy._editor_start(_start_args(map="-NotAMap"))
         self.assertTrue(result["isError"])
         self.assertEqual(result["structuredContent"]["error"], "INVALID_MAP")
 
     def test_map_schema_is_advertised(self):
         self.assertIn("map", EDITOR_START_TOOL["inputSchema"]["properties"])
 
+    # ---- mandatory launch mode and reason ------------------------------------
+
+    def test_launch_schemas_require_mode_and_reason(self):
+        for tool in (EDITOR_START_TOOL, EDITOR_RESTART_TOOL, EDITOR_RUN_TESTS_TOOL):
+            with self.subTest(tool=tool["name"]):
+                schema = tool["inputSchema"]
+                self.assertTrue({"mode", "reason"} <= set(schema["required"]))
+                self.assertNotIn("visible", schema["properties"])
+                mode = schema["properties"]["mode"]
+                self.assertEqual(mode["enum"], ["visible", "offscreen", "headless"])
+                self.assertNotIn("default)", mode["description"].lower())
+                self.assertIn("Required, no default", mode["description"])
+
+    def _refused(self, launch, args):
+        """Run a launch verb with every side effect armed to fail; return its result."""
+        with mock.patch("mcp_proxy.subprocess.Popen",
+                        side_effect=AssertionError("must not spawn")), \
+                mock.patch("mcp_proxy.pinwright_supervisor.spawn_supervised",
+                           side_effect=AssertionError("must not spawn")), \
+                mock.patch("mcp_proxy.resolve_uproject",
+                           side_effect=AssertionError("must not resolve the project")):
+            proxy = self._proxy(uproject="missing.uproject")
+            with mock.patch.object(proxy, "_probe_state",
+                                   side_effect=AssertionError("must not probe")):
+                return getattr(proxy, launch)(args)
+
+    def test_missing_or_invalid_mode_and_reason_are_refused_without_spawning(self):
+        cases = (
+            ({"reason": REASON}, "MISSING_REQUIRED_PARAM", "mode"),
+            ({"visible": True, "reason": REASON}, "MISSING_REQUIRED_PARAM", "mode"),
+            ({"mode": "windowless", "reason": REASON}, "INVALID_MODE", "mode"),
+            ({"mode": "Visible", "reason": REASON}, "INVALID_MODE", "mode"),
+            ({"mode": True, "reason": REASON}, "INVALID_MODE", "mode"),
+            ({"mode": None, "reason": REASON}, "INVALID_MODE", "mode"),
+            ({"mode": "headless"}, "MISSING_REQUIRED_PARAM", "reason"),
+            ({"mode": "offscreen", "reason": ""}, "INVALID_REASON", "reason"),
+            ({"mode": "offscreen", "reason": " \n\t "}, "INVALID_REASON", "reason"),
+            ({"mode": "visible", "reason": 7}, "INVALID_REASON", "reason"),
+            ({"mode": "visible", "reason": "x" * (pinwright_supervisor.REASON_MAX_CHARS + 1)},
+             "INVALID_REASON", "reason"),
+        )
+        for launch in ("_editor_start", "_editor_restart"):
+            for args, code, param in cases:
+                with self.subTest(launch=launch, args=args):
+                    result = self._refused(launch, args)
+                    self.assertTrue(result["isError"])
+                    self.assertEqual(result["structuredContent"]["error"], code)
+                    self.assertEqual(result["structuredContent"]["param"], param)
+
+    def test_mode_refusal_names_both_values_and_what_each_launches(self):
+        for args in ({"reason": REASON}, {"mode": "no", "reason": REASON}):
+            text = self._refused("_editor_start", args)["content"][0]["text"]
+            for mode in ("'visible'", "'offscreen'", "'headless'"):
+                self.assertIn(mode, text)
+            self.assertIn("-NullRHI", text)
+            self.assertIn("real RHI", text)
+
+    def test_mode_visible_keeps_todays_command_line_plus_the_launch_switches(self):
+        command = self._spawn_argv({"mode": "visible"})
+        identity = pinwright_supervisor.launch_identity_args(REASON, "editor_start")
+        self.assertEqual(command[2:], ["-AutoDeclinePackageRecovery"] + identity)
+        self.assertNotIn("-RenderOffScreen", command)
+
+    def test_mode_offscreen_keeps_todays_command_line_plus_the_launch_switches(self):
+        command = self._spawn_argv({"mode": "offscreen"})
+        identity = pinwright_supervisor.launch_identity_args(REASON, "editor_start")
+        self.assertEqual(command[2:], ["-AutoDeclinePackageRecovery"]
+                         + mcp_proxy._OFFSCREEN_FLAGS + identity)
+
+    def test_mode_headless_runs_nullrhi_under_the_capped_supervisor(self):
+        with tempfile.TemporaryDirectory() as temp:
+            proxy = self._proxy(uproject=self._project(temp), start_timeout=0.0)
+            with mock.patch.object(
+                    proxy, "_probe_state", return_value=("not_running", "refused")), \
+                    mock.patch("mcp_proxy.resolve_editor",
+                               return_value=("C:\\UE_5.8", "Editor.exe")), \
+                    mock.patch("mcp_proxy._visible_launch_env",
+                               side_effect=AssertionError("headless needs no display")), \
+                    mock.patch("mcp_proxy.subprocess.Popen",
+                               side_effect=AssertionError("headless must be supervised")), \
+                    mock.patch("mcp_proxy.pinwright_supervisor.spawn_supervised",
+                               return_value=_BlockedProcess()) as supervised:
+                result = proxy._editor_start(_start_args(mode="headless"))
+        command = supervised.call_args.args[0]
+        identity = pinwright_supervisor.launch_identity_args(REASON, "editor_start")
+        self.assertEqual(command[2:], ["-AutoDeclinePackageRecovery", "-NullRHI"]
+                         + mcp_proxy._OFFSCREEN_FLAGS + identity)
+        self.assertEqual(supervised.call_args.kwargs["mode"], "headless")
+        self.assertEqual(result["structuredContent"]["mode"], "headless")
+
 
 class LinuxLaunchTest(unittest.TestCase):
-    """Linux has no dependable .uproject open action, and a proxy started over SSH has no
-    DISPLAY, so a visible launch spawns the resolved editor with the desktop session's display."""
+    """A proxy started over SSH has no DISPLAY, so a visible Linux launch spawns the resolved
+    editor with the desktop session's display; a windowless one needs none."""
 
     ENGINE_ROOT = os.path.join(os.sep + "opt", "UE_5.8")
     EXE = os.path.join(ENGINE_ROOT, "Engine", "Binaries", "Linux", "UnrealEditor")
@@ -925,25 +1028,27 @@ class LinuxLaunchTest(unittest.TestCase):
             proxy = Proxy(None, 0.1, 0.1, 0.1, None, None, start_timeout=0.0,
                           uproject=project)
             probes = iter([("not_running", "refused"), ("alive", None)])
-            with mock.patch("mcp_proxy._association_open_supported", return_value=False), \
+            with mock.patch("mcp_proxy._visible_via_supervisor", return_value=False), \
                     mock.patch("mcp_proxy._visible_launch_env", **display_env) as display, \
                     mock.patch.object(proxy, "_probe_state",
                                       side_effect=lambda _url: next(probes)), \
                     mock.patch.object(proxy, "_resolve_url", return_value="http://x/mcp"), \
                     mock.patch("mcp_proxy.resolve_editor",
                                return_value=(self.ENGINE_ROOT, self.EXE)), \
-                    mock.patch("mcp_proxy._open_uproject",
-                               side_effect=AssertionError("must not use xdg-open")), \
+                    mock.patch("mcp_proxy.pinwright_supervisor.spawn_supervised",
+                               return_value=process or _CompletedProcess(code=None)) as supervised, \
                     mock.patch("mcp_proxy.subprocess.Popen",
                                return_value=process or _CompletedProcess(code=None)) as popen:
-                result = proxy._editor_start(args)
+                result = proxy._editor_start(_start_args(**args))
+            self.supervised = supervised
             return result, popen, display, os.path.normpath(project)
 
     def test_default_start_spawns_the_resolved_editor_with_the_session_display(self):
         result, popen, _display, project = self._start({}, {"return_value": self.SESSION})
         self.assertFalse(result["isError"])
         self.assertEqual(popen.call_args.args[0],
-                         [self.EXE, project, "-AutoDeclinePackageRecovery"])
+                         [self.EXE, project, "-AutoDeclinePackageRecovery"]
+                         + pinwright_supervisor.launch_identity_args(REASON, "editor_start"))
         env = popen.call_args.kwargs["env"]
         self.assertEqual(env["DISPLAY"], ":1")
         self.assertEqual(env["XAUTHORITY"], self.SESSION["XAUTHORITY"])
@@ -961,12 +1066,13 @@ class LinuxLaunchTest(unittest.TestCase):
     def test_windowless_start_needs_no_display(self):
         # -RenderOffScreen hints SDL's dummy video driver (LinuxPlatformApplicationMisc.cpp).
         _result, popen, display, _project = self._start(
-            {"visible": False, "wait": "exit"},
+            {"mode": "offscreen", "wait": "exit"},
             {"side_effect": AssertionError("must not look for a display")},
             process=_CompletedProcess(code=0))
         display.assert_not_called()
-        self.assertNotIn("env", popen.call_args.kwargs)
-        self.assertIn("-RenderOffScreen", popen.call_args.args[0])
+        popen.assert_not_called()
+        self.assertNotIn("env", self.supervised.call_args.kwargs)
+        self.assertIn("-RenderOffScreen", self.supervised.call_args.args[0])
 
 
 def _proc_state(pid):
@@ -999,12 +1105,12 @@ class ReapSpawnedChildTest(unittest.TestCase):
             fh.write('{"EngineAssociation": "5.8"}')
         proxy = Proxy(None, 0.1, 0.1, 0.1, None, None, start_timeout=5.0, uproject=project)
         probes = iter([("not_running", "refused"), ("alive", None)])
-        with mock.patch("mcp_proxy._association_open_supported", return_value=False), \
+        with mock.patch("mcp_proxy._visible_launch_env", return_value={}), \
                 mock.patch.object(proxy, "_probe_state", side_effect=lambda _url: next(probes)), \
                 mock.patch.object(proxy, "_resolve_url", return_value="http://x/mcp"), \
                 mock.patch("mcp_proxy.resolve_editor", return_value=("root", sys.executable)), \
                 mock.patch("mcp_proxy.build_editor_command", return_value=child):
-            result = proxy._editor_start({"visible": False})
+            result = proxy._editor_start(_start_args())
         self.assertFalse(result["isError"], result)
         pid = result["structuredContent"]["pid"]
 
@@ -1062,6 +1168,35 @@ class BorrowSessionDisplayTest(unittest.TestCase):
                 self.assertEqual(mcp_proxy._visible_launch_env(), {"DISPLAY": ":9"})
 
 
+class StampDetachTest(unittest.TestCase):
+    """Every supervised launch result says whether the run outlives the MCP client."""
+
+    @staticmethod
+    def _result():
+        return {"content": [{"type": "text", "text": "BUILD_STARTED: x."}],
+                "structuredContent": {"pid": 1}, "isError": False}
+
+    def test_detached_run_reports_its_mechanism(self):
+        run = mock.Mock(detached=True, launch_mechanism="wmi-win32-process-create",
+                        detach_note=None)
+        result = mcp_proxy._stamp_detach(self._result(), run)
+        self.assertEqual(result["structuredContent"],
+                         {"pid": 1, "detached": True, "detachNote": None,
+                          "launchMechanism": "wmi-win32-process-create"})
+        self.assertEqual(result["content"][0]["text"], "BUILD_STARTED: x.")
+
+    def test_a_run_that_is_not_detached_says_so_in_the_text(self):
+        run = mock.Mock(detached=False, launch_mechanism="createprocess-breakaway",
+                        detach_note="WMI launch failed (boom)")
+        result = mcp_proxy._stamp_detach(self._result(), run)
+        self.assertFalse(result["structuredContent"]["detached"])
+        self.assertIn("NOT DETACHED: WMI launch failed (boom)", result["content"][0]["text"])
+
+    def test_a_run_without_the_fields_is_left_alone(self):
+        result = mcp_proxy._stamp_detach(self._result(), _CompletedProcess())
+        self.assertEqual(result["structuredContent"], {"pid": 1})
+
+
 class SpawnKwargsTest(unittest.TestCase):
     def test_posix_editor_never_inherits_the_mcp_stdio(self):
         # stdout is the MCP frame stream; an editor holding it writes console output into it.
@@ -1091,7 +1226,8 @@ class ProxyEditorRestartTest(unittest.TestCase):
 
     def test_restart_schema_is_advertised(self):
         self.assertEqual(EDITOR_RESTART_TOOL["name"], "editor_restart")
-        for key in ("map", "visible", "save", "discard", "extra_args", "unattended_script"):
+        for key in ("map", "mode", "reason", "save", "discard", "extra_args",
+                    "unattended_script"):
             self.assertIn(key, EDITOR_RESTART_TOOL["inputSchema"]["properties"])
 
     def test_dispatch_is_proxy_local(self):
@@ -1113,10 +1249,13 @@ class ProxyEditorRestartTest(unittest.TestCase):
                 mock.patch.object(proxy, "_wait_for_endpoint_down", return_value=True), \
                 mock.patch.object(proxy, "_editor_start", return_value=started) as start:
             result = proxy._editor_restart(
-                {"map": "/Game/Maps/X", "visible": False, "save": True})
+                {"map": "/Game/Maps/X", "mode": "offscreen", "reason": REASON, "save": True})
         quit_rpc.assert_called_once_with(self.URL, True, False)
-        # save/discard are quit-half arguments and must not leak into the launch.
-        start.assert_called_once_with({"map": "/Game/Maps/X", "visible": False})
+        # save/discard are quit-half arguments and must not leak into the launch; mode and
+        # reason are forwarded verbatim, never defaulted.
+        start.assert_called_once_with(
+            {"map": "/Game/Maps/X", "mode": "offscreen", "reason": REASON},
+            launched_by="editor_restart")
         self.assertTrue(result["structuredContent"]["restarted"])
         self.assertTrue(result["structuredContent"]["stoppedPreviousEditor"])
 
@@ -1127,7 +1266,7 @@ class ProxyEditorRestartTest(unittest.TestCase):
                 mock.patch.object(proxy, "_request_editor_quit",
                                   side_effect=AssertionError("must not quit a dead editor")), \
                 mock.patch.object(proxy, "_editor_start", return_value=started):
-            result = proxy._editor_restart({"map": "/Game/Maps/X"})
+            result = proxy._editor_restart(_start_args(map="/Game/Maps/X"))
         self.assertFalse(result["structuredContent"]["stoppedPreviousEditor"])
 
     def test_a_refused_quit_never_starts_a_second_editor(self):
@@ -1143,7 +1282,7 @@ class ProxyEditorRestartTest(unittest.TestCase):
                                                 "result": refusal}), \
                 mock.patch.object(proxy, "_editor_start",
                                   side_effect=AssertionError("must not start a second editor")):
-            result = proxy._editor_restart({})
+            result = proxy._editor_restart(_start_args())
         self.assertTrue(result["isError"])
         self.assertEqual(result["structuredContent"]["error"], "EDITOR_QUIT_REFUSED")
         self.assertIn("UNSAVED_CHANGES", result["content"][0]["text"])
@@ -1156,7 +1295,7 @@ class ProxyEditorRestartTest(unittest.TestCase):
                                return_value=("blocked_on_modal", "a dialog is open")), \
                 mock.patch.object(proxy, "_editor_start",
                                   side_effect=AssertionError("must not start a second editor")):
-            result = proxy._editor_restart({})
+            result = proxy._editor_restart(_start_args())
         self.assertEqual(result["structuredContent"]["error"], "EDITOR_BLOCKED_ON_MODAL")
 
     def test_a_stuck_shutdown_times_out_without_killing_or_respawning(self):
@@ -1166,14 +1305,14 @@ class ProxyEditorRestartTest(unittest.TestCase):
                 mock.patch.object(proxy, "_wait_for_endpoint_down", return_value=False), \
                 mock.patch.object(proxy, "_editor_start",
                                   side_effect=AssertionError("must not start a second editor")):
-            result = proxy._editor_restart({})
+            result = proxy._editor_restart(_start_args())
         self.assertEqual(result["structuredContent"]["error"], "EDITOR_STOP_TIMEOUT")
 
     def test_save_and_discard_together_are_rejected(self):
         proxy = self._proxy()
         with mock.patch.object(proxy, "_probe_state",
                                side_effect=AssertionError("must not probe")):
-            result = proxy._editor_restart({"save": True, "discard": True})
+            result = proxy._editor_restart(_start_args(save=True, discard=True))
         self.assertEqual(result["structuredContent"]["error"], "INVALID_ARGUMENTS")
 
     def test_a_bad_map_is_rejected_before_the_editor_is_stopped(self):
@@ -1182,7 +1321,7 @@ class ProxyEditorRestartTest(unittest.TestCase):
         proxy = self._proxy()
         with mock.patch.object(proxy, "_probe_state",
                                side_effect=AssertionError("must not probe")):
-            result = proxy._editor_restart({"map": "-NotAMap"})
+            result = proxy._editor_restart(_start_args(map="-NotAMap"))
         self.assertEqual(result["structuredContent"]["error"], "INVALID_MAP")
 
     def test_quit_transport_error_is_treated_as_a_possible_clean_exit(self):
@@ -1285,18 +1424,24 @@ class ProxyStdioLifecycleTest(unittest.TestCase):
         self.assertIn("args: {...}})` executes the RPC", instructions)
         self.assertIn("still require `args: {}` to execute", instructions)
 
-    def test_eof_cleans_blocked_owned_direct_editor_without_writing_response(self):
+    def test_eof_ends_the_wait_but_leaves_the_detached_editor_running(self):
         with tempfile.TemporaryDirectory() as temp:
             proxy = self._proxy(self._project(temp))
-            process = _BlockingProcess()
+            process = _BlockedProcess()
+            spawned = threading.Event()
             input_stream = _ControlledInput()
             output_stream = _CapturedOutput()
+
+            def supervise(*_args, **_kwargs):
+                spawned.set()
+                return process
+
             with mock.patch(
                     "mcp_proxy.resolve_editor",
                     return_value=("C:\\UE_5.8", "Editor.exe"),
                 ), mock.patch(
-                    "mcp_proxy.subprocess.Popen", return_value=process
-                ) as popen:
+                    "mcp_proxy.pinwright_supervisor.spawn_supervised", side_effect=supervise
+                ):
                 server = threading.Thread(
                     target=serve_stdio, args=(proxy, input_stream, output_stream)
                 )
@@ -1307,65 +1452,18 @@ class ProxyStdioLifecycleTest(unittest.TestCase):
                     "method": "tools/call",
                     "params": {
                         "name": "editor_start",
-                        "arguments": {"visible": False, "wait": "exit"},
+                        "arguments": {"mode": "offscreen", "reason": REASON, "wait": "exit"},
                     },
                 })
-                self.assertTrue(process.started.wait(2.0))
+                self.assertTrue(spawned.wait(2.0))
                 input_stream.close()
-                server.join(2.0)
+                server.join(5.0)
 
         self.assertFalse(server.is_alive())
         self.assertTrue(proxy.shutdown_requested())
-        self.assertTrue(process.terminated)
-        self.assertEqual(process.wait_calls[0], ((), {}))
-        self.assertIn(((), {"timeout": 5.0}), process.wait_calls)
+        self.assertFalse(process.terminated)
+        self.assertFalse(process.killed)
         self.assertEqual(output_stream.getvalue(), "")
-        popen.assert_called_once()
-
-    def test_eof_never_owns_or_terminates_shell_association_editor(self):
-        with tempfile.TemporaryDirectory() as temp:
-            proxy = self._proxy(self._project(temp))
-            input_stream = _ControlledInput()
-            output_stream = _CapturedOutput()
-            opened = threading.Event()
-            with mock.patch(
-                    "mcp_proxy.resolve_editor", return_value=("C:\\UE_5.8", "Editor.exe")
-                ), mock.patch(
-                    "mcp_proxy._open_uproject", side_effect=lambda _path: opened.set()
-                ), mock.patch(
-                    "mcp_proxy.subprocess.Popen",
-                    side_effect=AssertionError("association launch used Popen"),
-                ), mock.patch.object(
-                    proxy,
-                    "_cleanup_child",
-                    side_effect=AssertionError("association editor was treated as owned"),
-                ):
-                server = threading.Thread(
-                    target=serve_stdio, args=(proxy, input_stream, output_stream)
-                )
-                server.start()
-                input_stream.send({
-                    "jsonrpc": "2.0",
-                    "id": 8,
-                    "method": "tools/call",
-                    "params": {"name": "editor_start", "arguments": {}},
-                })
-                self.assertTrue(opened.wait(2.0))
-                input_stream.close()
-                server.join(2.0)
-
-        self.assertFalse(server.is_alive())
-        self.assertTrue(proxy.shutdown_requested())
-        self.assertEqual(output_stream.getvalue(), "")
-
-    def test_child_spawn_race_after_eof_is_cleaned_without_becoming_owned(self):
-        proxy = self._proxy()
-        process = _BlockingProcess()
-        self.assertTrue(proxy.request_shutdown())
-        with self.assertRaisesRegex(RuntimeError, "shutting down"):
-            proxy._track_owned_child(process)
-        self.assertTrue(process.terminated)
-        self.assertTrue(proxy._cleanup_owned_child())
 
 
 class ProxyCliTest(unittest.TestCase):
@@ -1510,11 +1608,11 @@ class ProxyUnavailableCallTest(unittest.TestCase):
         self.assertTrue(result["structuredContent"]["retryable"])
 
 
-class ProxyEditorPrepareTestsTest(unittest.TestCase):
+class ProxyEditorRunTestsTest(unittest.TestCase):
     URL = "http://127.0.0.1:19880/mcp"
 
     def _proxy(self, uproject=None, url=None):
-        return Proxy(
+        proxy = Proxy(
             url,
             list_timeout=0.1,
             call_timeout=0.1,
@@ -1525,6 +1623,8 @@ class ProxyEditorPrepareTestsTest(unittest.TestCase):
             start_timeout=0.01,
             uproject=uproject,
         )
+        proxy.test_start_timeout = 0.0
+        return proxy
 
     def _project(self, temp):
         path = os.path.join(temp, "Host Project.uproject")
@@ -1538,27 +1638,37 @@ class ProxyEditorPrepareTestsTest(unittest.TestCase):
                               "UnrealEditor.exe")
         return root, editor
 
-    def _prepare(self, proxy, test_filter="PinWright",
-                 probe=("not_running", "connection refused")):
+    def _run(self, proxy, args=None, probe=("not_running", "connection refused"),
+             progress=None, run=None):
+        """Drive the real _editor_run_tests with the supervisor and the log scan faked."""
         engine_root, editor_exe = self._engine(proxy.uproject)
+        run = run or _BlockedProcess()
+        progress = progress or {"exists": True, "started": 1, "succeeded": 0, "failed": 0,
+                                "lastTest": "PinWright.infra.first"}
         with mock.patch.object(proxy, "_probe_state", return_value=probe), \
                 mock.patch("mcp_proxy.resolve_editor",
                            return_value=(engine_root, editor_exe)), \
                 mock.patch("mcp_proxy.os.path.isfile", return_value=True), \
+                mock.patch("mcp_proxy._visible_launch_env", return_value={}), \
                 mock.patch("mcp_proxy.subprocess.Popen",
-                           side_effect=AssertionError("must not spawn Unreal")) as popen, \
-                mock.patch.object(proxy, "_wait_for_ready",
-                                  side_effect=AssertionError("must not wait")), \
-                mock.patch.object(proxy, "_wait_for_exit",
-                                  side_effect=AssertionError("must not wait")):
-            result = proxy._editor_prepare_tests({"filter": test_filter})
-        return result, popen, engine_root, editor_exe
+                           side_effect=AssertionError("tests run only under the supervisor")), \
+                mock.patch("mcp_proxy.pinwright_supervisor.scan_test_progress",
+                           return_value=progress), \
+                mock.patch("mcp_proxy.pinwright_supervisor.spawn_supervised",
+                           return_value=run) as supervised:
+            result = proxy._editor_run_tests(
+                args if args is not None
+                else {"filter": "PinWright", "reason": REASON, "mode": "offscreen"})
+        return result, supervised, engine_root, editor_exe
 
-    def test_tool_schema_requires_only_filter(self):
-        schema = EDITOR_PREPARE_TESTS_TOOL["inputSchema"]
-        self.assertEqual(schema["required"], ["filter"])
-        self.assertEqual(set(schema["properties"]), {"filter"})
+    def test_tool_schemas(self):
+        schema = EDITOR_RUN_TESTS_TOOL["inputSchema"]
+        self.assertEqual(set(schema["required"]), {"filter", "reason", "mode"})
+        self.assertEqual(set(schema["properties"]), {"filter", "reason", "mode"})
         self.assertFalse(schema["additionalProperties"])
+        self.assertEqual(set(EDITOR_TEST_STATUS_TOOL["inputSchema"]["properties"]),
+                         {"logPath", "runId"})
+        self.assertNotIn("required", EDITOR_LIST_TOOL["inputSchema"])
 
     def test_tools_list_and_dispatch_are_proxy_local(self):
         proxy = self._proxy()
@@ -1570,150 +1680,168 @@ class ProxyEditorPrepareTestsTest(unittest.TestCase):
             })
         self.assertEqual(
             [tool["name"] for tool in response["result"]["tools"]],
-            ["call", "editor_start", "editor_restart", "editor_prepare_tests"],
+            ["call", "editor_start", "editor_restart", "editor_run_tests",
+             "editor_test_status", "editor_list", "editor_build", "editor_build_status"],
         )
+        self.assertFalse(hasattr(mcp_proxy, "EDITOR_PREPARE_TESTS_TOOL"))
 
-        expected = {
-            "content": [],
-            "structuredContent": {"status": "COMMAND_READY"},
-            "isError": False,
-        }
-        with mock.patch.object(proxy, "_editor_prepare_tests",
-                               return_value=expected) as prepare:
-            response = proxy.handle({
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "tools/call",
-                "params": {
-                    "name": "editor_prepare_tests",
-                    "arguments": {"filter": "X"},
-                },
-            })
-        prepare.assert_called_once_with({"filter": "X"})
-        self.assertEqual(response["result"], expected)
+        expected = {"content": [], "structuredContent": {"ok": True}, "isError": False}
+        for name, method, arguments in (
+                ("editor_run_tests", "_editor_run_tests", {"filter": "X"}),
+                ("editor_test_status", "_editor_test_status", {"logPath": "x.log"}),
+                ("editor_list", "_editor_list", {})):
+            with self.subTest(tool=name), \
+                    mock.patch.object(proxy, method, return_value=expected) as handler:
+                response = proxy.handle({
+                    "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                    "params": {"name": name, "arguments": arguments},
+                })
+                handler.assert_called_once_with(arguments)
+                self.assertEqual(response["result"], expected)
+                self.assertFalse(mcp_proxy._forwards_concurrently({
+                    "method": "tools/call", "id": 2, "params": {"name": name}}))
 
-    def test_guard_runs_before_filter_validation_or_project_path(self):
+    def test_missing_or_invalid_arguments_are_refused_before_the_guard(self):
+        invalid = (
+            (None, "INVALID_ARGUMENTS"),
+            ({"filter": "X", "reason": REASON}, "MISSING_REQUIRED_PARAM"),
+            ({"filter": "X", "mode": "windowless", "reason": REASON}, "INVALID_MODE"),
+            ({"filter": "X", "mode": "offscreen"}, "MISSING_REQUIRED_PARAM"),
+            ({"filter": "X", "mode": "offscreen", "reason": "  "}, "INVALID_REASON"),
+            ({"mode": "offscreen", "reason": REASON}, "INVALID_FILTER"),
+            ({"filter": "", "mode": "offscreen", "reason": REASON}, "INVALID_FILTER"),
+            ({"filter": " \t ", "mode": "offscreen", "reason": REASON}, "INVALID_FILTER"),
+            ({"filter": "A\nB", "mode": "offscreen", "reason": REASON}, "INVALID_FILTER"),
+            ({"filter": "A\u0085B", "mode": "offscreen", "reason": REASON}, "INVALID_FILTER"),
+            ({"filter": "A,B", "mode": "offscreen", "reason": REASON}, "INVALID_FILTER"),
+            ({"filter": "A;B", "mode": "offscreen", "reason": REASON}, "INVALID_FILTER"),
+            ({"filter": 7, "mode": "offscreen", "reason": REASON}, "INVALID_FILTER"),
+            ({"filter": "X", "mode": "offscreen", "reason": REASON, "extra_args": []},
+             "INVALID_ARGUMENTS"),
+        )
         proxy = self._proxy(uproject="missing.uproject", url=self.URL)
         with mock.patch.object(proxy, "_probe_state",
-                               return_value=("alive", None)), \
-                mock.patch.object(proxy, "_validate_test_arguments",
-                                   side_effect=AssertionError("validated too early")), \
-                mock.patch("mcp_proxy.resolve_uproject",
-                           side_effect=AssertionError("resolved project too early")):
-            result = proxy._editor_prepare_tests(None)
-        self.assertTrue(result["isError"])
-        structured = result["structuredContent"]
-        self.assertEqual(structured["error"], "EDITOR_ALREADY_RUNNING")
-        self.assertEqual(structured["editorGuard"]["state"], "alive")
-        self.assertEqual(structured["editorGuard"]["status"], "unavailable")
+                               side_effect=AssertionError("guard ran before validation")), \
+                mock.patch("mcp_proxy.pinwright_supervisor.spawn_supervised",
+                           side_effect=AssertionError("must not spawn")):
+            for arguments, code in invalid:
+                with self.subTest(arguments=arguments):
+                    result = proxy._editor_run_tests(arguments)
+                    self.assertEqual(result["structuredContent"]["error"], code)
 
-    def test_not_probed_observation_is_explicit_and_successful(self):
-        with tempfile.TemporaryDirectory() as temp:
-            project = self._project(temp)
-            proxy = self._proxy(uproject=project, url=None)
-            result, popen, _root, _editor = self._prepare(proxy)
-        self.assertFalse(result["isError"])
-        structured = result["structuredContent"]
-        self.assertEqual(structured["status"], "COMMAND_READY")
-        self.assertEqual(structured["editorGuard"]["status"], "not_probed")
-        self.assertEqual(structured["editorGuard"]["state"], "not_probed")
-        self.assertEqual(popen.call_count, 0)
-
-    def test_filter_validation_rejects_missing_unknown_empty_control_and_separator(self):
-        invalid = (
-            None,
-            {},
-            {"filter": ""},
-            {"filter": " \t "},
-            {"filter": "A\nB"},
-            {"filter": "A\u0085B"},
-            {"filter": "A,B"},
-            {"filter": "A;B"},
-            {"filter": "X", "extra_args": []},
-            {"filter": 7},
-        )
+    def test_a_live_editor_of_this_project_blocks_the_run(self):
+        # Kept from editor_prepare_tests: a second editor of this project would fight the live
+        # one for the gateway port and the project's Saved/ state.
         with tempfile.TemporaryDirectory() as temp:
             proxy = self._proxy(uproject=self._project(temp), url=self.URL)
-            with mock.patch.object(proxy, "_probe_state",
-                                   return_value=("not_running", "connection refused")):
-                for arguments in invalid:
-                    with self.subTest(arguments=arguments):
-                        result = proxy._editor_prepare_tests(arguments)
-                        self.assertEqual(
-                            result["structuredContent"]["error"], "INVALID_FILTER")
+            result, supervised, _root, _exe = self._run(proxy, probe=("alive", None))
+        self.assertEqual(result["structuredContent"]["error"], "EDITOR_ALREADY_RUNNING")
+        self.assertEqual(result["structuredContent"]["editorGuard"]["state"], "alive")
+        supervised.assert_not_called()
 
-    def test_command_ready_contains_the_load_bearing_launch_contract(self):
+    def test_windowless_run_launches_the_suite_contract_and_returns_once_tests_start(self):
         with tempfile.TemporaryDirectory() as temp:
             project = self._project(temp)
             proxy = self._proxy(uproject=project, url=self.URL)
-            result, popen, engine_root, editor_exe = self._prepare(proxy)
-        self.assertFalse(result["isError"])
+            result, supervised, engine_root, editor_exe = self._run(proxy)
+        self.assertFalse(result["isError"], result)
         structured = result["structuredContent"]
-        self.assertEqual(structured["status"], "COMMAND_READY")
-        self.assertEqual(structured["filter"], "PinWright")
-        self.assertEqual(structured["uproject"], os.path.abspath(project))
-        self.assertEqual(structured["engineAssociation"], "5.8")
-        self.assertEqual(structured["engineRoot"], os.path.abspath(engine_root))
-        self.assertEqual(structured["editorGuard"]["status"], "clear")
-        self.assertEqual(structured["editorGuard"]["state"], "not_running")
-        self.assertEqual(popen.call_count, 0)
-
-        launch = structured["launch"]
-        self.assertEqual(launch["executable"],
-                         os.path.abspath(_editor_cmd_from_editor(editor_exe)))
-        self.assertEqual(launch["argv"][0], os.path.abspath(project))
-        exec_cmd = next(arg for arg in launch["argv"]
-                        if arg.startswith("-ExecCmds="))
-        self.assertEqual(exec_cmd, "-ExecCmds=Automation RunTests PinWright,Quit")
-        self.assertNotIn(";Quit", exec_cmd)
-        self.assertIn("-TestExit=Automation Test Queue Empty", launch["argv"])
-        for flag in (
-                "-unattended",
-                "-nopause",
-                "-nosplash",
-                "-nosound",
-                "-RenderOffscreen",
-                "-nocefaccelpaint",
-                "-RunningUnattendedScript",
-                # No ZenLocal store in the cache graph, so nothing at startup builds an
-                # autolaunching FZenServiceInstance and the run does not pay the
-                # spawn-and-wait-for-health loop (23.5 s measured) before the first test.
-                "-ddc=InstalledNoZenLocalFallback",
-        ):
-            self.assertIn(flag, launch["argv"])
-        self.assertFalse(any("nullrhi" in arg.lower() for arg in launch["argv"]))
-
-        report_arg = next(arg for arg in launch["argv"]
-                          if arg.startswith("-ReportExportPath="))
-        self.assertTrue(os.path.isabs(report_arg.split("=", 1)[1]))
-        abslog = next(arg for arg in launch["argv"]
-                      if arg.startswith("-Abslog="))
-        self.assertEqual(abslog.split("=", 1)[1], structured["logPath"])
+        self.assertEqual(structured["status"], "TESTS_STARTED")
+        self.assertEqual(structured["startedTests"], 1)
+        self.assertEqual(structured["pid"], _BlockedProcess.pid)
+        self.assertEqual(structured["project"], os.path.abspath(project))
+        self.assertEqual(structured["reason"], REASON)
+        self.assertEqual(structured["mode"], "offscreen")
+        self.assertEqual(len(structured["runId"]), 32)
         self.assertTrue(os.path.isabs(structured["logPath"]))
-        self.assertEqual(launch["logPath"], structured["logPath"])
+        self.assertIn(structured["runId"], structured["logPath"])
 
-        checker = structured["checker"]
-        checker_script = os.path.abspath(os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "check_suite_log.py",
-        ))
-        self.assertEqual(checker["executable"], os.path.abspath(sys.executable))
-        self.assertEqual(checker["script"], checker_script)
-        self.assertEqual(checker["argv"], [checker_script, structured["logPath"]])
-        self.assertEqual(checker["logPath"], structured["logPath"])
+        argv = supervised.call_args.args[0]
+        kwargs = supervised.call_args.kwargs
+        self.assertEqual(argv[0], os.path.abspath(_editor_cmd_from_editor(editor_exe)))
+        self.assertEqual(argv[1], os.path.abspath(project))
+        self.assertIn("-ExecCmds=Automation RunTests PinWright,Quit", argv)
+        self.assertIn("-TestExit=Automation Test Queue Empty", argv)
+        for flag in ("-unattended", "-nopause", "-nosplash", "-nosound", "-RenderOffscreen",
+                     "-nocefaccelpaint", "-RunningUnattendedScript",
+                     "-ddc=InstalledNoZenLocalFallback", "-Abslog=" + structured["logPath"]):
+            self.assertIn(flag, argv)
+        self.assertFalse(any("nullrhi" in arg.lower() for arg in argv))
+        self.assertEqual(kwargs["kind"], "suite")
+        self.assertEqual(kwargs["reason"], REASON)
+        self.assertEqual(kwargs["launched_by"], "editor_run_tests")
+        self.assertEqual(kwargs["log_path"], structured["logPath"])
 
-        for key in (
-                "success",
-                "pid",
-                "exitCode",
-                "counts",
-                "verdict",
-                "result",
-                "timeoutSeconds",
-        ):
-            self.assertNotIn(key, structured)
+    def test_headless_run_adds_nullrhi_and_keeps_the_windowless_binary(self):
+        with tempfile.TemporaryDirectory() as temp:
+            proxy = self._proxy(uproject=self._project(temp), url=self.URL)
+            result, supervised, _root, editor_exe = self._run(
+                proxy, {"filter": "PinWright", "reason": REASON, "mode": "headless"})
+        self.assertFalse(result["isError"], result)
+        argv = supervised.call_args.args[0]
+        self.assertEqual(argv[0], os.path.abspath(_editor_cmd_from_editor(editor_exe)))
+        self.assertIn("-NullRHI", argv)
+        self.assertIn("-RenderOffscreen", argv)
+        self.assertEqual(supervised.call_args.kwargs["mode"], "headless")
+        self.assertEqual(result["structuredContent"]["mode"], "headless")
+        self.assertIn("headless", result["content"][0]["text"] + str(result["structuredContent"]))
 
-    def test_engine_association_selects_the_commandlet_without_spawning(self):
+    def test_visible_run_uses_the_gui_binary_without_render_offscreen(self):
+        with tempfile.TemporaryDirectory() as temp:
+            proxy = self._proxy(uproject=self._project(temp), url=self.URL)
+            result, supervised, _root, editor_exe = self._run(
+                proxy, {"filter": "PinWright", "reason": REASON, "mode": "visible"})
+        self.assertFalse(result["isError"], result)
+        argv = supervised.call_args.args[0]
+        self.assertEqual(argv[0], os.path.abspath(editor_exe))
+        self.assertNotIn("-RenderOffscreen", argv)
+        self.assertIn("-RunningUnattendedScript", argv)
+        self.assertEqual(result["structuredContent"]["mode"], "visible")
+
+    def test_exit_before_the_first_test_is_a_typed_error(self):
+        with tempfile.TemporaryDirectory() as temp:
+            proxy = self._proxy(uproject=self._project(temp), url=self.URL)
+            result, _sup, _root, _exe = self._run(
+                proxy, progress={"exists": False, "started": 0, "succeeded": 0, "failed": 0,
+                                 "lastTest": None},
+                run=_CompletedProcess(code=3))
+        self.assertEqual(result["structuredContent"]["error"], "EDITOR_EXITED_BEFORE_TESTS")
+        self.assertEqual(result["structuredContent"]["exitCode"], 3)
+        self.assertFalse(result["structuredContent"]["leftRunning"])
+
+    def test_no_test_within_the_deadline_is_a_typed_error_and_the_run_is_left_alone(self):
+        with tempfile.TemporaryDirectory() as temp:
+            proxy = self._proxy(uproject=self._project(temp), url=self.URL)
+            run = _BlockedProcess()
+            result, _sup, _root, _exe = self._run(
+                proxy, progress={"exists": True, "started": 0, "succeeded": 0, "failed": 0,
+                                 "lastTest": None}, run=run)
+        self.assertEqual(result["structuredContent"]["error"], "EDITOR_TESTS_NOT_STARTED")
+        self.assertTrue(result["structuredContent"]["leftRunning"])
+        self.assertFalse(run.terminated)
+        self.assertEqual(mcp_proxy.TEST_START_TIMEOUT, 600.0)
+
+    def test_a_modal_blocked_test_editor_is_reported(self):
+        with tempfile.TemporaryDirectory() as temp:
+            proxy = self._proxy(uproject=self._project(temp), url=self.URL)
+            probes = iter([("not_running", "refused"), ("blocked_on_modal", "dialog")])
+            engine_root, editor_exe = self._engine(proxy.uproject)
+            with mock.patch.object(proxy, "_probe_state",
+                                   side_effect=lambda _url: next(probes)), \
+                    mock.patch("mcp_proxy.resolve_editor",
+                               return_value=(engine_root, editor_exe)), \
+                    mock.patch("mcp_proxy.os.path.isfile", return_value=True), \
+                    mock.patch("mcp_proxy.pinwright_supervisor.scan_test_progress",
+                               return_value={"exists": True, "started": 0, "succeeded": 0,
+                                             "failed": 0, "lastTest": None}), \
+                    mock.patch("mcp_proxy.pinwright_supervisor.spawn_supervised",
+                               return_value=_BlockedProcess()):
+                proxy.test_start_timeout = 60.0
+                result = proxy._editor_run_tests(
+                    {"filter": "PinWright", "reason": REASON, "mode": "offscreen"})
+        self.assertEqual(result["structuredContent"]["error"], "EDITOR_BLOCKED_ON_MODAL")
+
+    def test_engine_association_selects_the_engine(self):
         with tempfile.TemporaryDirectory() as temp:
             project = self._project(temp)
             proxy = self._proxy(uproject=project, url=self.URL)
@@ -1723,51 +1851,532 @@ class ProxyEditorPrepareTestsTest(unittest.TestCase):
                     mock.patch("mcp_proxy.resolve_editor",
                                return_value=(engine_root, editor_exe)) as resolve, \
                     mock.patch("mcp_proxy.os.path.isfile", return_value=True), \
-                    mock.patch("mcp_proxy.subprocess.Popen",
-                               side_effect=AssertionError("must not spawn Unreal")):
-                result = proxy._editor_prepare_tests({"filter": "PinWright"})
+                    mock.patch("mcp_proxy.pinwright_supervisor.scan_test_progress",
+                               return_value={"exists": True, "started": 2, "succeeded": 1,
+                                             "failed": 0, "lastTest": None}), \
+                    mock.patch("mcp_proxy.pinwright_supervisor.spawn_supervised",
+                               return_value=_BlockedProcess()):
+                result = proxy._editor_run_tests(
+                    {"filter": "PinWright", "reason": REASON, "mode": "offscreen"})
         self.assertFalse(result["isError"])
         self.assertEqual(resolve.call_args.args[3], "5.8")
-        self.assertTrue(
-            result["structuredContent"]["launch"]["executable"].endswith(
-                "UnrealEditor-Cmd.exe"))
 
-    def test_checker_uses_the_exact_launch_log_path(self):
-        with tempfile.TemporaryDirectory() as temp:
-            proxy = self._proxy(uproject=self._project(temp), url=self.URL)
-            result, _popen, _root, _editor = self._prepare(proxy)
-        structured = result["structuredContent"]
-        self.assertEqual(structured["checker"]["argv"][-1], structured["logPath"])
-        self.assertEqual(
-            next(arg for arg in structured["launch"]["argv"]
-                 if arg.startswith("-Abslog=")),
-            "-Abslog=" + structured["logPath"],
-        )
-
-    def _prepare_with_cmd_twin_missing(self, os_name, editor_name):
+    def test_windows_requires_the_cmd_twin_for_a_windowless_run(self):
         with tempfile.TemporaryDirectory() as temp:
             project = self._project(temp)
             proxy = self._proxy(uproject=project)
-            root = os.path.join(temp, "UE_5.8")
-            editor_exe = os.path.join(root, "Engine", "Binaries", "Linux", editor_name)
+            root, editor_exe = self._engine(project)
             with mock.patch.object(proxy, "_probe_state",
                                    return_value=("not_running", "connection refused")), \
                     mock.patch("mcp_proxy.resolve_editor", return_value=(root, editor_exe)), \
                     mock.patch("mcp_proxy.os.path.isfile",
                                side_effect=lambda path: "-Cmd" not in os.path.basename(path)), \
-                    mock.patch.object(mcp_proxy.os, "name", os_name):
-                result = proxy._editor_prepare_tests({"filter": "PinWright"})
-        return result, editor_exe
-
-    def test_non_windows_runs_the_editor_binary_when_there_is_no_cmd_twin(self):
-        result, editor_exe = self._prepare_with_cmd_twin_missing("posix", "UnrealEditor")
-        self.assertFalse(result["isError"])
-        self.assertEqual(result["structuredContent"]["launch"]["executable"],
-                         os.path.abspath(editor_exe))
-
-    def test_windows_still_requires_the_cmd_twin(self):
-        result, _editor_exe = self._prepare_with_cmd_twin_missing("nt", "UnrealEditor.exe")
+                    mock.patch("mcp_proxy.pinwright_supervisor.spawn_supervised",
+                               side_effect=AssertionError("must not spawn")), \
+                    mock.patch.object(pinwright_supervisor.os, "name", "nt"), \
+                    mock.patch.object(mcp_proxy.os, "name", "nt"):
+                result = proxy._editor_run_tests(
+                    {"filter": "PinWright", "reason": REASON, "mode": "offscreen"})
         self.assertEqual(result["structuredContent"]["error"], "EDITOR_COMMAND_NOT_FOUND")
+
+
+def _row(pid, argv, exe=None, start_ms=1759140930000, cwd=None):
+    """A raw process row as the platform enumerators return it."""
+    return {"pid": pid, "exe": exe or argv[0], "argv": argv,
+            "commandLine": subprocess.list2cmdline(argv), "startMs": start_ms, "cwd": cwd}
+
+
+class EditorListTest(unittest.TestCase):
+    """editor_list reads everything from each editor's own command line: no launch registry."""
+
+    def setUp(self):
+        self._temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._temp.cleanup)
+        self.root = self._temp.name
+        self.engine = os.path.join(self.root, "UE 5.8")
+        self.exe = os.path.join(self.engine, "Engine", "Binaries", "Win64", "UnrealEditor.exe")
+        self.cmd_exe = os.path.join(self.engine, "Engine", "Binaries", "Win64",
+                                    "UnrealEditor-Cmd.exe")
+
+    def _project(self, *parts):
+        path = os.path.join(self.root, *parts)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write("{}")
+        return path
+
+    def test_quoted_project_path_with_spaces_resolves_from_the_command_line(self):
+        project = self._project("My Checkout", "Game Proj.uproject")
+        command_line = '"%s" "%s" -game' % (self.exe, project)
+        row = {"pid": 11, "exe": self.exe, "commandLine": command_line,
+               "argv": pinwright_supervisor.split_windows_command_line(command_line),
+               "startMs": 1759140930000, "cwd": None}
+        entry = mcp_proxy.describe_editor_process(row)
+        self.assertTrue(_same(entry["project"], project))
+        self.assertEqual(entry["projectName"], "Game Proj")
+        self.assertTrue(_same(entry["checkoutRoot"], os.path.dirname(project)))
+        self.assertEqual(entry["projectSource"], "commandLine")
+        self.assertEqual(entry["mode"], "game")
+        self.assertEqual(entry["startTime"], "2025-09-29T10:15:30Z")
+
+    def test_relative_project_path_resolves_against_the_process_working_directory(self):
+        project = self._project("work", "Rel", "Rel.uproject")
+        row = _row(12, [self.exe, os.path.join("Rel", "Rel.uproject")],
+                   cwd=os.path.join(self.root, "work"))
+        entry = mcp_proxy.describe_editor_process(row)
+        self.assertTrue(_same(entry["project"], project))
+        self.assertEqual(entry["projectSource"], "commandLine")
+
+    def test_project_passed_by_name_resolves_under_the_engine_root(self):
+        project = self._project("UE 5.8", "Named", "Named.uproject")
+        entry = mcp_proxy.describe_editor_process(_row(13, [self.exe, "Named", "-log"]))
+        self.assertTrue(_same(entry["project"], project))
+        self.assertEqual(entry["projectName"], "Named")
+
+    def test_unresolvable_project_reports_unresolved(self):
+        entry = mcp_proxy.describe_editor_process(_row(14, [self.exe, "Missing", "-log"]))
+        self.assertIsNone(entry["project"])
+        self.assertIsNone(entry["checkoutRoot"])
+        self.assertEqual(entry["projectSource"], "unresolved")
+        entry = mcp_proxy.describe_editor_process(_row(15, [self.exe, "-log"]))
+        self.assertEqual(entry["projectSource"], "unresolved")
+        self.assertIsNone(entry["projectName"])
+
+    def test_two_checkouts_of_the_same_project_are_told_apart(self):
+        main = self._project("game", "Game.uproject")
+        dev = self._project("game-dev", "Game.uproject")
+        port_dir = os.path.join(self.root, "game-dev", "Saved", "PinWright")
+        os.makedirs(port_dir)
+        with open(os.path.join(port_dir, "gateway-port"), "w", encoding="utf-8") as fh:
+            fh.write("24966\n")
+        first = mcp_proxy.describe_editor_process(_row(21, [self.exe, main]), this_project=main)
+        second = mcp_proxy.describe_editor_process(_row(22, [self.exe, dev]), this_project=main)
+        self.assertEqual(first["projectName"], second["projectName"])
+        self.assertFalse(_same(first["checkoutRoot"], second["checkoutRoot"]))
+        self.assertTrue(first["isThisProject"])
+        self.assertFalse(second["isThisProject"])
+        self.assertIsNone(first["gatewayPort"])
+        self.assertEqual(second["gatewayPort"], 24966)
+
+    def test_reason_and_launcher_come_from_the_launch_switches(self):
+        project = self._project("p", "P.uproject")
+        reason = 'fix "B-12", C:\\dir\\ 100% \u043f\u0440\u043e\u0432\u0435\u0440\u043a\u0430'
+        argv = ([self.exe, project, "/Game/Maps/Example", "-RenderOffScreen", "-unattended",
+                 "-Abslog=C:/logs/run.log"]
+                + pinwright_supervisor.launch_identity_args(reason, "editor_start"))
+        # Round-trip through the Windows command-line encoding the census actually reads.
+        command_line = subprocess.list2cmdline(argv)
+        row = {"pid": 31, "exe": self.exe, "commandLine": command_line,
+               "argv": pinwright_supervisor.split_windows_command_line(command_line),
+               "startMs": None, "cwd": None}
+        entry = mcp_proxy.describe_editor_process(row)
+        self.assertEqual(entry["reason"], reason)
+        self.assertEqual(entry["launchedBy"], "editor_start")
+        self.assertEqual(entry["mode"], "offscreen")
+        self.assertEqual(entry["map"], "/Game/Maps/Example")
+        self.assertEqual(entry["logPath"], "C:/logs/run.log")
+        self.assertIsNone(entry["startTime"])
+
+    def test_foreign_editor_without_switches_is_unknown(self):
+        project = self._project("other-repo", "Other.uproject")
+        entry = mcp_proxy.describe_editor_process(_row(41, [self.exe, project]))
+        self.assertIsNone(entry["reason"])
+        self.assertEqual(entry["launchedBy"], "unknown")
+        self.assertEqual(entry["mode"], "visible")
+
+    def test_headless_editor_is_classified_and_commandlet_wins_over_nullrhi(self):
+        project = self._project("h", "H.uproject")
+        entry = mcp_proxy.describe_editor_process(
+            _row(52, [self.exe, project, "-NullRHI", "-RenderOffScreen"]))
+        self.assertEqual(entry["mode"], "headless")
+        entry = mcp_proxy.describe_editor_process(
+            _row(53, [self.cmd_exe, project, "-run=Cook", "-NullRHI"]))
+        self.assertEqual(entry["mode"], "commandlet")
+
+    def test_commandlet_is_classified(self):
+        project = self._project("c", "C.uproject")
+        entry = mcp_proxy.describe_editor_process(
+            _row(51, [self.cmd_exe, project, "-run=ResavePackages", "-unattended"]))
+        self.assertEqual(entry["mode"], "commandlet")
+        self.assertTrue(_same(entry["engineRoot"], self.engine))
+
+    def test_windows_census_parses_the_cim_json(self):
+        project = self._project("w", "W.uproject")
+        reason_args = pinwright_supervisor.launch_identity_args("nightly suite", "editor_run_tests")
+        rows = [
+            {"ProcessId": 100, "ExecutablePath": self.exe, "StartMs": 1759140930123,
+             "CommandLine": subprocess.list2cmdline([self.exe, project] + reason_args)},
+            {"ProcessId": 101, "ExecutablePath": self.cmd_exe, "StartMs": 1759140931000,
+             "CommandLine": subprocess.list2cmdline([self.cmd_exe, project, "-run=Foo"])},
+        ]
+        completed = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=json.dumps(rows).encode("utf-8"), stderr=b"")
+        processes = mcp_proxy._windows_editor_processes(run=lambda *a, **k: completed)
+        self.assertEqual([proc["pid"] for proc in processes], [100, 101])
+        self.assertEqual(processes[0]["argv"][-1], "-PinWrightLaunchedBy=editor_run_tests")
+        self.assertIsNone(processes[0]["cwd"])
+        # A single CIM row serializes as an object, not an array.
+        single = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=json.dumps(rows[0]).encode("utf-8"), stderr=b"")
+        self.assertEqual(len(mcp_proxy._windows_editor_processes(run=lambda *a, **k: single)), 1)
+        empty = subprocess.CompletedProcess(args=[], returncode=0, stdout=b"", stderr=b"")
+        self.assertEqual(mcp_proxy._windows_editor_processes(run=lambda *a, **k: empty), [])
+
+    def test_windows_census_failure_is_an_error_not_an_empty_list(self):
+        failed = subprocess.CompletedProcess(args=[], returncode=1, stdout=b"",
+                                             stderr=b"Get-CimInstance: access denied")
+        with self.assertRaises(RuntimeError):
+            mcp_proxy._windows_editor_processes(run=lambda *a, **k: failed)
+        proxy = Proxy(None, 0.1, 0.1, 0.1, None, None)
+        with mock.patch("mcp_proxy._editor_processes", side_effect=RuntimeError("denied")):
+            result = proxy._editor_list({})
+        self.assertTrue(result["isError"])
+        self.assertEqual(result["structuredContent"]["error"], "EDITOR_LIST_FAILED")
+
+    def _proc_tree(self, entries):
+        """A canned /proc: {pid: (argv, starttime_ticks)} plus /proc/stat btime."""
+        proc_root = os.path.join(self.root, "proc")
+        os.makedirs(proc_root)
+        with open(os.path.join(proc_root, "stat"), "w", encoding="utf-8") as fh:
+            fh.write("cpu 1 2 3\nbtime 1759140000\n")
+        for pid, (argv, ticks) in entries.items():
+            base = os.path.join(proc_root, str(pid))
+            os.makedirs(base)
+            with open(os.path.join(base, "cmdline"), "wb") as fh:
+                fh.write(b"\0".join(arg.encode("utf-8") for arg in argv) + b"\0")
+            fields = ["S"] + ["0"] * 18 + [str(ticks)] + ["0"] * 10
+            with open(os.path.join(base, "stat"), "w", encoding="utf-8") as fh:
+                fh.write("%d (%s) %s\n" % (pid, os.path.basename(argv[0])[:15],
+                                            " ".join(fields)))
+        os.makedirs(os.path.join(proc_root, "self"))
+        return proc_root
+
+    def test_linux_census_reads_proc(self):
+        linux_exe = "/opt/UE_5.8/Engine/Binaries/Linux/UnrealEditor"
+        proc_root = self._proc_tree({
+            300: ([linux_exe, "/home/u/a b/Proj.uproject", "-RenderOffscreen", "-unattended"]
+                  + pinwright_supervisor.launch_identity_args("linux run", "cli"), 9300),
+            301: (["/usr/bin/bash", "-c", "sleep 1"], 100),
+            302: ([linux_exe, "/home/u/other/Other.uproject", "-run=Cook"], 200),
+        })
+        processes = mcp_proxy._linux_editor_processes(proc_root, clk_tck=100)
+        self.assertEqual([proc["pid"] for proc in processes], [300, 302])
+        self.assertEqual(processes[0]["argv"][1], "/home/u/a b/Proj.uproject")
+        self.assertEqual(processes[0]["startMs"], (1759140000 + 93) * 1000)
+        entry = mcp_proxy.describe_editor_process(processes[0])
+        self.assertEqual(entry["reason"], "linux run")
+        self.assertEqual(entry["launchedBy"], "cli")
+        self.assertEqual(entry["mode"], "offscreen")
+        self.assertEqual(entry["projectName"], "Proj")
+        self.assertEqual(mcp_proxy.describe_editor_process(processes[1])["mode"], "commandlet")
+
+    def test_editor_list_result_marks_this_project_and_sorts_by_start(self):
+        mine = self._project("mine", "Mine.uproject")
+        other = self._project("theirs", "Theirs.uproject")
+        rows = [_row(2, [self.exe, other], start_ms=2000),
+                _row(1, [self.exe, mine] + pinwright_supervisor.launch_identity_args(
+                    "why", "editor_start"), start_ms=1000)]
+        proxy = Proxy(None, 0.1, 0.1, 0.1, None, None, uproject=mine)
+        with mock.patch("mcp_proxy._editor_processes", return_value=rows):
+            result = proxy._editor_list({})
+        self.assertFalse(result["isError"])
+        editors = result["structuredContent"]["editors"]
+        self.assertEqual([entry["pid"] for entry in editors], [1, 2])
+        self.assertTrue(editors[0]["isThisProject"])
+        self.assertEqual(editors[0]["reason"], "why")
+        self.assertIn("not launched by PinWright", result["content"][0]["text"])
+
+
+class EditorTestStatusTest(unittest.TestCase):
+    def setUp(self):
+        self._temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._temp.cleanup)
+        self.log = os.path.join(self._temp.name, "automation.log")
+        self.proxy = Proxy(None, 0.1, 0.1, 0.1, None, None)
+
+    def _status(self, args, rows=(), progress=None, verdict=None):
+        progress = progress or {"exists": True, "started": 3, "succeeded": 2, "failed": 0,
+                                "lastTest": "PinWright.a.b"}
+        with mock.patch("mcp_proxy._editor_processes", return_value=list(rows)), \
+                mock.patch("mcp_proxy.pinwright_supervisor.scan_test_progress",
+                           return_value=progress), \
+                mock.patch("check_suite_log.check_log",
+                           return_value=verdict or {"state": "COMPLETED_CLEAN", "reason": "ok",
+                                                    "warnings": []}) as check:
+            return self.proxy._editor_test_status(args), check
+
+    def test_running_while_an_editor_writes_that_log(self):
+        exe = "C:\\UE\\Engine\\Binaries\\Win64\\UnrealEditor-Cmd.exe"
+        rows = [_row(77, [exe, "P.uproject", "-Abslog=" + self.log])]
+        result, check = self._status({"logPath": self.log}, rows=rows)
+        structured = result["structuredContent"]
+        self.assertEqual(structured["status"], "running")
+        self.assertEqual(structured["mode"], "visible")
+        self.assertEqual(structured["pid"], 77)
+        self.assertEqual((structured["started"], structured["succeeded"]), (3, 2))
+        self.assertNotIn("verdict", structured)
+        check.assert_not_called()
+
+    def test_finished_runs_carry_the_check_suite_log_verdict(self):
+        with open(self.log, "w", encoding="utf-8") as fh:
+            fh.write("LogInit: Command Line:  C:/P/H.uproject -NullRHI -RenderOffscreen "
+                     "-unattended \"-Abslog=%s\"\n" % self.log)
+        with open(self.log + ".result.txt", "w", encoding="utf-8") as fh:
+            fh.write("PINWRIGHT_SUITE_RESULT verdict=EDITOR_EXITED exit=0\n")
+        result, check = self._status(
+            {"logPath": self.log},
+            verdict={"state": "COMPLETED_WITH_FAILURES", "reason": "1 failed", "warnings": []})
+        structured = result["structuredContent"]
+        self.assertEqual(structured["status"], "finished")
+        self.assertEqual(structured["mode"], "headless")
+        self.assertIsNone(structured["pid"])
+        self.assertEqual(structured["verdict"]["state"], "COMPLETED_WITH_FAILURES")
+        self.assertTrue(structured["supervisorResult"].startswith("PINWRIGHT_SUITE_RESULT"))
+        check.assert_called_once_with(os.path.abspath(self.log))
+
+    def test_run_id_is_resolved_under_this_project(self):
+        project = os.path.join(self._temp.name, "Host.uproject")
+        with open(project, "w", encoding="utf-8") as fh:
+            fh.write("{}")
+        self.proxy.uproject = project
+        run_id = "0123456789abcdef0123456789abcdef"
+        result, _check = self._status({"runId": run_id})
+        self.assertTrue(_same(result["structuredContent"]["logPath"], os.path.join(
+            self._temp.name, "Saved", "PinWright", "test-runs", run_id, "automation.log")))
+
+    def test_bad_arguments_are_refused(self):
+        for args, code in (({}, "MISSING_REQUIRED_PARAM"),
+                           ({"logPath": "a", "runId": "b"}, "MISSING_REQUIRED_PARAM"),
+                           ({"runId": "../x"}, "INVALID_RUN_ID"),
+                           ({"logPath": "  "}, "INVALID_LOG_PATH"),
+                           ({"logPath": "a", "extra": 1}, "INVALID_ARGUMENTS")):
+            with self.subTest(args=args):
+                result, _check = self._status(args)
+                self.assertEqual(result["structuredContent"]["error"], code)
+
+    def test_unknown_log_with_no_editor_is_not_found(self):
+        result, _check = self._status(
+            {"logPath": self.log},
+            progress={"exists": False, "started": 0, "succeeded": 0, "failed": 0,
+                      "lastTest": None})
+        self.assertEqual(result["structuredContent"]["error"], "TEST_RUN_NOT_FOUND")
+
+
+class EditorBuildTest(unittest.TestCase):
+    """editor_build: argv, the own-checkout editor guard, and non-blocking start."""
+
+    def setUp(self):
+        self._temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._temp.cleanup)
+        self.root = self._temp.name
+        self.project = os.path.join(self.root, "Host Proj", "Host.uproject")
+        os.makedirs(os.path.dirname(self.project))
+        with open(self.project, "w", encoding="utf-8") as fh:
+            fh.write('{"EngineAssociation": "5.8"}')
+        self.engine = os.path.join(self.root, "UE_5.8")
+        self.editor = os.path.join(self.engine, "Engine", "Binaries", "Win64", "UnrealEditor.exe")
+        self.proxy = Proxy(None, 0.1, 0.1, 0.1, None, None, uproject=self.project)
+
+    def _build(self, args, rows=(), os_name="nt"):
+        run = _BlockedProcess()
+        with mock.patch("mcp_proxy._editor_processes", return_value=list(rows)), \
+                mock.patch("mcp_proxy.resolve_editor", return_value=(self.engine, self.editor)), \
+                mock.patch("mcp_proxy.os.path.isfile", return_value=True), \
+                mock.patch.object(mcp_proxy.os, "name", os_name), \
+                mock.patch("mcp_proxy.subprocess.Popen",
+                           side_effect=AssertionError("builds run only under the supervisor")), \
+                mock.patch("mcp_proxy.pinwright_supervisor.spawn_supervised",
+                           return_value=run) as supervised:
+            result = self.proxy._editor_build(args)
+        return result, supervised
+
+    def test_schema_requires_only_reason_and_has_no_mode(self):
+        schema = mcp_proxy.EDITOR_BUILD_TOOL["inputSchema"]
+        self.assertEqual(schema["required"], ["reason"])
+        self.assertEqual(set(schema["properties"]), {"reason"})
+        self.assertEqual(mcp_proxy.EDITOR_BUILD_STATUS_TOOL["inputSchema"]["required"], ["logPath"])
+        for name in ("editor_build", "editor_build_status"):
+            self.assertIn(name, mcp_proxy._LOCAL_TOOL_NAMES)
+
+    def test_windows_argv_and_immediate_return(self):
+        result, supervised = self._build({"reason": "rebuild after a header change"})
+        self.assertFalse(result["isError"], result)
+        argv = supervised.call_args.args[0]
+        self.assertEqual(argv, [
+            os.path.join(self.engine, "Engine", "Build", "BatchFiles", "Build.bat"),
+            "HostEditor", "Win64", "Development", "-Project=" + os.path.abspath(self.project),
+            "-WaitMutex", "-NoHotReloadFromIDE",
+            "-Log=" + os.path.join(os.path.dirname(result["structuredContent"]["logPath"]),
+                                   "ubt.log")])
+        kwargs = supervised.call_args.kwargs
+        self.assertEqual(kwargs["kind"], "command")
+        self.assertIsNone(kwargs["mode"])
+        self.assertEqual(kwargs["launched_by"], "editor_build")
+        self.assertIn("reason=rebuild after a header change", kwargs["output_header"])
+        structured = result["structuredContent"]
+        self.assertEqual(structured["status"], "BUILD_STARTED")
+        self.assertEqual(structured["pid"], _BlockedProcess.pid)
+        self.assertEqual(kwargs["output_path"], structured["logPath"])
+        self.assertTrue(structured["logPath"].startswith(
+            os.path.join(os.path.dirname(os.path.abspath(self.project)), "Saved", "PinWright",
+                         "builds")))
+        # The reason never reaches UBT, which would pass it to the target rules.
+        self.assertNotIn("-PinWrightLaunchReason", " ".join(argv))
+
+    def test_linux_uses_build_sh_and_the_linux_platform(self):
+        _result, supervised = self._build({"reason": "linux build"}, os_name="posix")
+        argv = supervised.call_args.args[0]
+        self.assertEqual(argv[0], os.path.join(self.engine, "Engine", "Build", "BatchFiles",
+                                               "Linux", "Build.sh"))
+        self.assertEqual(argv[1:4], ["HostEditor", "Linux", "Development"])
+
+    def test_an_editor_of_this_checkout_blocks_the_build_and_is_named(self):
+        rows = [_row(501, [self.editor, self.project, "-RenderOffScreen"]),
+                _row(502, [self.editor.replace("UnrealEditor.exe", "UnrealEditor-Cmd.exe"),
+                           self.project, "-run=Cook"])]
+        result, supervised = self._build({"reason": "x"}, rows=rows)
+        self.assertTrue(result["isError"])
+        self.assertEqual(result["structuredContent"]["error"], "BUILD_BLOCKED_BY_EDITOR")
+        self.assertEqual(result["structuredContent"]["pids"], [501, 502])
+        self.assertIn("501", result["content"][0]["text"])
+        supervised.assert_not_called()
+
+    def test_an_editor_of_another_checkout_does_not_block(self):
+        other = os.path.join(self.root, "Host Proj-dev", "Host.uproject")
+        os.makedirs(os.path.dirname(other))
+        with open(other, "w", encoding="utf-8") as fh:
+            fh.write("{}")
+        result, supervised = self._build({"reason": "x"},
+                                         rows=[_row(601, [self.editor, other])])
+        self.assertFalse(result["isError"], result)
+        supervised.assert_called_once()
+
+    def test_bad_arguments_are_refused_before_anything_runs(self):
+        for args, code in (({}, "MISSING_REQUIRED_PARAM"),
+                           ({"reason": "  "}, "INVALID_REASON"),
+                           ({"reason": "x", "mode": "offscreen"}, "INVALID_ARGUMENTS"),
+                           (None, "INVALID_ARGUMENTS")):
+            with self.subTest(args=args), \
+                    mock.patch("mcp_proxy._editor_processes",
+                               side_effect=AssertionError("must not enumerate")), \
+                    mock.patch("mcp_proxy.pinwright_supervisor.spawn_supervised",
+                               side_effect=AssertionError("must not spawn")):
+                result = self.proxy._editor_build(args)
+                self.assertEqual(result["structuredContent"]["error"], code)
+
+    def test_a_proxy_supervisor_skew_is_its_own_error_naming_the_fix(self):
+        skew = pinwright_supervisor.SupervisorVersionMismatch(
+            pinwright_supervisor._mismatch_text(3) + " (see x.log)")
+        with mock.patch("mcp_proxy._editor_processes", return_value=[]), \
+                mock.patch("mcp_proxy.resolve_editor", return_value=(self.engine, self.editor)), \
+                mock.patch("mcp_proxy.os.path.isfile", return_value=True), \
+                mock.patch("mcp_proxy.pinwright_supervisor.spawn_supervised", side_effect=skew):
+            result = self.proxy._editor_build({"reason": "x"})
+        self.assertTrue(result["isError"])
+        self.assertEqual(result["structuredContent"]["error"], "SUPERVISOR_VERSION_MISMATCH")
+        self.assertTrue(result["content"][0]["text"].startswith("SUPERVISOR_VERSION_MISMATCH: "))
+        self.assertIn("/mcp", result["content"][0]["text"])
+
+    def test_a_failed_census_refuses_rather_than_risking_the_link(self):
+        with mock.patch("mcp_proxy._editor_processes", side_effect=RuntimeError("denied")), \
+                mock.patch("mcp_proxy.pinwright_supervisor.spawn_supervised",
+                           side_effect=AssertionError("must not spawn")):
+            result = self.proxy._editor_build({"reason": "x"})
+        self.assertEqual(result["structuredContent"]["error"], "EDITOR_LIST_FAILED")
+
+
+_UBT_SUCCESS = """PinWright editor_build: reason=r; target=HostEditor Win64 Development; project=P
+Using bundled DotNet SDK version: 8.0.300
+Building HostEditor...
+[1/3] Compile [x64] Module.PinWright.cpp
+[3/3] Link [x64] UnrealEditor-PinWright.dll
+Result: Succeeded
+Total execution time: 42.10 seconds
+"""
+
+_UBT_COMPILE_ERROR = """Building HostEditor...
+[1/4] Compile [x64] Module.PinWright.3.cpp
+X:\\P\\Plugins\\PinWright\\Source\\A.cpp(12): error C4930: 'FScopedSink Sink(FString (__cdecl *)(void))': prototyped function not called
+X:\\P\\Plugins\\PinWright\\Source\\A.cpp(40): warning C4996: deprecated
+Result: Failed (OtherCompilationError)
+"""
+
+_UBT_LINK_LOCKED = """[5/5] Link [x64] UnrealEditor-PinWright.dll
+LINK : fatal error LNK1104: cannot open file 'X:\\P\\Plugins\\PinWright\\Binaries\\Win64\\UnrealEditor-PinWright.dll'
+Result: Failed (OtherCompilationError)
+"""
+
+
+class EditorBuildStatusTest(unittest.TestCase):
+    def setUp(self):
+        self._temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._temp.cleanup)
+        self.log = os.path.join(self._temp.name, "build.log")
+        self.proxy = Proxy(None, 0.1, 0.1, 0.1, None, None)
+
+    def _write(self, path, text):
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(text)
+
+    def _status(self, log_text=None, result_line=None, child_alive=False, supervisor=True):
+        if log_text is not None:
+            self._write(self.log, log_text)
+        if result_line is not None:
+            self._write(self.log + ".result.txt", result_line + "\n")
+        if supervisor:
+            self._write(self.log + ".supervisor.log", "[t] started pid 9876: Build.bat HostEditor\n")
+        with mock.patch("mcp_proxy.pinwright_supervisor.process_start_ms",
+                        return_value=123 if child_alive else None):
+            return self.proxy._editor_build_status({"logPath": self.log})
+
+    def test_success(self):
+        result = self._status(_UBT_SUCCESS, "PINWRIGHT_JOB_RESULT verdict=COMMAND_EXITED exit=0 "
+                                            "priority=BelowNormal cap_gb=38 peak_gb=3 wall_min=1")
+        structured = result["structuredContent"]
+        self.assertEqual(structured["status"], "succeeded")
+        self.assertEqual(structured["ubtResult"], "Succeeded")
+        self.assertEqual(structured["exitCode"], 0)
+        self.assertEqual(structured["errors"], [])
+
+    def test_compile_error_lines_are_extracted(self):
+        result = self._status(_UBT_COMPILE_ERROR, "PINWRIGHT_JOB_RESULT "
+                              "verdict=COMMAND_EXIT_NONZERO exit=6 priority=BelowNormal")
+        structured = result["structuredContent"]
+        self.assertEqual(structured["status"], "failed")
+        self.assertEqual(structured["ubtResult"], "Failed (OtherCompilationError)")
+        self.assertEqual(len(structured["errors"]), 1)
+        self.assertIn("error C4930", structured["errors"][0])
+        self.assertIn("error C4930", result["content"][0]["text"])
+
+    def test_link_error_with_a_locked_dll(self):
+        result = self._status(_UBT_LINK_LOCKED, "PINWRIGHT_JOB_RESULT "
+                              "verdict=COMMAND_EXIT_NONZERO exit=6 priority=BelowNormal")
+        structured = result["structuredContent"]
+        self.assertEqual(structured["status"], "failed")
+        self.assertTrue(any("LNK1104" in line for line in structured["errors"]))
+
+    def test_running_while_the_build_child_is_alive(self):
+        result = self._status("Building HostEditor...\n", child_alive=True)
+        structured = result["structuredContent"]
+        self.assertEqual(structured["status"], "running")
+        self.assertEqual(structured["pid"], 9876)
+
+    def test_ubt_done_but_result_not_yet_written(self):
+        result = self._status(_UBT_SUCCESS, child_alive=False)
+        self.assertEqual(result["structuredContent"]["status"], "succeeded")
+
+    def test_supervisor_died_without_a_result(self):
+        result = self._status("Building HostEditor...\n", child_alive=False)
+        self.assertEqual(result["structuredContent"]["status"], "lost")
+
+    def test_unknown_log_and_bad_arguments(self):
+        self.assertEqual(self._status(supervisor=False)["structuredContent"]["error"],
+                         "BUILD_NOT_FOUND")
+        for args, code in (({}, "MISSING_REQUIRED_PARAM"), ({"logPath": " "}, "INVALID_LOG_PATH"),
+                           ({"logPath": "a", "x": 1}, "INVALID_ARGUMENTS")):
+            with self.subTest(args=args):
+                self.assertEqual(self.proxy._editor_build_status(args)["structuredContent"]["error"],
+                                 code)
 
 
 class AbslogPathTest(unittest.TestCase):
@@ -1798,7 +2407,7 @@ class UnattendedFlagsTest(unittest.TestCase):
     into a regression."""
 
     def test_unattended_flags_visible_declines_recovery_without_going_unattended(self):
-        cmd = build_editor_command("Editor.exe", "P.uproject", visible=True, extra_args=None)
+        cmd = build_editor_command("Editor.exe", "P.uproject", mode="visible", extra_args=None)
         self.assertIn("-AutoDeclinePackageRecovery", cmd)
         # -unattended is process-global with no runtime off switch and strips every
         # confirmation prompt from a human sharing the window; on its own it also makes
@@ -1809,7 +2418,7 @@ class UnattendedFlagsTest(unittest.TestCase):
         self.assertNotIn("-RunningUnattendedScript", cmd)
 
     def test_unattended_flags_headless_has_both_and_no_duplicate_decline(self):
-        cmd = build_editor_command("Editor.exe", "P.uproject", visible=False, extra_args=None)
+        cmd = build_editor_command("Editor.exe", "P.uproject", mode="offscreen", extra_args=None)
         self.assertIn("-AutoDeclinePackageRecovery", cmd)
         self.assertIn("-unattended", cmd)
         self.assertIn("-RunningUnattendedScript", cmd)
@@ -1817,12 +2426,12 @@ class UnattendedFlagsTest(unittest.TestCase):
         self.assertEqual(cmd.count("-AutoDeclinePackageRecovery"), 1)
 
     def test_unattended_flags_script_switch_is_opt_in_on_the_visible_path(self):
-        # Opt-in applies to a VISIBLE launch only. visible=False carries it unconditionally;
+        # Opt-in applies to a VISIBLE launch only. mode="offscreen" carries it unconditionally;
         # that is pinned by the never-ships-alone invariant above.
-        default = build_editor_command("Editor.exe", "P.uproject", visible=True, extra_args=None)
+        default = build_editor_command("Editor.exe", "P.uproject", mode="visible", extra_args=None)
         self.assertNotIn("-RunningUnattendedScript", default)
 
-        opted_in = build_editor_command("Editor.exe", "P.uproject", visible=True,
+        opted_in = build_editor_command("Editor.exe", "P.uproject", mode="visible",
                                         extra_args=None, unattended_script=True)
         self.assertIn("-RunningUnattendedScript", opted_in)
         self.assertIn("-AutoDeclinePackageRecovery", opted_in)
@@ -1843,33 +2452,33 @@ class UnattendedFlagsTest(unittest.TestCase):
         #     returns PR_Cancelled and saves NOTHING (:4664). The first branch wins when both
         #     are set.
         # So the two switches must travel together on every argv this function can produce.
-        # Counterfactual: drop -RunningUnattendedScript from _HEADLESS_FLAGS and the
-        # visible=False, unattended_script=False case fails.
-        for visible in (True, False):
+        # Counterfactual: drop -RunningUnattendedScript from _OFFSCREEN_FLAGS and the
+        # mode="offscreen", unattended_script=False case fails.
+        for mode in mcp_proxy.LAUNCH_MODES:
             for script in (True, False):
-                cmd = build_editor_command("Editor.exe", "P.uproject", visible=visible,
+                cmd = build_editor_command("Editor.exe", "P.uproject", mode=mode,
                                            extra_args=None, unattended_script=script)
                 if "-unattended" in cmd:
                     self.assertIn(
                         "-RunningUnattendedScript", cmd,
-                        "visible=%s unattended_script=%s assembled -unattended alone"
-                        % (visible, script))
+                        "mode=%s unattended_script=%s assembled -unattended alone"
+                        % (mode, script))
 
     def test_unattended_flags_script_switch_is_never_duplicated(self):
         # The headless set and the opt-in must not both contribute it.
-        cmd = build_editor_command("Editor.exe", "P.uproject", visible=False,
+        cmd = build_editor_command("Editor.exe", "P.uproject", mode="offscreen",
                                    extra_args=None, unattended_script=True)
         self.assertEqual(cmd.count("-RunningUnattendedScript"), 1)
 
     def test_unattended_flags_extra_args_still_land_last(self):
-        cmd = build_editor_command("Editor.exe", "P.uproject", visible=False,
+        cmd = build_editor_command("Editor.exe", "P.uproject", mode="offscreen",
                                    extra_args=["-Abslog=C:/x.log"], unattended_script=True)
         self.assertEqual(cmd[-1], "-Abslog=C:/x.log")
 
     def test_unattended_flags_old_four_positional_signature_still_works(self):
         # patch_robustness's call sites pass four positional args; the new parameter is
         # keyword-defaulted precisely so they keep working.
-        cmd = build_editor_command("Editor.exe", "P.uproject", True, ["-windowed"])
+        cmd = build_editor_command("Editor.exe", "P.uproject", "visible", ["-windowed"])
         self.assertEqual(cmd[0:2], ["Editor.exe", "P.uproject"])
         self.assertIn("-AutoDeclinePackageRecovery", cmd)
         self.assertEqual(cmd[-1], "-windowed")

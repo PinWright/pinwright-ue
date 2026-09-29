@@ -4,7 +4,7 @@ Run the Unreal Localization Dashboard's GatherText commandlet from a tracked Pin
 
 ## Target/config safety
 
-The launcher accepts no extra command-line text, so callers cannot turn this surface into an arbitrary process runner.
+The commandlet spawn accepts no extra command-line text, so callers cannot turn this surface into an arbitrary process runner.
 
 - `target` is a single identifier (`A-Z`, `a-z`, digits, `_`, `-`), not a path.
 - Omitting `config` selects `<target>_Gather.ini` or `<target>_Compile.ini` below `Config/Localization`.

@@ -113,7 +113,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FJobRegistryCancelUnsupportedTest,
 bool FJobRegistryCancelUnsupportedTest::RunTest(const FString& Parameters)
 {
     FJobRegistry Reg(3600, 0, nullptr);
-    // No SetCancelCallback: this is the shape of level.build_lighting, system.run_ubt,
+    // No SetCancelCallback: this is the shape of level.build_lighting,
     // mrq.run_jobs, render.nanite_rebuild_mesh and the eleven other verbs that cannot be stopped.
     const FString Id = Reg.Start(TEXT("level.build_lighting"), MakeShared<FJsonObject>());
 

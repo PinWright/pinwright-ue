@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Alexander Penkin. MIT License.
 
-"""Unit tests for the standalone suite-log verdict gates used after editor_prepare_tests.
+"""Unit tests for the standalone suite-log verdict gates behind editor_test_status.
 
 The proxy prepares the Unreal command and checker command. The standalone checker owns the
 post-run verdict: zero matched tests, fatal or assertion diagnostics, incomplete queues, and
@@ -18,6 +18,7 @@ import io
 import os
 import sys
 import tempfile
+import time
 import unittest
 
 # mcp_proxy.py and check_suite_log.py live one directory up (Content/Python/).
@@ -132,7 +133,7 @@ class SuiteVerdictGateTest(unittest.TestCase):
         """The state through the post-mortem entry point -- what check_suite_log exits on."""
         return check_suite_log.check_log(path)["state"]
 
-    def test_fixture_command_matches_editor_prepare_tests_contract(self):
+    def test_fixture_command_matches_editor_run_tests_contract(self):
         self.assertIn(
             '-ExecCmds="Automation RunTests PinWright,Quit"', _CMDLINE)
         self.assertIn(
@@ -513,8 +514,9 @@ class CompletenessSelfTest(unittest.TestCase):
             fh.write(body)
         return path
 
-    def write_crash(self, name, is_ensure, crash_type="Crash", age_seconds=0):
-        """Write a CrashContext.runtime-xml with the two fields the scan reads."""
+    def write_crash(self, name, is_ensure, crash_type="Crash", age_seconds=0, pid=None, at=None,
+                    abslog=None):
+        """Write a CrashContext.runtime-xml with the fields the scan reads. `at` pins its mtime."""
         directory = os.path.join(self.crashes, name)
         os.makedirs(directory)
         path = os.path.join(directory, "CrashContext.runtime-xml")
@@ -524,9 +526,18 @@ class CompletenessSelfTest(unittest.TestCase):
                      "\t\t<IsEnsure>%s</IsEnsure>\n\t\t<IsAssert>false</IsAssert>\n"
                      "\t\t<CrashType>%s</CrashType>\n\t\t<ErrorMessage>synthetic</ErrorMessage>\n"
                      % ("true" if is_ensure else "false", crash_type))
+            if pid is not None:
+                fh.write("\t\t<ProcessId>%d</ProcessId>\n" % pid)
+            if abslog is not None:
+                # XML-escaped and quoted, as the engine writes a value with spaces.
+                fh.write("\t\t<CommandLine>Host.uproject -ExecCmds=&quot;Automation RunTests "
+                         "PinWright,Quit&quot; -Abslog=&quot;%s&quot; -unattended</CommandLine>\n"
+                         % abslog)
         if age_seconds:
             stamp = os.path.getmtime(path) - age_seconds
             os.utime(path, (stamp, stamp))
+        if at is not None:
+            os.utime(path, (at, at))
         return directory
 
     # ---- The five fixtures, and what each one has to be.
@@ -688,6 +699,82 @@ class CompletenessSelfTest(unittest.TestCase):
         self.write_crash("UECC-Windows-DDD_0000", is_ensure=True, crash_type="Ensure")
         text = check_suite_log.format_result(check_suite_log.check_log(self.completed_clean()))
         self.assertIn("crashReports: 0 non-ensure, 1 ensure-only", text)
+
+    # ---- Attribution: Saved/Crashes is shared by every editor of the project. The reference case
+    # is run 8be87dee (log opened 15:40:05, 9/9 passed) classified CRASHED on an assert that
+    # editor pid 64500 wrote at 15:38:37, inside the old 300 s pre-run slack.
+
+    RUN_PID = 57928
+
+    def supervised_run(self, body, opened_ago=120, last_write_ago=10):
+        """A test-runs log as editor_run_tests leaves it: `Log file open` header in local time,
+        and the supervisor's `started pid` line beside it. Returns (log path, open epoch)."""
+        run_dir = os.path.join(self.saved, "PinWright", "test-runs", "run")
+        os.makedirs(run_dir)
+        path = os.path.join(run_dir, "automation.log")
+        opened = int(time.time()) - opened_ago
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write("﻿Log file open, %s\n" % time.strftime(
+                "%m/%d/%y %H:%M:%S", time.localtime(opened)))
+            fh.write(body)
+        os.utime(path, (time.time() - last_write_ago,) * 2)
+        with open(path + ".supervisor.log", "w", encoding="utf-8") as fh:
+            fh.write("[2026-09-29 15:40:02] started pid %d: UnrealEditor-Cmd.exe Host.uproject\n"
+                     % self.RUN_PID)
+        return path, opened
+
+    def test_a_report_written_before_the_log_opened_is_not_this_run_s(self):
+        path, opened = self.supervised_run(_FOUND_LINE + _results(300) + _DRAIN_LINE)
+        # 90 s before the log opened: inside the old slack, and pid unknown to the report, so
+        # only the window can refuse it.
+        self.write_crash("UECC-Windows-EEE_0001", is_ensure=False, crash_type="Assert",
+                         at=opened - 90)
+        result = check_suite_log.check_log(path)
+        self.assertEqual(result["state"], STATE_COMPLETED_CLEAN, result["reason"])
+        self.assertEqual(result["crash"]["crashes"], [])
+
+    def test_a_report_from_another_pid_inside_the_window_is_not_this_run_s(self):
+        path, opened = self.supervised_run(_FOUND_LINE + _results(300) + _DRAIN_LINE)
+        self.write_crash("UECC-Windows-FFF_0001", is_ensure=False, crash_type="Assert",
+                         pid=64500, at=opened + 30)
+        result = check_suite_log.check_log(path)
+        self.assertEqual(result["state"], STATE_COMPLETED_CLEAN, result["reason"])
+        self.assertEqual(result["crash"]["pid"], self.RUN_PID)
+        # Standalone, with no pid to match, the window alone keeps the foreign report: the pid
+        # rule applies only when the run's pid is known.
+        os.remove(path + ".supervisor.log")
+        self.assertEqual(check_suite_log.check_log(path)["state"], STATE_CRASHED)
+        # --pid supplies it by hand.
+        self.assertEqual(check_suite_log.check_log(path, pid=self.RUN_PID)["state"],
+                         STATE_COMPLETED_CLEAN)
+
+    def test_a_report_naming_another_abslog_is_not_this_run_s(self):
+        path, opened = self.supervised_run(_FOUND_LINE + _results(300) + _DRAIN_LINE)
+        other = os.path.join(self.saved, "PinWright", "test-runs", "other", "automation.log")
+        # Same pid as the run and inside the window: only the Abslog says it is another run's.
+        self.write_crash("UECC-Windows-HHH_0001", is_ensure=False, crash_type="Assert",
+                         pid=self.RUN_PID, abslog=other, at=opened + 30)
+        self.assertEqual(check_suite_log.check_log(path)["state"], STATE_COMPLETED_CLEAN)
+        os.remove(path + ".supervisor.log")
+        self.assertEqual(check_suite_log.check_log(path)["state"], STATE_COMPLETED_CLEAN)
+
+    def test_a_report_naming_this_abslog_is_a_crash_with_no_pid_known(self):
+        path, opened = self.supervised_run(_FOUND_LINE + _results(5))
+        os.remove(path + ".supervisor.log")
+        same = path.upper() if os.name == "nt" else path
+        self.write_crash("UECC-Windows-III_0001", is_ensure=False, crash_type="Assert",
+                         abslog=same, at=opened + 60)
+        result = check_suite_log.check_log(path)
+        self.assertEqual(result["state"], STATE_CRASHED)
+        self.assertIn("UECC-Windows-III_0001", result["reason"])
+
+    def test_the_run_s_own_report_is_a_crash(self):
+        path, opened = self.supervised_run(_FOUND_LINE + _results(5))
+        self.write_crash("UECC-Windows-GGG_0001", is_ensure=False, crash_type="Assert",
+                         pid=self.RUN_PID, at=opened + 60)
+        result = check_suite_log.check_log(path)
+        self.assertEqual(result["state"], STATE_CRASHED)
+        self.assertIn("UECC-Windows-GGG_0001", result["reason"])
 
 
 if __name__ == "__main__":

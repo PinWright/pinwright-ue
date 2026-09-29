@@ -15,11 +15,12 @@ Run it under Unreal's bundled interpreter (never `uv`, and never install anythin
 file and `mcp_proxy` are stdlib-only on purpose so the editor's Python can run them as shipped):
 
     "%UE_ROOT%\\Engine\\Binaries\\ThirdParty\\Python3\\Win64\\python" -m check_suite_log \\
-        <log> [<log> ...] [--expected N] [--min-ratio R] [--crashes DIR] [--no-crash-scan]
+        <log> [<log> ...] [--expected N] [--min-ratio R] [--crashes DIR] [--pid PID]
+        [--no-crash-scan]
 
 States, worst to best: CRASHED (the editor died, positively evidenced), MEMORY_EXHAUSTED (the
 engine logged an allocation failure -- the host's wall, or the per-process Job Object cap
-scripts/Run-SuiteCapped.ps1 applies), DID_NOT_COMPLETE (the queue never drained and nothing says it
+pinwright_supervisor.py applies), DID_NOT_COMPLETE (the queue never drained and nothing says it
 crashed -- it was killed or wedged), NO_TESTS (nothing was enqueued, or nothing recorded a
 success), COMPLETED_WITH_FAILURES, COMPLETED_WITH_SKIPS (drained, nothing red, but a test reported
 success without running its assertions -- see PINWRIGHT_ASSERTIONS_SKIPPED),
@@ -35,7 +36,11 @@ CRASHED and DID_NOT_COMPLETE are separate states because they were being confuse
 directions: a truncated run greps like a crash if you grep a short log for `EnsureFailed`, and two
 such truncations were filed as a host crash on that basis. The crash question is therefore
 answered from `Saved/Crashes` (ensure reports excluded) and from fatal banners, never from log
-length. That scan is ON by default and is found from the log path alone.
+length. That scan is ON by default and is found from the log path alone. A report counts only
+inside the run's window (log open to last write), only if the `-Abslog=` its `<CommandLine>`
+records (when it records one) is this log, and, when the run's editor pid is known
+(`--pid`, else the `started pid` line of `<log>.supervisor.log` the capped supervisor writes),
+only if its `<ProcessId>` matches: every editor of the project writes into the same directory.
 
 Every verdict prints a `provenance:` line naming the absolute log path and, for a completed run,
 the exact terminal-marker line and its line number. A suite figure quoted without that linkage
@@ -56,15 +61,20 @@ from mcp_proxy import (  # noqa: E402  (path must be set before this import)
     parse_automation_log,
     scan_crash_reports,
 )
+from pinwright_supervisor import read_started_pid  # noqa: E402
 
 
-def check_log(path, expected=None, min_ratio=0.5, crash_scan=True, crashes_dir=None):
-    """Classify one log into exactly one of the run states."""
+def check_log(path, expected=None, min_ratio=0.5, crash_scan=True, crashes_dir=None, pid=None):
+    """Classify one log into exactly one of the run states. pid is the run's editor process id;
+    None reads it from the supervisor's `<log>.supervisor.log` when there is one."""
     log = parse_automation_log(path)
     # Default ON. The crash question has to be answered by somebody, and leaving it to whoever
     # reads the log afterwards is what produced a crash ticket built on two truncations.
+    if crash_scan and pid is None:
+        pid = read_started_pid(path + ".supervisor.log")
     crash = scan_crash_reports(
-        path, crashes_dir=crashes_dir, duration_seconds=log.get("durationSeconds")
+        path, crashes_dir=crashes_dir, duration_seconds=log.get("durationSeconds"),
+        started_at=log.get("openedAt"), pid=pid,
     ) if crash_scan else None
     # classify_log_state applies the shared fail-closed ladder to the log after the caller's
     # Unreal command has finished. The checker owns this post-run classification and keeps no
@@ -152,9 +162,10 @@ def format_result(result):
     if crash and crash.get("scanned"):
         # Printed on every run, green ones included: "I looked, and here is what was there" is
         # evidence, while silence is what let a short log be read as a crash.
-        lines.append("    crashReports: %d non-ensure, %d ensure-only in %s"
+        lines.append("    crashReports: %d non-ensure, %d ensure-only in %s%s"
                      % (len(crash.get("crashes") or []), len(crash.get("ensures") or []),
-                        crash.get("dir")))
+                        crash.get("dir"),
+                        " (pid %d)" % crash["pid"] if crash.get("pid") is not None else ""))
     if result.get("reason"):
         lines.append("    reason: %s" % result["reason"])
     for name in log.get("skippedTests") or []:
@@ -178,6 +189,9 @@ def main(argv=None):
     parser.add_argument("--crashes", default=None,
                         help="crash-report directory; default is the Saved/Crashes found by "
                              "walking up from the log")
+    parser.add_argument("--pid", type=int, default=None,
+                        help="the run's editor process id; a crash report recording another pid "
+                             "is not this run's. Default: the pid in <log>.supervisor.log, if any")
     parser.add_argument("--no-crash-scan", action="store_true",
                         help="skip the crash-report scan. The verdict then says 'crash reports "
                              "not checked' rather than implying there were none.")
@@ -186,7 +200,8 @@ def main(argv=None):
     worst = 0
     for path in args.logs:
         result = check_log(path, expected=args.expected, min_ratio=args.min_ratio,
-                           crash_scan=not args.no_crash_scan, crashes_dir=args.crashes)
+                           crash_scan=not args.no_crash_scan, crashes_dir=args.crashes,
+                           pid=args.pid)
         print(format_result(result))
         if result["state"] != STATE_COMPLETED_CLEAN:
             worst = 1

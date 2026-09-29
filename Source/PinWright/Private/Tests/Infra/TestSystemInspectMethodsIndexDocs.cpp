@@ -104,8 +104,8 @@ bool FSystemInspectMethodsIndexDocTest::RunTest(const FString& Parameters)
     }
 
     // Control + over-removal guard: a genuine Category-"system" verb still indexes here.
-    TestTrue(TEXT("system `## Methods` index still lists the genuine verb system.run_ubt"),
-        SystemIndex.Contains(TEXT("system.run_ubt")));
+    TestTrue(TEXT("system `## Methods` index still lists the genuine verb system.run_tests"),
+        SystemIndex.Contains(TEXT("system.run_tests")));
 
     // The declutter half of the fix: no method named system.inspect.* remains on the
     // parent `system` index — they all moved to their own page. Pre-fix this extracted

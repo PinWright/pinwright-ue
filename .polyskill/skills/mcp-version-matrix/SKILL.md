@@ -5,11 +5,17 @@ description: Drive the PinWright plugin to a green compile + automation suite on
 
 # MCP Version Matrix
 
+> **TODO(deferred): other-engine builds/suites used the retired pinwright_launch.py CLI; port to
+> pinwright_supervisor.spawn_supervised or a proxy tool before the next version-matrix run.** The
+> workflow's C2 (build) and T1 (suite) steps still call that CLI. `editor_build` / `editor_run_tests`
+> cannot replace it: they always use the host project's own `EngineAssociation`, not engines 5.3-5.7.
+> Do not launch this skill until the port lands.
+
 Take the PinWright plugin to green stdio-connector unit tests + a clean compile + green automation suite + a
 clean Rocket packaging gate on **every installed UE version** (5.3-5.8), as a background Workflow. Builds are
 machine-serial on one box, so the run processes **one version at a time**: it syncs that version's host clone
 to `origin/master`, then runs the Python connector's unit tests on that engine's bundled interpreter, builds,
-tests, and packages it to green with the editor running **windowless** (`-RenderOffScreen`), then pushes
+tests, and packages it to green with the editor running in **`offscreen`** mode (`-RenderOffScreen`, real RHI), then pushes
 **one commit per version** straight to `origin/master` so the other clones inherit the fix on their next sync. It front-loads a primary version (default 5.7) so version-agnostic fixes land once and propagate, then
 walks the rest newest-to-oldest and defers 5.8 to the very end (order: 5.7, 5.6, 5.5, 5.4, 5.3, 5.8), then
 converges to an all-green cross-version fixpoint. Once every non-blocked version is green at one commit, a
@@ -138,9 +144,11 @@ When the user asks to stop:
 
 ## Notes
 
-- **Windowless:** the per-version agent launches the GUI `UnrealEditor.exe` with
-  `-RenderOffScreen -unattended -nopause -nosplash -nocefaccelpaint -ddc=InstalledNoZenLocalFallback
-  -WindowStyle Hidden` and never `-log`, so no editor or console window appears. The build redirects to a log
+- **Offscreen:** the per-version agent runs the full suite through the retired `pinwright_launch.py suite --mode offscreen` (see the TODO at the top)
+  (the `-Cmd` twin with `-RenderOffScreen -unattended -nopause -nosplash -nocefaccelpaint
+  -ddc=InstalledNoZenLocalFallback`, real RHI; a full-suite verdict is taken in `offscreen` until
+  renderer-dependent tests skip cleanly under NullRHI) from a `-WindowStyle Hidden` shell and never `-log`, so
+  no editor or console window appears. The build redirects to a log
   file. (See the workflow script for the exact launch.) `-ddc=InstalledNoZenLocalFallback` is required on this
   box: IPv6 loopback is refused machine-wide, so the editor cannot reach ZenServer and the default DDC graph
   comes up with no writable node, aborting startup with "Unable to use default cache graph

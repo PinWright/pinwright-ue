@@ -49,27 +49,27 @@ Test groups are `PinWright.<Group>` (`PinWright.Catalog`, `PinWright.Dispatch`,
 `PinWright.Model`, `PinWright.Geometry`, `PinWright.render`, ...). Layout and group naming are in
 [docs/test-organization.md](docs/test-organization.md).
 
-One group, one editor launch (never one editor per group, and never `-NullRHI` - some tests need
-a real RHI):
+One group, one editor launch (never one editor per group), through the stdio proxy's
+`editor_run_tests`, then poll `editor_test_status`, on Windows and Linux alike. The caller picks
+the mode. Renderer-dependent tests need `offscreen` or `visible`. A full-suite verdict is taken in
+`offscreen` until renderer-dependent tests skip cleanly under NullRHI.
 
 ```
-UnrealEditor-Cmd.exe <Project>\<Host>.uproject \
-  -ExecCmds="Automation RunTests PinWright.Catalog;Quit" \
-  -TestExit="Automation Test Queue Empty" \
-  -Abslog=<Project>\Saved\PinWright\test-runs\<run>\automation.log \
-  -unattended -RunningUnattendedScript -nopause -nocefaccelpaint \
-  -ddc=InstalledNoZenLocalFallback -log
+editor_run_tests {"filter": "PinWright.Catalog", "reason": "PinWright.Catalog after <change>", "mode": "offscreen"}
+editor_test_status {"logPath": "<logPath from editor_run_tests>"}
 ```
 
-The exact flags and the reason for each are in `CLAUDE.md` -> **Testing**. The full suite is
-large (5000+ tests); scope to the affected groups unless the change touches dispatch, a shared
-helper, a response shape, an error table, or a `Build.cs`.
+It builds the suite argv (`-ExecCmds="Automation RunTests <filter>,Quit"`, `-TestExit`, `-Abslog`,
+`-unattended -RunningUnattendedScript -nopause -nocefaccelpaint -ddc=InstalledNoZenLocalFallback`,
+`-RenderOffscreen` in `offscreen` and `headless`, plus `-NullRHI` in `headless`) and runs it
+detached under the capped supervisor: memory cap (Windows Job Object, Linux `systemd-run` scope),
+BelowNormal priority, one `PINWRIGHT_SUITE_RESULT` line. `filter`, `reason` and `mode` are required.
+Build first with `editor_build {"reason": ...}` and poll `editor_build_status`; it refuses while an
+editor of this checkout runs.
 
-Full suite:
-
-- Windows: `scripts\Run-SuiteCapped.ps1 -HostProject <Project>\<Host>.uproject` - same argv plus
-  a job-object memory cap and BelowNormal priority.
-- Linux: run `UnrealEditor-Cmd` directly with the argv above, filter `PinWright`.
+The exact flags and the reason for each are in `CLAUDE.md` -> **Testing**. The full suite
+(`filter: "PinWright"`) is large (5000+ tests); scope to the affected groups unless the change
+touches dispatch, a shared helper, a response shape, an error table, or a `Build.cs`.
 
 **Verdict comes from the checker, not from reading the log.** `Content/Python/check_suite_log.py`
 is the only authority; it exits nonzero unless the run drained cleanly:

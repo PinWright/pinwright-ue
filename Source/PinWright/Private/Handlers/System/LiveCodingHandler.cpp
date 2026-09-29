@@ -3,9 +3,10 @@
 // LiveCodingHandler.cpp — system.live_coding_* : in-process Live Coding compile
 // trigger + status readback over ILiveCodingModule (the Ctrl+Alt+F11 equivalent).
 //
-// Motivation: system.run_ubt spawns an EXTERNAL UBT child process that cannot patch
-// the running editor. Agents iterating on C++ with the user need the editor's own
-// in-process Live Coding compile plus a way to read whether the patch applied. This
+// Motivation: an external UBT build cannot link the editor target while that editor
+// runs, and PinWright has no build verb. Agents iterating on C++ with the user need
+// the editor's own in-process Live Coding compile plus a way to read whether the
+// patch applied. This
 // mirrors Epic's UE 5.8 LiveCodingToolset (one tool over ILiveCodingModule):
 // Engine/Plugins/Experimental/Toolsets/LiveCodingToolset.
 //
@@ -161,7 +162,7 @@ REGISTER_RPC_HANDLER("system.live_coding_status", "system",
 
 // ---- system.live_coding_compile ----
 REGISTER_RPC_HANDLER("system.live_coding_compile", "system",
-    "Trigger the editor's own in-process Live Coding compile (Ctrl+Alt+F11 equivalent), wait for it, and return the patch result + captured LogLiveCoding tail. Unlike system.run_ubt (external UBT child process), this hot-patches the running editor. Requires Live Coding enabled for the session — check system.live_coding_status first.",
+    "Trigger the editor's own in-process Live Coding compile (Ctrl+Alt+F11 equivalent), wait for it, and return the patch result + captured LogLiveCoding tail. Unlike an external UBT build, which needs the editor closed, this hot-patches the running editor. Requires Live Coding enabled for the session — check system.live_coding_status first.",
     RPC_NO_PARAMS)
 {
 #if MCP_HAS_LIVE_CODING
@@ -256,7 +257,7 @@ REGISTER_RPC_HANDLER("system.live_coding_compile", "system",
     return true;
 #else
     Ctx.SendError(TEXT("LIVE_CODING_NOT_AVAILABLE"),
-        TEXT("Live Coding is not compiled into this build (requires a Windows x64 editor build with bWithLiveCoding). Use system.run_ubt for an external build instead."));
+        TEXT("Live Coding is not compiled into this build (requires a Windows x64 editor build with bWithLiveCoding). Close the editor and build from a shell (Build.bat/Build.sh -TargetType=Editor) instead."));
     return true;
 #endif
 }

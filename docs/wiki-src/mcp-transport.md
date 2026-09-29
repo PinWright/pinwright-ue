@@ -108,7 +108,11 @@ The MCP server exposes **exactly one tool**, named `call`. There is no per-handl
 
 Both object layers are type-checked before any wiki lookup or RPC dispatch. A present
 `params.arguments` or inner `arguments.args` value must be a JSON object; a string,
-array, or `null` returns JSON-RPC `-32602` immediately. Only an omitted field is
+array, or `null` returns JSON-RPC `-32602` immediately. One exception, for clients that
+serialize nested objects as JSON strings: an inner `args` string that parses to a JSON
+object is accepted as that object (the stdio proxy applies the same coercion before its
+`wait` check); any other `args` string stays `-32602`, and outer `arguments` is never
+coerced. Only an omitted field is
 eligible to synthesize an empty object: omitting outer `arguments` behaves like
 `arguments: {}`, while omitting inner `args` deliberately selects the wiki-page route.
 To execute a parameterless RPC, send `args: {}` explicitly.
@@ -180,7 +184,7 @@ For non-streaming requests (plain-JSON clients, or an explicit `wait: false` opt
 }
 ```
 
-Poll progress by calling the same `call` tool again with `method: "system.job_status"` and `args: { ticket_id: "..." }` (or tail `Saved/PinWright/jobs.jsonl`) for `started` / `progress` / `completed` / `failed` / `cancelled` events. Big jobs (`system.run_ubt`, `system.run_tests`, level builds) emit incremental progress events (`RecordProgress`) between start and completion, not just endpoints. A streaming request — the default for clients that send a `progressToken` and `Accept: text/event-stream` (see [Streaming responses (SSE)](#streaming-responses-sse)) — receives those same events as server-push `notifications/progress` frames and the terminal result on the same call instead of polling — the ticket contract is identical either way, and `jobs.jsonl` / `system.job_status` are unchanged. See [system](system.md) for the full ticket pattern.
+Poll progress by calling the same `call` tool again with `method: "system.job_status"` and `args: { ticket_id: "..." }` (or tail `Saved/PinWright/jobs.jsonl`) for `started` / `progress` / `completed` / `failed` / `cancelled` events. Big jobs (`system.run_tests`, level builds) emit incremental progress events (`RecordProgress`) between start and completion, not just endpoints. A streaming request — the default for clients that send a `progressToken` and `Accept: text/event-stream` (see [Streaming responses (SSE)](#streaming-responses-sse)) — receives those same events as server-push `notifications/progress` frames and the terminal result on the same call instead of polling — the ticket contract is identical either way, and `jobs.jsonl` / `system.job_status` are unchanged. See [system](system.md) for the full ticket pattern.
 
 ## Streaming responses (SSE)
 
@@ -234,46 +238,102 @@ Review the plugin's settings under **Plugins -> PinWright** before using the gat
 
 ## Stdio proxy lifecycle tools
 
-The direct in-editor endpoint has exactly one tool, `call`. A client configured through the bundled stdio proxy sees four tools: `call`, `editor_start`, `editor_restart`, and `editor_prepare_tests`.
+The direct in-editor endpoint has exactly one tool, `call`. A client configured through the bundled stdio proxy (`Content/Python/mcp_proxy.py`) also sees seven proxy-local tools that answer while no editor is running:
 
-- `editor_start({})` opens the project's `.uproject` through the registered file association (on Linux, which has none, it spawns the resolved editor directly, borrowing `DISPLAY`/`XAUTHORITY` from your desktop session when the proxy runs over SSH). Unreal owns prompts, compilation, and module loading for this path, and the engine comes from the project's `EngineAssociation` (on Linux, `UE_<version>=<engine root>` or a GUID key under `[Installations]` in `~/.config/Epic/UnrealEngine/Install.ini`), or from `$PINWRIGHT_ENGINE_ROOT` when set. An unresolved association fails with `EDITOR_ENGINE_NOT_FOUND`.
-- `editor_start({"map": "/Game/Maps/MyLevel"})` boots into a level. The map token is the first argument after the `.uproject`, so a map forces direct spawn and defaults `unattended_script` on.
-- `editor_restart({"map": "/Game/Maps/MyLevel"})` quits through `editor.quit`, waits for the endpoint to go down, then starts a fresh editor. Dirty or modal-blocked editors are reported rather than bypassed.
-- For tests, `editor_prepare_tests({"filter": "Project.Tests"})` is the only command-returning proxy verb. The `filter` is mandatory, must be non-empty, and has no default. The live-editor guard runs first and is reported as structured observation: a detected editor is `EDITOR_ALREADY_RUNNING`, an unavailable probe is `not_probed`, and only a safe probe proceeds to `COMMAND_READY`.
+| tool | required params | does |
+| --- | --- | --- |
+| `editor_start` | `mode` (`visible` \| `offscreen` \| `headless`), `reason` (string) | starts this project's editor; optional `map`, `wait` (`ready` default, or `exit`), `extra_args`, `unattended_script` |
+| `editor_restart` | `mode`, `reason` | `editor.quit` (optional `save` / `discard`), waits for the endpoint to go down, then runs the `editor_start` path; optional `map`, `extra_args`, `unattended_script` |
+| `editor_run_tests` | `filter`, `reason`, `mode` | launches the automation suite, returns once the first test has started |
+| `editor_test_status` | exactly one of `logPath`, `runId` | non-blocking progress; the verdict once finished |
+| `editor_list` | none | read-only census of every Unreal editor process on the machine |
+| `editor_build` | `reason` | builds this project's `<Project>Editor` Development target through the capped supervisor, returns at once |
+| `editor_build_status` | `logPath` | non-blocking build status, UBT result and every error line |
 
-All proxy-local lifecycle tools ping PinWright MCP before resolving or launching anything. If an editor answers, even while starting, lifecycle tools fail with `EDITOR_ALREADY_RUNNING`. A forwarded `call` while no editor is reachable reports `EDITOR_NOT_RUNNING`; an unavailable probe never licenses a second editor start.
+- **`mode` and `reason` have no default.** Missing: `MISSING_REQUIRED_PARAM`. Any `mode` other than the three words below, including a boolean: `INVALID_MODE`, whose message lists all three. A `reason` that is not a string, is blank after whitespace runs collapse to one space, or exceeds 300 characters: `INVALID_REASON` (refused, never truncated). `editor_restart` validates both before stopping anything.
+- **Modes** (the same three words in `editor_list`):
 
-The dotted `system.run_ubt` and `system.run_tests` RPCs remain separate live-editor operations reached through `call`. They cannot start a stopped editor; use `editor_start` for a live editor or `editor_prepare_tests` to prepare a cold test command for the caller.
+| mode | flags | window | RHI | cap / priority | use it for | Windows vs Linux |
+| --- | --- | --- | --- | --- | --- | --- |
+| `visible` | none added | yes | real | uncapped, normal priority; Windows: started by the uncapped supervisor through WMI so it survives the MCP client, Linux: direct detached spawn | a person watching or using the editor | Linux needs an X display: over SSH the proxy borrows `DISPLAY`/`XAUTHORITY` from the user's desktop session, else `EDITOR_NO_DISPLAY` |
+| `offscreen` | `-RenderOffScreen -unattended -RunningUnattendedScript -nopause -nosplash -nocefaccelpaint` | no | real | capped supervisor, BelowNormal | unattended work that renders or captures; full-suite verdicts | Windows: `CREATE_NO_WINDOW` and the null platform application; Linux: no display needed (SDL `dummy` video driver) |
+| `headless` | `-NullRHI` plus the `offscreen` flags | no | null | capped supervisor, BelowNormal | unattended work that never renders or reads pixels | same as `offscreen` |
 
-## Cold test commands from editor_prepare_tests
+- **`-RenderOffScreen` stays in `headless` on purpose.** `-NullRHI` only replaces the renderer; `-RenderOffScreen` is what selects the null platform application (`WindowsPlatformApplicationMisc.cpp:171-175`, `LinuxPlatformApplicationMisc.cpp:619-624`) and SDL's `dummy` video driver on Linux (`LinuxPlatformApplicationMisc.cpp:366-371`). Without it a NullRHI editor still opens OS windows and still needs an X display. Render, capture and screenshot verbs cannot produce pixels in `headless`.
+- **`unattended_script`** governs `visible` only: it opts that window into `-RunningUnattendedScript` and defaults on when `map` is given. `offscreen` and `headless` always carry it and suppress modal dialogs; `unattended_script` cannot turn that off. Capped launches run under the capped supervisor, `Content/Python/pinwright_supervisor.py` (internal to the proxy, no CLI): memory cap at 60% of physical RAM, BelowNormal priority, kill-on-close for the editor's children.
+- **One launch path.** Every launch is a detached spawn of the editor the project's `EngineAssociation` resolves to (on Linux, `UE_<version>=<engine root>` or a GUID key under `[Installations]` in `~/.config/Epic/UnrealEngine/Install.ini`), or of `$PINWRIGHT_ENGINE_ROOT` when set. An unresolved association fails with `EDITOR_ENGINE_NOT_FOUND`, never a fallback to another engine. There is no OS `.uproject` file-association launch. Every editor outlives the proxy and the MCP client: a client disconnect ends only the wait. On Windows every editor, visible included, is started by the supervisor through WMI, outside the client's process tree; the result's `detached` says whether that held.
+- **`map`** is placed as the first token after the `.uproject`, the only position the engine reads it from; booting into a map is more reliable than `level.load` on a live world. Dirty or modal-blocked editors are reported by `editor_restart` rather than bypassed.
+- **Guard.** `editor_start` and `editor_run_tests` ping PinWright MCP before resolving or launching anything: an editor of this project that answers, even while starting, fails them with `EDITOR_ALREADY_RUNNING`, and an unavailable probe never licenses a second editor. A forwarded `call` while no editor is reachable reports `EDITOR_NOT_RUNNING`.
 
-`COMMAND_READY` contains the resolved `UnrealEditor-Cmd` executable (off Windows, `UnrealEditor` when no `-Cmd` twin is built), the absolute project path, launch `argv`, explicit absolute `logPath`, checker executable, checker `argv`, and the `EngineAssociation`-resolved engine root. The verb returns immediately. It does not compile, launch, wait, kill, or return a test verdict.
+**Launch identity.** Every PinWright editor launch (`editor_start`, `editor_restart`, `editor_run_tests`) appends `-PinWrightLaunchReason=<reason>` (`%` encoded as `%25`, `"` as `%22`) and `-PinWrightLaunchedBy=<editor_start|editor_restart|editor_run_tests>` to the editor's command line. Nothing is written to files or the registry; `editor_list` and `system.identity` (`launch_reason`, `launched_by`) read both back from the live process.
 
-The caller runs the returned launch command and then the returned checker command with the exact same log path. The launch uses comma-separated `-ExecCmds` with `Automation RunTests <filter>,Quit`, `-TestExit="Automation Test Queue Empty"`, `-Abslog=<same absolute logPath>`, `-unattended`, `-nopause`, `-nocefaccelpaint`, `-ddc=InstalledNoZenLocalFallback`, and `-log`. It uses a real RHI and does not add `-NullRHI`.
+**`editor_list` entries:** `pid`, `exe`, `engineRoot`, `commandLine`, `startTime` (UTC ISO) and `startMs`, `project`, `projectName`, `checkoutRoot`, `projectSource` (`commandLine` | `unresolved`), `mode` (`visible` | `offscreen` | `headless` | `commandlet` | `game`, inferred from the switches: `headless` when `-NullRHI` is present; `commandlet` (`-run=`) and `game` (`-game`) win over rendering flags), `map`, `logPath` (its `-Abslog`), `isThisProject`, `gatewayPort` (that checkout's `Saved/PinWright/gateway-port`), `reason`, `launchedBy`. It covers every checkout and engine, commandlets (`UnrealEditor-Cmd`), `-game` runs and headless workers. An editor started by anything else, including other repos' tooling, reports `reason: null`, `launchedBy: "unknown"`; that is expected. It never signals a process.
 
-The command shape is:
+The dotted `system.run_tests` RPC remains a separate live-editor operation reached through `call`; it cannot start a stopped editor.
 
-```powershell
-$log = "$env:HOST_ROOT\Saved\PinWright\test-runs\<run>\automation.log"
-& "$env:UE_ROOT\Engine\Binaries\Win64\UnrealEditor-Cmd.exe" "$env:HOST_ROOT\<HostProject>.uproject" `
-  '-ExecCmds=Automation RunTests Project.Tests,Quit' `
-  '-TestExit=Automation Test Queue Empty' `
-  "-Abslog=$log" `
-  -unattended -nopause -nocefaccelpaint -log
-```
+`editor_build` builds the editor target with every editor of this checkout closed (see **Building** below); `system.live_coding_compile` hot-patches a running editor.
 
-`check_suite_log.py` is the fail-closed verdict authority. The caller runs it under Unreal's bundled Python interpreter after the launch. It requires the counted `Automation Test Queue Empty <N> tests performed.` drain marker and distinguishes incomplete, empty, failed, skipped, and clean measurements. `PINWRIGHT_ASSERTIONS_SKIPPED` remains a distinct `COMPLETED_WITH_SKIPS` outcome, not a clean result.
+## Test runs: editor_run_tests, then editor_test_status
+
+`editor_run_tests({"filter": "Project.Tests", "reason": "<why>", "mode": "offscreen"})` runs the live-editor guard, launches the suite under the capped, detached supervisor, and blocks **only** until the first `Test Started` line lands in its log. It returns `status: "TESTS_STARTED"`, `runId`, `pid`, `logPath`, `reportDir`, `startedTests`, `lastTest`, `project`, `engineRoot`, `mode`, `reason`, `capped`. The run continues detached and outlives the proxy. `filter` must be non-empty and free of control characters and of the `ExecCmds` separators `,` / `;` (`INVALID_FILTER`).
+
+Launch argv: `<uproject> "-ExecCmds=Automation RunTests <filter>,Quit" "-TestExit=Automation Test Queue Empty" -unattended -nopause -nosplash -nosound [-NullRHI] [-RenderOffscreen] -nocefaccelpaint -RunningUnattendedScript -ddc=InstalledNoZenLocalFallback -ReportExportPath=<reportDir> -Abslog=<logPath>`: `-RenderOffscreen` in `offscreen` and `headless`, `-NullRHI` in `headless` only. `visible` and `offscreen` use a real RHI. **The caller picks the mode. Renderer-dependent tests need `offscreen` or `visible`. A full-suite verdict is taken in `offscreen` until renderer-dependent tests skip cleanly under NullRHI.** Binary: `offscreen` and `headless` use `UnrealEditor-Cmd` on Windows and plain `UnrealEditor` on Linux; `visible` uses the GUI binary. Log: `<Project>/Saved/PinWright/test-runs/<runId>/automation.log`.
+
+Startup errors never stop the run; `pid` and `leftRunning` say what is still alive:
+
+| code | means |
+| --- | --- |
+| `EDITOR_EXITED_BEFORE_TESTS` | the editor exited before its first test (`exitCode`) |
+| `EDITOR_BLOCKED_ON_MODAL` | a modal owns the game thread before the first test |
+| `EDITOR_TESTS_NOT_STARTED` | no test within 600 s: the slowest healthy boot measured 395.1 s, plus half again |
+| `EDITOR_RUN_INTERRUPTED` | the MCP client disconnected, or the wait was interrupted |
+
+`editor_test_status({"logPath": "..."})` (or `{"runId": "..."}`, this project's runs only) never blocks and keeps no state: `status` is `running` while an Unreal editor whose `-Abslog` equals that log is alive, else `finished`. It reports `pid`, `mode` (read from the live editor's command line, or from the log's `Command Line:` line once finished, so every verdict says which mode produced it), `started` / `succeeded` / `failed`, `lastTest`, `supervisorResult` (the `PINWRIGHT_SUITE_RESULT` line from `<log>.result.txt`, once written) and, once finished, `verdict: {state, reason, warnings}` from `check_suite_log.check_log`. Neither a log nor a live writer: `TEST_RUN_NOT_FOUND`.
+
+`check_suite_log.py` is the fail-closed verdict authority; `editor_test_status` calls it, and it runs standalone under Unreal's bundled Python interpreter on any suite log. It requires the counted `Automation Test Queue Empty <N> tests performed.` drain marker and distinguishes incomplete, empty, failed, skipped, and clean measurements. `PINWRIGHT_ASSERTIONS_SKIPPED` remains a distinct `COMPLETED_WITH_SKIPS` outcome, not a clean result.
 
 The checker states are:
 
 | state | meaning | code |
 | --- | --- | --- |
-| `CRASHED` | the editor died: a fatal/assert banner, or a non-ensure crash report in the run window | `EDITOR_TESTS_CRASHED` |
+| `CRASHED` | the editor died: a fatal/assert banner, or a non-ensure crash report in the run window (log open to last write) from the run's own editor (its `-Abslog` and pid) | `EDITOR_TESTS_CRASHED` |
 | `DID_NOT_COMPLETE` | the queue never drained and no crash evidence exists, so the run was killed | `EDITOR_TESTS_INCOMPLETE` |
 | `NO_TESTS` | nothing was enqueued or recorded a success | `EDITOR_NO_TESTS` |
 | `COMPLETED_WITH_FAILURES` | the run drained with failures | `EDITOR_TESTS_FAILED` |
 | `COMPLETED_WITH_SKIPS` | the run drained but a skip marker was emitted | `EDITOR_TESTS_SKIPPED` |
 | `COMPLETED_CLEAN` | the run drained and every assertion ran | - |
+
+## Building: editor_build, then editor_build_status
+
+`editor_build({"reason": "<why>"})` builds `<Project>Editor` Development for the host platform (Win64: `Engine/Build/BatchFiles/Build.bat`; Linux: `Engine/Build/BatchFiles/Linux/Build.sh`) with `-Project=<uproject> -WaitMutex -NoHotReloadFromIDE -Log=<build dir>/ubt.log` (UBT's own log, so a concurrent build on the same engine cannot collide on the shared `Engine/Programs/UnrealBuildTool/Log.txt`), on the engine the project's `EngineAssociation` resolves to, through the capped supervisor at BelowNormal, detached. `reason` follows `editor_start`'s rules; there is no `mode` (it launches no editor). It returns at once: `status: "BUILD_STARTED"`, `logPath`, `pid`, `buildId`, `target`, `platform`, `configuration`, `project`, `engineRoot`, `reason`, `commandLine`, `capped`. Log: `<Project>/Saved/PinWright/builds/<buildId>/build.log`. The reason stays off the UBT command line, because a per-build string would become part of the target's inputs; it is the log's first line (`PinWright editor_build: reason=...`) and in the result.
+
+| code | means |
+| --- | --- |
+| `MISSING_REQUIRED_PARAM`, `INVALID_REASON` | `reason` missing or invalid |
+| `INVALID_ARGUMENTS` | an unknown field, including `mode` |
+| `BUILD_BLOCKED_BY_EDITOR` | an Unreal editor of this checkout is running (`pids` named): the link replaces its DLLs. Editors of other checkouts do not block |
+| `EDITOR_LIST_FAILED` | the process census failed; refused rather than risk the link |
+| `BUILD_SCRIPT_NOT_FOUND`, `BUILD_START_FAILED` | the engine's build script is missing, or the supervisor could not start |
+| `EDITOR_PROJECT_NOT_FOUND`, `EDITOR_ENGINE_NOT_FOUND` and the other engine-resolution errors | as for `editor_start` |
+
+`editor_build_status({"logPath": "..."})` never blocks and keeps no state: `status` (`running` \| `succeeded` \| `failed` \| `lost`, the supervisor died without a result), `ubtResult` (UBT's `Result: Succeeded|Failed (...)` line), `exitCode`, `verdict` (supervisor verdict, e.g. `MEMORY_CAP_HIT`, `TIMEOUT`), `supervisorResult` (the `PINWRIGHT_JOB_RESULT` line), `errorCount` and `errors` (compiler / linker / UBT error lines from the whole log: MSVC `error Cxxxx` / `LNKxxxx` / `MSBxxxx`, clang `: error:` / `fatal error:`, UBT `ERROR`, `Unable to build while Live Coding is active`, `cannot open file`; the first 200 distinct), `pid`. Refusals: `MISSING_REQUIRED_PARAM`, `INVALID_LOG_PATH`, `INVALID_ARGUMENTS`, `BUILD_NOT_FOUND`.
+
+A one-file compile check has no tool parameter: run plain `Build.bat` / `Build.sh ... -SingleFile=<file>` from a shell. That is fine outside the supervisor because it compiles one translation unit and writes no binaries.
+
+## Platform differences
+
+| | Windows | Linux |
+| --- | --- | --- |
+| spawn | direct, detached (`DETACHED_PROCESS`, new process group) | direct, new session |
+| supervisor start (tests, builds, `offscreen` / `headless` editors capped; `visible` editors uncapped on Windows) | WMI `Win32_Process.Create`: parent `WmiPrvSE`, so outside the MCP client's process tree and job and a client tree kill cannot reach the run. WMI failure: direct child, result `detached: false` with `detachNote`, text says `NOT DETACHED` | direct child, new session |
+| proxy / supervisor skew | the proxy keeps the supervisor module in memory and launches the file on disk; a protocol skew fails the launch with `SUPERVISOR_VERSION_MISMATCH`: restart the MCP server (`/mcp` reconnect) | same |
+| result fields | `detached`, `launchMechanism` (`wmi-win32-process-create` \| `createprocess-breakaway` \| `createprocess-in-caller-job`), `detachNote` | same fields, `launchMechanism: setsid` |
+| display | `offscreen` / `headless`: none (`CREATE_NO_WINDOW`, null platform application) | `offscreen` / `headless`: none (SDL `dummy` driver); `visible`: an X display |
+| memory cap (`offscreen` / `headless`, tests, builds) | Job Object `JOB_OBJECT_LIMIT_PROCESS_MEMORY`, per process (shader workers get their own ceiling); a hit fails allocations | `systemd-run --user --scope -p MemoryMax`, per scope = whole process tree; a hit invokes the cgroup OOM killer. Unavailable: uncapped, with the reason in `uncappedReason` |
+| priority (BelowNormal) | job priority class `0x4000`, job-wide | nice 10, inherited |
+| kill-on-exit, timeout | `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, `TerminateJobObject` | `PR_SET_PDEATHSIG(SIGKILL)` + own process group, `killpg` |
+| `offscreen` / `headless` suite binary | `UnrealEditor-Cmd.exe` | `UnrealEditor` |
+| `editor_list` enumeration | one `Get-CimInstance Win32_Process` query (no working directory) | `/proc/<pid>/cmdline`, `exe`, `cwd`; start time from `stat` + `btime` |
 
 ## Not supported in v1
 

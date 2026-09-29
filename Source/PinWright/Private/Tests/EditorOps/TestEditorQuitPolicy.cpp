@@ -346,7 +346,7 @@ bool FEditorQuitTerminatesRunningJobsTest::RunTest(const FString& Parameters)
     const FString Cancellable = Registry.Start(TEXT("asset.dump_folder"), MakeShared<FJsonObject>());
     bool bCancelHookRan = false;
     Registry.SetCancelCallback(Cancellable, [&bCancelHookRan]() { bCancelHookRan = true; });
-    const FString Done = Registry.Start(TEXT("system.run_ubt"), MakeShared<FJsonObject>());
+    const FString Done = Registry.Start(TEXT("level.build_lighting"), MakeShared<FJsonObject>());
     Registry.Complete(Done, true, nullptr, FString());
 
     const TArray<FString> Terminated = EditorQuitPolicy::TerminateRunningJobs(Registry);

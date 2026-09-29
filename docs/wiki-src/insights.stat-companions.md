@@ -4,7 +4,7 @@ Console `stat` / `dump*` commands that triage a frame **without** recording a `.
 
 ## How to run these
 
-Run all of these through `call("editor.console_command", {...})`; `call("performance")` wraps some overlays. The `dump*` commands write `Saved/Logs/<ProjectName>.log`; read that file after the run.
+Run all of these through `call("editor.console_command", {...})`; `call("performance")` wraps some overlays. The `dump*` commands write to this editor's log; read the path `system.identity` returns as `log_file` after the run (not an assumed `Saved/Logs/<ProjectName>.log`, which belongs to another editor when two are open on the project).
 
 ## Frame-cost triage (which thread is bound)
 

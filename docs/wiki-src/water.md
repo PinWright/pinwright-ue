@@ -29,7 +29,7 @@ Measured on UE 5.8: two `AWaterBodyLake` actors spawned into a level holding one
 So, when adding a body to a level that already has a zone:
 
 - expect no visible water until the level is reloaded — **a blank result is not evidence the body is wrong**; read the spline points back instead of trusting the render;
-- `editor.open_level` on the already-open map does **not** reload it. Save, then restart the editor (`editor_restart`, or `editor_start` with `map`);
+- `editor.open_level` on the already-open map does **not** reload it. Save, then restart the editor (`editor_restart`, or `editor_start` with `map`; both require `mode` and `reason`);
 - creating the zone *after* the bodies avoids it entirely, which is why the canonical workflow above lists `spawn_water_zone` first.
 
 ## Two lake traps that cost a rebuild each

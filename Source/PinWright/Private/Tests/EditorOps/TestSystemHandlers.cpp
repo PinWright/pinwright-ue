@@ -86,37 +86,6 @@ bool FSessionGetSessionsInfoNoCrashTest::RunTest(const FString& Parameters)
 }
 
 // ============================================================================
-// system.run_ubt
-// ============================================================================
-
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSystemRunUbtNoCrashTest,
-    "PinWright.system.run_ubt.ValidParamsNoCrash",
-    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
-
-bool FSystemRunUbtNoCrashTest::RunTest(const FString& Parameters)
-{
-    TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
-    Payload->SetStringField(TEXT("target"), TEXT("MyProject"));
-    Payload->SetStringField(TEXT("platform"), TEXT("Win64"));
-    Payload->SetStringField(TEXT("configuration"), TEXT("Development"));
-
-    // Handler will fail early if UBT batch file is absent from the test environment — must not crash
-    TestTrue(TEXT("Handler found and invoked"), InvokeHandler(TEXT("system.run_ubt"), Payload));
-    return true;
-}
-
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSystemRunUbtEmptyPayloadNoCrashTest,
-    "PinWright.system.run_ubt.EmptyPayloadNoCrash",
-    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
-
-bool FSystemRunUbtEmptyPayloadNoCrashTest::RunTest(const FString& Parameters)
-{
-    // All params optional — defaults kick in; handler gracefully fails if UBT is absent
-    TestTrue(TEXT("Handler found and invoked"), InvokeHandler(TEXT("system.run_ubt"), MakeShared<FJsonObject>()));
-    return true;
-}
-
-// ============================================================================
 // system.run_tests
 // ============================================================================
 

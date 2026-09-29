@@ -80,7 +80,7 @@ UPinWrightSettings::UPinWrightSettings()
 
     // Automation suite maintenance. 25 tests is the interval the suite has run at since the
     // force-delete removal (the reset is what reclaims detached fixtures). 0.55 sits below the
-    // 0.60 external Job Object cap scripts/Run-SuiteCapped.ps1 applies, so the in-process
+    // 0.60 external memory cap Content/Python/pinwright_supervisor.py applies, so the in-process
     // reclaim gets a chance before an allocation can fail; 0.75 still occupied AFTER a full
     // collect means the reclaim did not work and the run is worth flagging rather than trusting.
     TestSuiteResetIntervalTests = 25;

@@ -1,7 +1,8 @@
 # Copyright (c) 2026 Alexander Penkin. MIT License.
 
-"""Unit tests for mcp_proxy's SSE units: iter_sse_events (stream parsing) and
-_wants_stream (the streaming opt-in gate).
+"""Unit tests for mcp_proxy's SSE units: iter_sse_events (stream parsing),
+_wants_stream (the streaming opt-in gate) and _normalize_string_args (string
+`args` coercion ahead of that gate).
 
 Pure stdlib; drives the parser with canned byte streams via a readline
 callable, no sockets. Run from this directory with:
@@ -21,7 +22,7 @@ import unittest
 # mcp_proxy.py lives one directory up (Content/Python/).
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from mcp_proxy import _wants_stream, iter_sse_events
+from mcp_proxy import _normalize_string_args, _wants_stream, iter_sse_events
 
 
 def make_readline(payload):
@@ -174,6 +175,36 @@ class WantsStreamTest(unittest.TestCase):
         self.assertFalse(_wants_stream({}))
         self.assertFalse(_wants_stream({"params": "not-a-dict"}))
         self.assertFalse(_wants_stream({"params": {"_meta": "not-a-dict"}}))
+
+
+class NormalizeStringArgsTest(unittest.TestCase):
+    """A JSON-string `args` holding an object becomes that object before the
+    streaming gate reads it; any other string is forwarded untouched."""
+
+    def test_object_string_is_parsed_in_place(self):
+        msg = call_msg(meta=TOKEN, args='{"wait": false, "path": "/Game/X"}')
+        _normalize_string_args(msg)
+        self.assertEqual(msg["params"]["arguments"]["args"],
+                         {"wait": False, "path": "/Game/X"})
+        self.assertFalse(_wants_stream(msg))
+
+    def test_non_object_json_string_is_left_alone(self):
+        for raw in ('[1, 2]', '42', '"text"', 'null'):
+            msg = call_msg(args=raw)
+            _normalize_string_args(msg)
+            self.assertEqual(msg["params"]["arguments"]["args"], raw)
+
+    def test_invalid_json_string_is_left_alone(self):
+        msg = call_msg(args='{not json')
+        _normalize_string_args(msg)
+        self.assertEqual(msg["params"]["arguments"]["args"], '{not json')
+
+    def test_object_args_and_malformed_envelopes_untouched(self):
+        msg = call_msg(args={"wait": True})
+        _normalize_string_args(msg)
+        self.assertEqual(msg["params"]["arguments"]["args"], {"wait": True})
+        for bad in ({}, {"params": "x"}, {"params": {"arguments": "x"}}, call_msg()):
+            _normalize_string_args(bad)
 
 
 if __name__ == "__main__":

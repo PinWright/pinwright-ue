@@ -2,9 +2,8 @@
 
 // Red test for F-live-coding-trigger: PinWright must expose in-process Live Coding
 // RPCs so agents iterating on C++ can trigger the editor's own Live Coding compile
-// (Ctrl+Alt+F11 equivalent) and read whether the patch applied — instead of only
-// system.run_ubt, which spawns an EXTERNAL UBT process that cannot patch the running
-// editor. The ticket's proposed surface (over ILiveCodingModule, UE 5.8 parity with
+// (Ctrl+Alt+F11 equivalent) and read whether the patch applied — an EXTERNAL UBT
+// build cannot patch the running editor. The ticket's proposed surface (over ILiveCodingModule, UE 5.8 parity with
 // LiveCodingToolset) is two verbs:
 //   - system.live_coding_compile()  — trigger ILiveCodingModule::Compile as a job.
 //   - system.live_coding_status()   — enabled?, session started?, last compile result.

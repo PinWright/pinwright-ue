@@ -163,7 +163,7 @@ namespace WikiDocTestHelpers
 
     // Assert a namespace overlay documents the async ticket -> system.job_status poll
     // contract for one or more long-running verbs (the E-*-async-poll-undocumented ticket
-    // family: navigation.rebuild_navigation, level.build_lighting, run_ubt, run_benchmark,
+    // family: navigation.rebuild_navigation, level.build_lighting, run_benchmark,
     // render-nanite rebuild …). The shared contract a page must carry is: it names each
     // long-running verb, says the verb is async / returns a ticket, and cross-links
     // system.job_status as the poll follow-up. Lifted out of the per-test bodies so the

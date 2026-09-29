@@ -19,8 +19,8 @@ the process's top-level windows finds nothing to dismiss. Every symptom points a
 The only cheap way to keep it from recurring is to refuse the argv that permits it.
 
 WHY THIS IS A TEXT SCAN OVER COMMAND FILES, NOT A UNIT TEST. The proxy's own argv tables
-(`_HEADLESS_FLAGS`, `build_editor_command`, `_editor_prepare_tests`) are covered by
-`tests/test_mcp_proxy_editor_start.py`. The surface that unit test cannot reach is every launch
+(`_OFFSCREEN_FLAGS`, `build_editor_command`, `pinwright_supervisor.suite_argv`) are covered by
+`tests/test_mcp_proxy_editor_start.py` and `tests/test_pinwright_supervisor.py`. The surface that unit test cannot reach is every launch
 written OUTSIDE the proxy: PowerShell smoke drivers and workflow scripts. Those
 files are commands rather than prose, so a lexical scan of them is exact.
 
