@@ -27,7 +27,7 @@ namespace WidgetXmlTestHelpers
 {
     inline FString MakeXmlTestAssetPath(const FString& Prefix)
     {
-        return FString::Printf(TEXT("/Game/_Test/%s_%s"),
+        return FString::Printf(TEXT("/Game/PinWrightTests/_Test/%s_%s"),
             *Prefix,
             *FGuid::NewGuid().ToString(EGuidFormats::Digits));
     }
@@ -70,7 +70,7 @@ namespace WidgetXmlTestHelpers
         CleanupTestAsset(PackagePath);
     }
 
-    // Build an in-memory UWidgetBlueprint at a /Game/_Test/... pathname so the
+    // Build an in-memory UWidgetBlueprint at a /Game/PinWrightTests/_Test/... pathname so the
     // widget-xml handlers' LoadWidgetBlueprint -> FindObject lookup resolves it.
     // Avoids FKismetEditorUtilities::CreateBlueprint (full BP compile), on-disk
     // save, and matching DeleteAsset+GC cleanup — that path adds ~7-8s per WBP

@@ -27,6 +27,7 @@
 // success); it documents the false-success context, not the bug — the binding-resolution
 // assertions are what distinguish fixed from broken.
 #include "Misc/AutomationTest.h"
+#include "Tests/AutomationSuiteMaintenance.h"
 
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
@@ -59,7 +60,7 @@ namespace
     {
         const FString SeqName = FString::Printf(TEXT("MCP_AddActorBindSeq_%s"),
             *FGuid::NewGuid().ToString(EGuidFormats::Digits));
-        const FString DestFolder = TEXT("/Game/MCP_AddActorBindProbe");
+        const FString DestFolder = FString(PinWrightSuiteMaintenance::ScratchRootPackagePath()) / TEXT("MCP_AddActorBindProbe");
         OutFullPath = FString::Printf(TEXT("%s/%s"), *DestFolder, *SeqName);
 
         TSharedPtr<FJsonObject> CreatePayload = MakeShared<FJsonObject>();

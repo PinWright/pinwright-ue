@@ -49,7 +49,7 @@ namespace
     };
 
     // Builds the named, never-saved /Game transactional blueprint the three undo tests share: a
-    // GUID-suffixed package under /Game/__PW_GatewayTests/<Slug>_, an AActor blueprint flagged
+    // GUID-suffixed package under /Game/PinWrightTests/__PW_GatewayTests/<Slug>_, an AActor blueprint flagged
     // RF_Transactional, and its event graph (also RF_Transactional, required for undo/rollback).
     // Emits the same TestNotNull checkpoints the tests previously inlined. On failure, returns a
     // result whose BP/EventGraph are null but whose AssetPath is set so the caller still cleans up.
@@ -59,7 +59,7 @@ namespace
     {
         FUndoTestBlueprint Result;
         Result.AssetPath = FString::Printf(
-            TEXT("/Game/__PW_GatewayTests/%s_%s"),
+            TEXT("/Game/PinWrightTests/__PW_GatewayTests/%s_%s"),
             Slug,
             *FGuid::NewGuid().ToString(EGuidFormats::Digits));
 

@@ -29,7 +29,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMaterialAuthoringAutoLayoutTest,
 bool FMaterialAuthoringAutoLayoutTest::RunTest(const FString& Parameters)
 {
     const FString AssetPath = FString::Printf(
-        TEXT("/Game/__PW_GatewayTests/AutoLayout_%s"),
+        TEXT("/Game/PinWrightTests/__PW_GatewayTests/AutoLayout_%s"),
         *FGuid::NewGuid().ToString(EGuidFormats::Digits));
 
     UPackage* Pkg = CreatePackage(*AssetPath);

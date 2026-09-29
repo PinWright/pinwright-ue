@@ -37,8 +37,8 @@ namespace
     {
         OutInstance = nullptr;
         const FString Suffix = FGuid::NewGuid().ToString(EGuidFormats::Digits);
-        OutParentPath = FString::Printf(TEXT("/Game/__PW_GatewayTests/MatBPOParent_%s"), *Suffix);
-        OutInstancePath = FString::Printf(TEXT("/Game/__PW_GatewayTests/MatBPOInst_%s"), *Suffix);
+        OutParentPath = FString::Printf(TEXT("/Game/PinWrightTests/__PW_GatewayTests/MatBPOParent_%s"), *Suffix);
+        OutInstancePath = FString::Printf(TEXT("/Game/PinWrightTests/__PW_GatewayTests/MatBPOInst_%s"), *Suffix);
 
         UPackage* ParentPkg = CreatePackage(*OutParentPath);
         if (!Test.TestNotNull(TEXT("Parent package created"), ParentPkg))

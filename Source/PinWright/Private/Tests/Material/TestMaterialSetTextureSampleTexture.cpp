@@ -42,7 +42,7 @@ namespace
     {
         OutSample = nullptr;
         OutAssetPath = FString::Printf(
-            TEXT("/Game/__PW_GatewayTests/%s_%s"),
+            TEXT("/Game/PinWrightTests/__PW_GatewayTests/%s_%s"),
             AssetPathPrefix,
             *FGuid::NewGuid().ToString(EGuidFormats::Digits));
 
@@ -96,7 +96,7 @@ namespace
         OutFirst = nullptr;
         OutSecond = nullptr;
         OutAssetPath = FString::Printf(
-            TEXT("/Game/__PW_GatewayTests/SetTexSampleAmbiguous_%s"),
+            TEXT("/Game/PinWrightTests/__PW_GatewayTests/SetTexSampleAmbiguous_%s"),
             *FGuid::NewGuid().ToString(EGuidFormats::Digits));
 
         UPackage* Pkg = CreatePackage(*OutAssetPath);

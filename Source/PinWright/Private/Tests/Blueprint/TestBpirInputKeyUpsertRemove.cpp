@@ -25,7 +25,7 @@ namespace
     FString MakeInputKeyTestAssetPath()
     {
         return FString::Printf(
-            TEXT("/Game/__PW_GatewayTests/BpirInputKeyUpsert_%s"),
+            TEXT("/Game/PinWrightTests/__PW_GatewayTests/BpirInputKeyUpsert_%s"),
             *FGuid::NewGuid().ToString(EGuidFormats::Digits));
     }
 

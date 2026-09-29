@@ -767,6 +767,13 @@ bool FGeometryOpsWidenedBooleanAllowEmptyResultTest::RunTest(const FString& Para
         return TTuple<GeometryOps::FOpResult, int32>(Op, Target->GetTriangleCount());
     };
 
+    // GeometryScript's AppendError logs its refusal as a LogGeometry Error whether or not a debug
+    // sink is passed, and Boolean() then logs a Warning quoting the same sentence. Error and
+    // Warning lines are matched against the bare message by the automation message filter on
+    // GWarn, independent of bSuppressLogWarnings, so the provoked refusal is exactly 2 matches.
+    // The substring is the part both engine wordings (5.3 bare, 5.4+ with the remedy) share.
+    AddExpectedErrorPlain(TEXT("BooleanUnion: Boolean operation failed"),
+        EAutomationExpectedErrorFlags::Contains, 2);
     const TTuple<GeometryOps::FOpResult, int32> Refused = SubtractEverything(false);
     TestFalse(TEXT("the default path REFUSES - the engine declines an empty result and now says so"),
         Refused.Get<0>().bSuccess);

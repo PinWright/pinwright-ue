@@ -85,7 +85,7 @@ bool FMaterialAuthoringConfigureLayerBlendCreatesLayerBlendNodeTest::RunTest(con
     // Throwaway sandbox package — nothing is written to the host project's Content tree
     // (the call below passes save:false, and the package is deleted on scope exit).
     const FString AssetPath = FString::Printf(
-        TEXT("/Game/__PW_GatewayTests/ConfigureLayerBlend_%s"),
+        TEXT("/Game/PinWrightTests/__PW_GatewayTests/ConfigureLayerBlend_%s"),
         *FGuid::NewGuid().ToString(EGuidFormats::Digits));
 
     ON_SCOPE_EXIT

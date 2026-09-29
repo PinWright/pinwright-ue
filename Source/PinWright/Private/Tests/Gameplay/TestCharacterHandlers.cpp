@@ -249,14 +249,14 @@ namespace
 
     // Creates a real, persisted ACharacter blueprint the path-based handlers can
     // LoadObject by path (CompilerTestUtils only makes transient BPs, which these
-    // handlers can't resolve). Builds a GUID-unique /Game/__PW_GatewayTests/<Slug>_<guid>
+    // handlers can't resolve). Builds a GUID-unique /Game/PinWrightTests/__PW_GatewayTests/<Slug>_<guid>
     // package, asserts package + blueprint creation, and returns the BP (nullptr on
     // failure). Writes the package path to OutPackagePath; the caller owns
     // CleanupTestAsset(OutPackagePath).
     UBlueprint* CreatePersistedCharacterBP(FAutomationTestBase& Test, const FString& Slug, FString& OutPackagePath)
     {
         OutPackagePath = FString::Printf(
-            TEXT("/Game/__PW_GatewayTests/%s_%s"),
+            TEXT("/Game/PinWrightTests/__PW_GatewayTests/%s_%s"),
             *Slug, *FGuid::NewGuid().ToString(EGuidFormats::Digits));
         UPackage* Pkg = CreatePackage(*OutPackagePath);
         Test.TestNotNull(TEXT("package created"), Pkg);

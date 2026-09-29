@@ -33,6 +33,7 @@
 // precondition (the handler reports success both pre- and post-fix — it documents the
 // false-success context); the stored-key-time assertions distinguish fixed from broken.
 #include "Misc/AutomationTest.h"
+#include "Tests/AutomationSuiteMaintenance.h"
 
 #include "Dom/JsonObject.h"
 #include "EditorAssetLibrary.h"
@@ -60,7 +61,7 @@ namespace
     {
         const FString SeqName = FString::Printf(TEXT("MCP_AddKeyframeUnitsSeq_%s"),
             *FGuid::NewGuid().ToString(EGuidFormats::Digits));
-        const FString DestFolder = TEXT("/Game/MCP_AddKeyframeUnitsProbe");
+        const FString DestFolder = FString(PinWrightSuiteMaintenance::ScratchRootPackagePath()) / TEXT("MCP_AddKeyframeUnitsProbe");
         OutFullPath = FString::Printf(TEXT("%s/%s"), *DestFolder, *SeqName);
 
         TSharedPtr<FJsonObject> CreatePayload = MakeShared<FJsonObject>();

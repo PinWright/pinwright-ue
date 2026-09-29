@@ -48,7 +48,7 @@ namespace PinWrightMaterialShaderStateTestFixtures
 
     inline UMaterial* MakeSandboxMaterial(const TCHAR* NameStem, FString& OutAssetPath)
     {
-        OutAssetPath = FString::Printf(TEXT("/Game/__PW_GatewayTests/%s_%s"),
+        OutAssetPath = FString::Printf(TEXT("/Game/PinWrightTests/__PW_GatewayTests/%s_%s"),
             NameStem, *FGuid::NewGuid().ToString(EGuidFormats::Digits));
 
         UPackage* Package = CreatePackage(*OutAssetPath);
@@ -132,7 +132,7 @@ namespace PinWrightMaterialShaderStateTestFixtures
     inline UMaterialInstanceConstant* MakeMaterialInstance(UMaterialInterface* Parent,
         const TCHAR* NameStem, FString& OutAssetPath)
     {
-        OutAssetPath = FString::Printf(TEXT("/Game/__PW_GatewayTests/%s_%s"),
+        OutAssetPath = FString::Printf(TEXT("/Game/PinWrightTests/__PW_GatewayTests/%s_%s"),
             NameStem, *FGuid::NewGuid().ToString(EGuidFormats::Digits));
 
         UPackage* Package = CreatePackage(*OutAssetPath);

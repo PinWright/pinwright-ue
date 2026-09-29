@@ -35,7 +35,7 @@ namespace
 {
     FString MakeScsSplineAssetPath()
     {
-        return FString::Printf(TEXT("/Game/__PW_GatewayTests/BP_ScsSetSplinePoints_%s"),
+        return FString::Printf(TEXT("/Game/PinWrightTests/__PW_GatewayTests/BP_ScsSetSplinePoints_%s"),
             *FGuid::NewGuid().ToString(EGuidFormats::Digits));
     }
 

@@ -126,7 +126,7 @@ bool FBpirCompilePreexistingErrorsRepairTest::RunTest(const FString& Parameters)
     // ---- Part A: default (no flag) rolls the valid placement back ----
     {
         const FString AssetPath = FString::Printf(
-            TEXT("/Game/__PW_GatewayTests/BpirPreexistingErrors_Default_%s"),
+            TEXT("/Game/PinWrightTests/__PW_GatewayTests/BpirPreexistingErrors_Default_%s"),
             *FGuid::NewGuid().ToString(EGuidFormats::Digits));
 
         UBlueprint* BP = BuildBrokenActorBP(AssetPath);
@@ -177,7 +177,7 @@ bool FBpirCompilePreexistingErrorsRepairTest::RunTest(const FString& Parameters)
     // ---- Part B: allowPreexistingErrors:true keeps the valid placement ----
     {
         const FString AssetPath = FString::Printf(
-            TEXT("/Game/__PW_GatewayTests/BpirPreexistingErrors_Allowed_%s"),
+            TEXT("/Game/PinWrightTests/__PW_GatewayTests/BpirPreexistingErrors_Allowed_%s"),
             *FGuid::NewGuid().ToString(EGuidFormats::Digits));
 
         UBlueprint* BP = BuildBrokenActorBP(AssetPath);

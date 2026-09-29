@@ -19,6 +19,7 @@
 // populated. Counterfactual: revert the braces and the valid path returns true
 // without sending -> Capture.bWasCalled stays false -> these tests fail.
 #include "Misc/AutomationTest.h"
+#include "Tests/AutomationSuiteMaintenance.h"
 #include "Dom/JsonObject.h"
 #include "EditorAssetLibrary.h"
 #include "Tests/TestSkipReporting.h"
@@ -38,7 +39,7 @@ bool FSequencerCreateValidPathRespondsTest::RunTest(const FString& Parameters)
     // pre-exist branch is a different, already-braced response path).
     const FString SeqName = FString::Printf(TEXT("MCP_GuardProbeSeq_%s"),
         *FGuid::NewGuid().ToString(EGuidFormats::Digits));
-    const FString DestFolder = TEXT("/Game/MCP_SequencerGuardProbe");
+    const FString DestFolder = FString(PinWrightSuiteMaintenance::ScratchRootPackagePath()) / TEXT("MCP_SequencerGuardProbe");
     const FString FullPath = FString::Printf(TEXT("%s/%s"), *DestFolder, *SeqName);
 
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
@@ -100,7 +101,7 @@ bool FSequencerSetDisplayRateValidPathRespondsTest::RunTest(const FString& Param
 
     const FString SeqName = FString::Printf(TEXT("MCP_GuardRateSeq_%s"),
         *FGuid::NewGuid().ToString(EGuidFormats::Digits));
-    const FString DestFolder = TEXT("/Game/MCP_SequencerGuardProbe");
+    const FString DestFolder = FString(PinWrightSuiteMaintenance::ScratchRootPackagePath()) / TEXT("MCP_SequencerGuardProbe");
     const FString FullPath = FString::Printf(TEXT("%s/%s"), *DestFolder, *SeqName);
 
     // Create the sequence first so set_display_rate has a real target.

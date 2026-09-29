@@ -89,7 +89,7 @@ namespace
     FString MakeUniqueGEPath(const TCHAR* Prefix)
     {
         return FString::Printf(
-            TEXT("/Game/__PW_GatewayTests/%s_%s"),
+            TEXT("/Game/PinWrightTests/__PW_GatewayTests/%s_%s"),
             Prefix,
             *FGuid::NewGuid().ToString(EGuidFormats::Digits));
     }
@@ -1471,7 +1471,7 @@ bool FGasSetAbilityCooldownCostPlainPathPersistsTest::RunTest(const FString& Par
     const auto ExpectRejectsMissing = [&](const TCHAR* Method, const TCHAR* EffectField)
     {
         const FString MissingPath = FString::Printf(
-            TEXT("/Game/__PW_GatewayTests/GE_DoesNotExist_%s"),
+            TEXT("/Game/PinWrightTests/__PW_GatewayTests/GE_DoesNotExist_%s"),
             *FGuid::NewGuid().ToString(EGuidFormats::Digits));
         TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
         Payload->SetStringField(TEXT("blueprintPath"), AbilityObjectPath);
@@ -1640,7 +1640,7 @@ bool FGasAddEffectExecutionCalculationResolvesBarePathTest::RunTest(const FStrin
     return true;
 #else
     // 1. Create a real exec-calc Blueprint via the production handler. CreateGASAsset
-    //    returns the bare package path (/Game/__PW_GatewayTests/EC_…), the same form
+    //    returns the bare package path (/Game/PinWrightTests/__PW_GatewayTests/EC_…), the same form
     //    gas.create_execution_calculation echoes back as its assetPath — NO _C suffix.
     const FString ExecCalcPath = CreateGASAsset(
         *this, TEXT("gas.create_execution_calculation"), TEXT("EC_BarePath"),

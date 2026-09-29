@@ -76,7 +76,7 @@ bool FPhysicsSetupSimulationMeshBackedCreatesBodiesHeadlessTest::RunTest(const F
     }
 
     const FString Guid = FGuid::NewGuid().ToString(EGuidFormats::Digits);
-    const FString SavePath = FString::Printf(TEXT("/Game/__PW_GatewayTests/PhysHang_%s"), *Guid);
+    const FString SavePath = FString::Printf(TEXT("/Game/PinWrightTests/__PW_GatewayTests/PhysHang_%s"), *Guid);
     const FString AssetName = FString::Printf(TEXT("PA_SetupSim_%s"), *Guid);
     const FString PackagePath = FString::Printf(TEXT("%s/%s"), *SavePath, *AssetName);
     ON_SCOPE_EXIT { CleanupTestAsset(PackagePath); };
@@ -140,7 +140,7 @@ bool FCreatePhysicsAssetMeshBackedCreatesBodiesHeadlessTest::RunTest(const FStri
     }
 
     const FString Guid = FGuid::NewGuid().ToString(EGuidFormats::Digits);
-    const FString OutputPath = FString::Printf(TEXT("/Game/__PW_GatewayTests/PA_CreatePA_%s"), *Guid);
+    const FString OutputPath = FString::Printf(TEXT("/Game/PinWrightTests/__PW_GatewayTests/PA_CreatePA_%s"), *Guid);
     ON_SCOPE_EXIT { CleanupTestAsset(OutputPath); };
 
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();

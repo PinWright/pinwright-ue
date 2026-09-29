@@ -66,7 +66,7 @@ bool FBpirCompileBpirRollbackNoStructuralCompileTest::RunTest(const FString& Par
     }
 
     const FString AssetPath = FString::Printf(
-        TEXT("/Game/__PW_GatewayTests/BpirRollbackNoStructuralCompile_%s"),
+        TEXT("/Game/PinWrightTests/__PW_GatewayTests/BpirRollbackNoStructuralCompile_%s"),
         *FGuid::NewGuid().ToString(EGuidFormats::Digits));
 
     UPackage* Package = CreatePackage(*AssetPath);

@@ -63,7 +63,7 @@ bool FUiSetWidgetTextHitsResolvedWorldInstanceTest::RunTest(const FString& Param
     // tree onto the live instance, so GetWidgetFromName resolves the (duplicated) child.
     const FName TextBlockName(TEXT("InteractionText_RegressionProbe"));
 
-    const FString PackagePath = FString::Printf(TEXT("/Game/_Test/WBP_SetWidgetTextProbe_%s"),
+    const FString PackagePath = FString::Printf(TEXT("/Game/PinWrightTests/_Test/WBP_SetWidgetTextProbe_%s"),
         *FGuid::NewGuid().ToString(EGuidFormats::Digits));
     UPackage* Package = CreatePackage(*PackagePath);
     if (!Package)

@@ -29,7 +29,7 @@
 namespace AssetRefDirectionFixtures
 {
     // Builds a hard dependency A -> B (A references B) on disk under
-    // /Game/__PW_GatewayTests with GUID-suffixed names derived from PathLabel
+    // /Game/PinWrightTests/__PW_GatewayTests with GUID-suffixed names derived from PathLabel
     // (e.g. "RefDir" -> RefDirA_<guid>/RefDirB_<guid>), compiles + saves both
     // blueprints, then synchronously rescans the asset registry. On any failure
     // it cleans up whatever was created, reports the failure on Test, and returns
@@ -38,8 +38,8 @@ namespace AssetRefDirectionFixtures
         FString& OutPathA, FString& OutPathB)
     {
         const FString Suffix = FGuid::NewGuid().ToString(EGuidFormats::Digits);
-        OutPathB = FString::Printf(TEXT("/Game/__PW_GatewayTests/%sB_%s"), PathLabel, *Suffix);
-        OutPathA = FString::Printf(TEXT("/Game/__PW_GatewayTests/%sA_%s"), PathLabel, *Suffix);
+        OutPathB = FString::Printf(TEXT("/Game/PinWrightTests/__PW_GatewayTests/%sB_%s"), PathLabel, *Suffix);
+        OutPathA = FString::Printf(TEXT("/Game/PinWrightTests/__PW_GatewayTests/%sA_%s"), PathLabel, *Suffix);
 
         // 1. Create BP_B (the referenced asset).
         UPackage* PkgB = CreatePackage(*OutPathB);
@@ -107,7 +107,7 @@ namespace AssetRefDirectionFixtures
         }
         else
         {
-            Registry.ScanPathsSynchronous({TEXT("/Game/__PW_GatewayTests")}, /*bForceRescan=*/true);
+            Registry.ScanPathsSynchronous({TEXT("/Game/PinWrightTests/__PW_GatewayTests")}, /*bForceRescan=*/true);
         }
         return true;
     }

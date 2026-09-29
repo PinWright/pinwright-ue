@@ -335,49 +335,66 @@ test's report yet cannot turn its `Result={Success}` into a failure. A test that
 triggers the escalation must `AddExpectedError` it, because inside a *running* test the same
 capture would fail it.
 
-**Outside — `scripts/Run-SuiteCapped.ps1`.** Builds the identical suite argv and runs the editor in
-a Windows Job Object with `JOB_OBJECT_LIMIT_PROCESS_MEMORY | JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE |
-JOB_OBJECT_LIMIT_PRIORITY_CLASS` at `-MemoryFraction` (default 0.60) of physical RAM and
-`-PriorityClass` (default `BelowNormal`). Two reasons the memory half is not a watchdog: UE reads the
-job limit at startup into `MemoryConstants.TotalVirtual`
+**Outside — the capped supervisor, `Content/Python/pinwright_supervisor.py`.** Stdlib-only, Win64 and
+Linux, internal to the stdio proxy (no CLI: the proxy starts it as `pinwright_supervisor.py
+--supervise <spec.json>`, on Windows through WMI `Win32_Process.Create` so it is outside the MCP
+client's process tree and job); its module docstring is canonical for the mechanisms below. It
+runs the process at 0.60 of physical RAM and `BelowNormal` priority, so killing the MCP client
+does not stop the run; a launch that could not detach says `detached: false` in its result. `editor_run_tests`, `editor_build` and `offscreen` / `headless`
+`editor_start` / `editor_restart` all launch through it.
+
+On Windows the child runs in a Job Object with `JOB_OBJECT_LIMIT_PROCESS_MEMORY |
+JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_PRIORITY_CLASS`, created suspended, assigned,
+then resumed, so the cap precedes its first instruction. Two reasons the memory half is not a
+watchdog: UE reads the job limit at startup into `MemoryConstants.TotalVirtual`
 (`WindowsPlatformMemory.cpp:449-486`, `Detected a per-process memory limit of %.1fGB for this
 job.`), so `FAssetCompilingManager` throttles against the cap; and a hard per-process limit makes
 allocations *fail* rather than killing the process, so the failure is a diagnosable OOM at a known
 bound rather than a host that pages itself to a standstill. Per-process, not job-wide, so
 `ShaderCompileWorker` children are not charged to the editor's budget.
 
-The priority half covers those same children: the job's priority class applies to every process in
-the job and a job process cannot raise itself above it, and nothing in this path passes
-`CREATE_BREAKAWAY_FROM_JOB`, so `ShaderCompileWorker` here — and UBT's `dotnet`, `cl.exe` and
-`link.exe` under `Run-Capped.ps1` — inherit it. `BelowNormal` and not `Idle`: an Idle job is starved
-whenever anything else on the box wants CPU, which inflates wall time, while BelowNormal yields to
-interactive work without starving. **This launcher is how compiles, suite runs and any
-automated/unattended editor launch are started; an interactive editor session the user is working in
-stays uncapped and at normal priority.**
+On Linux the cap is `systemd-run --user --scope -p MemoryMax=<bytes>` when a probe scope starts and
+the scope's `memory.max` reads back. It is per scope, so the whole process tree shares one ceiling
+(unlike Windows), and a hit invokes the cgroup OOM killer (`memory.events oom_kill`) rather than
+failing allocations. Where it is unavailable the run is uncapped and says why (`UNCAPPED:` line,
+`uncappedReason`). Never `RLIMIT_AS`: UE reserves huge virtual ranges. Priority is nice 10 for
+`BelowNormal`, inherited; kill-on-exit is `PR_SET_PDEATHSIG(SIGKILL)` plus the child's own process
+group.
 
-```powershell
-& "<PLUGIN_ROOT>\scripts\Run-SuiteCapped.ps1" `
-  -HostProject "<HOST>\<HostProject>.uproject" -EngineRoot "%UE_ROOT%" -Filter PinWright `
-  -LogPath "<HOST>\Saved\Logs\pw_suite.log" -MemoryFraction 0.60 -PriorityClass BelowNormal `
-  -ExtraArgs @('-ddc=InstalledNoZenLocalFallback','-PinWrightTestGcEvery=25','-PinWrightTestMemoryWatermark=0.55')
+The priority half covers the children too: on Windows the job's priority class applies to every
+process in the job and a job process cannot raise itself above it, and the child is created inside
+the job (the supervisor itself starts outside the *caller's* job), so
+`ShaderCompileWorker` here, and UBT's `dotnet`, `cl.exe` and `link.exe` under `editor_build`,
+inherit it; on Linux the nice value is inherited. `BelowNormal` and not `Idle`: an Idle job is
+starved whenever anything else on the box wants CPU, which inflates wall time, while BelowNormal
+yields to interactive work without starving. **The capped supervisor is how builds, suite runs and
+any automated/unattended editor launch are started; a `mode: "visible"` editor session the user is
+working in stays uncapped and at normal priority.** Outside MCP there is no supported capped CLI: a
+commandlet sweep runs through the MCP tools or as a plain, uncapped shell command.
+
+```
+editor_run_tests {"filter": "PinWright", "reason": "full PinWright suite after <change>", "mode": "offscreen"}
+editor_test_status {"logPath": "<logPath from editor_run_tests>"}
 ```
 
-It prints (and writes to `<LogPath>.result.txt`) one machine-readable line:
+`filter`, `reason` and `mode` are required (`offscreen` and `headless` add `-RenderOffscreen`,
+`headless` also `-NullRHI`; the caller picks the mode, renderer-dependent tests need `offscreen` or
+`visible`, and a full-suite verdict is taken in `offscreen` until renderer-dependent tests skip
+cleanly under NullRHI). `-ddc=InstalledNoZenLocalFallback` is part of the suite argv itself. The
+supervisor writes one machine-readable line to `<log>.result.txt`, which `editor_test_status`
+returns:
 
 ```
 PINWRIGHT_SUITE_RESULT verdict=EDITOR_EXITED cap_gb=37.92 peak_gb=14.83 priority=BelowNormal exit=0 oom_alloc=0 oom_backup_pool=0 watermark_markers=0 capSeenByEditor=True wall_min=21 log=...
 ```
 
-**`scripts/Run-Capped.ps1`** is the sibling for everything that is not the suite: it wraps an
-arbitrary `-Command` (`Build.bat`, a commandlet, any `UnrealEditor-Cmd.exe` invocation) with
-`-CommandArgs` in the same Job Object, redirects stdout+stderr to `-OutputPath`, takes the same
-`-MemoryFraction` / `-PriorityClass` plus `-TimeoutMinutes` (default 120), and prints and writes
-(to `-ResultPath`, default `<OutputPath>.result.txt`) one line
-`PINWRIGHT_JOB_RESULT verdict=<COMMAND_EXITED|COMMAND_EXIT_NONZERO|MEMORY_CAP_HIT|TIMEOUT> exit=<n> priority=<...> cap_gb=<...> peak_gb=<...> wall_min=<n> command=<...> output=<...>`,
-exiting 2 on `TIMEOUT` / `MEMORY_CAP_HIT` and otherwise with the command's own exit code. Both
-drivers dot-source `scripts/CappedJob.ps1`, the shared Job Object interop.
+A build (`editor_build`) writes the sibling line
+`PINWRIGHT_JOB_RESULT verdict=<COMMAND_EXITED|COMMAND_EXIT_NONZERO|MEMORY_CAP_HIT|TIMEOUT> exit=<n> priority=<...> cap_gb=<...> peak_gb=<...> wall_min=<n> command=<...> output=<...>`
+to `<build.log>.result.txt`, returned by `editor_build_status` as `supervisorResult` / `verdict`.
+Both kinds time out at 120 minutes. Editor launches get the launch-identity switches
+(`-PinWrightLaunchedBy=<tool>`); a build gets none.
 
-`verdict=MEMORY_CAP_HIT` exits 2. The launcher does **not** classify the suite —
+The supervisor does **not** classify the suite —
 `check_suite_log.py` remains the verdict authority, and it gained two states for this:
 
 - **`MEMORY_EXHAUSTED`**, keyed on `Ran out of memory allocating` /
@@ -398,10 +415,11 @@ Both exit non-zero, and every verdict prints `memory: oomLines=N watermarkMarker
 zeros included, for the same reason the crash line does: an unchecked axis reported as silence is
 what let an OOM read as a truncation.
 
-The `-PinWright*` switches are passed **explicitly at every call site**
-(`.polyskill/skills/mcp-test-loop/SKILL.md`, `.polyskill/skills/mcp-version-matrix/mcp-version-matrix.workflow.js`)
-rather than left to their settings defaults, so a reader of the launch line can see both halves of
-the guard without opening `PinWrightSettings.cpp`.
+`editor_run_tests` takes no extra switches, so its runs use the `-PinWright*` settings defaults
+(`TestGcEvery` 25, `TestMemoryWatermark` 0.55). A hand-built launch line
+(`.polyskill/skills/mcp-version-matrix/mcp-version-matrix.workflow.js`) passes them **explicitly**,
+so a reader of the launch line can see both halves of the guard without opening
+`PinWrightSettings.cpp`.
 
 ---
 
@@ -458,7 +476,7 @@ uncounted — see the board ticket `B-tests-warn-and-pass-without-skip-marker` f
 
 ### `-unattended` never ships without `-RunningUnattendedScript`
 
-Every editor launch in this repo — the suite run, the version-matrix launcher — pairs the two
+Every editor launch in this repo — the suite run, the version-matrix workflow's launch line — pairs the two
 switches, and the pairing is a gate rather than a convention.
 
 `FSlateApplication::AddModalWindow` consults `GIsRunningUnattendedScript` and nothing else before
@@ -480,11 +498,11 @@ correctly ruled out ZenServer, session 0 and shader compilation, and equally cor
 Two checks, neither subsuming the other:
 
 - **Unit**, `Content/Python/tests/test_mcp_proxy_editor_start.py` asserts the invariant over every
-  argv `build_editor_command` can produce, and the flag list of `_editor_prepare_tests`' launch
-  command. That covers the proxy's own tables and nothing else.
+  argv `build_editor_command` can produce, and `tests/test_pinwright_supervisor.py` pins the suite
+  argv `pinwright_supervisor.suite_argv` builds. That covers the proxy's own tables and nothing else.
 - **Static**, `Content/Python/check_unattended_flags.py` scans the `.ps1` / `.yml` / `.yaml` / `.js`
   command files for an argv-shaped `-unattended` without the pair switch. This is the half that
-  reaches launches written *outside* the proxy — workflow steps, smoke drivers, skill launchers —
+  reaches launches written *outside* the proxy — workflow steps, smoke drivers, skill launch lines —
   which no unit test can see. Runs as its own CI job (`unattended-flag-scan`), self-tested by
   `Content/Python/tests/test_unattended_flag_scan.py`. Run it with
   `"%UE_ROOT%\Engine\Binaries\ThirdParty\Python3\Win64\python.exe" check_unattended_flags.py` from
@@ -493,7 +511,7 @@ Two checks, neither subsuming the other:
 Markdown and Python are outside the scan by design: both are full of prose naming `-unattended`
 while explaining this defect, and telling an explanation from an invocation would need an opt-out at
 every paragraph. **Consequence to know:** a launch recipe written only in a `.md` is unguarded —
-`.polyskill/skills/mcp-version-matrix/SKILL.md` currently summarises its launcher without the pair
+`.polyskill/skills/mcp-version-matrix/SKILL.md` currently summarises its launch line without the pair
 switch, while the `mcp-version-matrix.workflow.js` it defers to has it.
 
 ---

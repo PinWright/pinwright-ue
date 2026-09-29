@@ -49,7 +49,7 @@ bool FUiRemoveWidgetFromViewportTargetsRuntimeInstanceTest::RunTest(const FStrin
 
     const FString WidgetName = FString::Printf(TEXT("PW_RemoveWidgetProbe_%s"),
         *FGuid::NewGuid().ToString(EGuidFormats::Digits));
-    const FString PackagePath = FString::Printf(TEXT("/Game/_Test/WBP_RemoveWidgetProbe_%s"),
+    const FString PackagePath = FString::Printf(TEXT("/Game/PinWrightTests/_Test/WBP_RemoveWidgetProbe_%s"),
         *FGuid::NewGuid().ToString(EGuidFormats::Digits));
     // The compiled fixture Blueprint is RF_Standalone, so the periodic suite GC keeps it and its
     // generated class alive. Runs after the widget-instance owners are released below.

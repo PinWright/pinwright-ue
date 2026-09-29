@@ -31,7 +31,7 @@ bool FCascadeCreateDelegateCleanupTest::RunTest(const FString& Parameters)
     // On-disk path required: LoadBlueprintAsset (called by the handler) cannot see
     // transient-package assets. Follows the FBlueprintRemoveEventComponentNameFilterTest pattern.
     const FString AssetPath = FString::Printf(
-        TEXT("/Game/__PW_GatewayTests/CascadeCreateDelegate_%s"),
+        TEXT("/Game/PinWrightTests/__PW_GatewayTests/CascadeCreateDelegate_%s"),
         *FGuid::NewGuid().ToString(EGuidFormats::Digits));
 
     UPackage* Pkg = CreatePackage(*AssetPath);

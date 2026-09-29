@@ -7,6 +7,8 @@
 // invoked with missing required params (expects early-exit error path) or with
 // realistic fake param values (expects handler to reach the actor-lookup path).
 #include "Misc/AutomationTest.h"
+#include "Tests/AutomationSuiteMaintenance.h"
+#include "Misc/OutputDeviceRedirector.h"
 #include "Handlers/HandlerContext.h"
 #include "Handlers/HandlerRegistration.h"
 #include "Handlers/ParamSpec.h"
@@ -170,23 +172,75 @@ bool FActorSpawnFromBlueprintMissingBlueprintPathTest::RunTest(const FString& Pa
     return true;
 }
 
-// Provide blueprintPath so the handler passes validation and reaches asset-load logic.
+namespace ActorSpawnFromBlueprintTest
+{
+    // Counts log lines containing one needle while in scope. Registered beside the automation
+    // framework's own capture rather than replacing it, and it declares nothing, so a Warning
+    // the handler logs is observed here without being absorbed as "expected".
+    class FNeedleLogWatch : public FOutputDevice
+    {
+    public:
+        explicit FNeedleLogWatch(const TCHAR* InNeedle) : Needle(InNeedle)
+        {
+            GLog->AddOutputDevice(this);
+        }
+        virtual ~FNeedleLogWatch() override
+        {
+            GLog->RemoveOutputDevice(this);
+        }
+        virtual void Serialize(const TCHAR* Message, ELogVerbosity::Type Verbosity,
+            const FName& Category) override
+        {
+            if (FCString::Strstr(Message, *Needle))
+            {
+                FPlatformAtomics::InterlockedIncrement(&Hits);
+            }
+        }
+        virtual bool CanBeUsedOnAnyThread() const override { return true; }
+        virtual bool CanBeUsedOnMultipleThreads() const override { return true; }
+        int32 GetHits() const { return Hits; }
+
+    private:
+        FString Needle;
+        volatile int32 Hits = 0;
+    };
+}
+
+// A blueprintPath with no asset behind it passes validation, reaches the asset-load logic, and
+// must come back as the typed CLASS_NOT_FOUND refusal with nothing spawned - and without a single
+// load attempt on the missing path (board B-resolve-class-by-name-logs-loadasset-error):
+//   * no engine Error: the class lookup used to reach UEditorAssetLibrary::LoadAsset and log
+//     "LoadAsset failed". The automation framework fails the test on any Error line.
+//   * no "Failed to find object" Warning: ResolveAsset used to LoadObject the missing path.
+//     Warnings do not fail a test on hosts that suppress them, so a log watch counts it.
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FActorSpawnFromBlueprintWithPathTest,
     "PinWright.actor.spawn_from_blueprint.WithPath",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 
 bool FActorSpawnFromBlueprintWithPathTest::RunTest(const FString& Parameters)
 {
-    // Cleans up any actor spawned into the editor world (L_Core); the test
-    // blueprint path does not exist, so usually nothing spawns, but the guard
-    // keeps the map clean if it ever does.
+    // Keeps the editor world clean should the refusal ever regress into a spawn.
     FScopedEditorWorldActorGuard WorldGuard;
+    const FString MissingPath = FString::Printf(TEXT("%s/BP_SpawnMissing_%s"),
+        PinWrightSuiteMaintenance::ScratchRootPackagePath(),
+        *FGuid::NewGuid().ToString(EGuidFormats::Digits));
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
-    Payload->SetStringField(TEXT("blueprintPath"), TEXT("/Game/Blueprints/BP_TestActor"));
+    Payload->SetStringField(TEXT("blueprintPath"), MissingPath);
     Payload->SetStringField(TEXT("actorName"), TEXT("SpawnedBP"));
-    bSuppressLogErrors = true;
-    TestTrue(TEXT("actor.spawn_from_blueprint handler is registered"),
-        InvokeHandler(TEXT("actor.spawn_from_blueprint"), Payload));
+    FTestResponseCapture Capture;
+    int32 FailedFindWarnings = 0;
+    {
+        ActorSpawnFromBlueprintTest::FNeedleLogWatch Watch(TEXT("Failed to find object"));
+        TestTrue(TEXT("actor.spawn_from_blueprint handler is registered"),
+            InvokeHandlerWithCapture(TEXT("actor.spawn_from_blueprint"), Payload, Capture));
+        FailedFindWarnings = Watch.GetHits();
+    }
+    TestEqual(TEXT("no load was attempted on the missing path (no 'Failed to find object')"),
+        FailedFindWarnings, 0);
+    TestTrue(TEXT("handler answered"), Capture.bWasCalled);
+    TestFalse(TEXT("a missing Blueprint path is refused"), Capture.bSuccess);
+    TestEqual(TEXT("the refusal is typed CLASS_NOT_FOUND"),
+        Capture.ErrorCode, FString(TEXT("CLASS_NOT_FOUND")));
     return true;
 }
 
@@ -306,7 +360,6 @@ bool FActorDuplicateLockedLevelDiagnosticTest::RunTest(const FString& Parameters
     // Locked: the handler must report the diagnostic LEVEL_LOCKED code, not DUPLICATE_FAILED.
     {
         FTestResponseCapture Capture;
-        bSuppressLogErrors = true;
         TestTrue(TEXT("actor.duplicate handler is registered"),
             InvokeHandlerWithCapture(TEXT("actor.duplicate"), MakeDuplicatePayload(), Capture));
         TestTrue(TEXT("Handler called SendSuccess or SendError"), Capture.bWasCalled);
@@ -617,7 +670,6 @@ bool FActorDescribeMissingActorTest::RunTest(const FString& Parameters)
     FTestResponseCapture Capture;
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
     Payload->SetStringField(TEXT("actorName"), TEXT("NonExistentActor"));
-    bSuppressLogErrors = true;
     TestTrue(TEXT("actor.describe handler is registered"),
         InvokeHandlerWithCapture(TEXT("actor.describe"), Payload, Capture));
     TestTrue(TEXT("Handler called SendSuccess or SendError"), Capture.bWasCalled);
@@ -636,7 +688,6 @@ bool FActorDescribeObjectPathAliasMissingActorTest::RunTest(const FString& Param
     FTestResponseCapture Capture;
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
     Payload->SetStringField(TEXT("objectPath"), TEXT("NonExistentActor"));
-    bSuppressLogErrors = true;
     TestTrue(TEXT("actor.describe handler is registered"),
         InvokeHandlerWithCapture(TEXT("actor.describe"), Payload, Capture));
     TestTrue(TEXT("Handler called SendSuccess or SendError"), Capture.bWasCalled);
@@ -824,7 +875,6 @@ bool FActorFindByClassUnresolvableErrorsTest::RunTest(const FString& Parameters)
     FTestResponseCapture Capture;
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
     Payload->SetStringField(TEXT("className"), TEXT("ThisClassDoesNotExist_ABC123"));
-    bSuppressLogErrors = true;
     TestTrue(TEXT("actor.find_by_class handler is registered"),
         InvokeHandlerWithCapture(TEXT("actor.find_by_class"), Payload, Capture));
 
@@ -1148,7 +1198,7 @@ bool FActorRestoreSnapshotValidParamsTest::RunTest(const FString& Parameters)
 // ActorTransformHandler — actor.set_transform
 // ============================================================================
 
-// actorName is RPC_PARAM_REQ.
+// actorName is optional (the actors[] batch form is the alternative); the handler refuses a call carrying neither.
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FActorSetTransformMissingActorNameTest,
     "PinWright.actor.set_transform.MissingActorName",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
@@ -1332,7 +1382,6 @@ bool FActorGetComponentsValidParamsTest::RunTest(const FString& Parameters)
 {
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
     Payload->SetStringField(TEXT("actorName"), TEXT("NonExistentActor"));
-    bSuppressLogErrors = true;
     TestTrue(TEXT("actor.get_components handler is registered"),
         InvokeHandler(TEXT("actor.get_components"), Payload));
     return true;

@@ -109,7 +109,7 @@ bool FAssetSaveHandlerTest::RunTest(const FString& Parameters)
 #if PW_HAS_CREATE_DELEGATE
     {
         const FString AssetPath = FString::Printf(
-            TEXT("/Game/__PW_GatewayTests/AssetSaveIntegrity_%s"),
+            TEXT("/Game/PinWrightTests/__PW_GatewayTests/AssetSaveIntegrity_%s"),
             *FGuid::NewGuid().ToString(EGuidFormats::Digits));
 
         UPackage* Pkg = CreatePackage(*AssetPath);

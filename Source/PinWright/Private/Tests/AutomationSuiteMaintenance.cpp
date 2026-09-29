@@ -7,10 +7,14 @@
 #include "Async/TaskGraphInterfaces.h"
 #include "Editor.h"
 #include "Editor/EditorEngine.h"
+#include "BlueprintActionDatabase.h"
+#include "BlueprintCompilationManager.h"
+#include "Engine/Blueprint.h"
 #include "FileHelpers.h"
 #include "HAL/FileManager.h"
 #include "HAL/IConsoleManager.h"
 #include "HAL/PlatformMemory.h"
+#include "Kismet2/KismetEditorUtilities.h"
 #include "Handlers/Asset/AssetDumpHandler.h"
 #include "Misc/AutomationTest.h"
 #include "Misc/CommandLine.h"
@@ -20,7 +24,10 @@
 #include "PinWrightSettings.h"
 #include "ShaderCompiler.h"
 #include "SoundWaveCompiler.h"
+#include "Subsystems/AssetEditorSubsystem.h"
+#include "Tests/TestAssetTeardown.h"
 #include "Tests/TestUtils.h"
+#include "UObject/UObjectIterator.h"
 #include "UObject/GarbageCollection.h"
 #include "UObject/Linker.h"
 #include "UObject/Package.h"
@@ -58,6 +65,7 @@ namespace
     const TCHAR* const GScratchRootPackagePath = TEXT("/Game/PinWrightTests");
 
     FDelegateHandle TestEndHandle;
+    FDelegateHandle TestStartHandle;
 
     // Last PinWright test id seen by OnTestEnd. The escalation names it because the reset runs
     // BETWEEN tests: without it the log line points at nothing and the reader has to guess which
@@ -124,6 +132,126 @@ namespace
         }
     }
 
+    // Test Blueprints made under /Engine/Transient (CompilerTestUtils::CreateTransientTestBP and
+    // siblings, ~450 call sites) are RF_Standalone via FKismetEditorUtilities::CreateBlueprint, so
+    // no GC reclaims them, and they are left dirty. Every later PIE start compiled all of them in
+    // ResolveDirtyBlueprints (138 observed), and one whose interface had already been discarded
+    // tripped ensure(Owner->SkeletonGeneratedClass). Discarding them when their test ends makes PIE
+    // skip them (it ignores !IsValid) and lets the next suite reset reclaim them.
+    //
+    // Only Blueprints the finished test created are candidates. The editor keeps Blueprints of its
+    // own in the transient package: FBlueprintNodeTemplateCache's PROTO_BP_* templates
+    // (RF_Transient) host the template nodes every UBlueprintNodeSpawner primes from
+    // FBlueprintActionDatabase::Tick, and gutting one crashed the suite on the next tick
+    // (check(InContext.Struct) in PropertyAccessEditor.cpp via UK2Node_PropertyAccess::AllocatePins,
+    // ensure(SelfScope) via UK2Node_AddComponentByClass). A Blueprint whose class still has a live
+    // instance is also left alone rather than pulled out from under it.
+    TSet<FObjectKey> GTransientBlueprintsAtTestStart;
+
+    bool IsTransientTestBlueprintCandidate(const UBlueprint* Blueprint)
+    {
+        return IsValid(Blueprint)
+            && !Blueprint->HasAnyFlags(RF_Transient)
+            && !Blueprint->GetName().StartsWith(TEXT("PROTO_BP_"))
+            && Blueprint->GetOutermost()->GetName().StartsWith(TEXT("/Engine/Transient"));
+    }
+
+    void OnTestStart(FAutomationTestBase* Test)
+    {
+        // bSuppressLogErrors / bSuppressLogWarnings / bElevateLogWarningsToErrors are STATIC on
+        // FAutomationTestBase (AutomationTest.cpp:179-181), and ~60 PinWright tests set them in
+        // RunTest. LoadDefaultLogSettings, which the engine runs when the logging test changes,
+        // only overwrites them from AutomationControllerSettings keys that exist, so one test's
+        // suppression silently applied to every later test in the run. Every test starts from
+        // the configured defaults; OnTestStartEvent fires before RunTest.
+        FAutomationTestBase::bSuppressLogErrors = false;
+        FAutomationTestBase::bSuppressLogWarnings = false;
+        FAutomationTestBase::bElevateLogWarningsToErrors = false;
+        FAutomationTestBase::LoadDefaultLogSettings();
+
+        GTransientBlueprintsAtTestStart.Reset();
+        for (TObjectIterator<UBlueprint> It; It; ++It)
+        {
+            if (IsTransientTestBlueprintCandidate(*It))
+            {
+                GTransientBlueprintsAtTestStart.Add(FObjectKey(*It));
+            }
+        }
+    }
+
+    // Mirrors the engine's own Blueprint teardown (FBlueprintUnloader::UnloadBlueprint,
+    // Kismet2.cpp) plus the fixture discard rules: ClearEditorReferences broadcasts
+    // OnBlueprintUnloaded / OnBlueprintGeneratedClassUnloaded, which is how the action database,
+    // open Blueprint editors, Find-in-Blueprints, thumbnail renderers and the component type
+    // registry drop a Blueprint. The class keys are cleared from the action database explicitly
+    // because DiscardLoadedAssetNoGc garbage-marks the generated classes.
+    int32 DiscardLeakedTransientBlueprints()
+    {
+        TArray<UBlueprint*> Leaked;
+        for (TObjectIterator<UBlueprint> It; It; ++It)
+        {
+            UBlueprint* Blueprint = *It;
+            if (!IsTransientTestBlueprintCandidate(Blueprint)
+                || GTransientBlueprintsAtTestStart.Contains(FObjectKey(Blueprint)))
+            {
+                continue;
+            }
+            if (UClass* GeneratedClass = Blueprint->GeneratedClass)
+            {
+                TArray<UObject*> Instances;
+                GetObjectsOfClass(GeneratedClass, Instances, /*bIncludeDerivedClasses=*/true,
+                    RF_ClassDefaultObject | RF_ArchetypeObject);
+                if (Instances.ContainsByPredicate([](const UObject* Object) { return IsValid(Object); }))
+                {
+                    continue;
+                }
+            }
+            Leaked.Add(Blueprint);
+        }
+        GTransientBlueprintsAtTestStart.Reset();
+        if (Leaked.Num() == 0)
+        {
+            return 0;
+        }
+
+        // A queued compile of a Blueprint gutted below would run against removed classes.
+        FBlueprintCompilationManager::FlushCompilationQueue(nullptr);
+
+        UAssetEditorSubsystem* AssetEditors =
+            GEditor ? GEditor->GetEditorSubsystem<UAssetEditorSubsystem>() : nullptr;
+        FBlueprintActionDatabase* ActionDatabase = FBlueprintActionDatabase::TryGet();
+        bool bReferencedByUndoBuffer = false;
+        for (UBlueprint* Blueprint : Leaked)
+        {
+            if (AssetEditors && AssetEditors->FindEditorForAsset(Blueprint, /*bFocusIfOpen=*/false))
+            {
+                AssetEditors->CloseAllEditorsForAsset(Blueprint);
+            }
+            bReferencedByUndoBuffer |= FKismetEditorUtilities::IsReferencedByUndoBuffer(Blueprint);
+            Blueprint->ClearEditorReferences();
+            if (ActionDatabase)
+            {
+                ActionDatabase->ClearAssetActions(Blueprint);
+                for (UClass* Class : {static_cast<UClass*>(Blueprint->GeneratedClass),
+                         static_cast<UClass*>(Blueprint->SkeletonGeneratedClass)})
+                {
+                    if (Class)
+                    {
+                        ActionDatabase->ClearAssetActions(Class);
+                    }
+                }
+            }
+            PwTestAssetTeardown::DiscardLoadedAssetNoGc(Blueprint);
+            Blueprint->MarkAsGarbage();
+        }
+        if (bReferencedByUndoBuffer && GEditor && !GIsTransacting && !GUndo)
+        {
+            GEditor->ResetTransaction(
+                NSLOCTEXT("PinWright", "SuiteDiscardTestBlueprints", "PinWright test Blueprint discard"));
+        }
+        return Leaked.Num();
+    }
+
     void OnTestEnd(FAutomationTestBase* Test)
     {
         if (Test == nullptr
@@ -133,6 +261,13 @@ namespace
         }
 
         GLastCompletedTestId = Test->GetTestFullName();
+
+        if (const int32 Discarded = DiscardLeakedTransientBlueprints())
+        {
+            UE_LOG(LogPinWrightSuiteMaintenance, Log,
+                TEXT("Discarded %d transient test Blueprint(s) left by %s."), Discarded,
+                *GLastCompletedTestId);
+        }
 
         EResetTrigger Trigger = EResetTrigger::Count;
         if (AdvanceAndShouldReset(&Trigger))
@@ -408,6 +543,10 @@ void Register()
     {
         TestEndHandle = FAutomationTestFramework::Get().OnTestEndEvent.AddStatic(&OnTestEnd);
     }
+    if (!TestStartHandle.IsValid())
+    {
+        TestStartHandle = FAutomationTestFramework::Get().OnTestStartEvent.AddStatic(&OnTestStart);
+    }
 }
 
 void Unregister()
@@ -416,6 +555,11 @@ void Unregister()
     {
         FAutomationTestFramework::Get().OnTestEndEvent.Remove(TestEndHandle);
         TestEndHandle.Reset();
+    }
+    if (TestStartHandle.IsValid())
+    {
+        FAutomationTestFramework::Get().OnTestStartEvent.Remove(TestStartHandle);
+        TestStartHandle.Reset();
     }
 }
 

@@ -191,7 +191,7 @@ bool FUiActivatableLayerTagPassesDeclaredTypeGateTest::RunTest(const FString& Pa
     // ends the call in the handler body with a host-independent CLASS_NOT_FOUND: proving the
     // payload cleared the gate needs no PIE, no CommonGame and no real widget asset. Same probe
     // path as PinWright.ui.activatable.PushRejectsBadClass.
-    Params->SetStringField(TEXT("widgetClass"), TEXT("/Game/_Test/NoSuchClass"));
+    Params->SetStringField(TEXT("widgetClass"), TEXT("/Game/PinWrightTests/_Test/NoSuchClass"));
 
     bool bSuccess = false;
     FString ErrorCode;

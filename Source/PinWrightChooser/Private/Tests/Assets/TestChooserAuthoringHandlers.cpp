@@ -56,6 +56,13 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FChooserAuthoringBoolClassRoundTripTest,
 
 bool FChooserAuthoringBoolClassRoundTripTest::RunTest(const FString& Parameters)
 {
+    // The bool column is added without context/propertyBinding, so each UChooserTable::Compile
+    // UE_ASSET_LOGs "Missing property binding." at Error: once for add_column's binding hint and
+    // once for chooser.compile (same gating as AddColumnUnboundEmitsHint).
+#if UE_VERSION_NEWER_THAN_OR_EQUAL(5, 6, 0)
+    AddExpectedErrorPlain(TEXT("Missing property binding."), EAutomationExpectedErrorFlags::Contains, 2);
+#endif
+
     const FString PackagePath = MakeChooserPackagePath();
     const FString ObjectPath = PackagePath + TEXT(".") + FPackageName::GetLongPackageAssetName(PackagePath);
     CleanupTestAsset(PackagePath);
@@ -255,6 +262,12 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FChooserSetCellInvalidValueDoesNotResizeRowsTes
 
 bool FChooserSetCellInvalidValueDoesNotResizeRowsTest::RunTest(const FString& Parameters)
 {
+    // add_column's binding hint compiles the unbound bool column, which the engine reports as
+    // "Missing property binding." at Error (same gating as AddColumnUnboundEmitsHint).
+#if UE_VERSION_NEWER_THAN_OR_EQUAL(5, 6, 0)
+    AddExpectedErrorPlain(TEXT("Missing property binding."), EAutomationExpectedErrorFlags::Contains, 1);
+#endif
+
     const FString PackagePath = MakeChooserPackagePath();
     const FString ObjectPath = PackagePath + TEXT(".") + FPackageName::GetLongPackageAssetName(PackagePath);
     CleanupTestAsset(PackagePath);

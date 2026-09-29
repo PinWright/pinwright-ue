@@ -254,8 +254,6 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGeometryMeasureNotFoundTest,
 
 bool FGeometryMeasureNotFoundTest::RunTest(const FString& Parameters)
 {
-    bSuppressLogWarnings = true;
-
     if (!GEditor || !IsValid(GEditor->GetEditorWorldContext().World()))
     {
         PinWrightTestSkip::SkipAssertions(*this, TEXT("no-editor-world"),
@@ -286,7 +284,9 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGeometryMeasureRejectsUnknownParamTest,
 
 bool FGeometryMeasureRejectsUnknownParamTest::RunTest(const FString& Parameters)
 {
-    bSuppressLogWarnings = true;
+    // The provoked refusal's own log lines, declared with exact counts (docs/rpc-design.md s12).
+    AddExpectedMessagePlain(TEXT("[geometry.measure] Unknown parameter(s): bogusUnknownParam"),
+        ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
 
     DispatcherTestHelpers::FSinkPtr Sink;
     FRpcDispatcher Dispatcher;

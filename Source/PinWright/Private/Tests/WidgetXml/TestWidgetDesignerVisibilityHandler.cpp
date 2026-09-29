@@ -18,7 +18,7 @@ namespace
 {
     FString MakeWidgetDesignerVisibilityAssetPath(const FString& Prefix)
     {
-        return FString::Printf(TEXT("/Game/_Test/%s_%s"),
+        return FString::Printf(TEXT("/Game/PinWrightTests/_Test/%s_%s"),
             *Prefix,
             *FGuid::NewGuid().ToString(EGuidFormats::Digits));
     }

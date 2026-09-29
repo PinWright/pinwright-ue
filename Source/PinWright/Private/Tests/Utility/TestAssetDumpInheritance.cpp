@@ -838,9 +838,9 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpPropertiesSuppressesUserWidgetCompile
 
 bool FAssetDumpPropertiesSuppressesUserWidgetCompilerFlagsTest::RunTest(const FString& Parameters)
 {
-    // Build a transient WBP under /Game/_Test/ — same convention as the other widget
+    // Build a transient WBP under /Game/PinWrightTests/_Test/ — same convention as the other widget
     // tests in the suite. Unique GUID suffix avoids collisions across test reruns.
-    const FString PackagePath = FString::Printf(TEXT("/Game/_Test/WBP_CompilerFlagSuppression_%s"),
+    const FString PackagePath = FString::Printf(TEXT("/Game/PinWrightTests/_Test/WBP_CompilerFlagSuppression_%s"),
         *FGuid::NewGuid().ToString(EGuidFormats::Digits));
     const FString AssetName = FPackageName::GetLongPackageAssetName(PackagePath);
 

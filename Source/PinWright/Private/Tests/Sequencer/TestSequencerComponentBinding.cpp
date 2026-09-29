@@ -22,6 +22,7 @@
 // failure would look like a verb defect.
 
 #include "Misc/AutomationTest.h"
+#include "Tests/AutomationSuiteMaintenance.h"
 
 #include "Components/StaticMeshComponent.h"
 #include "Dom/JsonObject.h"
@@ -66,7 +67,7 @@ namespace
     {
         const FString SeqName = FString::Printf(TEXT("MCP_CompBindSeq_%s"),
             *FGuid::NewGuid().ToString(EGuidFormats::Digits));
-        const FString DestFolder = TEXT("/Game/MCP_CompBindProbe");
+        const FString DestFolder = FString(PinWrightSuiteMaintenance::ScratchRootPackagePath()) / TEXT("MCP_CompBindProbe");
         OutFullPath = FString::Printf(TEXT("%s/%s"), *DestFolder, *SeqName);
 
         TSharedPtr<FJsonObject> CreatePayload = MakeShared<FJsonObject>();

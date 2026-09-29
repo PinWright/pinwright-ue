@@ -36,7 +36,7 @@ namespace
     UMaterial* CreateBackPointerFixtureMaterial(
         FAutomationTestBase& Test, const TCHAR* Prefix, FString& OutPackagePath)
     {
-        OutPackagePath = FString::Printf(TEXT("/Game/__PW_GatewayTests/%s_%s"),
+        OutPackagePath = FString::Printf(TEXT("/Game/PinWrightTests/__PW_GatewayTests/%s_%s"),
             Prefix, *FGuid::NewGuid().ToString(EGuidFormats::Digits));
 
         UPackage* Pkg = CreatePackage(*OutPackagePath);
@@ -142,7 +142,7 @@ bool FMaterialExpressionOwnerBackPointerMaterialTest::RunTest(const FString& Par
     // A function to point use_material_function at, so the FINALIZE_EXPR_AND_RESPOND path is exercised.
     const FString FuncName = FString::Printf(TEXT("MF_BackPtr_%s"),
         *FGuid::NewGuid().ToString(EGuidFormats::Digits));
-    const FString FuncFolder = TEXT("/Game/__PW_GatewayTests");
+    const FString FuncFolder = TEXT("/Game/PinWrightTests/__PW_GatewayTests");
     const FString FuncPackagePath = FString::Printf(TEXT("%s/%s"), *FuncFolder, *FuncName);
     const FString FuncObjectPath = FString::Printf(TEXT("%s.%s"), *FuncPackagePath, *FuncName);
 
@@ -254,7 +254,7 @@ bool FMaterialExpressionOwnerBackPointerFunctionTest::RunTest(const FString& Par
 {
     const FString FuncName = FString::Printf(TEXT("MF_BackPtrOwner_%s"),
         *FGuid::NewGuid().ToString(EGuidFormats::Digits));
-    const FString FuncFolder = TEXT("/Game/__PW_GatewayTests");
+    const FString FuncFolder = TEXT("/Game/PinWrightTests/__PW_GatewayTests");
     const FString FuncPackagePath = FString::Printf(TEXT("%s/%s"), *FuncFolder, *FuncName);
     const FString FuncObjectPath = FString::Printf(TEXT("%s.%s"), *FuncPackagePath, *FuncName);
     ON_SCOPE_EXIT { CleanupTestAsset(FuncPackagePath); };

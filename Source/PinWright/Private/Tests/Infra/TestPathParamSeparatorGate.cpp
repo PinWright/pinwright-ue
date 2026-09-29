@@ -168,10 +168,15 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPathSeparatorGateRefusesDoubleSlashTest,
 
 bool FPathSeparatorGateRefusesDoubleSlashTest::RunTest(const FString& Parameters)
 {
-    // The gate logs its refusal through LogRpcDispatcher at Warning, exactly as the three passes
-    // around it do. UAutomationControllerSettings::bElevateLogWarningsToErrors defaults to TRUE, so
-    // a warning raised inside a running test is promoted to an error.
-    bSuppressLogWarnings = true;
+    // The provoked refusal's own log lines, declared with exact counts (docs/rpc-design.md s12).
+    AddExpectedMessagePlain(TEXT("'assetPath' contains a doubled slash: \"/Game//Props/SM_Wall\""),
+        ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
+    AddExpectedMessagePlain(TEXT("'className' contains a doubled slash: \"/Script//Engine.PointLight\""),
+        ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
+    AddExpectedMessagePlain(TEXT("'assetPath' contains a doubled slash: \"A//B\""),
+        ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
+    AddExpectedMessagePlain(TEXT("'assetPath' contains a doubled slash: \"/Game///Props/SM_Wall\""),
+        ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
 
     // The exact shape that killed a live editor: '//' in an asset path reaches CreatePackage
     // (UObjectGlobals.cpp:1094-1096), which logs Fatal and ends the process.
@@ -226,7 +231,9 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPathSeparatorGateArrayElementsTest,
 
 bool FPathSeparatorGateArrayElementsTest::RunTest(const FString& Parameters)
 {
-    bSuppressLogWarnings = true;
+    // The provoked refusal's own log lines, declared with exact counts (docs/rpc-design.md s12).
+    AddExpectedMessagePlain(TEXT("'assetPaths[1]' contains a doubled slash"),
+        ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
 
     // `path|array` is how an array-of-paths slot is spelled (assetPaths, and its siblings across
     // asset.* and source_control.*). Without element-level checking the union would be decoration:
@@ -321,7 +328,11 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPathSeparatorGateOrderingTest,
 
 bool FPathSeparatorGateOrderingTest::RunTest(const FString& Parameters)
 {
-    bSuppressLogWarnings = true;
+    // The provoked refusal's own log lines, declared with exact counts (docs/rpc-design.md s12).
+    AddExpectedMessagePlain(TEXT("[_test.path_separator_gate] Parameter type mismatch: 'assetPath' is declared path and was sent as object"),
+        ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
+    AddExpectedMessagePlain(TEXT("[_test.path_separator_gate] Unknown parameter(s): notAParameter"),
+        ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
 
     FRpcDispatcher Dispatcher;
     DispatcherTestHelpers::FSinkPtr Sink;
@@ -387,7 +398,9 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPathSeparatorGateCollectsEveryFaultTest,
 
 bool FPathSeparatorGateCollectsEveryFaultTest::RunTest(const FString& Parameters)
 {
-    bSuppressLogWarnings = true;
+    // The provoked refusal's own log lines, declared with exact counts (docs/rpc-design.md s12).
+    AddExpectedMessagePlain(TEXT("'assetPath' contains a doubled slash: \"/Game//Props/SM_Wall\""),
+        ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
 
     FRpcDispatcher Dispatcher;
     DispatcherTestHelpers::FSinkPtr Sink;

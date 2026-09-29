@@ -55,9 +55,9 @@ namespace AssetDeleteAliasTestLocal
     // Paths under a folder no host ships — see the file header for why "never existed"
     // is the property that makes this test both safe and discriminating.
     const TCHAR* const MissingPathA =
-        TEXT("/Game/__PW_GatewayTests/DoesNotExist_AssetDeleteAliasA");
+        TEXT("/Game/PinWrightTests/__PW_GatewayTests/DoesNotExist_AssetDeleteAliasA");
     const TCHAR* const MissingPathB =
-        TEXT("/Game/__PW_GatewayTests/DoesNotExist_AssetDeleteAliasB");
+        TEXT("/Game/PinWrightTests/__PW_GatewayTests/DoesNotExist_AssetDeleteAliasB");
 
     // Dispatch asset.delete with ExpectedPaths carried under the single wire key Key
     // (string slot when bBatch is false, string array when true) and assert the value

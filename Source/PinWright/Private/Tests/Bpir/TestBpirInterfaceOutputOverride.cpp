@@ -34,14 +34,14 @@ namespace BpirInterfaceOutputOverrideTestUtils
     FString MakeInterfaceAssetPath()
     {
         return FString::Printf(
-            TEXT("/Game/__PW_GatewayTests/BPI_BpirOutputOverride_%s"),
+            TEXT("/Game/PinWrightTests/__PW_GatewayTests/BPI_BpirOutputOverride_%s"),
             *FGuid::NewGuid().ToString(EGuidFormats::Digits));
     }
 
     FString MakeTargetAssetPath()
     {
         return FString::Printf(
-            TEXT("/Game/__PW_GatewayTests/BP_BpirOutputRollback_%s"),
+            TEXT("/Game/PinWrightTests/__PW_GatewayTests/BP_BpirOutputRollback_%s"),
             *FGuid::NewGuid().ToString(EGuidFormats::Digits));
     }
 
@@ -368,6 +368,21 @@ bool FBpirInterfaceNamedOutputsOverrideTest::RunTest(const FString& Parameters)
         TEXT("BpirInterfaceAutoOverride"));
     UBlueprint* ExplicitTarget = CompilerTestUtils::CreateTransientTestBP(
         TEXT("BpirInterfaceExplicitOverride"));
+    // Declared after the interface cleanup, so it runs first: an implementer left alive after its
+    // interface was discarded tripped ensure(Owner->SkeletonGeneratedClass) when the next PIE
+    // start recompiled it.
+    ON_SCOPE_EXIT
+    {
+        for (UBlueprint* Target : {AutoTarget, ExplicitTarget})
+        {
+            if (Target)
+            {
+                Target->ClearEditorReferences();
+                PwTestAssetTeardown::DiscardLoadedAssetNoGc(Target);
+                Target->MarkAsGarbage();
+            }
+        }
+    };
     if (!TestNotNull(TEXT("auto-override target created"), AutoTarget)
         || !TestNotNull(TEXT("explicit-override target created"), ExplicitTarget)
         || !ImplementInterface(

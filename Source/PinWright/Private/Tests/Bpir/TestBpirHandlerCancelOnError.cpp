@@ -54,7 +54,7 @@ bool FBpirHandlerCancelOnErrorTest::RunTest(const FString& Parameters)
     // On-disk path required: LoadBlueprintAsset (called by the handler) cannot
     // see transient-package assets.
     const FString AssetPath = FString::Printf(
-        TEXT("/Game/__PW_GatewayTests/BpirHandlerCancelOnError_%s"),
+        TEXT("/Game/PinWrightTests/__PW_GatewayTests/BpirHandlerCancelOnError_%s"),
         *FGuid::NewGuid().ToString(EGuidFormats::Digits));
 
     UPackage* Pkg = CreatePackage(*AssetPath);

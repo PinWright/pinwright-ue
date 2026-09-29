@@ -126,7 +126,7 @@ bool FMapSwapGuardProbeResidentTest::RunTest(const FString& Parameters)
 	using namespace PinWrightMapSwapGuard;
 
 	// GUID-suffixed so no real or previously-created asset can shadow the case.
-	const FString PackageName = FString::Printf(TEXT("/Game/_Test/L_MapSwapGuard_%s"),
+	const FString PackageName = FString::Printf(TEXT("/Game/PinWrightTests/_Test/L_MapSwapGuard_%s"),
 		*FGuid::NewGuid().ToString(EGuidFormats::Digits));
 
 	UPackage* Package = CreatePackage(*PackageName);
@@ -192,7 +192,7 @@ bool FMapSwapGuardProbeAbsentTest::RunTest(const FString& Parameters)
 {
 	using namespace PinWrightMapSwapGuard;
 
-	const FString AbsentPackage = FString::Printf(TEXT("/Game/_Test/L_MapSwapGuardAbsent_%s"),
+	const FString AbsentPackage = FString::Printf(TEXT("/Game/PinWrightTests/_Test/L_MapSwapGuardAbsent_%s"),
 		*FGuid::NewGuid().ToString(EGuidFormats::Digits));
 	const FTargetWorldState Absent = ProbeTargetWorld(AbsentPackage);
 	TestEqual(TEXT("a mounted path still resolves to its package name"),

@@ -62,7 +62,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBpirCompileBpirRollbackGraphPinsTest,
 bool FBpirCompileBpirRollbackGraphPinsTest::RunTest(const FString& Parameters)
 {
     const FString AssetPath = FString::Printf(
-        TEXT("/Game/__PW_GatewayTests/BpirRollbackGraphPins_%s"),
+        TEXT("/Game/PinWrightTests/__PW_GatewayTests/BpirRollbackGraphPins_%s"),
         *FGuid::NewGuid().ToString(EGuidFormats::Digits));
 
     UPackage* Package = CreatePackage(*AssetPath);

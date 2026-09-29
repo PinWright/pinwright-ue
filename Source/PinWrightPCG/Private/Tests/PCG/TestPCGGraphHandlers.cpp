@@ -27,7 +27,7 @@ namespace PinWrightPCGTests
 {
     FString MakeUniqueAssetFolder()
     {
-        return TEXT("/Game/__PW_GatewayTests");
+        return TEXT("/Game/PinWrightTests/__PW_GatewayTests");
     }
 
     FString MakeUniqueAssetName()

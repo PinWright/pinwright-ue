@@ -66,7 +66,7 @@ namespace PinWrightRevertResyncFixture
     inline bool BuildRevertResyncAsset(FAutomationTestBase& Test, FRevertResyncAsset& Out)
     {
         const FString Suffix = FGuid::NewGuid().ToString(EGuidFormats::Digits);
-        Out.FolderPath = FString::Printf(TEXT("/Game/__PW_SCRevertTests/%s"), *Suffix);
+        Out.FolderPath = FString::Printf(TEXT("/Game/PinWrightTests/__PW_SCRevertTests/%s"), *Suffix);
         Out.AssetName = FString::Printf(TEXT("PW_RevertResync_%s"), *Suffix);
         Out.PackagePath = FString::Printf(TEXT("%s/%s"), *Out.FolderPath, *Out.AssetName);
         Out.ObjectPath = FString::Printf(TEXT("%s.%s"), *Out.PackagePath, *Out.AssetName);

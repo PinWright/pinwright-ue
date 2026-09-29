@@ -320,7 +320,6 @@ bool FGeometrySkeletalRejectsUnskinnedMeshTest::RunTest(const FString& Parameter
         return true;
     }
 
-    bSuppressLogErrors = true;
     const FString Suffix = FGuid::NewGuid().ToString(EGuidFormats::Digits);
     const FString Label = FString::Printf(TEXT("PW_SkelUnskinned_%s"), *Suffix);
     const FString AssetPath = FString::Printf(TEXT("/Game/GeneratedMeshes/PW_SkelUnskinned_%s"), *Suffix);
@@ -428,7 +427,6 @@ bool FGeometrySkeletalOrderingTrapTest::RunTest(const FString& Parameters)
         return true;
     }
 
-    bSuppressLogErrors = true;
     const FString Suffix = FGuid::NewGuid().ToString(EGuidFormats::Digits);
     const FString Label = FString::Printf(TEXT("PW_SkelOrdering_%s"), *Suffix);
     const FString AssetPath = FString::Printf(TEXT("/Game/GeneratedMeshes/PW_SkelOrdering_%s"), *Suffix);
@@ -678,7 +676,6 @@ bool FGeometrySkeletalCreateRefusesOccupiedPathTest::RunTest(const FString& Para
     // Re-baking WITHOUT overwrite must be refused. The engine would have silently emptied the
     // asset's LODs, materials, reference skeleton and physics asset and reported success.
     {
-        bSuppressLogErrors = true;
         TSharedPtr<FJsonObject> BakeParams = MakeShared<FJsonObject>();
         BakeParams->SetStringField(TEXT("actorName"), Label);
         BakeParams->SetStringField(TEXT("assetPath"), AssetPath);
@@ -695,7 +692,6 @@ bool FGeometrySkeletalCreateRefusesOccupiedPathTest::RunTest(const FString& Para
     // And the /Engine refusal on the overwrite branch, which the engine also enforces but only
     // into the discarded Debug object.
     {
-        bSuppressLogErrors = true;
         TSharedPtr<FJsonObject> BakeParams = MakeShared<FJsonObject>();
         BakeParams->SetStringField(TEXT("actorName"), Label);
         BakeParams->SetStringField(TEXT("assetPath"), TEXT("/Engine/EngineMeshes/SkeletalCube"));

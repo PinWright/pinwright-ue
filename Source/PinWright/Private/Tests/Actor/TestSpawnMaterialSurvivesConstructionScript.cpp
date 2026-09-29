@@ -67,7 +67,7 @@ namespace SpawnMaterialCsTest
 
     FString MakeFixturePath(const TCHAR* Prefix)
     {
-        return FString::Printf(TEXT("/Game/__PW_GatewayTests/%s_%s"), Prefix,
+        return FString::Printf(TEXT("/Game/PinWrightTests/__PW_GatewayTests/%s_%s"), Prefix,
             *FGuid::NewGuid().ToString(EGuidFormats::Digits));
     }
 
@@ -228,11 +228,6 @@ bool FSpawnMaterialSurvivesConstructionScriptTest::RunTest(const FString& Parame
         return true;
     }
 
-    // The fixture Blueprint is created, compiled and recompiled-with-a-rename in memory, so the
-    // Kismet compiler and the editor asset subsystem can log noise at Error around an asset that
-    // has no on-disk source. Every verdict below is asserted explicitly off the response and off
-    // the live component, never off the log, so suppression cannot hide a real verdict.
-    bSuppressLogErrors = true;
 
     const FString BPPath = SpawnMaterialCsTest::MakeFixturePath(TEXT("BP_SpawnMatCS"));
     const FName OriginalComponentName(TEXT("PWFixtureMesh"));

@@ -98,9 +98,6 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveClickMissingHandleTest,
 
 bool FDriveClickMissingHandleTest::RunTest(const FString& Parameters)
 {
-    bSuppressLogErrors = true;
-    bSuppressLogWarnings = true;
-
     FTestResponseCapture Capture;
     const bool bFound = InvokeHandlerWithCapture(TEXT("drive.click"), MakeShared<FJsonObject>(), Capture);
 
@@ -121,9 +118,6 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveTypeMissingTextTest,
 
 bool FDriveTypeMissingTextTest::RunTest(const FString& Parameters)
 {
-    bSuppressLogErrors = true;
-    bSuppressLogWarnings = true;
-
     // Provide a handle but omit the required `text`.
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
     Payload->SetStringField(TEXT("handle"), TEXT("SomeHandle"));
@@ -147,9 +141,6 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveKeyMissingKeyTest,
 
 bool FDriveKeyMissingKeyTest::RunTest(const FString& Parameters)
 {
-    bSuppressLogErrors = true;
-    bSuppressLogWarnings = true;
-
     FTestResponseCapture Capture;
     const bool bFound = InvokeHandlerWithCapture(TEXT("drive.key"), MakeShared<FJsonObject>(), Capture);
 
@@ -169,9 +160,6 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveKeyInvalidKeyTest,
 
 bool FDriveKeyInvalidKeyTest::RunTest(const FString& Parameters)
 {
-    bSuppressLogErrors = true;
-    bSuppressLogWarnings = true;
-
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
     Payload->SetStringField(TEXT("key"), TEXT("__not_a_real_key__"));
 
@@ -195,9 +183,6 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveDragMissingTargetTest,
 
 bool FDriveDragMissingTargetTest::RunTest(const FString& Parameters)
 {
-    bSuppressLogErrors = true;
-    bSuppressLogWarnings = true;
-
     // A from-handle but neither to_handle nor to_x/to_y. This is a synchronous
     // argument error reached before any live resolve, so it never needs PIE.
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
@@ -223,9 +208,6 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveWaitForMissingConditionTest,
 
 bool FDriveWaitForMissingConditionTest::RunTest(const FString& Parameters)
 {
-    bSuppressLogErrors = true;
-    bSuppressLogWarnings = true;
-
     FTestResponseCapture Capture;
     const bool bFound = InvokeHandlerWithCapture(TEXT("drive.wait_for"), MakeShared<FJsonObject>(), Capture);
 
@@ -246,9 +228,6 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveClickNoPieCleanErrorTest,
 
 bool FDriveClickNoPieCleanErrorTest::RunTest(const FString& Parameters)
 {
-    bSuppressLogErrors = true;
-    bSuppressLogWarnings = true;
-
     // A handle that cannot exist forces a non-Found re-resolve, so the action
     // answers synchronously (the async settle driver never starts) with the
     // resolver's coded TARGET/UI error instead of hanging.
@@ -275,9 +254,6 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveWaitForNoPieCleanErrorTest,
 
 bool FDriveWaitForNoPieCleanErrorTest::RunTest(const FString& Parameters)
 {
-    bSuppressLogErrors = true;
-    bSuppressLogWarnings = true;
-
     // A valid condition gets past parsing to the live-UI pre-check, which fails
     // cleanly with no PIE and answers synchronously instead of polling the timeout.
     TSharedPtr<FJsonObject> Condition = MakeShared<FJsonObject>();

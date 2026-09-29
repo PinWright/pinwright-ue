@@ -69,7 +69,7 @@ namespace
     FString MakeUniqueAssetPath(const FString& Prefix)
     {
         return FString::Printf(
-            TEXT("/Game/__PW_GatewayTests/%s_%s"),
+            TEXT("/Game/PinWrightTests/__PW_GatewayTests/%s_%s"),
             *Prefix,
             *FGuid::NewGuid().ToString(EGuidFormats::Digits));
     }
@@ -365,11 +365,11 @@ bool FBlueprintCreateValidParamsNoCrashTest::RunTest(const FString& Parameters)
 {
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
     Payload->SetStringField(TEXT("name"), TEXT("TestBlueprint_Unit"));
-    Payload->SetStringField(TEXT("savePath"), TEXT("/Game/UnitTest"));
+    Payload->SetStringField(TEXT("savePath"), TEXT("/Game/PinWrightTests/UnitTest"));
     Payload->SetStringField(TEXT("blueprintType"), TEXT("actor"));
     TestTrue(TEXT("blueprint.create handler found"),
         InvokeHandler(TEXT("blueprint.create"), Payload));
-    CleanupTestAsset(TEXT("/Game/UnitTest/TestBlueprint_Unit"));
+    CleanupTestAsset(TEXT("/Game/PinWrightTests/UnitTest/TestBlueprint_Unit"));
     return true;
 }
 
@@ -3648,7 +3648,6 @@ bool FBlueprintRemoveFunctionWithPathTest::RunTest(const FString& Parameters)
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
     Payload->SetStringField(TEXT("path"), TEXT("/Game/Blueprints/BP_TestActor"));
     Payload->SetStringField(TEXT("functionName"), TEXT("TestFunction"));
-    bSuppressLogErrors = true;
     TestTrue(TEXT("blueprint.remove_function handler is registered"),
         InvokeHandler(TEXT("blueprint.remove_function"), Payload));
     return true;
@@ -3667,7 +3666,6 @@ bool FBlueprintDeleteUnusedVarsDryRunTest::RunTest(const FString& Parameters)
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
     Payload->SetStringField(TEXT("path"), TEXT("/Game/Blueprints/BP_TestActor"));
     Payload->SetBoolField(TEXT("dryRun"), true);
-    bSuppressLogErrors = true;
     TestTrue(TEXT("blueprint.delete_unused_variables handler is registered"),
         InvokeHandler(TEXT("blueprint.delete_unused_variables"), Payload));
     return true;

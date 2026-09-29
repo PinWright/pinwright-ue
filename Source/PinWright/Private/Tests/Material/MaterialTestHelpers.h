@@ -18,7 +18,7 @@ namespace PinWrightMaterialTestHelpers
     inline AssetType* CreateFixtureAsset(FAutomationTestBase& Test, const TCHAR* Prefix,
         FString& OutPackagePath)
     {
-        OutPackagePath = FString::Printf(TEXT("/Game/__PW_GatewayTests/%s_%s"),
+        OutPackagePath = FString::Printf(TEXT("/Game/PinWrightTests/__PW_GatewayTests/%s_%s"),
             Prefix, *FGuid::NewGuid().ToString(EGuidFormats::Digits));
         UPackage* Package = CreatePackage(*OutPackagePath);
         if (!Test.TestNotNull(TEXT("Fixture package created"), Package))

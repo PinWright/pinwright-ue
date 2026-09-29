@@ -95,7 +95,7 @@ bool FAssetSetMetadataDurableSaveRoundTripTest::RunTest(const FString& Parameter
 
     const FString AssetName = FString::Printf(
         TEXT("SC_MetadataDurability_%s"), *FGuid::NewGuid().ToString(EGuidFormats::Digits));
-    const FString PackagePath = FString::Printf(TEXT("/Game/__PW_GatewayTests/%s"), *AssetName);
+    const FString PackagePath = FString::Printf(TEXT("/Game/PinWrightTests/__PW_GatewayTests/%s"), *AssetName);
     const FString ObjectPath = FString::Printf(TEXT("%s.%s"), *PackagePath, *AssetName);
     const FString MetadataKey = TEXT("PinWrightDurableMetadata");
 
@@ -201,7 +201,7 @@ bool FAssetResetInstanceParametersDurableSaveRoundTripTest::RunTest(const FStrin
 
     const FString AssetName = FString::Printf(
         TEXT("MI_ResetDurability_%s"), *FGuid::NewGuid().ToString(EGuidFormats::Digits));
-    const FString PackagePath = FString::Printf(TEXT("/Game/__PW_GatewayTests/%s"), *AssetName);
+    const FString PackagePath = FString::Printf(TEXT("/Game/PinWrightTests/__PW_GatewayTests/%s"), *AssetName);
     const FString ObjectPath = FString::Printf(TEXT("%s.%s"), *PackagePath, *AssetName);
 
     UPackage* Package = CreatePackage(*PackagePath);

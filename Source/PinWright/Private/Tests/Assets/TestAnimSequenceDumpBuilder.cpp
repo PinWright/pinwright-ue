@@ -54,6 +54,20 @@ bool FAnimSequenceDumpBuilderShapeTest::RunTest(const FString& Parameters)
     {
         return false;
     }
+    // Every real UAnimSequence has a skeleton and an initialized data model (the factory and
+    // load paths set both). Without the model, reading its length logs "No Movie Scene found for
+    // SequencerDataModel"; initializing it without a skeleton logs the FKControlRig setup
+    // errors ("Unable to retrieve target USkeleton"). A leaked static bSuppressLogErrors used
+    // to hide both. Same setup order as BoneTracksReadback below.
+    USkeleton* Skeleton = NewTransientSkeletonWithBones({ FName(TEXT("root")) });
+    FScopedAnimAssetRoot SkeletonRoot(Skeleton);
+    TestNotNull(TEXT("Transient skeleton created"), Skeleton);
+    if (!Skeleton)
+    {
+        return false;
+    }
+    Sequence->SetSkeleton(Skeleton);
+    Sequence->GetController().InitializeModel();
 
     TSharedPtr<FJsonObject> Json = AnimSequenceDumpBuilder::BuildAnimSequenceJson(Sequence);
     TestTrue(TEXT("BuildAnimSequenceJson returns non-null"), Json.IsValid());
@@ -109,6 +123,20 @@ bool FAnimSequenceAssetDumpWritesAnimSequenceAspectFileTest::RunTest(const FStri
     {
         return false;
     }
+    // Every real UAnimSequence has a skeleton and an initialized data model (the factory and
+    // load paths set both). Without the model, reading its length logs "No Movie Scene found for
+    // SequencerDataModel"; initializing it without a skeleton logs the FKControlRig setup
+    // errors ("Unable to retrieve target USkeleton"). A leaked static bSuppressLogErrors used
+    // to hide both. Same setup order as BoneTracksReadback below.
+    USkeleton* Skeleton = NewTransientSkeletonWithBones({ FName(TEXT("root")) });
+    FScopedAnimAssetRoot SkeletonRoot(Skeleton);
+    TestNotNull(TEXT("Transient skeleton created"), Skeleton);
+    if (!Skeleton)
+    {
+        return false;
+    }
+    Sequence->SetSkeleton(Skeleton);
+    Sequence->GetController().InitializeModel();
 
     const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
         / TEXT("AnimSequenceDumpBuilderTests") / FGuid::NewGuid().ToString(EGuidFormats::Digits);

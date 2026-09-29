@@ -31,7 +31,7 @@ namespace
         FString& OutParamGuid)
     {
         OutAssetPath = FString::Printf(
-            TEXT("/Game/__PW_GatewayTests/MatMainReadback_%s"),
+            TEXT("/Game/PinWrightTests/__PW_GatewayTests/MatMainReadback_%s"),
             *FGuid::NewGuid().ToString(EGuidFormats::Digits));
 
         UPackage* Pkg = CreatePackage(*OutAssetPath);

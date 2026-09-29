@@ -63,7 +63,7 @@ namespace
 
     FString MakeScsCollisionAssetPath()
     {
-        return FString::Printf(TEXT("/Game/__PW_GatewayTests/BP_ScsSetPropCollision_%s"),
+        return FString::Printf(TEXT("/Game/PinWrightTests/__PW_GatewayTests/BP_ScsSetPropCollision_%s"),
             *FGuid::NewGuid().ToString(EGuidFormats::Digits));
     }
 

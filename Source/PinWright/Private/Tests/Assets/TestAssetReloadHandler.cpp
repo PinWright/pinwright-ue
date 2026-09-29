@@ -118,7 +118,7 @@ bool FAssetReloadHandlerTest::RunTest(const FString& Parameters)
     {
         const FString AssetName = FString::Printf(
             TEXT("SC_Reload_%s"), *FGuid::NewGuid().ToString(EGuidFormats::Digits));
-        const FString PkgPath = FString::Printf(TEXT("/Game/__PW_GatewayTests/%s"), *AssetName);
+        const FString PkgPath = FString::Printf(TEXT("/Game/PinWrightTests/__PW_GatewayTests/%s"), *AssetName);
         const FString ObjectPath = FString::Printf(TEXT("%s.%s"), *PkgPath, *AssetName);
 
         UPackage* Pkg = CreatePackage(*PkgPath);

@@ -24,6 +24,7 @@
 // handler plus an in-code possessable binding. sequence.add_keyframe needs only FindBinding to
 // succeed; the transform track/section it authors does not require a bound object instance.
 #include "Misc/AutomationTest.h"
+#include "Tests/AutomationSuiteMaintenance.h"
 
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
@@ -52,7 +53,7 @@ namespace
     {
         const FString SeqName = FString::Printf(TEXT("MCP_SeqAddKeyframeInterpSeq_%s"),
             *FGuid::NewGuid().ToString(EGuidFormats::Digits));
-        const FString DestFolder = TEXT("/Game/MCP_SeqAddKeyframeInterpProbe");
+        const FString DestFolder = FString(PinWrightSuiteMaintenance::ScratchRootPackagePath()) / TEXT("MCP_SeqAddKeyframeInterpProbe");
         OutFullPath = FString::Printf(TEXT("%s/%s"), *DestFolder, *SeqName);
 
         TSharedPtr<FJsonObject> CreatePayload = MakeShared<FJsonObject>();

@@ -39,11 +39,6 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveObserveNoPieCleanErrorTest,
 
 bool FDriveObserveNoPieCleanErrorTest::RunTest(const FString& Parameters)
 {
-    // The live resolver reports "no capturable UI" as an error in the automation
-    // editor (no PIE viewport); suppress the expected ambient log noise.
-    bSuppressLogErrors = true;
-    bSuppressLogWarnings = true;
-
     FTestResponseCapture Capture;
     const bool bFound = InvokeHandlerWithCapture(TEXT("drive.observe"), MakeShared<FJsonObject>(), Capture);
 
@@ -66,9 +61,6 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveExpectMissingConditionTest,
 
 bool FDriveExpectMissingConditionTest::RunTest(const FString& Parameters)
 {
-    bSuppressLogErrors = true;
-    bSuppressLogWarnings = true;
-
     // Empty payload omits the required `condition` object.
     FTestResponseCapture Capture;
     const bool bFound = InvokeHandlerWithCapture(TEXT("drive.expect"), MakeShared<FJsonObject>(), Capture);
@@ -90,9 +82,6 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveExpectInvalidConditionTypeTest,
 
 bool FDriveExpectInvalidConditionTypeTest::RunTest(const FString& Parameters)
 {
-    bSuppressLogErrors = true;
-    bSuppressLogWarnings = true;
-
     // A condition object whose `type` token is unrecognized must fail to parse.
     TSharedPtr<FJsonObject> Condition = MakeShared<FJsonObject>();
     Condition->SetStringField(TEXT("type"), TEXT("not_a_real_condition_type"));
@@ -119,9 +108,6 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveEventsSinceEmptyTest,
 
 bool FDriveEventsSinceEmptyTest::RunTest(const FString& Parameters)
 {
-    bSuppressLogErrors = true;
-    bSuppressLogWarnings = true;
-
     FTestResponseCapture Capture;
     const bool bFound = InvokeHandlerWithCapture(TEXT("drive.events_since"), MakeShared<FJsonObject>(), Capture);
 

@@ -40,9 +40,6 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDeleteRefusesReferencedTest,
 
 bool FAssetDeleteRefusesReferencedTest::RunTest(const FString& Parameters)
 {
-    // The refused delete logs the engine's own "Could not delete" warning.
-    bSuppressLogErrors = true;
-
     FString PathA, PathB;
     if (!AssetRefDirectionFixtures::BuildHardDependency(*this, TEXT("DeleteGate"), PathA, PathB))
     {

@@ -285,14 +285,14 @@ bool FLevelPresentInMemoryProbeTest::RunTest(const FString& Parameters)
 	// A package name that is not in memory, the registry, or on disk must read as
 	// absent (the FILE_NOT_FOUND branch). Use a GUID-suffixed path so no real or
 	// previously-created asset can shadow the negative case.
-	const FString MissingPackage = FString::Printf(TEXT("/Game/_Test/L_OrphanProbe_Missing_%s"),
+	const FString MissingPackage = FString::Printf(TEXT("/Game/PinWrightTests/_Test/L_OrphanProbe_Missing_%s"),
 		*FGuid::NewGuid().ToString(EGuidFormats::Digits));
 	TestFalse(TEXT("Unknown package -> not present (FILE_NOT_FOUND branch)"),
 		IsLevelPackagePresentInMemoryOrRegistry(MissingPackage));
 
 	// Create a live, never-saved-to-disk package — the in-memory orphan the fix
 	// targets. The probe must report it present (the LEVEL_NOT_PERSISTED branch).
-	const FString PresentPackage = FString::Printf(TEXT("/Game/_Test/L_OrphanProbe_Present_%s"),
+	const FString PresentPackage = FString::Printf(TEXT("/Game/PinWrightTests/_Test/L_OrphanProbe_Present_%s"),
 		*FGuid::NewGuid().ToString(EGuidFormats::Digits));
 	UPackage* Package = CreatePackage(*PresentPackage);
 	if (!TestNotNull(TEXT("created transient in-memory package for the probe"), Package))
@@ -340,7 +340,7 @@ bool FLevelSaveInMemoryWorldReportsNotPersistedTest::RunTest(const FString& Para
 {
 	// Build the exact orphan the bug fires on: a live, never-saved-to-disk package
 	// at a GUID-suffixed /Game/ path so nothing can shadow the negative case.
-	const FString InMemoryPackage = FString::Printf(TEXT("/Game/_Test/L_SaveProbe_InMemory_%s"),
+	const FString InMemoryPackage = FString::Printf(TEXT("/Game/PinWrightTests/_Test/L_SaveProbe_InMemory_%s"),
 		*FGuid::NewGuid().ToString(EGuidFormats::Digits));
 	UPackage* Package = CreatePackage(*InMemoryPackage);
 	if (!TestNotNull(TEXT("created transient in-memory package for the save probe"), Package))
@@ -394,7 +394,7 @@ bool FLevelSaveVerbRejectsInMemoryNoDiskFileTest::RunTest(const FString& Paramet
 {
 	// A live, never-saved-to-disk package — the in-memory-only world the false
 	// saved:true fires on. GUID-suffixed so nothing on disk can shadow it.
-	const FString InMemoryPackage = FString::Printf(TEXT("/Game/_Test/L_SaveVerbProbe_%s"),
+	const FString InMemoryPackage = FString::Printf(TEXT("/Game/PinWrightTests/_Test/L_SaveVerbProbe_%s"),
 		*FGuid::NewGuid().ToString(EGuidFormats::Digits));
 	UPackage* Package = CreatePackage(*InMemoryPackage);
 	if (!TestNotNull(TEXT("created transient in-memory package for the probe"), Package))

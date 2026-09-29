@@ -651,6 +651,9 @@ bool FWikiDiskGeneratorOwnedManifestPruneTest::RunTest(const FString& Parameters
         return IFileManager::Get().Delete(*Path, /*RequireExists=*/false,
             /*EvenReadOnly=*/false, /*Quiet=*/true);
     };
+    // The generator's own refusal of the empty output directory, logged once.
+    AddExpectedErrorPlain(TEXT("Wiki generation has no output directory."),
+        EAutomationExpectedErrorFlags::Contains, 1);
     TestFalse(TEXT("empty explicit output directory is rejected before path resolution"),
         WikiDiskGenerator::Testing::ReconcileOutputForTests(FString(), DesiredFiles));
     TestTrue(TEXT("manifest-owned reconciliation succeeds"),
@@ -943,6 +946,19 @@ bool FWikiDiskGeneratorWriteFailureSkipsPruneTest::RunTest(const FString& Parame
         return false;
     };
 
+    // The generator logs each refusal this test provokes: the injected staging failure on
+    // both output roots, then one refusal per oversized outgoing ownership manifest.
+    AddExpectedErrorPlain(
+        TEXT("Wiki generation failed to stage registry.json: injected late wiki staging failure."),
+        EAutomationExpectedErrorFlags::Contains, 2);
+    AddExpectedErrorPlain(FString::Printf(
+        TEXT("Wiki generation refused an oversized ownership manifest: ownership manifest exceeds the %d-entry limit."),
+        WikiDiskGenerator::Testing::MaxOwnershipManifestEntriesForTests()),
+        EAutomationExpectedErrorFlags::Contains, 1);
+    AddExpectedErrorPlain(FString::Printf(
+        TEXT("Wiki generation refused an oversized ownership manifest: ownership manifest exceeds the %lld-byte limit."),
+        static_cast<long long>(WikiDiskGenerator::Testing::MaxOwnershipManifestBytesForTests())),
+        EAutomationExpectedErrorFlags::Contains, 1);
     TestFalse(TEXT("injected late staging failure aborts reconciliation"),
         WikiDiskGenerator::Testing::ReconcileOutputForTests(
             Root, TestWikiDiskGenerator_MakeDesiredFiles(), Operations));

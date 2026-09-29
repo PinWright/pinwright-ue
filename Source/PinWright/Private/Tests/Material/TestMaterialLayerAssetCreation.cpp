@@ -29,8 +29,8 @@ namespace
 {
 // Test content paths kept under a discoverable sandbox so a stale asset from
 // a prior run is overwritten rather than colliding with a real project asset.
-const TCHAR* const kLayerTestPath = TEXT("/Game/__PW_GatewayTests/Layers");
-const TCHAR* const kBlendTestPath = TEXT("/Game/__PW_GatewayTests/LayerBlends");
+const TCHAR* const kLayerTestPath = TEXT("/Game/PinWrightTests/__PW_GatewayTests/Layers");
+const TCHAR* const kBlendTestPath = TEXT("/Game/PinWrightTests/__PW_GatewayTests/LayerBlends");
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMaterialAuthoringCreateMaterialLayerYieldsSubclassTest,

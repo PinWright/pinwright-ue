@@ -91,7 +91,7 @@ namespace PinWrightAssetSaveDiskGuardFixture
     inline bool BuildDiskGuardAsset(FAutomationTestBase& Test, FDiskGuardAsset& Out)
     {
         const FString Suffix = FGuid::NewGuid().ToString(EGuidFormats::Digits);
-        Out.FolderPath = FString::Printf(TEXT("/Game/__PW_AssetSaveDiskGuard/%s"), *Suffix);
+        Out.FolderPath = FString::Printf(TEXT("/Game/PinWrightTests/__PW_AssetSaveDiskGuard/%s"), *Suffix);
         Out.AssetName  = FString::Printf(TEXT("PW_DiskGuard_%s"), *Suffix);
         Out.PackagePath = FString::Printf(TEXT("%s/%s"), *Out.FolderPath, *Out.AssetName);
         Out.ObjectPath  = FString::Printf(TEXT("%s.%s"), *Out.PackagePath, *Out.AssetName);

@@ -71,7 +71,7 @@ bool FMaterialDerivedSourcePinRoundTripTest::RunTest(const FString& Parameters)
     }
 
     const FString AssetPath = FString::Printf(
-        TEXT("/Game/__PW_GatewayTests/DerivedSourcePin_%s"),
+        TEXT("/Game/PinWrightTests/__PW_GatewayTests/DerivedSourcePin_%s"),
         *FGuid::NewGuid().ToString(EGuidFormats::Digits));
 
     UPackage* Pkg = CreatePackage(*AssetPath);
@@ -176,7 +176,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMaterialDerivedInputPinRoundTripTest,
 bool FMaterialDerivedInputPinRoundTripTest::RunTest(const FString& Parameters)
 {
     const FString AssetPath = FString::Printf(
-        TEXT("/Game/__PW_GatewayTests/DerivedInputPin_%s"),
+        TEXT("/Game/PinWrightTests/__PW_GatewayTests/DerivedInputPin_%s"),
         *FGuid::NewGuid().ToString(EGuidFormats::Digits));
 
     UPackage* Pkg = CreatePackage(*AssetPath);

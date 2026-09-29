@@ -47,8 +47,9 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWidgetSetSlotThroughDispatcherTest,
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FWidgetSetSlotThroughDispatcherTest::RunTest(const FString& Parameters)
 {
-    // Gate refusals log at Warning, which automation elevates to errors by default.
-    bSuppressLogWarnings = true;
+    // The provoked refusal's own log lines, declared with exact counts (docs/rpc-design.md s12).
+    AddExpectedMessagePlain(TEXT("[widget.set] Parameter type mismatch: 'slot' is declared object and was sent as string"),
+        ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
 
     const FString WidgetPath = WidgetTestFixtures::MakeWidgetAssetPath(TEXT("WBP_WidgetSetSlotDispatch"));
     UWidgetBlueprint* WBP = WidgetTestFixtures::MakeTransientWidgetBlueprint(WidgetPath);

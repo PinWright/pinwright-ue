@@ -25,7 +25,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FComponentPathCdoDefaultShapeRoundTripTest,
 
 bool FComponentPathCdoDefaultShapeRoundTripTest::RunTest(const FString& Parameters)
 {
-    const FString AssetPath = FString::Printf(TEXT("/Game/__McpTest__/T_CdoPath_%s"),
+    const FString AssetPath = FString::Printf(TEXT("/Game/PinWrightTests/__McpTest__/T_CdoPath_%s"),
         *FGuid::NewGuid().ToString(EGuidFormats::DigitsLower).Left(8));
     const FString AssetName = FPackageName::GetLongPackageAssetName(AssetPath);
 

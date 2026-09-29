@@ -108,7 +108,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FXmlExportNonExistentWidgetPathTest,
 bool FXmlExportNonExistentWidgetPathTest::RunTest(const FString& Parameters)
 {
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
-    Payload->SetStringField(TEXT("widgetPath"), TEXT("/Game/_Test/WBP_DoesNotExist_XmlExport"));
+    Payload->SetStringField(TEXT("widgetPath"), TEXT("/Game/PinWrightTests/_Test/WBP_DoesNotExist_XmlExport"));
 
     FTestResponseCapture Capture;
     bool bFound = InvokeHandlerWithCapture(TEXT("widget.export_xml"), Payload, Capture);
@@ -253,7 +253,7 @@ bool FXmlExportSanitizesAttributeNameSpacesTest::RunTest(const FString& Paramete
     // Covers exporter line 230 (bindings path). For property-reflection
     // path coverage (lines 56-58) see FXmlExportPropertyReflectionPathSanitizationTest.
     // Build a transient WBP with a root TextBlock widget.
-    const FString PackagePath = TEXT("/Game/_Test/WBP_SanitizeAttrTest");
+    const FString PackagePath = TEXT("/Game/PinWrightTests/_Test/WBP_SanitizeAttrTest");
     UPackage* Package = CreatePackage(*PackagePath);
     TestNotNull(TEXT("package created"), Package);
     if (!Package) return false;
@@ -317,7 +317,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FXmlExportPropertyReflectionPathSanitizationTes
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FXmlExportPropertyReflectionPathSanitizationTest::RunTest(const FString& Parameters)
 {
-    const FString PackagePath = TEXT("/Game/_Test/WBP_SanitizePropertyPathTest");
+    const FString PackagePath = TEXT("/Game/PinWrightTests/_Test/WBP_SanitizePropertyPathTest");
     UPackage* Package = CreatePackage(*PackagePath);
     TestNotNull(TEXT("package created"), Package);
     if (!Package) return false;
@@ -449,7 +449,7 @@ bool FXmlExportSanitizesDigitPrefixedTagTest::RunTest(const FString& Parameters)
     // Create a transient Blueprint whose generated class name begins with a digit.
     // FKismetEditorUtilities::CreateBlueprint + immediate compile is the only way
     // to get a live UClass whose GetName() returns "1_DigitPrefixed_C".
-    const FString PackagePath = TEXT("/Game/_Test/WBP_DigitPrefixTest");
+    const FString PackagePath = TEXT("/Game/PinWrightTests/_Test/WBP_DigitPrefixTest");
     UPackage* Package = CreatePackage(*PackagePath);
     TestNotNull(TEXT("package created"), Package);
     if (!Package) return false;
@@ -879,7 +879,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FXmlExportUserWidgetTagDropsCSuffixTest,
 bool FXmlExportUserWidgetTagDropsCSuffixTest::RunTest(const FString& Parameters)
 {
     // 1. Build & compile an inner WBP so its generated class GetName() carries "_C".
-    const FString InnerPackagePath = TEXT("/Game/_Test/WBP_InnerUser_Pkg");
+    const FString InnerPackagePath = TEXT("/Game/PinWrightTests/_Test/WBP_InnerUser_Pkg");
     UPackage* InnerPackage = CreatePackage(*InnerPackagePath);
     TestNotNull(TEXT("inner package created"), InnerPackage);
     if (!InnerPackage) return false;
@@ -926,7 +926,7 @@ bool FXmlExportUserWidgetTagDropsCSuffixTest::RunTest(const FString& Parameters)
     if (!InnerBPGC->GetName().EndsWith(TEXT("_C"))) return false;
 
     // 2. Build the outer WBP with a CanvasPanel root and an instance of the inner BPGC under it.
-    const FString OuterPackagePath = TEXT("/Game/_Test/WBP_OuterUser_Pkg");
+    const FString OuterPackagePath = TEXT("/Game/PinWrightTests/_Test/WBP_OuterUser_Pkg");
     UPackage* OuterPackage = CreatePackage(*OuterPackagePath);
     TestNotNull(TEXT("outer package created"), OuterPackage);
     if (!OuterPackage) return false;

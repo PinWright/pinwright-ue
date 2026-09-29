@@ -24,6 +24,7 @@
 // implementer adds a handler that force-evaluates the sequence and returns the
 // interpolated transform, the assertions flip green.
 #include "Misc/AutomationTest.h"
+#include "Tests/AutomationSuiteMaintenance.h"
 #include "Dom/JsonObject.h"
 #include "EditorAssetLibrary.h"
 #include "Tests/TestSkipReporting.h"
@@ -48,7 +49,7 @@ namespace
     {
         const FString SeqName = FString::Printf(TEXT("MCP_EvalReadbackSeq_%s"),
             *FGuid::NewGuid().ToString(EGuidFormats::Digits));
-        const FString DestFolder = TEXT("/Game/MCP_EvalReadbackProbe");
+        const FString DestFolder = FString(PinWrightSuiteMaintenance::ScratchRootPackagePath()) / TEXT("MCP_EvalReadbackProbe");
         OutFullPath = FString::Printf(TEXT("%s/%s"), *DestFolder, *SeqName);
 
         TSharedPtr<FJsonObject> CreatePayload = MakeShared<FJsonObject>();

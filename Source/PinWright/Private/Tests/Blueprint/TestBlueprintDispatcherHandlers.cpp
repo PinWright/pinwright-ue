@@ -26,7 +26,7 @@ namespace
     FString MakeUniqueDispatcherTestPath()
     {
         return FString::Printf(
-            TEXT("/Game/__PW_GatewayTests/BP_AddDispatcher_%s"),
+            TEXT("/Game/PinWrightTests/__PW_GatewayTests/BP_AddDispatcher_%s"),
             *FGuid::NewGuid().ToString(EGuidFormats::Digits));
     }
 }
@@ -277,7 +277,7 @@ bool FBlueprintEnsureExistsAutoCreatesMissingTest::RunTest(const FString& Parame
     }
 
     const FString AssetPath = FString::Printf(
-        TEXT("/Game/__PW_GatewayTests/BP_EnsureExists_%s"),
+        TEXT("/Game/PinWrightTests/__PW_GatewayTests/BP_EnsureExists_%s"),
         *FGuid::NewGuid().ToString(EGuidFormats::Digits));
     ON_SCOPE_EXIT
     {

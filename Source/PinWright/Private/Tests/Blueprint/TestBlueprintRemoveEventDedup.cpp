@@ -30,7 +30,7 @@ bool FBlueprintRemoveEventComponentNameFilterTest::RunTest(const FString& Parame
     // On-disk path required: LoadBlueprintAsset (called by the handler) cannot see
     // transient-package assets. Follows the FBlueprintAddEventWithParamsTest pattern.
     const FString AssetPath = FString::Printf(
-        TEXT("/Game/__PW_GatewayTests/RemoveEventDedup_%s"),
+        TEXT("/Game/PinWrightTests/__PW_GatewayTests/RemoveEventDedup_%s"),
         *FGuid::NewGuid().ToString(EGuidFormats::Digits));
 
     UPackage* Pkg = CreatePackage(*AssetPath);

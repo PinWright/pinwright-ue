@@ -75,9 +75,6 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveWebintObserveNoBrowserTest,
 
 bool FDriveWebintObserveNoBrowserTest::RunTest(const FString& Parameters)
 {
-    bSuppressLogErrors = true;
-    bSuppressLogWarnings = true;
-
     if (!NoLiveBrowser())
     {
         PinWrightTestSkip::SkipAssertions(*this, TEXT("live-browser-present"),
@@ -108,9 +105,6 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveWebintClickNoBrowserTest,
 
 bool FDriveWebintClickNoBrowserTest::RunTest(const FString& Parameters)
 {
-    bSuppressLogErrors = true;
-    bSuppressLogWarnings = true;
-
     if (!NoLiveBrowser())
     {
         PinWrightTestSkip::SkipAssertions(*this, TEXT("live-browser-present"),
@@ -145,9 +139,6 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveWebintWaitForNoBrowserTest,
 
 bool FDriveWebintWaitForNoBrowserTest::RunTest(const FString& Parameters)
 {
-    bSuppressLogErrors = true;
-    bSuppressLogWarnings = true;
-
     if (!NoLiveBrowser())
     {
         PinWrightTestSkip::SkipAssertions(*this, TEXT("live-browser-present"),
@@ -183,9 +174,6 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveWebintClickMissingHandleTest,
 
 bool FDriveWebintClickMissingHandleTest::RunTest(const FString& Parameters)
 {
-    bSuppressLogErrors = true;
-    bSuppressLogWarnings = true;
-
     FTestResponseCapture Capture;
     const bool bFound = InvokeHandlerWithCapture(TEXT("drive.click"), MakeWebPayload(), Capture);
 
@@ -207,9 +195,6 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveWebintExpectMissingConditionTest,
 
 bool FDriveWebintExpectMissingConditionTest::RunTest(const FString& Parameters)
 {
-    bSuppressLogErrors = true;
-    bSuppressLogWarnings = true;
-
     FTestResponseCapture Capture;
     const bool bFound = InvokeHandlerWithCapture(TEXT("drive.expect"), MakeWebPayload(), Capture);
 
@@ -231,9 +216,6 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveWebintScrollNoBrowserTest,
 
 bool FDriveWebintScrollNoBrowserTest::RunTest(const FString& Parameters)
 {
-    bSuppressLogErrors = true;
-    bSuppressLogWarnings = true;
-
     if (!NoLiveBrowser())
     {
         PinWrightTestSkip::SkipAssertions(*this, TEXT("live-browser-present"),
@@ -266,9 +248,6 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveWebintHoverNoBrowserTest,
 
 bool FDriveWebintHoverNoBrowserTest::RunTest(const FString& Parameters)
 {
-    bSuppressLogErrors = true;
-    bSuppressLogWarnings = true;
-
     if (!NoLiveBrowser())
     {
         PinWrightTestSkip::SkipAssertions(*this, TEXT("live-browser-present"),
@@ -303,9 +282,6 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveWebintKeyNoBrowserTest,
 
 bool FDriveWebintKeyNoBrowserTest::RunTest(const FString& Parameters)
 {
-    bSuppressLogErrors = true;
-    bSuppressLogWarnings = true;
-
     if (!NoLiveBrowser())
     {
         PinWrightTestSkip::SkipAssertions(*this, TEXT("live-browser-present"),
@@ -338,9 +314,6 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveWebintDragNoBrowserTest,
 
 bool FDriveWebintDragNoBrowserTest::RunTest(const FString& Parameters)
 {
-    bSuppressLogErrors = true;
-    bSuppressLogWarnings = true;
-
     if (!NoLiveBrowser())
     {
         PinWrightTestSkip::SkipAssertions(*this, TEXT("live-browser-present"),
@@ -377,9 +350,6 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveWebintDragMissingToHandleTest,
 
 bool FDriveWebintDragMissingToHandleTest::RunTest(const FString& Parameters)
 {
-    bSuppressLogErrors = true;
-    bSuppressLogWarnings = true;
-
     TSharedPtr<FJsonObject> Payload = MakeWebPayload();
     Payload->SetStringField(TEXT("handle"), TEXT("pw-1"));
 

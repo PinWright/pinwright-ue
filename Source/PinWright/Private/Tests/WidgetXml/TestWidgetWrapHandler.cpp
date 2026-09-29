@@ -29,7 +29,7 @@ namespace
 {
     FString MakeWrapTestAssetPath()
     {
-        return FString::Printf(TEXT("/Game/_Test/WBP_WidgetWrap_%s"),
+        return FString::Printf(TEXT("/Game/PinWrightTests/_Test/WBP_WidgetWrap_%s"),
             *FGuid::NewGuid().ToString(EGuidFormats::Digits));
     }
 }
@@ -41,7 +41,7 @@ bool FWidgetWrapPreservesGrandparentSlotTest::RunTest(const FString& Parameters)
 {
     const FString AssetPath = MakeWrapTestAssetPath();
 
-    // 1. Build an in-memory widget blueprint at the /Game/_Test path the
+    // 1. Build an in-memory widget blueprint at the /Game/PinWrightTests/_Test path the
     // handler will look up via FindObject.
     UWidgetBlueprint* WidgetBP = MakeOnDiskShapedWidgetBlueprint(AssetPath);
     TestNotNull(TEXT("widget blueprint allocated"), WidgetBP);

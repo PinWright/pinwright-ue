@@ -23,6 +23,7 @@
 // implementer wires CR track add + control keying + evaluated readback, the
 // assertions flip green.
 #include "Misc/AutomationTest.h"
+#include "Tests/AutomationSuiteMaintenance.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "EditorAssetLibrary.h"
@@ -57,7 +58,7 @@ namespace
     {
         const FString SeqName = FString::Printf(TEXT("MCP_CRTrackSeq_%s"),
             *FGuid::NewGuid().ToString(EGuidFormats::Digits));
-        const FString DestFolder = TEXT("/Game/MCP_CRTrackProbe");
+        const FString DestFolder = FString(PinWrightSuiteMaintenance::ScratchRootPackagePath()) / TEXT("MCP_CRTrackProbe");
         OutFullPath = FString::Printf(TEXT("%s/%s"), *DestFolder, *SeqName);
 
         TSharedPtr<FJsonObject> CreatePayload = MakeShared<FJsonObject>();

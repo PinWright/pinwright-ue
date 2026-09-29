@@ -25,6 +25,7 @@
 // 30 / 120, so every conversion assertion fails. A missing fixture is a hard failure
 // (TestTrue/TestNotNull record the error), never a skip.
 #include "Misc/AutomationTest.h"
+#include "Tests/AutomationSuiteMaintenance.h"
 #include "Dom/JsonObject.h"
 #include "EditorAssetLibrary.h"
 #include "Tests/TestUtils.h"
@@ -62,7 +63,7 @@ bool FSetPropertiesPlaybackRangeFramesToTicksTest::RunTest(const FString& Parame
     // asset so sequencer.set_properties' UEditorAssetLibrary::LoadAsset can resolve it.
     const FString SeqName = FString::Printf(TEXT("MCP_SetPropsUnits_%s"),
         *FGuid::NewGuid().ToString(EGuidFormats::Digits));
-    const FString DestFolder = TEXT("/Game/MCP_SetPropsUnitsProbe");
+    const FString DestFolder = FString(PinWrightSuiteMaintenance::ScratchRootPackagePath()) / TEXT("MCP_SetPropsUnitsProbe");
     const FString FullPath = FString::Printf(TEXT("%s/%s"), *DestFolder, *SeqName);
 
     TSharedPtr<FJsonObject> CreatePayload = MakeShared<FJsonObject>();

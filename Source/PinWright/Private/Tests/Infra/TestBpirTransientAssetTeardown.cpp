@@ -58,7 +58,7 @@ bool FBpirTransientAssetTeardownContractTest::RunTest(const FString& Parameters)
 {
     const FString AssetName = FString::Printf(TEXT("BP_BpirTeardown_%s"),
         *FGuid::NewGuid().ToString(EGuidFormats::Digits));
-    const FString PackagePath = TEXT("/Game/__PW_GatewayTests/") + AssetName;
+    const FString PackagePath = TEXT("/Game/PinWrightTests/__PW_GatewayTests/") + AssetName;
     const FString ObjectPath = ToObjectPath(PackagePath);
 
     FString PackageFilename;

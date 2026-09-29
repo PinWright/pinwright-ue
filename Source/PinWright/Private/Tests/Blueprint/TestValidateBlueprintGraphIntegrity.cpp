@@ -31,7 +31,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBpValidateIntegrityDetectsStaleCreateDelegateT
 bool FBpValidateIntegrityDetectsStaleCreateDelegateTest::RunTest(const FString& Parameters)
 {
     const FString AssetPath = FString::Printf(
-        TEXT("/Game/__PW_GatewayTests/ValidateIntegrity_%s"),
+        TEXT("/Game/PinWrightTests/__PW_GatewayTests/ValidateIntegrity_%s"),
         *FGuid::NewGuid().ToString(EGuidFormats::Digits));
 
     UPackage* Pkg = CreatePackage(*AssetPath);
@@ -103,7 +103,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBpCompileBpirIntegrityFailureReturnsPayloadTes
 bool FBpCompileBpirIntegrityFailureReturnsPayloadTest::RunTest(const FString& Parameters)
 {
     const FString AssetPath = FString::Printf(
-        TEXT("/Game/__PW_GatewayTests/BpirIntegrityPayload_%s"),
+        TEXT("/Game/PinWrightTests/__PW_GatewayTests/BpirIntegrityPayload_%s"),
         *FGuid::NewGuid().ToString(EGuidFormats::Digits));
 
     UPackage* Pkg = CreatePackage(*AssetPath);

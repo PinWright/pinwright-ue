@@ -177,7 +177,9 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMaterialMGIRCompileRejectsUnknownParamViaDispa
 
 bool FMaterialMGIRCompileRejectsUnknownParamViaDispatcherTest::RunTest(const FString& Parameters)
 {
-    bSuppressLogWarnings = true;
+    // The provoked refusal's own log lines, declared with exact counts (docs/rpc-design.md s12).
+    AddExpectedMessagePlain(TEXT("[material.compile_mgir] Unknown parameter(s): unexpected"),
+        ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
 
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
     Payload->SetStringField(TEXT("text"), TEXT("entry material `/Game/Materials/M_Test` {}"));
@@ -214,7 +216,9 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMaterialMGIRDecompileRejectsUnknownParamViaDis
 
 bool FMaterialMGIRDecompileRejectsUnknownParamViaDispatcherTest::RunTest(const FString& Parameters)
 {
-    bSuppressLogWarnings = true;
+    // The provoked refusal's own log lines, declared with exact counts (docs/rpc-design.md s12).
+    AddExpectedMessagePlain(TEXT("[material.decompile_mgir] Unknown parameter(s): unexpected"),
+        ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
 
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
     Payload->SetStringField(TEXT("assetPath"), TEXT("/Game/Materials/M_Test"));

@@ -25,7 +25,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBpirCompileBpirRollbackNoNewNodesTest,
 bool FBpirCompileBpirRollbackNoNewNodesTest::RunTest(const FString& Parameters)
 {
     const FString AssetPath = FString::Printf(
-        TEXT("/Game/__PW_GatewayTests/BpirRollbackNoNewNodes_%s"),
+        TEXT("/Game/PinWrightTests/__PW_GatewayTests/BpirRollbackNoNewNodes_%s"),
         *FGuid::NewGuid().ToString(EGuidFormats::Digits));
 
     UPackage* Package = CreatePackage(*AssetPath);

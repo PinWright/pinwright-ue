@@ -21,6 +21,7 @@
 // authored roll=5 / pitch=-22 / yaw=130, so every one of the three assertions below
 // fails. Post-fix each component appears under its own key.
 #include "Misc/AutomationTest.h"
+#include "Tests/AutomationSuiteMaintenance.h"
 #include "Dom/JsonObject.h"
 #include "EditorAssetLibrary.h"
 #include "Tests/TestSkipReporting.h"
@@ -55,7 +56,7 @@ namespace
     {
         const FString SeqName = FString::Printf(TEXT("MCP_RotationFieldSeq_%s"),
             *FGuid::NewGuid().ToString(EGuidFormats::Digits));
-        const FString DestFolder = TEXT("/Game/MCP_RotationFieldProbe");
+        const FString DestFolder = FString(PinWrightSuiteMaintenance::ScratchRootPackagePath()) / TEXT("MCP_RotationFieldProbe");
         OutFullPath = FString::Printf(TEXT("%s/%s"), *DestFolder, *SeqName);
 
         TSharedPtr<FJsonObject> CreatePayload = MakeShared<FJsonObject>();

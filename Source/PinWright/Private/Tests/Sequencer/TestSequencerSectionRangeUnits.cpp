@@ -34,6 +34,7 @@
 // false-success context); the section-range assertions are what distinguish fixed from
 // broken.
 #include "Misc/AutomationTest.h"
+#include "Tests/AutomationSuiteMaintenance.h"
 
 #include "Dom/JsonObject.h"
 #include "EditorAssetLibrary.h"
@@ -63,7 +64,7 @@ namespace
     {
         const FString SeqName = FString::Printf(TEXT("MCP_SectionRangeUnitsSeq_%s"),
             *FGuid::NewGuid().ToString(EGuidFormats::Digits));
-        const FString DestFolder = TEXT("/Game/MCP_SectionRangeUnitsProbe");
+        const FString DestFolder = FString(PinWrightSuiteMaintenance::ScratchRootPackagePath()) / TEXT("MCP_SectionRangeUnitsProbe");
         OutFullPath = FString::Printf(TEXT("%s/%s"), *DestFolder, *SeqName);
 
         TSharedPtr<FJsonObject> CreatePayload = MakeShared<FJsonObject>();

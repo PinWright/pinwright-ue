@@ -40,7 +40,7 @@ namespace
     UBlueprint* CreatePersistedSprintCharacterBP(FAutomationTestBase& Test, FString& OutPackagePath)
     {
         OutPackagePath = FString::Printf(
-            TEXT("/Game/__PW_GatewayTests/SprintSpeedDefault_%s"),
+            TEXT("/Game/PinWrightTests/__PW_GatewayTests/SprintSpeedDefault_%s"),
             *FGuid::NewGuid().ToString(EGuidFormats::Digits));
         UPackage* Pkg = CreatePackage(*OutPackagePath);
         Test.TestNotNull(TEXT("package created"), Pkg);

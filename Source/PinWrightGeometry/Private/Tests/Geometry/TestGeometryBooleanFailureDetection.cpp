@@ -136,12 +136,12 @@ bool FGeometryBooleanEnclosedSubtractFailsTest::RunTest(const FString& Parameter
     // test on any uncaptured Error line. Declaring it expected is what separates "the engine
     // complained, as this test intended" from "something went wrong".
     //
-    // Occurrences 0 means "any number, including none", which is deliberate: whether the
-    // framework captures the line at all has proved environment-dependent (the boolean family's
-    // two dispatcher tests passed in one suite run and failed in the next on identical code), and
-    // a fixed count would then fail in the other direction.
+    // Exact counts, per docs/rpc-design.md section 12. The automation message filter on GWarn
+    // matches Error AND Warning lines against the bare message, whatever bSuppressLogWarnings
+    // says, so a refused Boolean() counts 2: the engine's LogGeometry Error plus the
+    // LogMcpGeometryHandlersNew Warning that quotes it (Trim logs no warning of its own: 1).
     AddExpectedErrorPlain(GeomBoolFailTest_EngineRefusalText,
-        EAutomationExpectedErrorFlags::Contains, /*Occurrences=*/0);
+        EAutomationExpectedErrorFlags::Contains, /*Occurrences=*/2);
 
     UDynamicMesh* Target = GeomBoolFailTest_NewBox(FVector::ZeroVector, 100.0);
     UDynamicMesh* Tool = GeomBoolFailTest_NewBox(FVector::ZeroVector, 400.0);
@@ -235,7 +235,7 @@ bool FGeometryBooleanDisjointIntersectionFailsTest::RunTest(const FString& Param
     // Before the sink both answered "success, changed: false", which is why a caller could not
     // tell an intersection that produced nothing from a subtract that legitimately cut nothing.
     AddExpectedErrorPlain(GeomBoolFailTest_EngineRefusalText,
-        EAutomationExpectedErrorFlags::Contains, /*Occurrences=*/0);
+        EAutomationExpectedErrorFlags::Contains, /*Occurrences=*/2);
 
     {
         UDynamicMesh* Target = GeomBoolFailTest_NewBox(FVector::ZeroVector, 100.0);
@@ -283,7 +283,7 @@ bool FGeometryBooleanTrimEmptyResultFailsTest::RunTest(const FString& Parameters
     // SILENTLY UNTOUCHED under a success response, so the caller went on to bevel, collide and
     // bake geometry that still had the whole tool volume in it.
     AddExpectedErrorPlain(GeomBoolFailTest_EngineRefusalText,
-        EAutomationExpectedErrorFlags::Contains, /*Occurrences=*/0);
+        EAutomationExpectedErrorFlags::Contains, /*Occurrences=*/1);
 
     UDynamicMesh* Target = GeomBoolFailTest_NewBox(FVector::ZeroVector, 100.0);
     UDynamicMesh* Tool = GeomBoolFailTest_NewBox(FVector(1000.0, 0.0, 0.0), 100.0);
@@ -357,7 +357,7 @@ bool FGeometryBooleanFailureReachesTheCallerTest::RunTest(const FString& Paramet
     }
 
     AddExpectedErrorPlain(GeomBoolFailTest_EngineRefusalText,
-        EAutomationExpectedErrorFlags::Contains, /*Occurrences=*/0);
+        EAutomationExpectedErrorFlags::Contains, /*Occurrences=*/2);
 
     const FString Suffix = FGuid::NewGuid().ToString(EGuidFormats::Digits);
     const FString TargetLabel = FString::Printf(TEXT("PW_BoolFailTarget_%s"), *Suffix);
@@ -439,7 +439,7 @@ bool FGeometryBooleanFailedKeepsToolTest::RunTest(const FString& Parameters)
     }
 
     AddExpectedErrorPlain(GeomBoolFailTest_EngineRefusalText,
-        EAutomationExpectedErrorFlags::Contains, /*Occurrences=*/0);
+        EAutomationExpectedErrorFlags::Contains, /*Occurrences=*/2);
 
     const FString Suffix = FGuid::NewGuid().ToString(EGuidFormats::Digits);
     const FString TargetLabel = FString::Printf(TEXT("PW_BoolKeepTarget_%s"), *Suffix);

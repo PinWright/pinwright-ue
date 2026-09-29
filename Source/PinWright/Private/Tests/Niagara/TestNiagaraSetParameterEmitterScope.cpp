@@ -103,7 +103,7 @@ bool FNiagaraSetParameterEmitterParamReachesHandlerTest::RunTest(const FString& 
     DispatcherTestHelpers::MakeDispatcher(Sink, Dispatcher);
 
     // A path under a folder no host ships: the handler must fail on the asset, not on the schema.
-    const FString MissingAsset(TEXT("/Game/__PW_GatewayTests/DoesNotExist_NiagaraSetParameterEmitter"));
+    const FString MissingAsset(TEXT("/Game/PinWrightTests/__PW_GatewayTests/DoesNotExist_NiagaraSetParameterEmitter"));
 
     bool bSuccess = false;
     FString ErrorCode;

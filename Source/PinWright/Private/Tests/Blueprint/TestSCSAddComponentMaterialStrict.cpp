@@ -47,7 +47,7 @@ namespace
     // same-shaped fixture helpers in sibling Tests/Blueprint files.
     FString MakeScsMatStrictAssetPath(const FString& Prefix)
     {
-        return FString::Printf(TEXT("/Game/__PW_GatewayTests/%s_%s"),
+        return FString::Printf(TEXT("/Game/PinWrightTests/__PW_GatewayTests/%s_%s"),
             *Prefix,
             *FGuid::NewGuid().ToString(EGuidFormats::Digits));
     }
@@ -107,8 +107,8 @@ namespace
         }
 
         // No force-delete tail. Every caller passes MakeScsMatStrictAssetPath(), which always
-        // yields a /Game/__PW_GatewayTests/ path, so the guard that used to sit here
-        // (`StartsWith("/Game/__PW_GatewayTests/") -> return`) always fired and the
+        // yields a /Game/PinWrightTests/__PW_GatewayTests/ path, so the guard that used to sit here
+        // (`StartsWith("/Game/PinWrightTests/__PW_GatewayTests/") -> return`) always fired and the
         // UEditorAssetLibrary::DeleteAsset branches below it were unreachable.
     }
 

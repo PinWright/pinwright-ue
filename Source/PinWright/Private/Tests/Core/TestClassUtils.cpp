@@ -168,7 +168,7 @@ bool FResolveUClassNonExistentContentPathTest::RunTest(const FString& Parameters
     // A qualified content-mount path that does not resolve must early-return nullptr,
     // NOT fall through to short-name iteration (which could pick up an unrelated class
     // whose name happens to be the package leaf).
-    UClass* Found = ResolveUClass(TEXT("/Game/_Test/DoesNotExist_XYZ"));
+    UClass* Found = ResolveUClass(TEXT("/Game/PinWrightTests/_Test/DoesNotExist_XYZ"));
     TestNull(TEXT("Non-existent content-mount path returns null"), Found);
     return true;
 }

@@ -29,9 +29,9 @@ namespace
             *FGuid::NewGuid().ToString(EGuidFormats::Digits));
         TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
         Payload->SetStringField(TEXT("name"), Name);
-        Payload->SetStringField(TEXT("path"), TEXT("/Game/__PW_GatewayTests"));
+        Payload->SetStringField(TEXT("path"), TEXT("/Game/PinWrightTests/__PW_GatewayTests"));
         Test.TestTrue(TEXT("Handler found"), InvokeHandler(Method, Payload));
-        CleanupTestAsset(FString::Printf(TEXT("/Game/__PW_GatewayTests/%s"), *Name));
+        CleanupTestAsset(FString::Printf(TEXT("/Game/PinWrightTests/__PW_GatewayTests/%s"), *Name));
     }
 }
 
@@ -563,11 +563,11 @@ bool FGASAddTagToAssetAscOwnerRejectedTest::RunTest(const FString& Parameters)
 {
     const FString Name = FString::Printf(TEXT("BP_AscTagOwner_%s"),
         *FGuid::NewGuid().ToString(EGuidFormats::Digits));
-    const FString PackagePath = FString::Printf(TEXT("/Game/__PW_GatewayTests/%s"), *Name);
+    const FString PackagePath = FString::Printf(TEXT("/Game/PinWrightTests/__PW_GatewayTests/%s"), *Name);
 
     TSharedPtr<FJsonObject> CreatePayload = MakeShared<FJsonObject>();
     CreatePayload->SetStringField(TEXT("name"), Name);
-    CreatePayload->SetStringField(TEXT("savePath"), TEXT("/Game/__PW_GatewayTests"));
+    CreatePayload->SetStringField(TEXT("savePath"), TEXT("/Game/PinWrightTests/__PW_GatewayTests"));
     CreatePayload->SetStringField(TEXT("parentClass"), TEXT("Character"));
     FTestResponseCapture CreateCapture;
     TestTrue(TEXT("blueprint.create handler found"),

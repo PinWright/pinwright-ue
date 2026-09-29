@@ -50,7 +50,6 @@ bool FAssetDeleteValidParamsTest::RunTest(const FString& Parameters)
     // since the asset does not exist in a test environment.
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
     Payload->SetStringField(TEXT("path"), TEXT("/Game/TestAssets/NonExistentAsset"));
-    bSuppressLogErrors = true;
     TestTrue(TEXT("asset.delete handler found"), InvokeHandler(TEXT("asset.delete"), Payload));
     return true;
 }
@@ -91,12 +90,8 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDeleteVerdictMatchesExistsAfterTest,
 
 bool FAssetDeleteVerdictMatchesExistsAfterTest::RunTest(const FString& Parameters)
 {
-    // A two-asset package is unusual enough that the registry and the delete path both log
-    // about it; the assertions below are what this test judges on.
-    bSuppressLogErrors = true;
-
     const FString Suffix = FGuid::NewGuid().ToString(EGuidFormats::Digits);
-    const FString FolderPath = FString::Printf(TEXT("/Game/__PW_DeleteTests/%s"), *Suffix);
+    const FString FolderPath = FString::Printf(TEXT("/Game/PinWrightTests/__PW_DeleteTests/%s"), *Suffix);
     const FString PackagePath = FString::Printf(TEXT("%s/PW_DeleteVerdict_%s"), *FolderPath, *Suffix);
     const FString TargetName = FString::Printf(TEXT("MI_Target_%s"), *Suffix);
     const FString KeeperName = FString::Printf(TEXT("MI_Keeper_%s"), *Suffix);
@@ -236,10 +231,10 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetCreateFolderValidParamsTest,
 bool FAssetCreateFolderValidParamsTest::RunTest(const FString& Parameters)
 {
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
-    Payload->SetStringField(TEXT("path"), TEXT("/Game/TestFolder"));
+    Payload->SetStringField(TEXT("path"), TEXT("/Game/PinWrightTests/TestFolder"));
     TestTrue(TEXT("asset.create_folder handler found"),
              InvokeHandler(TEXT("asset.create_folder"), Payload));
-    CleanupTestAsset(TEXT("/Game/TestFolder"));
+    CleanupTestAsset(TEXT("/Game/PinWrightTests/TestFolder"));
     return true;
 }
 

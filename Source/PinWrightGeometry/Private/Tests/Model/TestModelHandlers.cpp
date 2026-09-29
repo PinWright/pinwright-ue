@@ -578,7 +578,7 @@ FString ModelHandlersTest_FullPath(const FString& Path)
 
 FString ModelHandlersTest_UniqueAssetPath()
 {
-    return FString::Printf(TEXT("/Game/PwModelHandlerTests/PW_ModelHandler_%s"),
+    return FString::Printf(TEXT("/Game/PinWrightTests/PwModelHandlerTests/PW_ModelHandler_%s"),
         *FGuid::NewGuid().ToString(EGuidFormats::Digits));
 }
 
@@ -936,7 +936,7 @@ bool FModelCompileRefusesInlineTextTest::RunTest(const FString& Parameters)
     TSharedPtr<FJsonObject> Payload = ModelHandlersTest_Payload();
     Payload->SetStringField(TEXT("text"), ModelHandlersTest_MinimalDocument);
     Payload->SetStringField(TEXT("filePath"), TEXT("bracket.pwmodel"));
-    Payload->SetStringField(TEXT("outputPath"), TEXT("/Game/PwModelHandlerTests/Bracket"));
+    Payload->SetStringField(TEXT("outputPath"), TEXT("/Game/PinWrightTests/PwModelHandlerTests/Bracket"));
 
     bool bSuccess = false;
     TSharedPtr<FJsonObject> Result;
@@ -963,7 +963,7 @@ bool FModelCompileRequiresFilePathTest::RunTest(const FString& Parameters)
     MakeDispatcher(Sink, Dispatcher);
 
     TSharedPtr<FJsonObject> Payload = ModelHandlersTest_Payload();
-    Payload->SetStringField(TEXT("outputPath"), TEXT("/Game/PwModelHandlerTests/Bracket"));
+    Payload->SetStringField(TEXT("outputPath"), TEXT("/Game/PinWrightTests/PwModelHandlerTests/Bracket"));
 
     bool bSuccess = false;
     FString ErrorCode;
@@ -1161,7 +1161,7 @@ bool FModelCompileMissingFileTest::RunTest(const FString& Parameters)
     TSharedPtr<FJsonObject> Payload = ModelHandlersTest_Payload();
     Payload->SetStringField(TEXT("filePath"),
         FString::Printf(TEXT("PwModelAbsent_%s.pwmodel"), *FGuid::NewGuid().ToString(EGuidFormats::Digits)));
-    Payload->SetStringField(TEXT("outputPath"), TEXT("/Game/PwModelHandlerTests/Absent"));
+    Payload->SetStringField(TEXT("outputPath"), TEXT("/Game/PinWrightTests/PwModelHandlerTests/Absent"));
 
     bool bSuccess = false;
     FString ErrorCode;

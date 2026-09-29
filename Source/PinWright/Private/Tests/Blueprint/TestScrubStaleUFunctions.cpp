@@ -52,7 +52,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBpirScrubStaleUFunctionsFromClassTest,
 bool FBpirScrubStaleUFunctionsFromClassTest::RunTest(const FString& Parameters)
 {
     const FString AssetPath = FString::Printf(
-        TEXT("/Game/__PW_GatewayTests/ScrubStaleUFunctions_%s"),
+        TEXT("/Game/PinWrightTests/__PW_GatewayTests/ScrubStaleUFunctions_%s"),
         *FGuid::NewGuid().ToString(EGuidFormats::Digits));
 
     UPackage* Pkg = CreatePackage(*AssetPath);

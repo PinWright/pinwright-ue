@@ -262,6 +262,13 @@ bool FWorldPreconditionDispatchContractTest::RunTest(const FString& Parameters)
     FTestResponseCapture NestedCapture;
     PinWrightWorldPreconditionTest::FScopedNestedDispatcher NestedDispatcherScope(
         NestedDispatcher, NestedCapture);
+    // On this null-subsystem capture path the nested refusal lands in NestedCapture (the
+    // testing hook), not in the forwarding handler's own per-call capture, so the dispatcher's
+    // missing-response guard names the forwarder once. Production always drains with the
+    // subsystem, where the nested response is routed by request id and the guard is not armed.
+    AddExpectedErrorPlain(
+        TEXT("Handler '_test.world_nested_dispatch' returned without sending a response"),
+        EAutomationExpectedErrorFlags::Contains, 1);
     NestedDispatcher.ProcessRequest(TEXT("_test-nested"),
         TEXT("_test.world_nested_dispatch"), NestedPayload);
     TestTrue(TEXT("nested DispatchMethod rejects a stale expectWorld before mutation"),

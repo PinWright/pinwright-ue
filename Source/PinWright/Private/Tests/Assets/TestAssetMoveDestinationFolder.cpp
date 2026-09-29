@@ -66,7 +66,7 @@ namespace AssetMoveDestinationTest
 
     inline FString MakeFolderPath(const FString& Suffix)
     {
-        return FString::Printf(TEXT("/Game/__PW_MoveTests/%s"), *Suffix);
+        return FString::Printf(TEXT("/Game/PinWrightTests/__PW_MoveTests/%s"), *Suffix);
     }
 
     // A saved, registry-scanned asset in its own package. No Parent on the instance: it keeps the
@@ -158,9 +158,6 @@ bool FAssetMoveMissingFolderRefusedTest::RunTest(const FString& Parameters)
 {
     using namespace AssetMoveDestinationTest;
 
-    // The refusal is an error response, which the handler logs.
-    bSuppressLogErrors = true;
-
     FFixture Source;
     const FString Suffix = FGuid::NewGuid().ToString(EGuidFormats::Digits);
 
@@ -247,9 +244,6 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetMoveExistingFolderKeepsNameTest,
 bool FAssetMoveExistingFolderKeepsNameTest::RunTest(const FString& Parameters)
 {
     using namespace AssetMoveDestinationTest;
-
-    // The rename path logs about checkout and re-save of the fixture packages.
-    bSuppressLogErrors = true;
 
     FFixture Source;
     FString ExpectedPackagePath;

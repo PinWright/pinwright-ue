@@ -24,7 +24,7 @@ namespace
 {
     static FString MakeEnhancedInputTestPath(const TCHAR* Prefix)
     {
-        return FString::Printf(TEXT("/Game/__PW_GatewayTests/%s_%s"), Prefix,
+        return FString::Printf(TEXT("/Game/PinWrightTests/__PW_GatewayTests/%s_%s"), Prefix,
             *FGuid::NewGuid().ToString(EGuidFormats::Digits));
     }
 

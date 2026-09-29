@@ -22,7 +22,7 @@ bool FUiActivatablePushBadClassTest::RunTest(const FString& Parameters)
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
     Payload->SetStringField(TEXT("host"), TEXT("AnyHost"));
     Payload->SetStringField(TEXT("stack"), TEXT("AnyStack"));
-    Payload->SetStringField(TEXT("widgetClass"), TEXT("/Game/_Test/NoSuchClass"));
+    Payload->SetStringField(TEXT("widgetClass"), TEXT("/Game/PinWrightTests/_Test/NoSuchClass"));
 
     FTestResponseCapture Capture;
     TestTrue(TEXT("ui.activatable_push handler found"),

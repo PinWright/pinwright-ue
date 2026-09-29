@@ -208,7 +208,6 @@ bool FSpawnMaterialNotFoundIsPreflightErrorTest::RunTest(const FString& Paramete
         return true;
     }
 
-    bSuppressLogErrors = true;
     FScopedEditorWorldActorGuard WorldGuard;
     const FString Label = SpawnMatLabel(TEXT("PW_SpawnMatMissing"));
 
@@ -374,7 +373,6 @@ bool FSpawnBatchBadEntryMaterialSpawnsNothingTest::RunTest(const FString& Parame
         return true;
     }
 
-    bSuppressLogErrors = true;
     FScopedEditorWorldActorGuard WorldGuard;
     const FString LabelA = SpawnMatLabel(TEXT("PW_BatchAbortA"));
     const FString LabelB = SpawnMatLabel(TEXT("PW_BatchAbortB"));

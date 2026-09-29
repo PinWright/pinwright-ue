@@ -76,7 +76,7 @@ namespace AssetDumpMismatchedNameFixture
     // exactly this one package.
     struct FMismatchedNameAsset
     {
-        FString FolderPath;      // /Game/__PW_DumpTests/<guid>
+        FString FolderPath;      // /Game/PinWrightTests/__PW_DumpTests/<guid>
         FString PackagePath;     // <FolderPath>/PkgTail_<guid>
         FString InnerName;       // MI_Inner_<guid>
         FString ObjectPath;      // <PackagePath>.<InnerName>
@@ -126,7 +126,7 @@ namespace AssetDumpMismatchedNameFixture
         Out = FMismatchedNameAsset();
 
         const FString Suffix = FGuid::NewGuid().ToString(EGuidFormats::Digits);
-        Out.FolderPath = FString::Printf(TEXT("/Game/__PW_DumpTests/%s"), *Suffix);
+        Out.FolderPath = FString::Printf(TEXT("/Game/PinWrightTests/__PW_DumpTests/%s"), *Suffix);
         Out.PackagePath = FString::Printf(TEXT("%s/PkgTail_%s"), *Out.FolderPath, *Suffix);
         Out.InnerName = FString::Printf(TEXT("MI_Inner_%s"), *Suffix);
         Out.ObjectPath = FString::Printf(TEXT("%s.%s"), *Out.PackagePath, *Out.InnerName);

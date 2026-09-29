@@ -15,7 +15,7 @@ namespace
 {
     FString MakeRequiredNameAssetPath(const FString& Prefix)
     {
-        return FString::Printf(TEXT("/Game/_Test/%s_%s"),
+        return FString::Printf(TEXT("/Game/PinWrightTests/_Test/%s_%s"),
             *Prefix,
             *FGuid::NewGuid().ToString(EGuidFormats::Digits));
     }
@@ -65,7 +65,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWidgetAddRejectsMissingNameDirectTest,
 bool FWidgetAddRejectsMissingNameDirectTest::RunTest(const FString& Parameters)
 {
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
-    Payload->SetStringField(TEXT("widgetPath"), TEXT("/Game/_Test/WBP_RequiredName"));
+    Payload->SetStringField(TEXT("widgetPath"), TEXT("/Game/PinWrightTests/_Test/WBP_RequiredName"));
     Payload->SetStringField(TEXT("type"), TEXT("TextBlock"));
 
     return ExpectMissingNameFailure(*this, TEXT("widget.add"), Payload,
@@ -78,7 +78,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWidgetWrapRejectsMissingWrapperNameDirectTest,
 bool FWidgetWrapRejectsMissingWrapperNameDirectTest::RunTest(const FString& Parameters)
 {
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
-    Payload->SetStringField(TEXT("widgetPath"), TEXT("/Game/_Test/WBP_RequiredName"));
+    Payload->SetStringField(TEXT("widgetPath"), TEXT("/Game/PinWrightTests/_Test/WBP_RequiredName"));
     Payload->SetStringField(TEXT("targetName"), TEXT("Child"));
     Payload->SetStringField(TEXT("wrapperType"), TEXT("Overlay"));
 
@@ -92,7 +92,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWidgetDuplicateRejectsMissingNameDirectTest,
 bool FWidgetDuplicateRejectsMissingNameDirectTest::RunTest(const FString& Parameters)
 {
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
-    Payload->SetStringField(TEXT("widgetPath"), TEXT("/Game/_Test/WBP_RequiredName"));
+    Payload->SetStringField(TEXT("widgetPath"), TEXT("/Game/PinWrightTests/_Test/WBP_RequiredName"));
     Payload->SetStringField(TEXT("sourceName"), TEXT("Source"));
 
     return ExpectMissingNameFailure(*this, TEXT("widget.duplicate"), Payload,
@@ -132,7 +132,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWidgetCreateAnimationRejectsMissingNameDirectT
 bool FWidgetCreateAnimationRejectsMissingNameDirectTest::RunTest(const FString& Parameters)
 {
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
-    Payload->SetStringField(TEXT("widgetPath"), TEXT("/Game/_Test/WBP_RequiredName"));
+    Payload->SetStringField(TEXT("widgetPath"), TEXT("/Game/PinWrightTests/_Test/WBP_RequiredName"));
 
     return ExpectMissingNameFailure(*this, TEXT("widget.create_widget_animation"), Payload,
         TEXT("MISSING_PARAMETER"), TEXT("animationName"));
@@ -144,7 +144,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWidgetBindRejectsMissingFunctionNameDirectTest
 bool FWidgetBindRejectsMissingFunctionNameDirectTest::RunTest(const FString& Parameters)
 {
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
-    Payload->SetStringField(TEXT("widgetPath"), TEXT("/Game/_Test/WBP_RequiredName"));
+    Payload->SetStringField(TEXT("widgetPath"), TEXT("/Game/PinWrightTests/_Test/WBP_RequiredName"));
     Payload->SetStringField(TEXT("widgetName"), TEXT("Label"));
     Payload->SetStringField(TEXT("propertyName"), TEXT("Text"));
 

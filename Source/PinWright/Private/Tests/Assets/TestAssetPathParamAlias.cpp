@@ -77,7 +77,7 @@ bool FAssetReadbackVerbsAcceptPathAliasOnWireTest::RunTest(const FString& Parame
     // A path that does not resolve to a real asset: the body returns a domain result
     // (exists=false for asset.exists, ASSET_NOT_FOUND for asset.get/asset.dump), never
     // the param error — that is the discriminating signal the alias was honored.
-    const FString MissingPath = TEXT("/Game/__PW_GatewayTests/DoesNotExist_AssetPathAlias");
+    const FString MissingPath = TEXT("/Game/PinWrightTests/__PW_GatewayTests/DoesNotExist_AssetPathAlias");
 
     // asset.validate is async (AsyncTask to the game thread) and its captured response
     // may not settle synchronously in the test harness, so it is covered by test 1 only.

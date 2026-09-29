@@ -27,11 +27,11 @@ using DispatcherTestHelpers::Dispatch;
 
 namespace
 {
-    // Create a loadable in-memory UMaterial under /Game/__PW_GatewayTests and return its path.
+    // Create a loadable in-memory UMaterial under /Game/PinWrightTests/__PW_GatewayTests and return its path.
     FString MakeTestMaterial(UMaterial*& OutMaterial)
     {
         const FString AssetPath = FString::Printf(
-            TEXT("/Game/__PW_GatewayTests/MatAlias_%s"),
+            TEXT("/Game/PinWrightTests/__PW_GatewayTests/MatAlias_%s"),
             *FGuid::NewGuid().ToString(EGuidFormats::Digits));
 
         UPackage* Pkg = CreatePackage(*AssetPath);

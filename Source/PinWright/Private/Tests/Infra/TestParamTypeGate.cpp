@@ -582,11 +582,9 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FParamTypeGateRequiredNullTest,
 
 bool FParamTypeGateRequiredNullTest::RunTest(const FString& Parameters)
 {
-    // The gate logs its refusal through LogRpcDispatcher at Warning, exactly as the unknown-name
-    // pass above it does. UAutomationControllerSettings::bElevateLogWarningsToErrors defaults to
-    // TRUE, so a warning raised inside a running test is promoted to an error - the same reason
-    // FDispatcherUnknownParamsDiscoveryGuidanceTest sets this flag (Tests/Infra/TestDispatcher.cpp).
-    bSuppressLogWarnings = true;
+    // The provoked refusal's own log lines, declared with exact counts (docs/rpc-design.md s12).
+    AddExpectedMessagePlain(TEXT("'numericValue' is declared number and was sent as null"),
+        ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
 
     // UE 5.8's FJsonObject::HasField tests only that the shared pointer is valid and returns TRUE
     // for EJson::Null, so this payload cleared the required-param gate and landed in the handler
@@ -611,11 +609,11 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FParamTypeGateOptionalNullTest,
 
 bool FParamTypeGateOptionalNullTest::RunTest(const FString& Parameters)
 {
-    // The gate logs its refusal through LogRpcDispatcher at Warning, exactly as the unknown-name
-    // pass above it does. UAutomationControllerSettings::bElevateLogWarningsToErrors defaults to
-    // TRUE, so a warning raised inside a running test is promoted to an error - the same reason
-    // FDispatcherUnknownParamsDiscoveryGuidanceTest sets this flag (Tests/Infra/TestDispatcher.cpp).
-    bSuppressLogWarnings = true;
+    // The provoked refusal's own log lines, declared with exact counts (docs/rpc-design.md s12).
+    AddExpectedMessagePlain(TEXT("'flag' is declared bool and was sent as null"),
+        ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
+    AddExpectedMessagePlain(TEXT("'payload' is declared any and was sent as null"),
+        ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
 
     // The optional half is where the damage lived: a client whose serializer emits nulls for unset
     // optionals turned "I did not set this" into "I explicitly set this to the destructive value"
@@ -647,11 +645,21 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FParamTypeGateWrongShapeTest,
 
 bool FParamTypeGateWrongShapeTest::RunTest(const FString& Parameters)
 {
-    // The gate logs its refusal through LogRpcDispatcher at Warning, exactly as the unknown-name
-    // pass above it does. UAutomationControllerSettings::bElevateLogWarningsToErrors defaults to
-    // TRUE, so a warning raised inside a running test is promoted to an error - the same reason
-    // FDispatcherUnknownParamsDiscoveryGuidanceTest sets this flag (Tests/Infra/TestDispatcher.cpp).
-    bSuppressLogWarnings = true;
+    // The provoked refusal's own log lines, declared with exact counts (docs/rpc-design.md s12).
+    AddExpectedMessagePlain(TEXT("'numericValue' is declared number and was sent as string"),
+        ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
+    AddExpectedMessagePlain(TEXT("'numericValue' is declared number and was sent as array"),
+        ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
+    AddExpectedMessagePlain(TEXT("'label' is declared string and was sent as array"),
+        ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
+    AddExpectedMessagePlain(TEXT("'names' is declared array and was sent as string"),
+        ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
+    AddExpectedMessagePlain(TEXT("'options' is declared object and was sent as string"),
+        ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
+    AddExpectedMessagePlain(TEXT("'flag' is declared bool and was sent as string"),
+        ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
+    AddExpectedMessagePlain(TEXT("'either' is declared array|string and was sent as object"),
+        ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
 
     // Every row here is one line of the ticket's coercion matrix, each of which reached a handler
     // as ""/0/false with only an editor-only LogJson line the caller never sees.
@@ -737,7 +745,9 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FParamTypeGateIntegerPolicyTest,
 
 bool FParamTypeGateIntegerPolicyTest::RunTest(const FString& Parameters)
 {
-    bSuppressLogWarnings = true;
+    // The provoked refusal's own log lines, declared with exact counts (docs/rpc-design.md s12).
+    AddExpectedMessagePlain(TEXT("'wholeCount' is declared integer and was sent as number"),
+        ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 2);
 
     TSharedPtr<FJsonObject> FractionalPayload = ParamTypeGateTests::MakeGatePayload();
     FractionalPayload->SetNumberField(TEXT("wholeCount"), 1.5);
@@ -764,12 +774,6 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FParamTypeGateLosslessTest,
 
 bool FParamTypeGateLosslessTest::RunTest(const FString& Parameters)
 {
-    // The gate logs its refusal through LogRpcDispatcher at Warning, exactly as the unknown-name
-    // pass above it does. UAutomationControllerSettings::bElevateLogWarningsToErrors defaults to
-    // TRUE, so a warning raised inside a running test is promoted to an error - the same reason
-    // FDispatcherUnknownParamsDiscoveryGuidanceTest sets this flag (Tests/Infra/TestDispatcher.cpp).
-    bSuppressLogWarnings = true;
-
     // The gate is directional on purpose. A blanket strict rule would refuse every working caller
     // who sends "limit": "100" or "force": "true" - routine LLM-client output, and lossless: the
     // accessor recovers the intended value exactly. This test is what stops a later tightening
@@ -840,11 +844,9 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FParamTypeGateTypedAliasTest,
 
 bool FParamTypeGateTypedAliasTest::RunTest(const FString& Parameters)
 {
-    // The gate logs its refusal through LogRpcDispatcher at Warning, exactly as the unknown-name
-    // pass above it does. UAutomationControllerSettings::bElevateLogWarningsToErrors defaults to
-    // TRUE, so a warning raised inside a running test is promoted to an error - the same reason
-    // FDispatcherUnknownParamsDiscoveryGuidanceTest sets this flag (Tests/Infra/TestDispatcher.cpp).
-    bSuppressLogWarnings = true;
+    // The provoked refusal's own log lines, declared with exact counts (docs/rpc-design.md s12).
+    AddExpectedMessagePlain(TEXT("'pathCandidates' is declared array and was sent as string"),
+        ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
 
     // `pathCandidates` is declared `array` while its canonical `path` is `string`. Resolving the
     // gate per SPEC instead of per matched wire name would refuse the alias's own correct shape
@@ -898,11 +900,9 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FParamTypeGateOrderingTest,
 
 bool FParamTypeGateOrderingTest::RunTest(const FString& Parameters)
 {
-    // The gate logs its refusal through LogRpcDispatcher at Warning, exactly as the unknown-name
-    // pass above it does. UAutomationControllerSettings::bElevateLogWarningsToErrors defaults to
-    // TRUE, so a warning raised inside a running test is promoted to an error - the same reason
-    // FDispatcherUnknownParamsDiscoveryGuidanceTest sets this flag (Tests/Infra/TestDispatcher.cpp).
-    bSuppressLogWarnings = true;
+    // The provoked refusal's own log lines, declared with exact counts (docs/rpc-design.md s12).
+    AddExpectedMessagePlain(TEXT("[_test.param_type_gate] Unknown parameter(s): nosuchparam"),
+        ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
 
     // The type gate runs last on purpose. A payload that both omits a required slot and misshapes
     // an optional one must still answer MISSING_REQUIRED_PARAM: that is the fault the caller has
@@ -951,11 +951,11 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FParamTypeGateWidgetReplaceClassTest,
 
 bool FParamTypeGateWidgetReplaceClassTest::RunTest(const FString& Parameters)
 {
-    // The gate logs its refusal through LogRpcDispatcher at Warning, exactly as the unknown-name
-    // pass above it does. UAutomationControllerSettings::bElevateLogWarningsToErrors defaults to
-    // TRUE, so a warning raised inside a running test is promoted to an error - the same reason
-    // FDispatcherUnknownParamsDiscoveryGuidanceTest sets this flag (Tests/Infra/TestDispatcher.cpp).
-    bSuppressLogWarnings = true;
+    // The provoked refusal's own log lines, declared with exact counts (docs/rpc-design.md s12).
+    AddExpectedMessagePlain(TEXT("[widget.replace_class] Parameter type mismatch: 'preserveProperties' is declared bool and was sent as null"),
+        ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
+    AddExpectedMessagePlain(TEXT("[widget.replace_class] Parameter type mismatch: 'preserveProperties' is declared bool and was sent as string"),
+        ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
 
     // `widget.replace_class` declares preserveProperties as `bool` defaulting to true and reads it
     // with Ctx.GetBool(..., true). Sent as null it cleared HasField, coerced to FALSE, and

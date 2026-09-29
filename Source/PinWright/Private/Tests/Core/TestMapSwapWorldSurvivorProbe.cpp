@@ -86,7 +86,7 @@ bool FMapSwapSurvivorProbeHeldWorldTest::RunTest(const FString& Parameters)
 	// EWorldType::Inactive (World.cpp:1693), which the engine's leak check keeps
 	// unconditionally, so this one must not appear in the refusal.
 	const FString ResidentPackageName =
-		FString::Printf(TEXT("/Game/_Test/L_SurvivorProbeDirty_%s"), *Suffix);
+		FString::Printf(TEXT("/Game/PinWrightTests/_Test/L_SurvivorProbeDirty_%s"), *Suffix);
 	UPackage* ResidentPackage = CreatePackage(*ResidentPackageName);
 	if (!TestNotNull(TEXT("created an in-memory world package"), ResidentPackage))
 	{
@@ -177,7 +177,7 @@ bool FMapSwapLeakCheckClassifierTest::RunTest(const FString& Parameters)
 {
 	using namespace PinWrightMapSwapGuard;
 
-	const FString PackageName = FString::Printf(TEXT("/Game/_Test/L_LeakClassifier_%s"),
+	const FString PackageName = FString::Printf(TEXT("/Game/PinWrightTests/_Test/L_LeakClassifier_%s"),
 		*FGuid::NewGuid().ToString(EGuidFormats::Digits));
 
 	UPackage* Package = CreatePackage(*PackageName);

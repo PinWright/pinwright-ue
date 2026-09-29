@@ -27,7 +27,7 @@ namespace
     {
         OutParam = nullptr;
         OutAssetPath = FString::Printf(
-            TEXT("/Game/__PW_GatewayTests/%s_%s"),
+            TEXT("/Game/PinWrightTests/__PW_GatewayTests/%s_%s"),
             AssetPathPrefix,
             *FGuid::NewGuid().ToString(EGuidFormats::Digits));
 
@@ -82,7 +82,7 @@ namespace
         FString& OutAssetPath)
     {
         OutAssetPath = FString::Printf(
-            TEXT("/Game/__PW_GatewayTests/%s_%s"),
+            TEXT("/Game/PinWrightTests/__PW_GatewayTests/%s_%s"),
             AssetPathPrefix,
             *FGuid::NewGuid().ToString(EGuidFormats::Digits));
 

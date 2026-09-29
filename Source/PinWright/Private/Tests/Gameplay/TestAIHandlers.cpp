@@ -171,7 +171,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAIStopBehaviorTreeClearsAssignmentTest,
 bool FAIStopBehaviorTreeClearsAssignmentTest::RunTest(const FString& Parameters)
 {
     const FString Suffix = FGuid::NewGuid().ToString(EGuidFormats::Digits);
-    const FString BasePath = TEXT("/Game/__PW_GatewayTests/AIStopBT");
+    const FString BasePath = TEXT("/Game/PinWrightTests/__PW_GatewayTests/AIStopBT");
     const FString ControllerName = FString::Printf(TEXT("BP_StopBTProbe_%s"), *Suffix);
     const FString BTName = FString::Printf(TEXT("BT_StopProbe_%s"), *Suffix);
     const FString ControllerPackagePath = BasePath / ControllerName;
@@ -262,7 +262,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAIRunBehaviorTreeWritesCDOTest,
 bool FAIRunBehaviorTreeWritesCDOTest::RunTest(const FString& Parameters)
 {
     const FString Suffix = FGuid::NewGuid().ToString(EGuidFormats::Digits);
-    const FString BasePath = TEXT("/Game/__PW_GatewayTests/AIRunBT");
+    const FString BasePath = TEXT("/Game/PinWrightTests/__PW_GatewayTests/AIRunBT");
     const FString ControllerName = FString::Printf(TEXT("BP_RunBTProbe_%s"), *Suffix);
     const FString BTName = FString::Printf(TEXT("BT_RunProbe_%s"), *Suffix);
     const FString ControllerPackagePath = BasePath / ControllerName;
@@ -335,7 +335,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAIAssignBlackboardWritesCDOTest,
 bool FAIAssignBlackboardWritesCDOTest::RunTest(const FString& Parameters)
 {
     const FString Suffix = FGuid::NewGuid().ToString(EGuidFormats::Digits);
-    const FString BasePath = TEXT("/Game/__PW_GatewayTests/AIAssignBB");
+    const FString BasePath = TEXT("/Game/PinWrightTests/__PW_GatewayTests/AIAssignBB");
     const FString ControllerName = FString::Printf(TEXT("BP_AssignBBProbe_%s"), *Suffix);
     const FString BBName = FString::Printf(TEXT("BB_AssignProbe_%s"), *Suffix);
     const FString ControllerPackagePath = BasePath / ControllerName;
@@ -464,7 +464,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAIAddBlackboardKeyAppliesBaseObjectClassTest,
 bool FAIAddBlackboardKeyAppliesBaseObjectClassTest::RunTest(const FString& Parameters)
 {
     const FString Suffix = FGuid::NewGuid().ToString(EGuidFormats::Digits);
-    const FString BasePath = TEXT("/Game/__PW_GatewayTests/AIAddBBKey");
+    const FString BasePath = TEXT("/Game/PinWrightTests/__PW_GatewayTests/AIAddBBKey");
     const FString BBName = FString::Printf(TEXT("BB_BaseClassProbe_%s"), *Suffix);
     const FString BBPackagePath = BasePath / BBName;
 
@@ -665,7 +665,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAIConfigureSlotBehaviorRejectsNoOpInputsTest,
 bool FAIConfigureSlotBehaviorRejectsNoOpInputsTest::RunTest(const FString& Parameters)
 {
     const FString Suffix = FGuid::NewGuid().ToString(EGuidFormats::Digits);
-    const FString BasePath = TEXT("/Game/__PW_GatewayTests/AISmartObjects");
+    const FString BasePath = TEXT("/Game/PinWrightTests/__PW_GatewayTests/AISmartObjects");
     const FString DefName = FString::Printf(TEXT("SOD_SlotBehaviorProbe_%s"), *Suffix);
     const FString DefPackagePath = BasePath / DefName;
 
@@ -802,7 +802,7 @@ bool FBehaviorTreeCreateBlueprintNodeClassesTest::RunTest(const FString& Paramet
         UClass* ExpectedParent;
     };
 
-    const FString SavePath = TEXT("/Game/__PW_GatewayTests/BehaviorTreeBlueprintNodes");
+    const FString SavePath = TEXT("/Game/PinWrightTests/__PW_GatewayTests/BehaviorTreeBlueprintNodes");
     TArray<FString> PackagePaths;
     ON_SCOPE_EXIT
     {
@@ -1014,7 +1014,7 @@ bool FNavCreateNavModifierComponentEchoesAreaClassTest::RunTest(const FString& P
 {
     const FString BlueprintName = FString::Printf(
         TEXT("BP_NavModEcho_%s"), *FGuid::NewGuid().ToString(EGuidFormats::Digits));
-    const FString BasePath = TEXT("/Game/__PW_GatewayTests/NavModifierEcho");
+    const FString BasePath = TEXT("/Game/PinWrightTests/__PW_GatewayTests/NavModifierEcho");
     const FString PackagePath = BasePath / BlueprintName;
     const FString BlueprintObjectPath = FString::Printf(TEXT("%s.%s"), *PackagePath, *BlueprintName);
 
@@ -1437,7 +1437,7 @@ bool FAIAddMassSpawnerReturnsNotImplementedTest::RunTest(const FString& Paramete
     // The handler ignores the payload (it rejects with NOT_IMPLEMENTED before reading any
     // param), so a lone synthetic blueprintPath — never loaded — is enough.
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
-    Payload->SetStringField(TEXT("blueprintPath"), TEXT("/Game/__PW_GatewayTests/Stub_DoesNotMatter"));
+    Payload->SetStringField(TEXT("blueprintPath"), TEXT("/Game/PinWrightTests/__PW_GatewayTests/Stub_DoesNotMatter"));
 
     // Delegates the honest-failure contract (handler found + bSuccess == false +
     // ErrorCode == "NOT_IMPLEMENTED") to the shared helper so it lives in one place; the old
@@ -1461,7 +1461,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAIMassEntityConfigReflectionRoundTripTest,
 bool FAIMassEntityConfigReflectionRoundTripTest::RunTest(const FString& Parameters)
 {
     const FString Suffix = FGuid::NewGuid().ToString(EGuidFormats::Digits);
-    const FString BasePath = TEXT("/Game/__PW_GatewayTests/AIMass");
+    const FString BasePath = TEXT("/Game/PinWrightTests/__PW_GatewayTests/AIMass");
     const FString ParentName = FString::Printf(TEXT("MEC_Parent_%s"), *Suffix);
     const FString ChildName = FString::Printf(TEXT("MEC_Child_%s"), *Suffix);
     const FString ParentPath = BasePath / ParentName;

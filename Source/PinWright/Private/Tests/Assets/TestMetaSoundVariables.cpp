@@ -170,6 +170,11 @@ bool FAddMetaSoundVariableIntAliasTest::RunTest(const FString& Parameters)
     // Pre-flight: the raw documented name "Int" is rejected by the engine
     // registry (the bug). This anchors the test to the real contract — if the
     // engine ever started accepting "Int", the fix would be unnecessary.
+    // The rejection is logged by the engine as two errors; both are the expected outcome here.
+    AddExpectedErrorPlain(TEXT("Data type is not registered [Name:Int]"),
+        EAutomationExpectedErrorFlags::Contains, 1);
+    AddExpectedErrorPlain(TEXT("Attempted creation of variable 'IntRaw' with unregistered DataType 'Int'"),
+        EAutomationExpectedErrorFlags::Contains, 1);
     const FMetasoundFrontendVariable* RawIntVar =
         Builder.AddGraphVariable(FName("IntRaw"), FName("Int"), &Literal);
     TestNull(TEXT("Raw 'Int' is rejected by the builder registry"), RawIntVar);

@@ -142,8 +142,13 @@ namespace FixtureOwnershipContractHelpers
     const TCHAR* const RootedProducerBaseline[] = {
         TEXT("PinWright/Private/Tests/Assets/AnimAuthoringTestFixtures.h|2"),
         TEXT("PinWright/Private/Tests/Assets/TestAnimSequenceCreate.cpp|2"),
-        TEXT("PinWright/Private/Tests/Assets/TestAnimSequenceDumpBuilder.cpp|5"),
+        // 7: Shape and WritesAnimSequenceAspectFile each bind a transient skeleton, scoped by
+        // FScopedAnimAssetRoot as the next statement (CheckAnimationFactoryCallers enforces it).
+        TEXT("PinWright/Private/Tests/Assets/TestAnimSequenceDumpBuilder.cpp|7"),
         TEXT("PinWright/Private/Tests/Format/TestPwAnimCompiler.cpp|6"),
+        // 1: UsageBitmaskGatesTargetStack binds BuildEmptySystemWithEmitter's rooted system, scoped
+        // by FAuthorableSystemRoots (system + first emitter) immediately after the null check.
+        TEXT("PinWright/Private/Tests/Niagara/TestNiagaraAddModuleUsage.cpp|1"),
         TEXT("PinWright/Private/Tests/Niagara/TestNiagaraCurveHandler.cpp|4"),
         TEXT("PinWright/Private/Tests/Niagara/TestNiagaraEditorOpenGuard.cpp|1"),
         TEXT("PinWright/Private/Tests/Niagara/TestNiagaraGetModuleInputs.cpp|1"),

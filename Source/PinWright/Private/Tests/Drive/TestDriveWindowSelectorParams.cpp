@@ -107,11 +107,6 @@ bool FDriveObserveAcceptsWindowSelectorOnWireTest::RunTest(const FString& Parame
     using DispatcherTestHelpers::MakeDispatcher;
     using DispatcherTestHelpers::Dispatch;
 
-    // Resolving no window (guaranteed-miss title / out-of-range index) short-circuits before
-    // any screenshot, so the editor-chrome walk emits only ambient no-window noise; suppress it.
-    bSuppressLogErrors = true;
-    bSuppressLogWarnings = true;
-
     // A fresh GUID can never be a substring of any real window title, so the title case is a
     // deterministic miss regardless of host/editor window state.
     const FString MissTitle = FString::Printf(TEXT("PW_NoSuchWindow_%s"),

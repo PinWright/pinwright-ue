@@ -362,7 +362,7 @@ bool FPropertySetGrassTypeEditFlushesGrassCacheTest::RunTest(const FString& Para
     }
 
     const FString Suffix = FGuid::NewGuid().ToString(EGuidFormats::Digits);
-    const FString AssetPath = FString::Printf(TEXT("/Game/__PW_GatewayTests/PW_GrassFlush_%s"), *Suffix);
+    const FString AssetPath = FString::Printf(TEXT("/Game/PinWrightTests/__PW_GatewayTests/PW_GrassFlush_%s"), *Suffix);
     ON_SCOPE_EXIT
     {
         CleanupTestAsset(AssetPath);
@@ -475,7 +475,7 @@ bool FLandscapeFlushGrassInvalidatesStaleCacheTest::RunTest(const FString& Param
     }
 
     const FString Suffix = FGuid::NewGuid().ToString(EGuidFormats::Digits);
-    const FString AssetPath = FString::Printf(TEXT("/Game/__PW_GatewayTests/PW_GrassFlushVerb_%s"), *Suffix);
+    const FString AssetPath = FString::Printf(TEXT("/Game/PinWrightTests/__PW_GatewayTests/PW_GrassFlushVerb_%s"), *Suffix);
     ON_SCOPE_EXIT
     {
         CleanupTestAsset(AssetPath);

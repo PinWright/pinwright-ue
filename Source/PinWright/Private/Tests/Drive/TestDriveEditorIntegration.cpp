@@ -118,9 +118,6 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveEditorIntObserveTest,
 
 bool FDriveEditorIntObserveTest::RunTest(const FString& Parameters)
 {
-    bSuppressLogErrors = true;
-    bSuppressLogWarnings = true;
-
     // screenshot=false keeps the test to the element list (the window-capture path is
     // best-effort and exercised elsewhere); no window selector selects the active window.
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
@@ -261,9 +258,6 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveEditorIntObserveInteractablesOnlyTest,
 
 bool FDriveEditorIntObserveInteractablesOnlyTest::RunTest(const FString& Parameters)
 {
-    bSuppressLogErrors = true;
-    bSuppressLogWarnings = true;
-
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
     Payload->SetStringField(TEXT("surface"), TEXT("editor_chrome"));
     Payload->SetBoolField(TEXT("screenshot"), false);
@@ -318,9 +312,6 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveEditorIntObserveMaxElementsTest,
 
 bool FDriveEditorIntObserveMaxElementsTest::RunTest(const FString& Parameters)
 {
-    bSuppressLogErrors = true;
-    bSuppressLogWarnings = true;
-
     // Baseline: the unfiltered element count for the active window.
     TSharedPtr<FJsonObject> BasePayload = MakeShared<FJsonObject>();
     BasePayload->SetStringField(TEXT("surface"), TEXT("editor_chrome"));
@@ -396,9 +387,6 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveEditorIntResolveBogusHandleTest,
 
 bool FDriveEditorIntResolveBogusHandleTest::RunTest(const FString& Parameters)
 {
-    bSuppressLogErrors = true;
-    bSuppressLogWarnings = true;
-
     // A handle that cannot exist on any real widget, routed to the editor-chrome
     // surface. The synchronous re-resolve fails before any input is injected, so the
     // handler answers with a coded error (TARGET_NOT_FOUND when a window resolved, or a

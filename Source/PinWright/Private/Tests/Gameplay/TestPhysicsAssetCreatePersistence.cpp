@@ -35,7 +35,7 @@ namespace
         FString& OutObjectPath)
     {
         OutPackagePath = FString::Printf(
-            TEXT("/Game/__PW_GatewayTests/PhysMesh_%s"),
+            TEXT("/Game/PinWrightTests/__PW_GatewayTests/PhysMesh_%s"),
             *FGuid::NewGuid().ToString(EGuidFormats::Digits));
         const FString AssetName = FPackageName::GetLongPackageAssetName(OutPackagePath);
 
@@ -160,7 +160,7 @@ bool FPhysicsSetupSimulationPersistsPhysicsAssetTest::RunTest(const FString& /*P
     }
 
     const FString Guid = FGuid::NewGuid().ToString(EGuidFormats::Digits);
-    const FString SavePath = FString::Printf(TEXT("/Game/__PW_GatewayTests/PhysPersist_%s"), *Guid);
+    const FString SavePath = FString::Printf(TEXT("/Game/PinWrightTests/__PW_GatewayTests/PhysPersist_%s"), *Guid);
     const FString AssetName = FString::Printf(TEXT("PA_SetupPersist_%s"), *Guid);
     const FString PackagePath = FString::Printf(TEXT("%s/%s"), *SavePath, *AssetName);
 
@@ -200,7 +200,7 @@ bool FSkeletonCreatePhysicsAssetPersistsPhysicsAssetTest::RunTest(const FString&
 
     const FString Guid = FGuid::NewGuid().ToString(EGuidFormats::Digits);
     const FString OutputPath = FString::Printf(
-        TEXT("/Game/__PW_GatewayTests/PhysSkeletonPersist_%s"), *Guid);
+        TEXT("/Game/PinWrightTests/__PW_GatewayTests/PhysSkeletonPersist_%s"), *Guid);
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
     Payload->SetStringField(TEXT("skeletalMeshPath"), GPhysicsPersistenceMannyMeshPath);
     Payload->SetStringField(TEXT("outputPath"), OutputPath);
@@ -242,7 +242,7 @@ bool FPhysicsSetupSimulationAssignedAssetSurvivesReloadTest::RunTest(
     }
     const FString Guid = FGuid::NewGuid().ToString(EGuidFormats::Digits);
     const FString SavePath = FString::Printf(
-        TEXT("/Game/__PW_GatewayTests/PhysAssign_%s"), *Guid);
+        TEXT("/Game/PinWrightTests/__PW_GatewayTests/PhysAssign_%s"), *Guid);
     const FString AssetName = FString::Printf(TEXT("PA_AssignPersist_%s"), *Guid);
     const FString PhysicsPackagePath = FString::Printf(TEXT("%s/%s"), *SavePath, *AssetName);
 

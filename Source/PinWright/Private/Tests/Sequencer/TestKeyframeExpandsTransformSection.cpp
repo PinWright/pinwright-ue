@@ -20,6 +20,7 @@
 // written key's tick frame. Counterfactual: revert the ExpandToFrame calls and
 // the section stays [0,0], the contains check fails, and these tests fail.
 #include "Misc/AutomationTest.h"
+#include "Tests/AutomationSuiteMaintenance.h"
 #include "Dom/JsonObject.h"
 #include "EditorAssetLibrary.h"
 #include "Tests/TestSkipReporting.h"
@@ -40,7 +41,7 @@ namespace
     {
         const FString SeqName = FString::Printf(TEXT("MCP_KeyframeExpandSeq_%s"),
             *FGuid::NewGuid().ToString(EGuidFormats::Digits));
-        const FString DestFolder = TEXT("/Game/MCP_KeyframeExpandProbe");
+        const FString DestFolder = FString(PinWrightSuiteMaintenance::ScratchRootPackagePath()) / TEXT("MCP_KeyframeExpandProbe");
         OutFullPath = FString::Printf(TEXT("%s/%s"), *DestFolder, *SeqName);
 
         TSharedPtr<FJsonObject> CreatePayload = MakeShared<FJsonObject>();

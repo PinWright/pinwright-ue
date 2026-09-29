@@ -156,7 +156,7 @@ bool FMaterialCreateAcceptsCombinedAssetPathOnWireTest::RunTest(const FString& P
 {
     const FString Leaf = FString::Printf(TEXT("M_EACombinedPath_%s"),
         *FGuid::NewGuid().ToString(EGuidFormats::Digits));
-    const FString Folder = TEXT("/Game/__PW_GatewayTests/CombinedPath");
+    const FString Folder = TEXT("/Game/PinWrightTests/__PW_GatewayTests/CombinedPath");
     const FString CombinedPath = Folder / Leaf;
 
     DispatcherTestHelpers::FSinkPtr Sink;

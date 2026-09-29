@@ -38,6 +38,7 @@
 // on-disk-file and success checks), not presence-only.
 
 #include "Misc/AutomationTest.h"
+#include "Tests/AutomationSuiteMaintenance.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "EditorAssetLibrary.h"
@@ -75,7 +76,7 @@ namespace
     {
         const FString SeqName = FString::Printf(TEXT("MCP_FbxRoundTripSeq_%s"),
             *FGuid::NewGuid().ToString(EGuidFormats::Digits));
-        const FString DestFolder = TEXT("/Game/MCP_FbxRoundTripProbe");
+        const FString DestFolder = FString(PinWrightSuiteMaintenance::ScratchRootPackagePath()) / TEXT("MCP_FbxRoundTripProbe");
         OutFullPath = FString::Printf(TEXT("%s/%s"), *DestFolder, *SeqName);
 
         TSharedPtr<FJsonObject> CreatePayload = MakeShared<FJsonObject>();

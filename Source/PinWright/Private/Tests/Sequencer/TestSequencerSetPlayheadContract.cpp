@@ -25,6 +25,7 @@
 // open), which this suite does not stand up under -unattended. Those are verified
 // at runtime against a real editor — see docs/wiki-src/sequencer.md.
 #include "Misc/AutomationTest.h"
+#include "Tests/AutomationSuiteMaintenance.h"
 
 #include "Dom/JsonObject.h"
 #include "EditorAssetLibrary.h"
@@ -46,7 +47,7 @@ namespace
     {
         const FString SeqName = FString::Printf(TEXT("MCP_SetPlayheadSeq_%s"),
             *FGuid::NewGuid().ToString(EGuidFormats::Digits));
-        const FString DestFolder = TEXT("/Game/MCP_SetPlayheadProbe");
+        const FString DestFolder = FString(PinWrightSuiteMaintenance::ScratchRootPackagePath()) / TEXT("MCP_SetPlayheadProbe");
         OutFullPath = FString::Printf(TEXT("%s/%s"), *DestFolder, *SeqName);
 
         TSharedPtr<FJsonObject> CreatePayload = MakeShared<FJsonObject>();

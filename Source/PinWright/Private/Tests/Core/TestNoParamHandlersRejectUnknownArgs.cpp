@@ -34,9 +34,9 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FNoParamHandlerRejectsUnknownArgTest,
 
 bool FNoParamHandlerRejectsUnknownArgTest::RunTest(const FString& Parameters)
 {
-    // The unknown-param rejection logs a Warning; suppress it so the expected
-    // rejection path doesn't trip the automation warning gate.
-    bSuppressLogWarnings = true;
+    // The provoked refusal's own log lines, declared with exact counts (docs/rpc-design.md s12).
+    AddExpectedMessagePlain(TEXT("[_test.beta] Unknown parameter(s): bogus"),
+        ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
 
     DispatcherTestHelpers::FSinkPtr Sink;
     FRpcDispatcher Dispatcher;

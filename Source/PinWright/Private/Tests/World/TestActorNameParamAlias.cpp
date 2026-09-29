@@ -88,7 +88,17 @@ bool FActorReaderVerbsDeclareActorPathAliasTest::RunTest(const FString& Paramete
         {
             continue;
         }
-        TestTrue(*FString::Printf(TEXT("%s actorName is required"), *Verb), Spec->bRequired);
+        // actor.set_transform also takes an actors[] batch form, so its handler (not the
+        // dispatcher) enforces "actorName or actors" and the slot is declared optional.
+        if (Verb == TEXT("actor.set_transform"))
+        {
+            TestFalse(TEXT("actor.set_transform actorName is optional beside its actors[] batch form"),
+                Spec->bRequired);
+        }
+        else
+        {
+            TestTrue(*FString::Printf(TEXT("%s actorName is required"), *Verb), Spec->bRequired);
+        }
         TestTrue(*FString::Printf(TEXT("%s actorName carries the 'actorPath' alias"), *Verb),
             Spec->Aliases.Contains(TEXT("actorPath")));
         TestTrue(*FString::Printf(TEXT("%s actorName carries the 'objectPath' alias"), *Verb),
@@ -115,7 +125,7 @@ bool FActorReaderVerbsAcceptActorPathAliasOnWireTest::RunTest(const FString& Par
     // stale asset-registry entry on a mutated fuzzing host can ever make DoesAssetExist true
     // for it — keeping the test deterministic regardless of host content state.
     const FString MissingActor = FString::Printf(
-        TEXT("/Game/__PW_GatewayTests/DoesNotExist_ActorPathAlias_%s"),
+        TEXT("/Game/PinWrightTests/__PW_GatewayTests/DoesNotExist_ActorPathAlias_%s"),
         *FGuid::NewGuid().ToString(EGuidFormats::Digits));
 
     for (const FString& Verb : ActorReaderVerbs())

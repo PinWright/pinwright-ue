@@ -32,7 +32,7 @@ namespace
 {
     FString MakeScsGetAssetPath(const FString& Prefix)
     {
-        return FString::Printf(TEXT("/Game/__PW_GatewayTests/%s_%s"),
+        return FString::Printf(TEXT("/Game/PinWrightTests/__PW_GatewayTests/%s_%s"),
             *Prefix,
             *FGuid::NewGuid().ToString(EGuidFormats::Digits));
     }

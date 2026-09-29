@@ -46,7 +46,7 @@ bool FAssetGetReturnsRegistryTagsTest::RunTest(const FString& Parameters)
 {
     // Build a real in-memory asset so asset.get's FindAssetData/DoesAssetExist resolve it.
     const FString PackagePath = FString::Printf(
-        TEXT("/Game/__PW_GatewayTests/AssetGetTags_%s"),
+        TEXT("/Game/PinWrightTests/__PW_GatewayTests/AssetGetTags_%s"),
         *FGuid::NewGuid().ToString(EGuidFormats::Digits));
 
     UPackage* Pkg = CreatePackage(*PackagePath);

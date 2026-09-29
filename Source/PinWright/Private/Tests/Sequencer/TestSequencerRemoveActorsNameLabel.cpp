@@ -29,6 +29,7 @@
 // driven through a LIVE UPinWrightSubsystem via MakeContextWithCapture (the
 // null-subsystem InvokeHandlerWithCapture would crash add_actors).
 #include "Misc/AutomationTest.h"
+#include "Tests/AutomationSuiteMaintenance.h"
 
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
@@ -58,7 +59,7 @@ namespace
     {
         const FString SeqName = FString::Printf(TEXT("MCP_SeqNameLabelSeq_%s"),
             *FGuid::NewGuid().ToString(EGuidFormats::Digits));
-        const FString DestFolder = TEXT("/Game/MCP_SeqNameLabelProbe");
+        const FString DestFolder = FString(PinWrightSuiteMaintenance::ScratchRootPackagePath()) / TEXT("MCP_SeqNameLabelProbe");
         OutFullPath = FString::Printf(TEXT("%s/%s"), *DestFolder, *SeqName);
 
         TSharedPtr<FJsonObject> CreatePayload = MakeShared<FJsonObject>();

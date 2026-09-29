@@ -25,7 +25,7 @@ namespace
     FString MakePieGuardTestAssetPath()
     {
         return FString::Printf(
-            TEXT("/Game/__PW_GatewayTests/BpirCompilePieGuard_%s"),
+            TEXT("/Game/PinWrightTests/__PW_GatewayTests/BpirCompilePieGuard_%s"),
             *FGuid::NewGuid().ToString(EGuidFormats::Digits));
     }
 

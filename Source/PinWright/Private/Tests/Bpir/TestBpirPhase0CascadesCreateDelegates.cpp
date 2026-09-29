@@ -62,7 +62,7 @@ bool FBpirPhase0CascadesCreateDelegatesTest::RunTest(const FString& Parameters)
     // On-disk path required: LoadBlueprintAsset (called by the handler) cannot see
     // transient-package assets.
     const FString AssetPath = FString::Printf(
-        TEXT("/Game/__PW_GatewayTests/BpirPhase0Cascade_%s"),
+        TEXT("/Game/PinWrightTests/__PW_GatewayTests/BpirPhase0Cascade_%s"),
         *FGuid::NewGuid().ToString(EGuidFormats::Digits));
 
     UPackage* Pkg = CreatePackage(*AssetPath);

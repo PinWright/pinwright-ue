@@ -57,7 +57,7 @@ namespace CleanupTestAssetTeardownTestHelpers
     {
         const FString AssetName = FString::Printf(
             TEXT("%s_%s"), NamePrefix, *FGuid::NewGuid().ToString(EGuidFormats::Digits));
-        OutPackagePath = TEXT("/Game/__PW_GatewayTests/") + AssetName;
+        OutPackagePath = TEXT("/Game/PinWrightTests/__PW_GatewayTests/") + AssetName;
         OutObjectPath = FString::Printf(TEXT("%s.%s"), *OutPackagePath, *AssetName);
         if (!Test.TestTrue(TEXT("fixture package path resolves to a .uasset filename"),
                 FPackageName::TryConvertLongPackageNameToFilename(

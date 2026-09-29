@@ -189,12 +189,12 @@ bool FGeometryImportDuplicateFaceFailsTest::RunTest(const FString& Parameters)
     // test on any uncaptured Error line. Declaring it expected is what separates "the engine
     // complained, as this test intended" from "something went wrong".
     //
-    // Occurrences 0 means "any number, including none", which is deliberate: whether the
-    // framework captures the line at all has proved environment-dependent (the boolean family's
-    // two dispatcher tests passed in one suite run and failed in the next on identical code), and
-    // a fixed count would then fail in the other direction.
+    // Exact counts, per docs/rpc-design.md section 12. The automation message filter on GWarn
+    // matches Error AND Warning lines against the bare message, whatever bSuppressLogWarnings
+    // says, so each count is the engine's LogGeometry Errors plus any LogMcpGeometryHandlersNew
+    // Warning that quotes them: here 1 + the "Mesh import refused" warning = 2.
     AddExpectedErrorPlain(TEXT("AppendBuffersToMesh: Triangle cannot be added because it is a duplicate of an existing Triangle"),
-        EAutomationExpectedErrorFlags::Contains, /*Occurrences=*/0);
+        EAutomationExpectedErrorFlags::Contains, /*Occurrences=*/2);
 
     const FString Label = FString::Printf(TEXT("PW_ImportDup_%s"),
         *FGuid::NewGuid().ToString(EGuidFormats::Digits));
@@ -246,8 +246,9 @@ bool FGeometryImportNonManifoldFailsTest::RunTest(const FString& Parameters)
         return true;
     }
 
+    // 1 engine Error + the "Mesh import refused" warning quoting it.
     AddExpectedErrorPlain(TEXT("AppendBuffersToMesh: Triangle cannot be added because it would create invalid Non-Manifold Mesh Topology"),
-        EAutomationExpectedErrorFlags::Contains, /*Occurrences=*/0);
+        EAutomationExpectedErrorFlags::Contains, /*Occurrences=*/2);
 
     const FString Label = FString::Printf(TEXT("PW_ImportNM_%s"),
         *FGuid::NewGuid().ToString(EGuidFormats::Digits));
@@ -296,8 +297,10 @@ bool FGeometryImportAllowPartialTest::RunTest(const FString& Parameters)
         return true;
     }
 
+    // One refused triangle per import, two imports (allowPartial and allow_partial); the
+    // allowPartial path logs no warning of its own.
     AddExpectedErrorPlain(TEXT("AppendBuffersToMesh: Triangle cannot be added because it would create invalid Non-Manifold Mesh Topology"),
-        EAutomationExpectedErrorFlags::Contains, /*Occurrences=*/0);
+        EAutomationExpectedErrorFlags::Contains, /*Occurrences=*/2);
 
     const FString Label = FString::Printf(TEXT("PW_ImportPartial_%s"),
         *FGuid::NewGuid().ToString(EGuidFormats::Digits));
@@ -437,8 +440,9 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGeometryAppendBuffersRefusalTest,
 
 bool FGeometryAppendBuffersRefusalTest::RunTest(const FString& Parameters)
 {
+    // 1 engine Error + the "append_buffers refused ... mesh rolled back" warning quoting it.
     AddExpectedErrorPlain(TEXT("AppendBuffersToMesh: Triangle cannot be added because it is a duplicate of an existing Triangle"),
-        EAutomationExpectedErrorFlags::Contains, /*Occurrences=*/0);
+        EAutomationExpectedErrorFlags::Contains, /*Occurrences=*/2);
 
     UDynamicMesh* Mesh = NewObject<UDynamicMesh>(GetTransientPackage());
 
@@ -478,8 +482,9 @@ bool FGeometryAppendBuffersRollbackTest::RunTest(const FString& Parameters)
     // The case the empty-target test cannot reach: rolling back to a real prior mesh rather than
     // to nothing. Without the snapshot this leaves the box plus three orphan vertices plus one
     // triangle, under an error response saying the append failed.
+    // 1 engine Error + the "append_buffers refused ... mesh rolled back" warning quoting it.
     AddExpectedErrorPlain(TEXT("AppendBuffersToMesh: Triangle cannot be added because it is a duplicate of an existing Triangle"),
-        EAutomationExpectedErrorFlags::Contains, /*Occurrences=*/0);
+        EAutomationExpectedErrorFlags::Contains, /*Occurrences=*/2);
 
     UDynamicMesh* Mesh = GeomFailTest_NewBox();
     const int32 TrisBefore = Mesh->GetTriangleCount();
@@ -548,7 +553,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGeometryTangentsOnUVLessMeshTest,
 bool FGeometryTangentsOnUVLessMeshTest::RunTest(const FString& Parameters)
 {
     AddExpectedErrorPlain(TEXT("ComputeTangents: TargetMesh is missing UV Set or Normals required to compute Tangents"),
-        EAutomationExpectedErrorFlags::Contains, /*Occurrences=*/0);
+        EAutomationExpectedErrorFlags::Contains, /*Occurrences=*/1);
 
     UDynamicMesh* Mesh = GeomFailTest_NewUVLessTriangle();
 
@@ -608,7 +613,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGeometryXAtlasNonCompactTest,
 bool FGeometryXAtlasNonCompactTest::RunTest(const FString& Parameters)
 {
     AddExpectedErrorPlain(TEXT("AutoGenerateXAtlasMeshUVs: TargetMesh is non-Compact"),
-        EAutomationExpectedErrorFlags::Contains, /*Occurrences=*/0);
+        EAutomationExpectedErrorFlags::Contains, /*Occurrences=*/1);
 
     UDynamicMesh* Mesh = GeomFailTest_NewBox();
 

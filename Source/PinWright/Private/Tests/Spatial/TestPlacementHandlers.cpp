@@ -327,7 +327,9 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPlaceRelativeUnknownArgRejectedTest,
 
 bool FPlaceRelativeUnknownArgRejectedTest::RunTest(const FString& Parameters)
 {
-    bSuppressLogWarnings = true;
+    // The provoked refusal's own log lines, declared with exact counts (docs/rpc-design.md s12).
+    AddExpectedMessagePlain(TEXT("[spatial.place_relative] Unknown parameter(s): bogusParam"),
+        ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
 
     DispatcherTestHelpers::FSinkPtr Sink;
     FRpcDispatcher Dispatcher;
@@ -777,8 +779,6 @@ bool FFindClearPlacementTypedRefusalsTest::RunTest(const FString& Parameters)
     // would only exercise RequireObject's own INVALID_PARAMS fallback, never proving `region` is
     // declared required in RPC_PARAMS.
     {
-        bSuppressLogWarnings = true;
-
         DispatcherTestHelpers::FSinkPtr Sink;
         FRpcDispatcher Dispatcher;
         DispatcherTestHelpers::MakeDispatcher(Sink, Dispatcher);

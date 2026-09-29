@@ -62,7 +62,11 @@ bool FRemoveMetaSoundNodeAndDisconnectTest::RunTest(const FString& Parameters)
 
     // Add a Sine node. Skip gracefully if the node class registry isn't populated
     // (e.g., test context started before MetaSound module fully initialized).
-    FMetasoundFrontendClassName SineClassName(FName(), FName("Metasound.Sine"), FName());
+    // The registry key is UE.Sine.Audio (what search_metasound_nodes reports). The former
+    // None.Metasound.Sine never resolved, so this test always took the skip below, and the
+    // engine's "Class info not registered" error was hidden only by a leaked static
+    // bSuppressLogErrors.
+    FMetasoundFrontendClassName SineClassName(FName(TEXT("UE")), FName(TEXT("Sine")), FName(TEXT("Audio")));
     const FMetasoundFrontendNode* SineNode = Builder.AddNodeByClassName(SineClassName, 1, FGuid::NewGuid());
     if (!SineNode)
     {

@@ -597,7 +597,7 @@ bool FNetworkingGetNetworkingInfoRpcReplicationRoundTripTest::RunTest(const FStr
 {
     // 1. Create a real package-backed blueprint loadable by path.
     const FString AssetPath = FString::Printf(
-        TEXT("/Game/__PW_GatewayTests/BP_NetInfo_%s"),
+        TEXT("/Game/PinWrightTests/__PW_GatewayTests/BP_NetInfo_%s"),
         *FGuid::NewGuid().ToString(EGuidFormats::Digits));
     UPackage* Pkg = CreatePackage(*AssetPath);
     UBlueprint* BP = FKismetEditorUtilities::CreateBlueprint(
@@ -764,7 +764,7 @@ bool FNetworkingSetPropertyReplicatedWarnsWhenActorNotReplicatingTest::RunTest(c
 {
     // 1. Create a real package-backed actor blueprint (CDO bReplicates defaults false).
     const FString AssetPath = FString::Printf(
-        TEXT("/Game/__PW_GatewayTests/BP_RepWarn_%s"),
+        TEXT("/Game/PinWrightTests/__PW_GatewayTests/BP_RepWarn_%s"),
         *FGuid::NewGuid().ToString(EGuidFormats::Digits));
     UPackage* Pkg = CreatePackage(*AssetPath);
     UBlueprint* BP = FKismetEditorUtilities::CreateBlueprint(
@@ -900,7 +900,7 @@ bool FNetworkingCreateRpcFunctionInputParamPinCreatedTest::RunTest(const FString
 {
     // 1. Create a real package-backed blueprint loadable by path.
     const FString AssetPath = FString::Printf(
-        TEXT("/Game/__PW_GatewayTests/BP_RpcParam_%s"),
+        TEXT("/Game/PinWrightTests/__PW_GatewayTests/BP_RpcParam_%s"),
         *FGuid::NewGuid().ToString(EGuidFormats::Digits));
     UPackage* Pkg = CreatePackage(*AssetPath);
     UBlueprint* BP = FKismetEditorUtilities::CreateBlueprint(

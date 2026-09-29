@@ -26,7 +26,7 @@ bool FBlueprintRemoveFunctionCascadesCustomEventTest::RunTest(const FString& Par
     // On-disk path required: LoadBlueprintAsset (called by the handler) cannot see
     // transient-package assets. Follows the FBlueprintRemoveEventComponentNameFilterTest pattern.
     const FString AssetPath = FString::Printf(
-        TEXT("/Game/__PW_GatewayTests/RemoveFuncCustomEvent_%s"),
+        TEXT("/Game/PinWrightTests/__PW_GatewayTests/RemoveFuncCustomEvent_%s"),
         *FGuid::NewGuid().ToString(EGuidFormats::Digits));
 
     UPackage* Pkg = CreatePackage(*AssetPath);

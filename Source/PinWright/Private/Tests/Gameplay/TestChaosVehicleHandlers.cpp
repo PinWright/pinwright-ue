@@ -22,7 +22,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVehicleCreateWheelAssetRoundTripTest,
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FVehicleCreateWheelAssetRoundTripTest::RunTest(const FString& Parameters)
 {
-    const FString AssetPath = FString::Printf(TEXT("/Game/__McpTest__/T_Wheel_%s"),
+    const FString AssetPath = FString::Printf(TEXT("/Game/PinWrightTests/__McpTest__/T_Wheel_%s"),
         *FGuid::NewGuid().ToString(EGuidFormats::DigitsLower).Left(8));
 
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
@@ -78,7 +78,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVehicleCreateWheelAssetBadParentClassTest,
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 bool FVehicleCreateWheelAssetBadParentClassTest::RunTest(const FString& Parameters)
 {
-    const FString AssetPath = FString::Printf(TEXT("/Game/__McpTest__/T_BadWheel_%s"),
+    const FString AssetPath = FString::Printf(TEXT("/Game/PinWrightTests/__McpTest__/T_BadWheel_%s"),
         *FGuid::NewGuid().ToString(EGuidFormats::DigitsLower).Left(8));
 
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();

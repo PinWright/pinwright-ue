@@ -82,7 +82,7 @@ namespace AiCreateAssetNamePathSafetyHelpers
     constexpr const TCHAR* SafetyUnmountedFolder = TEXT("/PinWrightMissingRoot/AiNameSafety");
 
     // Real and mounted, used only by the controls.
-    constexpr const TCHAR* SafetyMountedFolder = TEXT("/Game/__PW_GatewayTests/AiNameSafety");
+    constexpr const TCHAR* SafetyMountedFolder = TEXT("/Game/PinWrightTests/__PW_GatewayTests/AiNameSafety");
 
     struct FSafetyBadName
     {

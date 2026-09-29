@@ -41,8 +41,8 @@ namespace
     {
         OutInstance = nullptr;
         const FString Suffix = FGuid::NewGuid().ToString(EGuidFormats::Digits);
-        OutParentPath = FString::Printf(TEXT("/Game/__PW_GatewayTests/MatParent%s_%s"), *NamePrefix, *Suffix);
-        OutInstancePath = FString::Printf(TEXT("/Game/__PW_GatewayTests/MatInst%s_%s"), *NamePrefix, *Suffix);
+        OutParentPath = FString::Printf(TEXT("/Game/PinWrightTests/__PW_GatewayTests/MatParent%s_%s"), *NamePrefix, *Suffix);
+        OutInstancePath = FString::Printf(TEXT("/Game/PinWrightTests/__PW_GatewayTests/MatInst%s_%s"), *NamePrefix, *Suffix);
 
         // ---- Create parent UMaterial with the caller-supplied parameter ----
         UPackage* ParentPkg = CreatePackage(*OutParentPath);
@@ -322,8 +322,8 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMaterialInstanceCreateWithInlineParamsTest,
 bool FMaterialInstanceCreateWithInlineParamsTest::RunTest(const FString& Parameters)
 {
     const FString Suffix = FGuid::NewGuid().ToString(EGuidFormats::Digits);
-    const FString ParentPath = FString::Printf(TEXT("/Game/__PW_GatewayTests/MatParentInline_%s"), *Suffix);
-    const FString InstanceDir = TEXT("/Game/__PW_GatewayTests");
+    const FString ParentPath = FString::Printf(TEXT("/Game/PinWrightTests/__PW_GatewayTests/MatParentInline_%s"), *Suffix);
+    const FString InstanceDir = TEXT("/Game/PinWrightTests/__PW_GatewayTests");
     const FString InstanceName = FString::Printf(TEXT("MatInstInline_%s"), *Suffix);
     const FString InstancePath = InstanceDir / InstanceName;
 

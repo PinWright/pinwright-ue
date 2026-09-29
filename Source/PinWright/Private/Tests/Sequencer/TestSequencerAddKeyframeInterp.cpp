@@ -24,6 +24,7 @@
 // in-code (add_keyframe needs only FindBinding to succeed; the float track/section it authors does
 // not require a bound object instance). No example/Lyra asset is loaded.
 #include "Misc/AutomationTest.h"
+#include "Tests/AutomationSuiteMaintenance.h"
 
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
@@ -52,7 +53,7 @@ namespace
     {
         const FString SeqName = FString::Printf(TEXT("MCP_AddKeyframeInterpSeq_%s"),
             *FGuid::NewGuid().ToString(EGuidFormats::Digits));
-        const FString DestFolder = TEXT("/Game/MCP_AddKeyframeInterpProbe");
+        const FString DestFolder = FString(PinWrightSuiteMaintenance::ScratchRootPackagePath()) / TEXT("MCP_AddKeyframeInterpProbe");
         OutFullPath = FString::Printf(TEXT("%s/%s"), *DestFolder, *SeqName);
 
         TSharedPtr<FJsonObject> CreatePayload = MakeShared<FJsonObject>();

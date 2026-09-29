@@ -28,7 +28,7 @@ namespace
     FString MakeUniqueInterfacePath()
     {
         return FString::Printf(
-            TEXT("/Game/__PW_GatewayTests/BPI_CreateInterface_%s"),
+            TEXT("/Game/PinWrightTests/__PW_GatewayTests/BPI_CreateInterface_%s"),
             *FGuid::NewGuid().ToString(EGuidFormats::Digits));
     }
 }

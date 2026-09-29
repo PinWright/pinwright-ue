@@ -128,7 +128,7 @@ bool FMaterialGraphMutatorsRejectEditorOpenTest::RunTest(const FString& Paramete
 #else
     const FString AssetName = FString::Printf(
         TEXT("GraphMutatorsWhileOpen_%s"), *FGuid::NewGuid().ToString(EGuidFormats::Digits));
-    const FString PackagePath = FString::Printf(TEXT("/Game/__PW_GatewayTests/%s"), *AssetName);
+    const FString PackagePath = FString::Printf(TEXT("/Game/PinWrightTests/__PW_GatewayTests/%s"), *AssetName);
     const FString ObjectPath = FString::Printf(TEXT("%s.%s"), *PackagePath, *AssetName);
 
     UPackage* Pkg = CreatePackage(*PackagePath);

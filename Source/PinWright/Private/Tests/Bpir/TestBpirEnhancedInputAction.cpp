@@ -125,7 +125,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBpirEnhancedInputActionRoundTripTest,
 bool FBpirEnhancedInputActionRoundTripTest::RunTest(const FString& Parameters)
 {
     const FString ActionPackagePath = FString::Printf(
-        TEXT("/Game/__PW_GatewayTests/IA_BpirEnhancedInput_%s"),
+        TEXT("/Game/PinWrightTests/__PW_GatewayTests/IA_BpirEnhancedInput_%s"),
         *FGuid::NewGuid().ToString(EGuidFormats::Digits));
     ON_SCOPE_EXIT
     {

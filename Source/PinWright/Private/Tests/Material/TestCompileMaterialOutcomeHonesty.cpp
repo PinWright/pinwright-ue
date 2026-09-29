@@ -102,7 +102,7 @@ bool FCompileMaterialOutcomeHonestyTest::RunTest(const FString& Parameters)
     }
 
     const FString AssetPath = FString::Printf(
-        TEXT("/Game/__PW_GatewayTests/CompileOutcome_%s"),
+        TEXT("/Game/PinWrightTests/__PW_GatewayTests/CompileOutcome_%s"),
         *FGuid::NewGuid().ToString(EGuidFormats::Digits));
 
     UPackage* Pkg = CreatePackage(*AssetPath);

@@ -401,7 +401,8 @@ bool FDispatcherStdExceptionTest::RunTest(const FString& Parameters)
             throw std::runtime_error("test boom");
         });
 
-    bSuppressLogErrors = true;
+    // The provoked refusal's own log lines, declared with exact counts (docs/rpc-design.md s12).
+    AddExpectedErrorPlain(TEXT("Exception in handler req-throw: test boom"), EAutomationExpectedErrorFlags::Contains, 1);
     Dispatcher.ProcessRequest(TEXT("req-throw"), TEXT("test.throw_std"), MakeShared<FJsonObject>());
 
     TestEqual(TEXT("Error code is INTERNAL_ERROR"), CapturedErrorCode, TEXT("INTERNAL_ERROR"));
@@ -437,7 +438,8 @@ bool FDispatcherUnknownExceptionTest::RunTest(const FString& Parameters)
             throw 42;
         });
 
-    bSuppressLogErrors = true;
+    // The provoked refusal's own log lines, declared with exact counts (docs/rpc-design.md s12).
+    AddExpectedErrorPlain(TEXT("Unknown exception in handler req-throw-int"), EAutomationExpectedErrorFlags::Contains, 1);
     Dispatcher.ProcessRequest(TEXT("req-throw-int"), TEXT("test.throw_int"), MakeShared<FJsonObject>());
 
     TestEqual(TEXT("Error code is INTERNAL_ERROR"), CapturedErrorCode, TEXT("INTERNAL_ERROR"));
@@ -544,7 +546,9 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDispatcherUnknownParamsDiscoveryGuidanceTest,
 
 bool FDispatcherUnknownParamsDiscoveryGuidanceTest::RunTest(const FString& Parameters)
 {
-    bSuppressLogWarnings = true;
+    // The provoked refusal's own log lines, declared with exact counts (docs/rpc-design.md s12).
+    AddExpectedMessagePlain(TEXT("[_test.require_name] Unknown parameter(s): unexpected"),
+        ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
 
     bool bCompletionFired = false;
     bool bCompletionSuccess = true;
@@ -802,10 +806,6 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDispatcherAutoValidateNullPayloadTest,
 
 bool FDispatcherAutoValidateNullPayloadTest::RunTest(const FString& Parameters)
 {
-    // Suppress ambient MapCheck/level errors that can fire during editor testing.
-    bSuppressLogErrors = true;
-    bSuppressLogWarnings = true;
-
     // _test.require_name requires "name" — a null payload should block the
     // handler body from running.
     FRpcDispatcher Dispatcher;

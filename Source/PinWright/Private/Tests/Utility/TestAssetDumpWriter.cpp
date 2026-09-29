@@ -433,6 +433,10 @@ bool FAssetDumpWriterCommitFailureRollsBackTest::RunTest(const FString& Paramete
     Files.Add({TEXT("a.txt"), TEXT("new-a")});
     Files.Add({TEXT("blocked/child.txt"), TEXT("new-child")});
 
+    // The injected failure is the engine's IFileManager::Move giving up on the blocked
+    // destination after its retries; it logs that as one LogFileManager error.
+    AddExpectedErrorPlain(TEXT("Error moving file"), EAutomationExpectedErrorFlags::Contains, 1);
+
     FString OutError;
     const AssetDumpWriter::FWriteResult Result =
         AssetDumpWriter::WriteAssetDump(DumpDir, DumpRoot, Files, OutError);

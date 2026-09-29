@@ -24,7 +24,7 @@ namespace
     FString MakeUniqueAssetPath(const TCHAR* Prefix)
     {
         return FString::Printf(
-            TEXT("/Game/__PW_GatewayTests/%s_%s"),
+            TEXT("/Game/PinWrightTests/__PW_GatewayTests/%s_%s"),
             Prefix,
             *FGuid::NewGuid().ToString(EGuidFormats::Digits));
     }

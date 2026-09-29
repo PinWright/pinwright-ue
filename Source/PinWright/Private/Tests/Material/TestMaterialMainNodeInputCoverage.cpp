@@ -18,7 +18,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMaterialMainNodeInputCoverageTest,
 bool FMaterialMainNodeInputCoverageTest::RunTest(const FString& Parameters)
 {
     const FString AssetPath = FString::Printf(
-        TEXT("/Game/__PW_GatewayTests/MainNodeInputs_%s"),
+        TEXT("/Game/PinWrightTests/__PW_GatewayTests/MainNodeInputs_%s"),
         *FGuid::NewGuid().ToString(EGuidFormats::Digits));
 
     UPackage* Pkg = CreatePackage(*AssetPath);

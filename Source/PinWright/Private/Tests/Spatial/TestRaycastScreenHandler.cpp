@@ -305,7 +305,9 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRaycastScreenUnknownArgRejectedTest,
 
 bool FRaycastScreenUnknownArgRejectedTest::RunTest(const FString& Parameters)
 {
-    bSuppressLogWarnings = true;
+    // The provoked refusal's own log lines, declared with exact counts (docs/rpc-design.md s12).
+    AddExpectedMessagePlain(TEXT("[spatial.raycast_screen] Unknown parameter(s): bogusParam"),
+        ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
 
     DispatcherTestHelpers::FSinkPtr Sink;
     FRpcDispatcher Dispatcher;

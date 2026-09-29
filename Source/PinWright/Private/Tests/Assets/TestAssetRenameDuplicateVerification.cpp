@@ -41,7 +41,7 @@ namespace AssetRenameDuplicateVerificationTest
 
     inline FString MakeFolderPath(const FString& Suffix)
     {
-        return FString::Printf(TEXT("/Game/__PW_RenameDuplicateTests/%s"), *Suffix);
+        return FString::Printf(TEXT("/Game/PinWrightTests/__PW_RenameDuplicateTests/%s"), *Suffix);
     }
 
     inline bool BuildSavedAsset(FAutomationTestBase& Test, const TCHAR* NamePrefix,
@@ -134,8 +134,6 @@ bool FAssetDuplicateReportsRegistryAndDiskReadbackTest::RunTest(const FString& P
 {
     using namespace AssetRenameDuplicateVerificationTest;
 
-    bSuppressLogErrors = true;
-
     FFixture Source;
     FString DestinationPath;
     ON_SCOPE_EXIT
@@ -221,8 +219,6 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetRenameReportsDestinationAndSourceReadback
 bool FAssetRenameReportsDestinationAndSourceReadbackTest::RunTest(const FString& Parameters)
 {
     using namespace AssetRenameDuplicateVerificationTest;
-
-    bSuppressLogErrors = true;
 
     FFixture Source;
     FString DestinationPath;
@@ -318,8 +314,6 @@ bool FAssetDuplicateRejectsMissingDestinationReadbackTest::RunTest(const FString
 {
     using namespace AssetRenameDuplicateVerificationTest;
 
-    bSuppressLogErrors = true;
-
     FFixture Source;
     FString DestinationPath;
     ON_SCOPE_EXIT
@@ -396,8 +390,6 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetRenameRejectsMissingDestinationReadbackTe
 bool FAssetRenameRejectsMissingDestinationReadbackTest::RunTest(const FString& Parameters)
 {
     using namespace AssetRenameDuplicateVerificationTest;
-
-    bSuppressLogErrors = true;
 
     FFixture Source;
     FString DestinationPath;

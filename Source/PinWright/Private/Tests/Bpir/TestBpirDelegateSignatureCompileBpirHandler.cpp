@@ -89,7 +89,7 @@ bool FBpirDelegateSignatureCompileBpirHandlerTest::RunTest(const FString& Parame
     // On-disk path required: LoadBlueprintAsset (called by the handler) cannot see
     // unregistered transient-package assets.
     const FString AssetPath = FString::Printf(
-        TEXT("/Game/__PW_GatewayTests/W_BpirDelegateSigTest_%s"),
+        TEXT("/Game/PinWrightTests/__PW_GatewayTests/W_BpirDelegateSigTest_%s"),
         *FGuid::NewGuid().ToString(EGuidFormats::Digits));
 
     UPackage* Pkg = CreatePackage(*AssetPath);

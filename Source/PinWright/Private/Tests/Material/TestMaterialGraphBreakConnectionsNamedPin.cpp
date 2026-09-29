@@ -27,7 +27,7 @@ namespace
     bool BuildMaterial(FAutomationTestBase& Test, FBreakConnTestSetup& Out, const TCHAR* Slug)
     {
         Out.AssetPath = FString::Printf(
-            TEXT("/Game/__PW_GatewayTests/BreakConn%s_%s"),
+            TEXT("/Game/PinWrightTests/__PW_GatewayTests/BreakConn%s_%s"),
             Slug,
             *FGuid::NewGuid().ToString(EGuidFormats::Digits));
 

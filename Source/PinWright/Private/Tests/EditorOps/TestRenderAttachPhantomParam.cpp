@@ -93,7 +93,7 @@ namespace
         const FString& ParamName, FString& OutMaterialObjectPath, FString& OutPackagePath)
     {
         OutPackagePath = FString::Printf(
-            TEXT("/Game/__PW_GatewayTests/AttachParamMat_%s"),
+            TEXT("/Game/PinWrightTests/__PW_GatewayTests/AttachParamMat_%s"),
             *FGuid::NewGuid().ToString(EGuidFormats::Digits));
 
         UPackage* Pkg = CreatePackage(*OutPackagePath);

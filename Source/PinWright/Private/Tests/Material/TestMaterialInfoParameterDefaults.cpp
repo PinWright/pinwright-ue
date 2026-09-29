@@ -31,7 +31,7 @@ namespace
     UMaterial* CreateMaterialWithDefaultedParams(FAutomationTestBase& Test, FString& OutAssetPath)
     {
         OutAssetPath = FString::Printf(
-            TEXT("/Game/__PW_GatewayTests/MatParamDefaults_%s"),
+            TEXT("/Game/PinWrightTests/__PW_GatewayTests/MatParamDefaults_%s"),
             *FGuid::NewGuid().ToString(EGuidFormats::Digits));
 
         UPackage* Pkg = CreatePackage(*OutAssetPath);

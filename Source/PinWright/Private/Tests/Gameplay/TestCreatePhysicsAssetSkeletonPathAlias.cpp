@@ -75,7 +75,7 @@ bool FCreatePhysicsAssetDispatcherAcceptsSkeletonPathTest::RunTest(const FString
     // the alias, then the body's not-found branch fires. GUID-suffixed so it can never
     // collide with a real asset in the disposable host.
     const FString BogusSkeletonPath = FString::Printf(
-        TEXT("/Game/__PW_GatewayTests/DoesNotExist_SkeletonAliasProbe_%s"),
+        TEXT("/Game/PinWrightTests/__PW_GatewayTests/DoesNotExist_SkeletonAliasProbe_%s"),
         *FGuid::NewGuid().ToString(EGuidFormats::Digits));
 
     TSharedPtr<FJsonObject> Params = MakeShared<FJsonObject>();

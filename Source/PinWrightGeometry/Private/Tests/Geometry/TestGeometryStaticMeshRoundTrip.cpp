@@ -425,7 +425,6 @@ bool FGeometryConvertOverwriteGuardsTest::RunTest(const FString& Parameters)
         return true;
     }
 
-    bSuppressLogErrors = true;
     const FString Suffix = FGuid::NewGuid().ToString(EGuidFormats::Digits);
     const FString Label = FString::Printf(TEXT("PW_RoundTripGuard_%s"), *Suffix);
 
