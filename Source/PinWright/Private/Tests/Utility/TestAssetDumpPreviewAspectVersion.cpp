@@ -252,9 +252,11 @@ bool FAssetDumpPreviewPngAspectVersionNumberTest::RunTest(const FString& Paramet
     //    is 0xFF where the render target's transparent clear used to survive into the file.
     // 3: the preview is no longer sRGB-encoded twice, so every colour byte in every widget
     //    preview.png changes (B-screenshot-designer-double-srgb).
+    // 4: the preview renders runtime Visibility instead of the Designer's eye-only binding, so
+    //    an authored-Collapsed widget no longer draws (B-screenshot-designer-not-runtime-faithful).
     TestEqual(TEXT("preview.png explicit aspect version"),
         AssetDumpCache::GetAspectVersion(DumpFileNames::WidgetPreviewPng),
-        static_cast<int32>(3));
+        static_cast<int32>(4));
     TestTrue(TEXT("preview.png is no longer served at the default aspect version"),
         AssetDumpCache::GetAspectVersion(DumpFileNames::WidgetPreviewPng)
             != AssetDumpCache::AssetDumpDefaultAspectVersion);

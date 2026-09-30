@@ -2,6 +2,7 @@
 
 #include "Handlers/UI/WidgetDesignerCaptureUtil.h"
 
+#include "Handlers/UI/WidgetAuthoringUtils.h"
 #include "Handlers/UI/WidgetDesignerCaptureInternal.h"
 #include "Handlers/UI/WidgetGeometryResolver.h"
 #include "Blueprint/UserWidget.h"
@@ -222,6 +223,16 @@ bool CapturePreviewToPng(
     const FIntPoint PreviewDrawSize(
         FMath::Max(1, FMath::RoundToInt(Natural.X * Factor)),
         FMath::Max(1, FMath::RoundToInt(Natural.Y * Factor)));
+
+    // The Designer binds each preview widget's Slate visibility to its eye flag only, so without
+    // this an authored-Collapsed widget draws and a visibilityOverrides entry never reaches the
+    // frame (B-screenshot-designer-not-runtime-faithful). Push the runtime visibility for this
+    // render, then have the toolkit rebuild the preview on its next tick, which restores the
+    // designer bindings on every widget this touched.
+    if (WidgetAuthoringHelpers::ApplyRuntimeVisibilityToPreview(PreviewWidget))
+    {
+        WidgetEditor->InvalidatePreview(/*bViewOnly=*/false);
+    }
 
     // Renderer and render target live in RenderSlateWidgetToSrgbColors so the sRGB pairing
     // has one definition; its contract (encoded exactly once, error codes) is on the header.

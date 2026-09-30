@@ -843,7 +843,9 @@ int32 GetAspectVersion(const FString& RelativeFile)
         //    space and only the render target's ROP encodes, so EVERY colour byte in EVERY
         //    widget preview.png changes (B-screenshot-designer-double-srgb). Still inert for
         //    the reason above, and still recorded for the same three reasons.
-        { TEXT("preview.png"),              3 },
+        // 4: the preview renders runtime Visibility, not the Designer's eye-only binding, so an
+        //    authored-Collapsed widget no longer draws (B-screenshot-designer-not-runtime-faithful).
+        { TEXT("preview.png"),              4 },
     };
     if (const int32* Found = Versions.Find(RelativeFile))
     {

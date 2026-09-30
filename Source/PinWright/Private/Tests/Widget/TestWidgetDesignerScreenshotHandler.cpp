@@ -12,6 +12,7 @@
 #include "BlueprintModes/WidgetBlueprintApplicationModes.h"
 #include "Components/CanvasPanel.h"
 #include "Components/CanvasPanelSlot.h"
+#include "Components/Image.h"
 #include "Components/SizeBox.h"
 #include "Components/TextBlock.h"
 #include "Components/Widget.h"
@@ -20,6 +21,11 @@
 #include "Framework/Application/SlateApplication.h"
 #include "HAL/FileManager.h"
 #include "Handlers/ErrorCodes.h"
+#include "Handlers/Render/CaptureSubject.h"
+#include "IImageWrapper.h"
+#include "IImageWrapperModule.h"
+#include "Misc/FileHelper.h"
+#include "Modules/ModuleManager.h"
 #include "Handlers/UI/WidgetDesignerCaptureInternal.h"
 #include "Handlers/UI/WidgetGeometryResolver.h"
 #include "Kismet2/BlueprintEditorUtils.h"
@@ -941,5 +947,174 @@ bool FWidgetScreenshotDesignerNativeParentOverridesTest::RunTest(const FString& 
     }
     TestEqual(TEXT("design-time preview never ran the native parent's NativeConstruct"),
         UTestWidgetConstructProbe::NativeConstructCalls, 0);
+    return true;
+}
+
+// Board B-screenshot-designer-not-runtime-faithful. The Designer binds every preview widget's Slate
+// visibility to its eye flag (UWidget::SynchronizeProperties at design time), so the preview capture
+// drew authored-Collapsed widgets and a visibilityOverrides entry could be counted while the frame
+// ignored it. Asserted on PIXELS: a solid red Image fills a 200x200 design canvas, and each capture
+// counts the red pixels in the decoded PNG.
+//
+// Counterfactual: remove the ApplyRuntimeVisibilityToPreview call from
+// WidgetDesignerCaptureUtil::CapturePreviewToPng and the authored-Collapsed case renders red
+// (fraction ~1 where ~0 is required). Report the request count instead of the measured one and the
+// eye-hidden override case reports 1 where 0 is required and loses its visibilityOverridesNotApplied.
+namespace
+{
+    // Fraction of pixels that read as the probe's pure red.
+    bool PwRuntimeVisRedFraction(FAutomationTestBase& Test, const FString& PngPath, double& OutFraction)
+    {
+        OutFraction = 0.0;
+        TArray<uint8> Png;
+        if (!Test.TestTrue(TEXT("capture PNG readable"), FFileHelper::LoadFileToArray(Png, *PngPath)))
+        {
+            return false;
+        }
+        IImageWrapperModule& ImageWrapperModule =
+            FModuleManager::LoadModuleChecked<IImageWrapperModule>("ImageWrapper");
+        TSharedPtr<IImageWrapper> Wrapper = ImageWrapperModule.CreateImageWrapper(EImageFormat::PNG);
+        TArray64<uint8> Raw;
+        if (!Test.TestTrue(TEXT("capture PNG decodes"),
+                Wrapper.IsValid() && Wrapper->SetCompressed(Png.GetData(), Png.Num())
+                && Wrapper->GetRaw(ERGBFormat::BGRA, 8, Raw) && Raw.Num() >= 4))
+        {
+            return false;
+        }
+        int64 Red = 0;
+        for (int64 Offset = 0; Offset + 3 < Raw.Num(); Offset += 4)
+        {
+            // BGRA
+            if (Raw[Offset + 2] > 200 && Raw[Offset + 1] < 60 && Raw[Offset] < 60)
+            {
+                ++Red;
+            }
+        }
+        OutFraction = double(Red) / double(Raw.Num() / 4);
+        return true;
+    }
+
+    struct FPwRuntimeVisCase
+    {
+        const TCHAR* Label;
+        ESlateVisibility Authored;
+        bool bEyeHidden;
+        const TCHAR* Override;      // nullptr = no visibilityOverrides
+        bool bExpectRed;
+        int32 ExpectedCount;        // -1 = overridesApplied absent
+        bool bExpectNotApplied;
+    };
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWidgetScreenshotDesignerRuntimeVisibilityPixelsTest,
+    "PinWright.widget.screenshot_designer.PreviewRendersRuntimeVisibility",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FWidgetScreenshotDesignerRuntimeVisibilityPixelsTest::RunTest(const FString& Parameters)
+{
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
+
+    const FPwRuntimeVisCase Cases[] = {
+        { TEXT("authored Visible (control)"),         ESlateVisibility::Visible,   false, nullptr,      true,  -1, false },
+        { TEXT("authored Collapsed"),                 ESlateVisibility::Collapsed, false, nullptr,      false, -1, false },
+        { TEXT("authored Visible, override Collapsed"), ESlateVisibility::Visible, false, TEXT("Collapsed"), false, 1, false },
+        { TEXT("authored Collapsed, override Visible"), ESlateVisibility::Collapsed, false, TEXT("Visible"), true, 1, false },
+        { TEXT("eye-hidden, override Visible"),       ESlateVisibility::Visible,   true,  TEXT("Visible"), false, 0, true },
+    };
+
+    for (const FPwRuntimeVisCase& Case : Cases)
+    {
+        const FString WidgetPath = MakeWidgetDesignerScreenshotAssetPath(TEXT("WBP_RuntimeVisibility"));
+        UWidgetBlueprint* WBP = MakeWidgetDesignerScreenshotBlueprint(WidgetPath);
+        UCanvasPanel* RootCanvas = WBP && WBP->WidgetTree ? Cast<UCanvasPanel>(WBP->WidgetTree->RootWidget) : nullptr;
+        if (!TestNotNull(TEXT("fixture root canvas"), RootCanvas))
+        {
+            return false;
+        }
+        UImage* Probe = WBP->WidgetTree->ConstructWidget<UImage>(UImage::StaticClass(), TEXT("Probe"));
+        Probe->SetColorAndOpacity(FLinearColor(1.0f, 0.0f, 0.0f, 1.0f));
+        Probe->SetVisibility(Case.Authored);
+        Probe->bHiddenInDesigner = Case.bEyeHidden;
+        if (UCanvasPanelSlot* CanvasSlot = Cast<UCanvasPanelSlot>(RootCanvas->AddChild(Probe)))
+        {
+            CanvasSlot->SetPosition(FVector2D::ZeroVector);
+            CanvasSlot->SetSize(FVector2D(200.0, 200.0));
+        }
+        WidgetTestFixtures::RegisterWidgetVariable(WBP, Probe->GetFName());
+        FKismetEditorUtilities::CompileBlueprint(WBP);
+        SetDesignerPreviewSizeOnCDO(WBP, FVector2D(200.0, 200.0));
+
+        FString ScreenshotPath;
+        ON_SCOPE_EXIT
+        {
+            if (!ScreenshotPath.IsEmpty())
+            {
+                IFileManager::Get().Delete(*ScreenshotPath);
+            }
+            PinWrightCaptureSubject::FlushDeferredAssetEditorCloses();
+            if (GEditor)
+            {
+                if (UAssetEditorSubsystem* AssetEditorSubsystem = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>())
+                {
+                    AssetEditorSubsystem->CloseAllEditorsForAsset(WBP);
+                }
+            }
+            if (UPackage* Package = WBP->GetOutermost())
+            {
+                Package->SetDirtyFlag(false);
+            }
+            CleanupTestAsset(WidgetPath);
+        };
+
+        TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+        Payload->SetStringField(TEXT("widgetPath"), WidgetPath);
+        Payload->SetStringField(TEXT("target"), TEXT("preview"));
+        Payload->SetNumberField(TEXT("max_size"), 64);
+        if (Case.Override)
+        {
+            TSharedPtr<FJsonObject> Overrides = MakeShared<FJsonObject>();
+            Overrides->SetStringField(TEXT("Probe"), Case.Override);
+            Payload->SetObjectField(TEXT("visibilityOverrides"), Overrides);
+        }
+
+        FTestResponseCapture Capture;
+        InvokeHandlerWithCapture(TEXT("widget.screenshot_designer"), Payload, Capture);
+        if (!TestTrue(FString::Printf(TEXT("[%s] capture succeeds"), Case.Label),
+                Capture.bSuccess && Capture.Result.IsValid()))
+        {
+            continue;
+        }
+        Capture.Result->TryGetStringField(TEXT("path"), ScreenshotPath);
+
+        double RedFraction = 0.0;
+        if (PwRuntimeVisRedFraction(*this, ScreenshotPath, RedFraction))
+        {
+            if (Case.bExpectRed)
+            {
+                TestTrue(FString::Printf(TEXT("[%s] probe drawn (red fraction %.3f >= 0.5)"),
+                    Case.Label, RedFraction), RedFraction >= 0.5);
+            }
+            else
+            {
+                TestTrue(FString::Printf(TEXT("[%s] probe absent (red fraction %.3f <= 0.01)"),
+                    Case.Label, RedFraction), RedFraction <= 0.01);
+            }
+        }
+
+        const TSharedPtr<FJsonObject>* Applied = nullptr;
+        const bool bHasApplied = Capture.Result->TryGetObjectField(TEXT("overridesApplied"), Applied) && Applied;
+        if (Case.ExpectedCount < 0)
+        {
+            TestFalse(FString::Printf(TEXT("[%s] no overridesApplied without overrides"), Case.Label), bHasApplied);
+            continue;
+        }
+        if (!TestTrue(FString::Printf(TEXT("[%s] overridesApplied present"), Case.Label), bHasApplied))
+        {
+            continue;
+        }
+        TestEqual(FString::Printf(TEXT("[%s] visibilityOverrideCount is the measured count"), Case.Label),
+            static_cast<int32>((*Applied)->GetNumberField(TEXT("visibilityOverrideCount"))), Case.ExpectedCount);
+        TestEqual(FString::Printf(TEXT("[%s] visibilityOverridesNotApplied presence"), Case.Label),
+            (*Applied)->HasField(TEXT("visibilityOverridesNotApplied")), Case.bExpectNotApplied);
+    }
     return true;
 }

@@ -56,6 +56,7 @@ namespace WidgetAuthoringHelpers
         bool bOriginalHidden = false;
         bool bHadVisibilityOverride = false;
         ESlateVisibility OriginalVisibility = ESlateVisibility::Visible;
+        ESlateVisibility RequestedVisibility = ESlateVisibility::Visible;
     };
 
     struct FTransientDesignerOverrides
@@ -63,7 +64,6 @@ namespace WidgetAuthoringHelpers
         TArray<FTransientDesignerOverride> Entries;
 
         int32 NumHiddenOverrides() const;
-        int32 NumVisibilityOverrides() const;
     };
 
     // Apply transient designer-eye + runtime-Visibility overrides to the children of PreviewRoot
@@ -79,6 +79,22 @@ namespace WidgetAuthoringHelpers
         FString& OutError);
 
     void RevertTransientDesignerOverrides(const FTransientDesignerOverrides& Guard);
+
+    // The widget's authored/runtime Visibility property. UWidget::GetVisibility() reads the
+    // Slate widget, which in a Designer preview is bound to the eye flag instead
+    // (UWidget::SynchronizeProperties at design time -> GetVisibilityInDesigner), so it answers
+    // Visible for an authored-Collapsed widget.
+    ESlateVisibility GetAuthoredVisibility(const UWidget* W);
+
+    // Makes a Designer preview render the way the widget does at runtime: pushes every built
+    // widget's runtime Visibility (Collapsed when eye-hidden) onto its Slate widget, replacing
+    // the designer binding that shows everything. Returns true when any Slate widget was
+    // touched; the caller must then rebuild the preview (InvalidatePreview(false)) to give the
+    // Designer its bindings back. B-screenshot-designer-not-runtime-faithful.
+    bool ApplyRuntimeVisibilityToPreview(UUserWidget* Preview);
+
+    // True when a visibility override is what the widget's Slate widget shows right now.
+    bool IsVisibilityOverrideLive(const FTransientDesignerOverride& Entry);
 
     UWidget* FindWidgetByName(UWidgetBlueprint* WidgetBP, const FString& WidgetName);
 

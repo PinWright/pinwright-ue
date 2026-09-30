@@ -587,8 +587,9 @@ namespace WidgetAuthoringHelpers
             if (!Entry.bHadVisibilityOverride)
             {
                 Entry.bHadVisibilityOverride = true;
-                Entry.OriginalVisibility = Pair.Key->GetVisibility();
+                Entry.OriginalVisibility = GetAuthoredVisibility(Pair.Key);
             }
+            Entry.RequestedVisibility = Pair.Value;
         }
 
         for (FTransientDesignerOverride& Entry : OutGuard.Entries)
@@ -632,22 +633,66 @@ namespace WidgetAuthoringHelpers
         }
     }
 
+    ESlateVisibility GetAuthoredVisibility(const UWidget* W)
+    {
+        static const FProperty* VisibilityProperty =
+            UWidget::StaticClass()->FindPropertyByName(TEXT("Visibility"));
+        return (W && VisibilityProperty)
+            ? *VisibilityProperty->ContainerPtrToValuePtr<ESlateVisibility>(W)
+            : ESlateVisibility::Visible;
+    }
+
+    bool ApplyRuntimeVisibilityToPreview(UUserWidget* Preview)
+    {
+        bool bTouched = false;
+        // Crosses into nested UUserWidget trees and includes the nested widget itself, which
+        // UWidgetTree::ForEachWidgetAndDescendants skips.
+        TFunction<void(UWidgetTree*)> Walk = [&](UWidgetTree* Tree)
+        {
+            Tree->ForEachWidget([&](UWidget* W)
+            {
+                if (!W)
+                {
+                    return;
+                }
+                if (const TSharedPtr<SWidget> Slate = W->GetCachedWidget())
+                {
+                    Slate->SetVisibility(W->bHiddenInDesigner
+                        ? EVisibility::Collapsed
+                        : UWidget::ConvertSerializedVisibilityToRuntime(GetAuthoredVisibility(W)));
+                    bTouched = true;
+                }
+                if (UUserWidget* Nested = Cast<UUserWidget>(W))
+                {
+                    if (Nested->WidgetTree)
+                    {
+                        Walk(Nested->WidgetTree);
+                    }
+                }
+            });
+        };
+        if (Preview && Preview->WidgetTree)
+        {
+            Walk(Preview->WidgetTree);
+        }
+        return bTouched;
+    }
+
+    bool IsVisibilityOverrideLive(const FTransientDesignerOverride& Entry)
+    {
+        const UWidget* W = Entry.Widget.Get();
+        const TSharedPtr<SWidget> Slate = W ? W->GetCachedWidget() : nullptr;
+        return Entry.bHadVisibilityOverride && Slate.IsValid()
+            && Slate->GetVisibility()
+                == UWidget::ConvertSerializedVisibilityToRuntime(Entry.RequestedVisibility);
+    }
+
     int32 FTransientDesignerOverrides::NumHiddenOverrides() const
     {
         int32 Count = 0;
         for (const FTransientDesignerOverride& E : Entries)
         {
             if (E.bHadHiddenOverride) ++Count;
-        }
-        return Count;
-    }
-
-    int32 FTransientDesignerOverrides::NumVisibilityOverrides() const
-    {
-        int32 Count = 0;
-        for (const FTransientDesignerOverride& E : Entries)
-        {
-            if (E.bHadVisibilityOverride) ++Count;
         }
         return Count;
     }

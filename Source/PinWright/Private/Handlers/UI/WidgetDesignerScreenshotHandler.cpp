@@ -406,6 +406,27 @@ REGISTER_RPC_HANDLER("widget.screenshot_designer", "widget",
         AlphaZeroFraction = Info.AlphaZeroFraction;
     }
 
+    // Measured, not echoed: an override counts only if the captured Slate widget showed it when
+    // the frame was taken. Reporting the request count is what let a no-op read as applied
+    // (B-screenshot-designer-not-runtime-faithful).
+    int32 VisibilityOverridesLive = 0;
+    TArray<FString> UnappliedVisibilityOverrides;
+    for (const FTransientDesignerOverride& Entry : Guard.Entries)
+    {
+        if (!Entry.bHadVisibilityOverride)
+        {
+            continue;
+        }
+        if (IsVisibilityOverrideLive(Entry))
+        {
+            ++VisibilityOverridesLive;
+        }
+        else if (const UWidget* W = Entry.Widget.Get())
+        {
+            UnappliedVisibilityOverrides.Add(W->GetName());
+        }
+    }
+
     const FString AssetName = FPackageName::GetLongPackageAssetName(WidgetPath);
     FString Filename;
     const FString OutputPath = PinWrightScreenshotUtils::MakeScreenshotOutputPath(
@@ -480,10 +501,21 @@ REGISTER_RPC_HANDLER("widget.screenshot_designer", "widget",
         //     (input-side count; the actual eye-flip count fan-outs to all non-keep widgets).
         //   - hiddenOverrideCount: how many preview widgets ended up with bHiddenInDesigner
         //     mutated for this capture (sum of showOnly fan-out + explicit `hide` entries).
-        //   - visibilityOverrideCount: how many preview widgets had their runtime Visibility flipped.
+        //   - visibilityOverrideCount: how many requested runtime Visibility overrides the captured
+        //     Slate widgets actually showed (measured above); the rest are named in
+        //     visibilityOverridesNotApplied.
         TSharedPtr<FJsonObject> Applied = MakeShared<FJsonObject>();
         Applied->SetNumberField(TEXT("hiddenOverrideCount"), Guard.NumHiddenOverrides());
-        Applied->SetNumberField(TEXT("visibilityOverrideCount"), Guard.NumVisibilityOverrides());
+        Applied->SetNumberField(TEXT("visibilityOverrideCount"), VisibilityOverridesLive);
+        if (UnappliedVisibilityOverrides.Num() > 0)
+        {
+            TArray<TSharedPtr<FJsonValue>> Names;
+            for (const FString& Name : UnappliedVisibilityOverrides)
+            {
+                Names.Add(MakeShared<FJsonValueString>(Name));
+            }
+            Applied->SetArrayField(TEXT("visibilityOverridesNotApplied"), Names);
+        }
         Applied->SetNumberField(TEXT("showOnlyInputCount"), ShowOnly.Num());
         Result->SetObjectField(TEXT("overridesApplied"), Applied);
     }

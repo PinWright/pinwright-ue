@@ -692,15 +692,18 @@ persists on save, and changes gameplay. Use the eye toggle.
   "params": { "widgetPath": "/Game/UI/WBP_HUD.WBP_HUD", "widgetName": "RaceOverlay", "visible": true } }
 ```
 
-#### Runtime Visibility=Collapsed leaks into the preview render
+#### Runtime Visibility in the preview render
 
-The Designer honors runtime `Visibility=Collapsed`: a Collapsed parent contributes zero size and
-children do not render even when their eye flag is shown. Hiding siblings alone cannot reveal it.
+The interactive Designer ignores runtime `Visibility`: it binds every widget's visibility to the eye
+flag alone, so an authored-`Collapsed` widget stays drawn there. The `target: "preview"` capture
+does not: for the render it applies each widget's runtime `Visibility` (and `Collapsed` for an
+eye-hidden widget), then the Designer rebuilds its preview on the next tick to restore its own
+view. So an authored-`Collapsed` widget, and its children, are absent from the capture. The
+`target: "window"` capture shows the Designer as a person sees it and does not apply this.
 
-For an off-by-default subtree, temporarily set runtime `Visibility` to `Visible` or
-`SelfHitTestInvisible` with `widget.set`, then revert before saving. Prefer screenshot
-`showOnly` / `hide` / `visibilityOverrides`, which apply transient flips without dirtying the asset;
-manual `widget.set` is the fallback.
+For an off-by-default subtree, use `visibilityOverrides` (for example `{"Panel": "Visible"}`),
+which applies for one capture without dirtying the asset. `widget.set` on `Visibility` persists
+on save and is the fallback only.
 
 #### Override modes
 
@@ -714,6 +717,11 @@ no `editor.save_all` cleanup is needed, and overrides revert even on failure.
 
 `ON_SCOPE_EXIT` restores original eye flags and runtime visibility on success or error. Mutations are
 made on the **live preview UUserWidget instance**, not the asset template, so the package stays clean.
+
+`overridesApplied.visibilityOverrideCount` is measured, not echoed: it counts only the overrides the
+captured widget actually showed when the frame was taken. Any that did not take effect (for example a
+`Visible` override on an eye-hidden widget, which stays `Collapsed`) are listed by name in
+`overridesApplied.visibilityOverridesNotApplied`, omitted when empty.
 
 ```json
 { "method": "widget.screenshot_designer",
