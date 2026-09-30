@@ -728,7 +728,7 @@ def read_started_pid(supervisor_log_path):
 
 
 # ------------------------------------------------------------------------------------------------
-# Supervisor (runs detached: `python pinwright_supervisor.py --supervise`, spec on stdin)
+# Supervisor (runs detached: `python pinwright_supervisor.py --supervise <spec.json>`)
 # ------------------------------------------------------------------------------------------------
 def _say(message):
     sys.stderr.write("[%s] %s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), message))
