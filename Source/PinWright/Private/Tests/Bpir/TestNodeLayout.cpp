@@ -427,7 +427,7 @@ bool FNodeLayoutFormatXLinearSpacingTest::RunTest(const FString& Parameters)
     const float Raw = EventRight + static_cast<float>(Settings->NodePadX);
     const int32 ExpectedCall1 = FMath::CeilToInt(Raw / static_cast<float>(Grid)) * Grid;
 
-    // The tolerance is a single grid step. It's meaningful because BA's formula rounds
+    // The tolerance is a single grid step. It's meaningful because the GetChildX formula rounds
     // via FMath::RoundToInt after the directional ceil, which could shift by <1px in
     // edge cases where font measurement differs between platforms.
     TestTrue(TEXT("Call1.NodePosX within +/- InternalGridPx of expected"),

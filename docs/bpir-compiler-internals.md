@@ -790,7 +790,7 @@ Decompilation appends ` @(x, y)` centrally for node-backed BPIR lines using the 
 
 `RunLayoutPass` picks the layout anchor from the created-node set. In insert mode (`compile_bpir` wires a new Call into a pre-existing Event that is **not** in `CreatedGUIDs`), none of the created nodes is an event/entry/tunnel. When that happens, the pass walks upstream along input exec pins starting from `Pool[0]` to find the true exec root — even if that root is in the `Obstacles` set. On match, the upstream root is promoted from `Obstacles` into `Pool` and used as the Anchor. This preserves the same-row invariant for inserted chains (the chain lands on the same Y as the existing event, rather than the first created node anchoring itself and dragging downstream siblings off-row).
 
-Undo remains safe across this promotion: UE transactions record `NodePosX`/`NodePosY` changes on any `Modify()`-ed node regardless of which transaction created that node, so repositioning an obstacle still round-trips through undo. BlueprintAssist does not do this walk — it relies on caller-supplied `NodeToKeepStill`. See the [Blueprint wiki insertion sections](wiki-src/blueprint.md#blueprintinsert_bpir_at_node) for the insert-mode surface.
+Undo remains safe across this promotion: UE transactions record `NodePosX`/`NodePosY` changes on any `Modify()`-ed node regardless of which transaction created that node, so repositioning an obstacle still round-trips through undo. See the [Blueprint wiki insertion sections](wiki-src/blueprint.md#blueprintinsert_bpir_at_node) for the insert-mode surface.
 
 ### Pipeline phases (in order)
 
@@ -807,7 +807,7 @@ Undo remains safe across this promotion: UE transactions record `NodePosX`/`Node
     if (Other == Info->LinkFromParent.GetFromNode()) return false;
     ```
 
-    This matches BlueprintAssist's `EdGraphFormatter::FormatY_Recursive` pattern (`Plugins/BlueprintAssist/Source/BlueprintAssist/Private/BlueprintAssistFormatters/EdGraphFormatter.cpp:1120-1123`). FormatX pass 2 places siblings far enough apart in X that no non-parent ancestor's cluster can reach a same-row grandchild's X range, so direct-parent-skip alone is sufficient — BA does **not** use a slide-right mechanism, and neither do we.
+    FormatX pass 2 places siblings far enough apart in X that no non-parent ancestor's cluster can reach a same-row grandchild's X range, so direct-parent-skip alone is sufficient; there is **no** slide-right mechanism.
 
 8. **ResetRelativeToAnchor** — translate entire pool by `SavedPos - CurrentAnchorPos` so the anchor lands back at its pre-format coordinates.
 9. **SnapToGrid** — directional rounding: Floor for input-direction children, Ceil for output-direction, Round for root. Y always Round. Grid = `InternalGridPx` (default 8).

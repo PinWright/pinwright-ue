@@ -813,7 +813,7 @@ namespace BpirLayout
     // ------------------------------------------------------------------------
     // GetChildX / FormatX
     //
-    // Port of BlueprintAssist's FEdGraphFormatter::GetChildX formula. For an
+    // Child X is placed next to the parent's edge plus padding. For an
     // EGPD_Output walk (child right of parent):
     //     Delta = ChildBounds.Left - LargerBounds.Left
     //     NewX  = ParentBounds.Right + Delta + NodePadX
@@ -1121,11 +1121,11 @@ namespace BpirLayout
 
                     // Collision resolution loop. Jump-to-clear on overlap: push
                     // Node's top just below the overlapping obstacle's bottom.
-                    // This matches BA's actual behavior (set NodePosY =
-                    // OtherBounds.Bottom + 1) rather than literally nudging one
-                    // pixel per iteration — the latter would need orders of
-                    // magnitude more iterations on tall obstacles and is what
-                    // caused BA's cap to sometimes trip. Cap is still honored as
+                    // Jumping (NodePosY = OtherBounds.Bottom + 1) rather than
+                    // nudging one pixel per iteration keeps the iteration count
+                    // bounded by the obstacle count; per-pixel nudging would need
+                    // orders of magnitude more iterations on tall obstacles and
+                    // could trip the cap. Cap is still honored as
                     // a safety valve against pathological cascades.
 
                     // Build the set of same-row ancestors once before the loop.

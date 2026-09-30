@@ -103,7 +103,7 @@ namespace BpirLayout
         const UBpirLayoutSettings& Settings);
 
     // Computes the X coordinate at which Child should be placed relative to Parent,
-    // following the BA formula (see .cpp for derivation). LargerBounds = cluster-extended
+    // as parent edge + padding (see .cpp for derivation). LargerBounds = cluster-extended
     // bounds of the Child when bUseClusterBounds is true (covers the child's own parameter
     // subtree); ChildBounds = always bare; ParentBounds = cluster-extended when
     // bUseClusterBounds is true. Result is directionally grid-aligned to Settings.InternalGridPx
