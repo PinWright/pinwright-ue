@@ -141,7 +141,7 @@ tells the caller something is off.
   documents.
 
 ### D-05 `geometry.loft` reads only `Profiles[0].Extent` and overstates what it used
-**Owner** `pwmodel-value-system.md` (blocked by D-80) · **Status** CONFIRMED
+**Owner** `pwmodel-value-system.md` (blocked by D-80) · **Status** FIXED (RPC verb; `.pwmodel` op still blocked by D-80)
 `Source/PinWrightGeometry/Private/Handlers/Geometry/GeometryOps_Advanced.cpp:348`
 - **Wrong** `const FVector ProfileExtent = Profiles[0].Extent;` — three differently-sized profile
   actors contribute three *locations* and one *size*. Interior profiles contribute nothing at all:
@@ -157,6 +157,10 @@ tells the caller something is off.
   commits to that kind for exactly this reason. At minimum, warn and stop counting ignored profiles.
 - **Contract** `profilesUsed` semantics, and the shape of any existing loft with more than two
   profiles.
+- **Landed** `GeometryOps::Loft` now skins one ring per meshed profile, each sized from its own
+  max-XY extent at its own location; `profilesUsed` counts the sections lofted and the response adds
+  `crossSection`, `profileRadii` and `unhonoredProfiles`. Pinned by
+  `PinWright.Geometry.Ops.Advanced.LoftSkinsEveryProfileRadius`.
 
 ### D-06 `sweep`'s `steps` is silently halved and means two unrelated things
 **Owner** — · **Status** CONFIRMED

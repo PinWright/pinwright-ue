@@ -123,6 +123,9 @@ bool FGeometryLoftSweepEmitGeometryTest::RunTest(const FString& Parameters)
                 TArray<TSharedPtr<FJsonValue>> Profiles;
                 Profiles.Add(MakeShared<FJsonValueString>(Prof0));
                 Profiles.Add(MakeShared<FJsonValueString>(Prof1));
+                // A name that resolves to nothing: skipped, and named in unhonoredProfiles.
+                const FString Missing = FString::Printf(TEXT("PW_LoftMissing_%s"), *Suffix);
+                Profiles.Add(MakeShared<FJsonValueString>(Missing));
                 LP->SetArrayField(TEXT("profileActors"), Profiles);
                 LP->SetNumberField(TEXT("subdivisions"), 8);
 
@@ -141,6 +144,25 @@ bool FGeometryLoftSweepEmitGeometryTest::RunTest(const FString& Parameters)
                     TestEqual(TEXT("loft resolved both profile actors"), (int32)ProfilesUsed, 2);
                     TestTrue(TEXT("loft emitted a non-empty mesh (was 0 with the null-polygon bug)"),
                         TrisAfter > 0.0);
+
+                    // The response names the approximation and what each profile contributed.
+                    TestEqual(TEXT("loft reports its circular cross-section"),
+                        LoftResult->GetStringField(TEXT("crossSection")), FString(TEXT("circle")));
+                    const TArray<TSharedPtr<FJsonValue>>* Radii = nullptr;
+                    if (TestTrue(TEXT("loft reports profileRadii"),
+                            LoftResult->TryGetArrayField(TEXT("profileRadii"), Radii)) &&
+                        TestEqual(TEXT("one radius per lofted profile"), Radii->Num(), 2))
+                    {
+                        TestEqual(TEXT("each sphere profile's radius is its XY half-extent"),
+                            (*Radii)[1]->AsNumber(), 40.0, 1.0);
+                    }
+                    const TArray<TSharedPtr<FJsonValue>>* Unhonored = nullptr;
+                    if (TestTrue(TEXT("loft reports unhonoredProfiles"),
+                            LoftResult->TryGetArrayField(TEXT("unhonoredProfiles"), Unhonored)) &&
+                        TestEqual(TEXT("only the unresolvable profile is unhonored"), Unhonored->Num(), 1))
+                    {
+                        TestEqual(TEXT("the unhonored entry names it"), (*Unhonored)[0]->AsString(), Missing);
+                    }
                 }
             }
         }

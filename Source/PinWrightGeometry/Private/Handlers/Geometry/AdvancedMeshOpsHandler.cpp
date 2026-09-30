@@ -156,16 +156,12 @@ REGISTER_RPC_HANDLER("geometry.loft", "geometry", "Loft a surface between cross-
 
     Params.bUseProfiles = ProfileActors.Num() > 0 && World != nullptr;
 
-    // The actor -> data adapter: a profile contributes its world location and, for the FIRST
-    // resolved profile only, the extent of its mesh's bounding box.
-    //
-    // GeometryOps::Loft reads Extent off Profiles[0] and nowhere else (its ProfileExtent is the
-    // sole use), while Location and bHasMesh are read on the first and last entries and Num() on
-    // the whole array - so every entry must still be appended, and only the first must pay for
-    // the bounding box. GetMeshBoundingBox is an O(V) walk of the profile's mesh; filling it for
-    // all N profiles walked N-1 meshes whose result was discarded, and the code this replaced
-    // computed exactly one. Re-check this against GeometryOps_Advanced.cpp before adding a field.
+    // The actor -> data adapter: every profile contributes its location, converted into the
+    // target mesh's local space so the rings land on the profile actors, and the extent of its
+    // mesh's bounding box. A profile that does not resolve or carries no mesh is not lofted and
+    // is named in unhonoredProfiles.
     TArray<GeometryOps::FLoftProfileSample> ProfileSamples;
+    TArray<TSharedPtr<FJsonValue>> UnhonoredProfiles;
     if (Params.bUseProfiles)
     {
         for (const FString& ProfileName : ProfileActors)
@@ -183,21 +179,23 @@ REGISTER_RPC_HANDLER("geometry.loft", "geometry", "Loft a surface between cross-
                 : nullptr;
             if (!Profile)
             {
+                UnhonoredProfiles.Add(MakeShared<FJsonValueString>(ProfileName));
                 continue;
             }
 
             GeometryOps::FLoftProfileSample Sample;
-            Sample.Location = Profile->GetActorLocation();
+            Sample.Location = Target.Actor->GetActorTransform().InverseTransformPosition(Profile->GetActorLocation());
             if (UDynamicMeshComponent* ProfileDMC = Profile->GetDynamicMeshComponent())
             {
                 if (UDynamicMesh* ProfileMesh = ProfileDMC->GetDynamicMesh())
                 {
                     Sample.bHasMesh = true;
-                    if (ProfileSamples.Num() == 0)
-                    {
-                        Sample.Extent = UGeometryScriptLibrary_MeshQueryFunctions::GetMeshBoundingBox(ProfileMesh).GetExtent();
-                    }
+                    Sample.Extent = UGeometryScriptLibrary_MeshQueryFunctions::GetMeshBoundingBox(ProfileMesh).GetExtent();
                 }
+            }
+            if (!Sample.bHasMesh)
+            {
+                UnhonoredProfiles.Add(MakeShared<FJsonValueString>(ProfileName));
             }
             ProfileSamples.Add(Sample);
         }
@@ -220,6 +218,15 @@ REGISTER_RPC_HANDLER("geometry.loft", "geometry", "Loft a surface between cross-
     Result->SetBoolField(TEXT("smooth"), Params.bSmooth);
     Result->SetBoolField(TEXT("cap"), Params.bCap);
     Result->SetNumberField(TEXT("profilesUsed"), Outputs.ProfilesUsed);
+    // Both branches loft a circle; the profile branch sizes one per section from its XY extent.
+    Result->SetStringField(TEXT("crossSection"), TEXT("circle"));
+    TArray<TSharedPtr<FJsonValue>> ProfileRadii;
+    for (const double Radius : Outputs.ProfileRadii)
+    {
+        ProfileRadii.Add(MakeShared<FJsonValueNumber>(Radius));
+    }
+    Result->SetArrayField(TEXT("profileRadii"), ProfileRadii);
+    Result->SetArrayField(TEXT("unhonoredProfiles"), UnhonoredProfiles);
     Result->SetNumberField(TEXT("trianglesBefore"), Op.TrianglesBefore);
     Result->SetNumberField(TEXT("trianglesAfter"), Op.TrianglesAfter);
     GeometryOps::AddOpWarnings(Result, Op);

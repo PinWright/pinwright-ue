@@ -91,8 +91,9 @@ FOpResult EdgeSplit(UDynamicMesh* Mesh, const FEdgeSplitParams& Params, FEdgeSpl
 // ---------------------------------------------------------------------------
 
 // One cross-section profile, reduced to the data the loft actually consumes. The verb does not
-// trace a profile's outline - it takes the profile's world location and derives a circular
-// cross-section from its bounding-box extent - so this is the whole actor->data adapter.
+// trace a profile's outline - it takes the profile's location (in the target mesh's space) and
+// derives a circular cross-section of radius max(Extent.X, Extent.Y) - so this is the whole
+// actor->data adapter. The loft skins one ring through EVERY profile that has a mesh, in order.
 struct FLoftProfileSample
 {
     FVector Location = FVector::ZeroVector;
@@ -100,8 +101,8 @@ struct FLoftProfileSample
     // Bounding-box extent of the profile's mesh. Meaningful only when bHasMesh.
     FVector Extent = FVector::ZeroVector;
 
-    // False for a profile actor that carries no mesh. The loft runs only when BOTH the first
-    // and last profile have one, matching the handler's guard.
+    // False for a profile actor that carries no mesh. Such a profile is skipped; the loft runs
+    // when at least two profiles have one.
     bool bHasMesh = false;
 };
 
@@ -122,7 +123,9 @@ struct FLoftParams
 
 struct FLoftOutputs
 {
+    // Sections actually lofted (0 when nothing was appended), and each one's circle radius.
     int32 ProfilesUsed = 0;
+    TArray<double> ProfileRadii;
 };
 
 FOpResult Loft(UDynamicMesh* Mesh, const FLoftParams& Params,

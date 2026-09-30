@@ -44,7 +44,7 @@ Treat the asset as **derived**. Editor, `python.execute`, or `geometry.*` edits 
 
 ## What the format cannot express
 
-`loft` has no op and returns `PWSRC_UNKNOWN_OP`. `geometry.loft` does not trace profile outlines: it reads profile actor world locations, derives a **circular** section from the *first* profile's bounding-box extent, and sweeps that circle. The honest equivalent is `sweep path=[…]` with per-frame rotation and an authored section. A real loft needs a list of profiles (lists of points), which the value grammar cannot hold.
+`loft` has no op and returns `PWSRC_UNKNOWN_OP`. `geometry.loft` does not trace profile outlines: it reads profile ACTORS and skins one **circular** ring per profile, sized from that profile's bounding-box extent. The honest equivalent is `sweep path=[…]` with per-frame rotation and an authored section. A real loft needs a list of profiles (lists of points), which the value grammar cannot hold.
 
 `sweep`, `extrude_along_spline`, and `array_along_path` are in the op table. They take literal frames `path=[(x, y, z, roll, pitch, yaw), …]`; no spline/actor exists, so `steps` does not resample. Without `profile=`, `sweep` and `extrude_along_spline` use a circle sized from the accumulated mesh bounding box, and both APPEND rather than replace.
 

@@ -423,56 +423,78 @@ FOpResult Loft(UDynamicMesh* Mesh, const FLoftParams& Params,
 
     if (Params.bUseProfiles)
     {
-        // Profiles requested but fewer than two resolved, or an endpoint carries no mesh:
-        // nothing is appended. Deliberately NOT the bounding-box branch below - falling through
-        // to it would silently substitute a different shape for the one that was asked for.
-        if (Profiles.Num() >= 2 && Profiles[0].bHasMesh && Profiles.Last().bHasMesh)
+        // The sections actually lofted: every profile that carries a mesh, in caller order.
+        // A mesh-less profile is skipped here and named in the handler's unhonoredProfiles.
+        TArray<const FLoftProfileSample*> Sections;
+        for (const FLoftProfileSample& Profile : Profiles)
         {
-            const FVector StartPos = Profiles[0].Location;
-            const FVector EndPos = Profiles.Last().Location;
-            FVector Direction = EndPos - StartPos;
-            const double PathLength = Direction.Size();
-
-            if (PathLength > KINDA_SMALL_NUMBER)
+            if (Profile.bHasMesh)
             {
-                Direction.Normalize();
+                Sections.Add(&Profile);
+            }
+        }
 
-                const FVector ProfileExtent = Profiles[0].Extent;
+        // Fewer than two sections: nothing is appended. Deliberately NOT the bounding-box
+        // branch below - falling through to it would silently substitute a different shape
+        // for the one that was asked for.
+        const FVector Axis = Sections.Num() >= 2
+            ? Sections.Last()->Location - Sections[0]->Location
+            : FVector::ZeroVector;
 
-                // Create a simple polygon approximating the first profile's cross-section.
-                // Side count is derived from the RAW subdivisions (8 + it, clamped) - clamping
-                // the caller value first would change the polygon this branch has always built.
-                const int32 NumPolySides = FMath::Clamp(8 + Params.Subdivisions, 4, 64);
-                const double ProfileRadius = FMath::Max(ProfileExtent.X, ProfileExtent.Y);
-                const TArray<FVector2D> PolygonVertices =
-                    GeometryOpsAdvanced_BuildCircularProfile(NumPolySides, ProfileRadius);
+        if (Axis.Size() > KINDA_SMALL_NUMBER)
+        {
+            // Unit circle; each ring is scaled to its own section's radius through the frame
+            // scale, which AppendSweepPolygon applies per path frame. Side count is derived
+            // from the RAW subdivisions (8 + it, clamped) - clamping the caller value first
+            // would change the polygon this branch has always built.
+            const int32 NumPolySides = FMath::Clamp(8 + Params.Subdivisions, 4, 64);
+            const TArray<FVector2D> PolygonVertices =
+                GeometryOpsAdvanced_BuildCircularProfile(NumPolySides, 1.0);
 
-                // Build path frames for sweeping. The two loft branches clamp subdivisions to
-                // DIFFERENT ceilings (64 here, 32 below), so which one a caller hit is not
-                // derivable from the response - the warning is the only record of it.
-                TArray<FTransform> PathFrames;
-                const int32 NumPathSteps =
-                    ClampRangeWarn(Params.Subdivisions, 2, 64, TEXT("subdivisions"), Result);
+            // subdivisions is the step count of EACH span between consecutive sections, so a
+            // two-profile loft keeps the ring count it always had. The two loft branches clamp
+            // it to DIFFERENT ceilings (64 here, 32 below), so which one a caller hit is not
+            // derivable from the response - the warning is the only record of it.
+            const int32 StepsPerSpan =
+                ClampRangeWarn(Params.Subdivisions, 2, 64, TEXT("subdivisions"), Result);
 
-                for (int32 Step = 0; Step <= NumPathSteps; ++Step)
+            // One orientation for every ring: the section plane is perpendicular to the
+            // first->last axis and the sweep advances along the frame's local +X (see
+            // GeometryOpsAdvanced_FirstInPlaneSegment). A shared frame cannot twist.
+            // ponytail: rings stay parallel, so a section placed BEHIND its predecessor along
+            // the axis folds the surface; per-ring tangent frames if bent lofts are needed.
+            const FQuat Rotation = FRotationMatrix::MakeFromX(Axis).ToQuat();
+
+            TArray<FTransform> PathFrames;
+            for (int32 Span = 0; Span + 1 < Sections.Num(); ++Span)
+            {
+                const FLoftProfileSample& A = *Sections[Span];
+                const FLoftProfileSample& B = *Sections[Span + 1];
+                const double RadiusA = FMath::Max(A.Extent.X, A.Extent.Y);
+                const double RadiusB = FMath::Max(B.Extent.X, B.Extent.Y);
+
+                // Each span after the first starts on the ring the previous one ended on.
+                for (int32 Step = Span == 0 ? 0 : 1; Step <= StepsPerSpan; ++Step)
                 {
-                    const double T = (double)Step / NumPathSteps;
-                    const FVector Pos = StartPos + Direction * PathLength * T;
-                    const FQuat Rotation = FQuat::FindBetweenNormals(FVector::UpVector, Direction);
-                    PathFrames.Add(FTransform(Rotation, Pos));
+                    const double T = (double)Step / StepsPerSpan;
+                    PathFrames.Add(FTransform(Rotation, FMath::Lerp(A.Location, B.Location, T),
+                        FVector(FMath::Lerp(RadiusA, RadiusB, T))));
                 }
+            }
 
-                FGeometryScriptPrimitiveOptions PrimOptions;
-                PrimOptions.PolygroupMode = EGeometryScriptPrimitivePolygroupMode::PerQuad;
-                PrimOptions.bFlipOrientation = false;
+            FGeometryScriptPrimitiveOptions PrimOptions;
+            PrimOptions.PolygroupMode = EGeometryScriptPrimitivePolygroupMode::PerQuad;
+            PrimOptions.bFlipOrientation = false;
 
-                const FTransform SweepTransform(FRotator::ZeroRotator, StartPos);
+            // Identity: the frames already carry the section locations. This used to be a
+            // translation to the first profile, which shifted the whole loft by that offset.
+            GeometryOpsAdvanced_AppendSweepPolygonCompat(Mesh, PrimOptions, FTransform::Identity,
+                PolygonVertices, PathFrames, /*bLoop*/ false, /*bCapped*/ Params.bCap);
 
-                // Sweep the profile polygon along the loft path.
-                GeometryOpsAdvanced_AppendSweepPolygonCompat(Mesh, PrimOptions, SweepTransform,
-                    PolygonVertices, PathFrames, /*bLoop*/ false, /*bCapped*/ Params.bCap);
-
-                Out.ProfilesUsed = Profiles.Num();
+            Out.ProfilesUsed = Sections.Num();
+            for (const FLoftProfileSample* Section : Sections)
+            {
+                Out.ProfileRadii.Add(FMath::Max(Section->Extent.X, Section->Extent.Y));
             }
         }
     }

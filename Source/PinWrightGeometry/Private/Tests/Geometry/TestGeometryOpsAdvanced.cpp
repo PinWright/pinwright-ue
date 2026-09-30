@@ -465,6 +465,99 @@ bool FGeometryOpsAdvancedLoftProfilesTest::RunTest(const FString& Parameters)
 }
 
 // ============================================================================
+// loft: every profile contributes a ring at its own location and radius.
+// ============================================================================
+// The old profile branch read only the first and last profiles and swept the FIRST profile's
+// radius between them, while profilesUsed still counted every profile. On this vase stack that
+// built a radius-16 tube (offset by the first location, too) and reported profilesUsed 4, so no
+// vertex sits on the Belly ring at radius 52 and the per-profile ring checks below all fail.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGeometryOpsAdvancedLoftEveryProfileTest,
+    "PinWright.Geometry.Ops.Advanced.LoftSkinsEveryProfileRadius",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FGeometryOpsAdvancedLoftEveryProfileTest::RunTest(const FString& Parameters)
+{
+    // Off the origin on X so a loft shifted by the first profile's location misses every ring.
+    const FVector Base(500.0, 0.0, 0.0);
+    const double Heights[] = { 0.0, 100.0, 200.0, 300.0 };
+    const double Radii[] = { 16.0, 52.0, 24.0, 34.0 };
+
+    TArray<GeometryOps::FLoftProfileSample> Profiles;
+    for (int32 i = 0; i < 4; ++i)
+    {
+        GeometryOps::FLoftProfileSample Sample;
+        Sample.Location = Base + FVector(0.0, 0.0, Heights[i]);
+        // Y is the larger half-extent on two of them: the radius is max(X, Y), not X.
+        Sample.Extent = (i % 2 == 0) ? FVector(Radii[i], Radii[i] * 0.5, 5.0)
+                                     : FVector(Radii[i] * 0.5, Radii[i], 5.0);
+        Sample.bHasMesh = true;
+        Profiles.Add(Sample);
+    }
+
+    TStrongObjectPtr<UDynamicMesh> Mesh(GeometryOpsAdvancedTest_NewMesh());
+
+    GeometryOps::FLoftParams Params;
+    Params.bUseProfiles = true;
+    Params.Subdivisions = 4;
+    Params.bCap = false;
+    Params.bSmooth = false;
+
+    GeometryOps::FLoftOutputs Outputs;
+    const GeometryOps::FOpResult Result = GeometryOps::Loft(Mesh.Get(), Params, Profiles, Outputs);
+
+    TestTrue(TEXT("the four-profile loft succeeds"), Result.bSuccess);
+    TestEqual(TEXT("profilesUsed counts the four sections lofted"), Outputs.ProfilesUsed, 4);
+    if (TestEqual(TEXT("one radius per section"), Outputs.ProfileRadii.Num(), 4))
+    {
+        for (int32 i = 0; i < 4; ++i)
+        {
+            TestEqual(FString::Printf(TEXT("profileRadii[%d]"), i), Outputs.ProfileRadii[i], Radii[i], 1e-6);
+        }
+    }
+
+    // Every vertex on a profile's plane must sit at that profile's radius around its location,
+    // and each plane must carry a whole ring (8 + subdivisions sides).
+    const FDynamicMesh3& M = Mesh->GetMeshRef();
+    for (int32 i = 0; i < 4; ++i)
+    {
+        int32 OnPlane = 0;
+        bool bAllAtRadius = true;
+        for (const int32 Vid : M.VertexIndicesItr())
+        {
+            const FVector3d P = M.GetVertex(Vid);
+            if (FMath::Abs(P.Z - Heights[i]) > 0.01)
+            {
+                continue;
+            }
+            ++OnPlane;
+            const double R = FVector2d(P.X - Base.X, P.Y - Base.Y).Size();
+            bAllAtRadius &= FMath::IsNearlyEqual(R, Radii[i], 0.01);
+        }
+        TestTrue(FString::Printf(TEXT("profile %d (z=%.0f) has a full ring of vertices"), i, Heights[i]),
+            OnPlane >= 8 + Params.Subdivisions);
+        TestTrue(FString::Printf(TEXT("profile %d ring sits at its own radius %.0f"), i, Radii[i]),
+            OnPlane > 0 && bAllAtRadius);
+    }
+
+    // A mesh-less middle profile is skipped rather than aborting the loft or being counted.
+    {
+        TArray<GeometryOps::FLoftProfileSample> WithHole = Profiles;
+        WithHole[1].bHasMesh = false;
+
+        TStrongObjectPtr<UDynamicMesh> HoleMesh(GeometryOpsAdvancedTest_NewMesh());
+        GeometryOps::FLoftOutputs HoleOutputs;
+        const GeometryOps::FOpResult HoleResult =
+            GeometryOps::Loft(HoleMesh.Get(), Params, WithHole, HoleOutputs);
+
+        TestTrue(TEXT("a loft with a mesh-less middle profile still appends"),
+            HoleResult.TrianglesAfter > HoleResult.TrianglesBefore);
+        TestEqual(TEXT("and counts only the three sections it lofted"), HoleOutputs.ProfilesUsed, 3);
+    }
+
+    return true;
+}
+
+// ============================================================================
 // extrude_along_spline: path frames arrive as data.
 // ============================================================================
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGeometryOpsAdvancedExtrudeAlongSplineTest,

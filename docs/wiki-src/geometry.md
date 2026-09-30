@@ -869,6 +869,27 @@ Reads as the whole boolean family - `boolean_union`, `boolean_subtract`, `boolea
   shipped without the pre-flight the other three have. The guard runs before either mesh is touched, so a caller that trips it
   keeps exactly the geometry it had.
 
+### geometry.loft
+
+- **With `profileActors`, the loft skins one ring through EVERY profile, in the order given.** Each ring
+  sits at its profile actor's location (converted into the target actor's local space) and is a circle
+  of radius `max(extentX, extentY)` of that profile mesh's bounding box. Consecutive rings are joined by
+  a straight, linearly interpolated span of `subdivisions` steps (clamped 2-64); `cap` closes the two end
+  rings. A foot 16 / belly 52 / neck 24 / rim 34 stack therefore comes back as that varying-radius vase.
+  It used to read only the first and last profiles and sweep the FIRST radius between them, reporting
+  every profile as used.
+- **The cross-section is always a circle, and the response says so**: `crossSection: "circle"`,
+  `profileRadii` (one radius per ring actually built, in order) and `unhonoredProfiles` (names that did
+  not resolve to a dynamic-mesh actor or carry no mesh; those are skipped, not lofted). `profilesUsed`
+  counts the rings built and is 0 when nothing was appended (fewer than two usable profiles, or the first
+  and last at the same location).
+- **Profile outlines are not traced.** A square or star-shaped profile lofts as its bounding circle. For
+  an axisymmetric turned shape with an exact silhouette use `geometry.revolve`.
+- Every ring is perpendicular to the first->last axis, so rings stay parallel: a profile placed behind
+  its predecessor along that axis folds the surface. There is no curved-path loft.
+- **Without `profileActors`** the verb sweeps a circle of the mesh's own XY bounding extent up its Z
+  extent (`subdivisions` clamped 2-32 there) and appends it.
+
 ### geometry.sweep
 
 - **The cross-section lands in each spline frame's local Y-Z plane and the sweep advances along its local +X.** A frame whose
