@@ -30,9 +30,10 @@ using namespace BlueprintHandlerUtils;
 
 namespace
 {
-    void ParseInputKeyRemoveEventName(const FString& EventName, FString& OutKeyIdentifier, bool& bOutHasSense, bool& bOutReleased)
+    void ParseInputKeyRemoveEventName(const FString& EventName, FString& OutKeyIdentifier, FString& OutModifiers, bool& bOutHasSense, bool& bOutReleased)
     {
         OutKeyIdentifier = EventName.TrimStartAndEnd();
+        OutModifiers.Reset();
         bOutHasSense = false;
         bOutReleased = false;
 
@@ -51,10 +52,19 @@ namespace
             OutKeyIdentifier = OutKeyIdentifier.RightChop(ReleasedPrefix.Len()).TrimStartAndEnd();
         }
 
-        if (OutKeyIdentifier.EndsWith(TEXT("()")))
+        // BPIR entry spelling: `J()` is plain J, `J(ctrl, shift)` carries modifiers.
+        // An unparseable list leaves the identifier whole, so it matches no key.
+        int32 ParenOpen = INDEX_NONE;
+        if (OutKeyIdentifier.EndsWith(TEXT(")")) && OutKeyIdentifier.FindChar(TEXT('('), ParenOpen))
         {
-            OutKeyIdentifier.LeftChopInline(2);
-            OutKeyIdentifier = OutKeyIdentifier.TrimStartAndEnd();
+            bool bCtrl = false, bAlt = false, bShift = false, bCmd = false;
+            FString UnknownModifier;
+            const FString List = OutKeyIdentifier.Mid(ParenOpen + 1, OutKeyIdentifier.Len() - ParenOpen - 2);
+            if (FBpirInputKeyHelpers::ParseInputKeyModifiers(List, bCtrl, bAlt, bShift, bCmd, UnknownModifier))
+            {
+                OutModifiers = FBpirInputKeyHelpers::FormatInputKeyModifiers(bCtrl, bAlt, bShift, bCmd);
+                OutKeyIdentifier = OutKeyIdentifier.Left(ParenOpen).TrimStartAndEnd();
+            }
         }
     }
 }
@@ -466,7 +476,7 @@ REGISTER_RPC_HANDLER("blueprint.add_event", "blueprint", "Add an event entry nod
 REGISTER_RPC_HANDLER("blueprint.remove_event", "blueprint", "Remove an event from a Blueprint",
     RPC_PARAMS(
         BlueprintPathParamReq(TEXT("path"), TEXT("path"), TEXT("Blueprint asset path")),
-        RPC_PARAM_REQ("eventName", "string", "Name of the event to remove"),
+        RPC_PARAM_REQ("eventName", "string", "Name of the event to remove. InputKey events take the BPIR entry spelling: `key_pressed J(ctrl)` for Ctrl J; a key without modifiers (`J`, `key_pressed J`) matches only the unmodified key."),
         RPC_PARAM_OPT("componentName", "string", "Optional: when a blueprint has multiple events bound to different components sharing the same delegate signature, pass the owning component's property name (e.g. `BT_MyTracks`) to target just that one."),
         RPC_PARAM_OPT("nodeId", "string", "Optional: a specific K2Node_ComponentBoundEvent node GUID to target unambiguously. Takes precedence over componentName."),
         RPC_PARAM_DEF("cleanupNewOrphans", "boolean", "Delete nodes that become orphaned by this deletion (default: true)", "true")
@@ -543,9 +553,11 @@ REGISTER_RPC_HANDLER("blueprint.remove_event", "blueprint", "Remove an event fro
 
             TArray<UEdGraphNode*> EventRootNodes;
             FString InputKeyIdentifier;
+            FString InputKeyModifiers;
             bool bInputKeyHasSense = false;
             bool bInputKeyReleased = false;
-            ParseInputKeyRemoveEventName(EventName, InputKeyIdentifier, bInputKeyHasSense, bInputKeyReleased);
+            ParseInputKeyRemoveEventName(
+                EventName, InputKeyIdentifier, InputKeyModifiers, bInputKeyHasSense, bInputKeyReleased);
 
             // Disambiguator: nodeId wins when set; otherwise componentName filters
             // ComponentBoundEvent candidates (branches without a component ignore it).
@@ -572,7 +584,7 @@ REGISTER_RPC_HANDLER("blueprint.remove_event", "blueprint", "Remove an event fro
                         const bool bSenseMatches =
                             !bInputKeyHasSense
                             || FBpirInputKeyHelpers::IsInputKeyExecPinActive(InputKeyNode, bInputKeyReleased);
-                        if (FBpirInputKeyHelpers::DoesInputKeyMatchBpirIdentifier(InputKeyNode, InputKeyIdentifier)
+                        if (FBpirInputKeyHelpers::DoesInputKeyMatchBpirKey(InputKeyNode, InputKeyIdentifier, InputKeyModifiers)
                             && bSenseMatches
                             && PassesDisambiguator(InputKeyNode->NodeGuid, NAME_None))
                         {

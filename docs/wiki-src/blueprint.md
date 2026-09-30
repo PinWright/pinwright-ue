@@ -271,6 +271,8 @@ Behavior rules:
 
 Use `componentName` when you know which widget variable the binding belongs to. Use `nodeId` when you have the exact GUID from `blueprint.decompile` or `blueprint.graph.find_nodes`. The default (no disambiguators) remains safe for blueprints where event names are unique.
 
+InputKey events accept the BPIR entry spelling, including modifiers: `key_pressed J(ctrl)` removes only the Ctrl J pressed binding. `J`, `J()` and `key_pressed J` match only the unmodified J key, never Ctrl J. Without a `key_pressed ` / `key_released ` prefix, both senses match. See `call("bpir.entry-points")` for the modifier tokens.
+
 ### blueprint.add_variable
 
 Adds a member variable to a Blueprint class. Recompile (`blueprint.compile`) for the variable to be usable in graphs. For per-variable replication/exposure flags use `blueprint.set_variable_settings`.

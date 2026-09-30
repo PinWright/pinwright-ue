@@ -174,3 +174,90 @@ bool FBpirInputKeyUpsertAndRemoveEventTest::RunTest(const FString& Parameters)
 
     return true;
 }
+
+// remove_event matches InputKey events with their modifiers: `key_pressed J` removes only the
+// plain J node, `key_pressed J(ctrl)` only the Ctrl J node. Fails unfixed: the match compared the
+// key alone, so the first call removed both nodes, and `J(ctrl)` was left as the identifier and
+// matched nothing.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBpirRemoveEventInputKeyModifiersTest,
+    "PinWright.blueprint.remove_event.InputKeyMatchesModifiers",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FBpirRemoveEventInputKeyModifiersTest::RunTest(const FString& Parameters)
+{
+    const FString AssetPath = MakeInputKeyTestAssetPath();
+    UPackage* Package = CreatePackage(*AssetPath);
+    if (!TestNotNull(TEXT("Package created"), Package))
+    {
+        return true;
+    }
+
+    UBlueprint* Blueprint = FKismetEditorUtilities::CreateBlueprint(
+        AActor::StaticClass(),
+        Package,
+        FName(*FPackageName::GetLongPackageAssetName(AssetPath)),
+        BPTYPE_Normal,
+        UBlueprint::StaticClass(),
+        UBlueprintGeneratedClass::StaticClass());
+
+    if (!TestNotNull(TEXT("Blueprint created"), Blueprint))
+    {
+        CleanupTestAsset(AssetPath);
+        return true;
+    }
+
+    ON_SCOPE_EXIT
+    {
+        if (UPackage* BlueprintPackage = Blueprint->GetOutermost())
+        {
+            BlueprintPackage->SetDirtyFlag(false);
+        }
+        CleanupTestAsset(AssetPath);
+    };
+
+    TSharedPtr<FJsonObject> CompilePayload = MakeShared<FJsonObject>();
+    CompilePayload->SetStringField(TEXT("assetPath"), AssetPath);
+    CompilePayload->SetStringField(TEXT("mode"), TEXT("append"));
+    CompilePayload->SetStringField(TEXT("code"),
+        TEXT("entry key_pressed J(ctrl) {\n    call PrintString(InString: \"ctrl j\")\n}\n")
+        TEXT("entry key_pressed J() {\n    call PrintString(InString: \"plain j\")\n}\n"));
+    FTestResponseCapture CompileCapture;
+    TestTrue(TEXT("blueprint.compile_bpir handler found"),
+        InvokeHandlerWithCapture(TEXT("blueprint.compile_bpir"), CompilePayload, CompileCapture));
+    if (!TestTrue(FString::Printf(TEXT("compile_bpir succeeded: %s"), *CompileCapture.Message), CompileCapture.bSuccess))
+    {
+        return false;
+    }
+
+    auto CountJ = [&](const bool bControl)
+    {
+        int32 Count = 0;
+        for (UK2Node_InputKey* Node : FindInputKeyNodes(Blueprint, EKeys::J))
+        {
+            Count += Node->bControl == bControl ? 1 : 0;
+        }
+        return Count;
+    };
+    TestEqual(TEXT("One plain J node before removal"), CountJ(false), 1);
+    TestEqual(TEXT("One Ctrl J node before removal"), CountJ(true), 1);
+
+    auto RemoveEvent = [&](const TCHAR* EventName)
+    {
+        TSharedPtr<FJsonObject> RemovePayload = MakeShared<FJsonObject>();
+        RemovePayload->SetStringField(TEXT("path"), AssetPath);
+        RemovePayload->SetStringField(TEXT("eventName"), EventName);
+        FTestResponseCapture RemoveCapture;
+        TestTrue(TEXT("blueprint.remove_event handler found"),
+            InvokeHandlerWithCapture(TEXT("blueprint.remove_event"), RemovePayload, RemoveCapture));
+        TestTrue(FString::Printf(TEXT("remove_event '%s' succeeded: %s"), EventName, *RemoveCapture.Message),
+            RemoveCapture.bSuccess);
+    };
+
+    RemoveEvent(TEXT("key_pressed J"));
+    TestEqual(TEXT("Plain J node removed by 'key_pressed J'"), CountJ(false), 0);
+    TestEqual(TEXT("Ctrl J node survives 'key_pressed J'"), CountJ(true), 1);
+
+    RemoveEvent(TEXT("key_pressed J(ctrl)"));
+    TestEqual(TEXT("Ctrl J node removed by 'key_pressed J(ctrl)'"), CountJ(true), 0);
+    return true;
+}
