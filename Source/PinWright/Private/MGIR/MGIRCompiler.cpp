@@ -771,7 +771,7 @@ FMGIRCompileResult EmitInstruction(
     case EMGIROpcode::Reroute:
     {
         FString SourceReference;
-        FString DisplayName = Instruction.SymbolName;
+        FString DisplayName;
         for (const FMGIRArg& Arg : Instruction.Args)
         {
             if (Arg.Name.Equals(TEXT("Source"), ESearchCase::IgnoreCase))
@@ -784,19 +784,40 @@ FMGIRCompileResult EmitInstruction(
             }
         }
 
-        if (!SourceReference.IsEmpty())
+        // A declaration names itself in the head (`%r = reroute r (...)`, the decompiler's
+        // form, wired or not); a usage names the declaration's MGIR symbol (`%u = reroute r()`).
+        // DisplayName is the declaration's editor label only, never a lookup key.
+        const bool bDeclaration = !SourceReference.IsEmpty()
+            || MGIRHelpers::NormalizeSymbolName(Instruction.SymbolName)
+                == MGIRHelpers::NormalizeSymbolName(Instruction.ResultName);
+        if (bDeclaration)
         {
             FMGIRRerouteDeclarationSpec Spec;
             Spec.Name = Instruction.ResultName;
+            Spec.DisplayName = DisplayName;
             Spec.SourceReference = SourceReference;
             Spec.Position = Instruction.Position;
             EmitResult = Emitter.EmitNamedRerouteDeclaration(Spec);
+        }
+        else if (!DisplayName.IsEmpty())
+        {
+            return FMGIRCompileResult::MakeError(
+                TEXT("MGIR_BAD_PROPERTY"),
+                FString::Printf(
+                    TEXT("Line %d: reroute usage '%%%s' cannot carry DisplayName; the name belongs on the ")
+                    TEXT("declaration. A declaration names itself in the head: '%%%s = reroute %s (DisplayName: ...)'. ")
+                    TEXT("A usage names the declaration's symbol: '%%%s = reroute <declaration>()'."),
+                    Instruction.SourceLine,
+                    *Instruction.ResultName,
+                    *Instruction.ResultName,
+                    *Instruction.ResultName,
+                    *Instruction.ResultName));
         }
         else
         {
             FMGIRRerouteUsageSpec Spec;
             Spec.Name = Instruction.ResultName;
-            Spec.DeclarationName = DisplayName;
+            Spec.DeclarationName = Instruction.SymbolName;
             Spec.Position = Instruction.Position;
             EmitResult = Emitter.EmitNamedRerouteUsage(Spec);
         }

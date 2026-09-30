@@ -20,6 +20,7 @@
 #include "Material/MaterialInputIterCompat.h"
 #include "Material/MaterialPinNames.h"
 #include "Materials/MaterialExpressionMaterialFunctionCall.h"
+#include "Materials/MaterialExpressionNamedReroute.h"
 #include "Materials/MaterialExpressionParameter.h"
 #include "Materials/MaterialExpressionTextureSample.h"
 #include "Materials/MaterialFunction.h"
@@ -116,6 +117,17 @@ inline int32 ComputeExpressionDepth(
         Depth = FMath::Max(Depth, ComputeExpressionDepth(Input->Expression, ExpressionSet, Depths, Visiting) + 1);
         return false;
     });
+
+    // A named reroute usage reads its declaration through a pointer, not an FExpressionInput, so
+    // without this edge a usage can sort (and decompile) ahead of the declaration it names.
+    if (UMaterialExpressionNamedRerouteUsage* Usage = Cast<UMaterialExpressionNamedRerouteUsage>(Expression))
+    {
+        UMaterialExpression* Declaration = Usage->Declaration.Get();
+        if (Declaration && ExpressionSet.Contains(Declaration))
+        {
+            Depth = FMath::Max(Depth, ComputeExpressionDepth(Declaration, ExpressionSet, Depths, Visiting) + 1);
+        }
+    }
 
     Visiting.Remove(Expression);
     Depths.Add(Expression, Depth);

@@ -388,7 +388,7 @@ FMGIREmitResult FMGIRExpressionEmitter::EmitNamedRerouteDeclaration(const FMGIRR
         return MakeError(TEXT("MGIR_CREATE_FAILED"), TEXT("Failed to create named reroute declaration."));
     }
 
-    Declaration->Name = FName(*Spec.Name);
+    Declaration->Name = FName(Spec.DisplayName.IsEmpty() ? *Spec.Name : *Spec.DisplayName);
     if (bHasSource)
     {
         FMGIRPinResolver::ApplyResolvedPin(Declaration->Input, Source);

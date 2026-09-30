@@ -186,6 +186,21 @@ The names are the parameter names the generated HLSL function receives, so the n
 
 Previously the pins were never created. A document naming any input but `Input` failed its own decompile with `MGIR_INPUT_NOT_FOUND`; one naming `Input` compiled, saved, and produced a Custom function with **no parameters**, so the shader failed on the first identifier the code named with nothing in the response saying so. `blocksCompiled` is not evidence that a material's shader compiles — [`material.authoring.compile_material`](material.authoring.compile_material.md) is what reports that. `material.authoring.add_custom_expression` is the imperative equivalent, taking an explicit `inputs` array.
 
+## Named reroutes
+
+`reroute` writes both halves of a named reroute. The head token decides which one a line is:
+
+```text
+%rough = reroute rough (Source: %c, DisplayName: "Roughness") @(-300, 0)
+%slot  = reroute slot (DisplayName: "Unwired Slot") @(-300, 200)
+%use   = reroute rough() @(0, 0)
+```
+
+- **Declaration** - the head repeats the line's own symbol (`%rough = reroute rough ...`), or the line has `Source:`. `Source:` wires the declaration's input and may be omitted for an unwired one. `DisplayName:` is the node's editor name (`UMaterialExpressionNamedRerouteDeclaration::Name`); without it the name is the MGIR symbol.
+- **Usage** - the head names a declaration's MGIR **symbol**, never its `DisplayName`, and the declaration must appear earlier in the document. An unknown symbol fails `MGIR_REROUTE_NOT_FOUND`; a usage carrying `DisplayName:` is refused with `MGIR_BAD_PROPERTY`.
+
+Symbols are unique per document and display names are not, which is why usages resolve by symbol. `material.decompile_mgir` emits exactly this shape, declarations always ahead of their usages, so both the name and the usage binding survive a round trip. Previously the compiler replaced every declaration's name with its `n<guid>` handle, compiled an unwired declaration as a usage (`MGIR_REROUTE_NOT_FOUND`), and could decompile a usage ahead of its wired declaration.
+
 ## TArray-typed `UMaterialExpression` properties
 
 The MGIR decompiler whitelist accepts `FArrayProperty` for reflected expression properties. Custom HLSL multi-output, defines, includes, and DynamicParameter channel-names round-trip; previously these were silently dropped. If a round-trip diff surfaces unexpected array properties on other expression types, that is the whitelist now passing them through correctly — not a regression.

@@ -37,6 +37,8 @@ struct FMGIRFunctionCallSpec
 struct FMGIRRerouteDeclarationSpec
 {
     FString Name;
+    // The engine-visible reroute name; empty falls back to Name (the MGIR symbol).
+    FString DisplayName;
     FString SourceReference;
     FVector2D Position = FVector2D::ZeroVector;
 };
