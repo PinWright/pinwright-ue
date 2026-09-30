@@ -493,7 +493,7 @@ namespace DataTableAuthoringInternal
         if (const FMapProperty* MapProp = CastField<FMapProperty>(Prop))
         {
             const UEnum* KeyEnum = GetPropertyEnum(MapProp->KeyProp);
-            for (const TPair<FString, TSharedPtr<FJsonValue>>& Entry : Value->AsObject()->Values)
+            for (const auto& Entry : Value->AsObject()->Values)
             {
                 if (!Entry.Value.IsValid() || Entry.Value->IsNull())
                 {
@@ -501,7 +501,7 @@ namespace DataTableAuthoringInternal
                 }
                 const FString EntryPath = FString::Printf(TEXT("%s[\"%s\"]"), *PropertyPath, *Entry.Key);
                 FString Detail = KeyEnum
-                    ? DescribeEnumLiteral(KeyEnum, Entry.Key, EntryPath, RowStruct, TEXT("key"))
+                    ? DescribeEnumLiteral(KeyEnum, FString(*Entry.Key), EntryPath, RowStruct, TEXT("key"))
                     : FString();
                 if (Detail.IsEmpty())
                 {
