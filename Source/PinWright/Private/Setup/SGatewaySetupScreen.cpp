@@ -43,8 +43,8 @@ void SGatewaySetupScreen::Construct(const FArguments& InArgs)
           INVTEXT("Writes .codex/config.toml in the project root. The project folder must be "
                   "trusted by Codex - the first 'codex' run in this folder prompts for trust.") },
         { EAgentTool::Cursor, INVTEXT("Cursor"),
-          INVTEXT("Opens a deeplink that installs to your user-global Cursor config after a "
-                  "confirmation dialog in Cursor. Installation state cannot be detected from here.") },
+          INVTEXT("Writes .cursor/mcp.json in the project root. Recent Cursor versions add "
+                  "project-file servers disabled - enable it in Cursor's MCP settings.") },
         { EAgentTool::GeminiCli, INVTEXT("Gemini CLI"),
           INVTEXT("Writes .gemini/settings.json in the project root. The folder must be trusted "
                   "in Gemini CLI before the server is used.") },
@@ -481,8 +481,6 @@ FText SGatewaySetupScreen::GetStateText(int32 RowIndex) const
         return INVTEXT("Configured (up to date)");
     case EAgentConfigState::Outdated:
         return INVTEXT("Configured but outdated - Update to refresh");
-    case EAgentConfigState::Unknown:
-        return INVTEXT("Cannot detect (user-global config)");
     case EAgentConfigState::NotConfigured:
     default:
         return INVTEXT("Not configured");
@@ -491,10 +489,6 @@ FText SGatewaySetupScreen::GetStateText(int32 RowIndex) const
 
 FText SGatewaySetupScreen::GetButtonLabel(int32 RowIndex) const
 {
-    if (AgentRows[RowIndex].Agent == EAgentTool::Cursor)
-    {
-        return INVTEXT("Install...");
-    }
     switch (AgentRows[RowIndex].State)
     {
     case EAgentConfigState::Configured:

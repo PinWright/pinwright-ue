@@ -273,16 +273,15 @@ private:
 
         // An installed-but-outdated agent config counts as a problem too: the agent would
         // spawn the proxy with stale plumbing (e.g. pre-port-file args), so surface the
-        // setup screen for a one-click Update. Detection keys on structural args
-        // (port-file/token paths), not the port value, so a mere port change never trips
-        // this. NotConfigured agents are the user's choice and don't trip it either;
-        // Cursor is undetectable (user-global config) and is skipped.
+        // setup screen for a one-click Update. Detection compares the whole entry Install
+        // would write; a stdio entry carries no port, so a mere port change never trips
+        // this. NotConfigured agents are the user's choice and don't trip it either.
         bool bAnyInstalledConfigOutdated = false;
         if (Settings->bShowSetupScreenOnProblem)
         {
             const FString EndpointUrl = AgentMcpConfigurator::GetEndpointUrl();
-            const EAgentTool DetectableAgents[] = { EAgentTool::ClaudeCode,
-                EAgentTool::CodexCli, EAgentTool::GeminiCli, EAgentTool::VsCodeCopilot };
+            const EAgentTool DetectableAgents[] = { EAgentTool::ClaudeCode, EAgentTool::CodexCli,
+                EAgentTool::Cursor, EAgentTool::GeminiCli, EAgentTool::VsCodeCopilot };
             for (EAgentTool Agent : DetectableAgents)
             {
                 if (AgentMcpConfigurator::Detect(Agent, EndpointUrl) == EAgentConfigState::Outdated)

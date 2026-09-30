@@ -2,6 +2,7 @@
 
 #include "Setup/AgentMcpConfigurator.h"
 
+#include "Compat/JsonKeyCompat.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "Editor.h"
@@ -12,10 +13,8 @@
 #include "Utils/AtomicFileWriter.h"
 #include "Utils/GatewayAuthToken.h"
 #include "Utils/GatewayPortFile.h"
-#include "Misc/Base64.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
-#include "Policies/CondensedJsonPrintPolicy.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
@@ -26,6 +25,19 @@ namespace AgentMcpConfiguratorPrivate
 {
 
 constexpr const TCHAR* ServerName = TEXT("pinwright");
+
+// Test-only replacement for FPaths::ProjectDir() as the root the agent config files live under.
+FString& ProjectDirOverrideForTests()
+{
+    static FString Dir;
+    return Dir;
+}
+
+FString ConfigRoot()
+{
+    const FString& Override = ProjectDirOverrideForTests();
+    return Override.IsEmpty() ? FPaths::ProjectDir() : Override;
+}
 
 // --- Server launch resolution: bundled-Python stdio proxy, or direct-HTTP fallback ---
 //
@@ -167,7 +179,7 @@ FServerLaunch ResolveServerLaunch(const FString& EndpointUrl)
     return Launch;  // bStdio == false -> direct-HTTP fallback
 }
 
-// --- JSON-config agents (Claude Code, Gemini CLI, VS Code Copilot) ---
+// --- JSON-config agents (Claude Code, Cursor, Gemini CLI, VS Code Copilot) ---
 
 struct FJsonAgentFile
 {
@@ -181,6 +193,9 @@ FJsonAgentFile GetJsonSpec(EAgentTool Agent)
 {
     switch (Agent)
     {
+    case EAgentTool::Cursor:
+        // No "type": "http" on URL entries: Cursor infers the transport from "url".
+        return { TEXT(".cursor/mcp.json"), TEXT("mcpServers"), TEXT("url"), false };
     case EAgentTool::GeminiCli:
         return { TEXT(".gemini/settings.json"), TEXT("mcpServers"), TEXT("httpUrl"), false };
     case EAgentTool::VsCodeCopilot:
@@ -202,9 +217,41 @@ bool LoadJsonRoot(const FString& FilePath, TSharedPtr<FJsonObject>& OutRoot)
     return FJsonSerializer::Deserialize(Reader, OutRoot) && OutRoot.IsValid();
 }
 
+// The server entry Install writes; Detect compares against the same object so the two cannot drift.
+TSharedRef<FJsonObject> BuildJsonEntry(const FJsonAgentFile& Spec, const FServerLaunch& Launch)
+{
+    const TSharedRef<FJsonObject> Entry = MakeShared<FJsonObject>();
+    if (Launch.bStdio)
+    {
+        Entry->SetStringField(TEXT("type"), TEXT("stdio"));
+        Entry->SetStringField(TEXT("command"), Launch.Command);
+        TArray<TSharedPtr<FJsonValue>> ArgsArray;
+        for (const FString& Arg : Launch.Args)
+        {
+            ArgsArray.Add(MakeShared<FJsonValueString>(Arg));
+        }
+        Entry->SetArrayField(TEXT("args"), ArgsArray);
+    }
+    else
+    {
+        if (Spec.bWriteTypeKey)
+        {
+            Entry->SetStringField(FString(TEXT("type")), TEXT("http"));
+        }
+        Entry->SetStringField(FString(Spec.UrlKey), Launch.Url);
+        if (!Launch.TokenValue.IsEmpty())
+        {
+            TSharedPtr<FJsonObject> HeadersObj = MakeShared<FJsonObject>();
+            HeadersObj->SetStringField(TEXT("Authorization"), TEXT("Bearer ") + Launch.TokenValue);
+            Entry->SetObjectField(TEXT("headers"), HeadersObj);
+        }
+    }
+    return Entry;
+}
+
 EAgentConfigState DetectJsonAgent(const FJsonAgentFile& Spec, const FServerLaunch& Launch)
 {
-    const FString FilePath = FPaths::ProjectDir() / Spec.RelativePath;
+    const FString FilePath = ConfigRoot() / Spec.RelativePath;
     TSharedPtr<FJsonObject> Root;
     if (!FPaths::FileExists(FilePath) || !LoadJsonRoot(FilePath, Root))
     {
@@ -223,66 +270,17 @@ EAgentConfigState DetectJsonAgent(const FJsonAgentFile& Spec, const FServerLaunc
         return EAgentConfigState::NotConfigured;
     }
 
-    if (Launch.bStdio)
-    {
-        // Configured when the proxy args carry the port-file path and, when auth is on, the
-        // token-file path. The proxy follows the live port from the port file, so any leftover
-        // --url from an older config is harmless and ignored here. A legacy config missing
-        // --port-file reads Outdated so the Install button becomes the migration path
-        // (same precedent as the token-file migration).
-        const TArray<TSharedPtr<FJsonValue>>* ArgsArray = nullptr;
-        if ((*Entry)->TryGetArrayField(TEXT("args"), ArgsArray))
-        {
-            bool bHasPortFile = Launch.PortFilePath.IsEmpty();
-            bool bHasToken = Launch.TokenFilePath.IsEmpty();
-            for (const TSharedPtr<FJsonValue>& Arg : *ArgsArray)
-            {
-                if (!Arg.IsValid())
-                {
-                    continue;
-                }
-                const FString ArgStr = Arg->AsString();
-                if (!Launch.PortFilePath.IsEmpty() && ArgStr == Launch.PortFilePath)
-                {
-                    bHasPortFile = true;
-                }
-                if (!Launch.TokenFilePath.IsEmpty() && ArgStr == Launch.TokenFilePath)
-                {
-                    bHasToken = true;
-                }
-            }
-            if (bHasPortFile && bHasToken)
-            {
-                return EAgentConfigState::Configured;
-            }
-        }
-        return EAgentConfigState::Outdated;
-    }
-
-    FString Url;
-    if ((*Entry)->TryGetStringField(FString(Spec.UrlKey), Url) && Url == Launch.Url)
-    {
-        if (Launch.TokenValue.IsEmpty())
-        {
-            return EAgentConfigState::Configured;
-        }
-        // Auth on: the entry must also carry the matching bearer header, else it's a pre-auth
-        // config that Install should migrate.
-        const TSharedPtr<FJsonObject>* HeadersObj = nullptr;
-        FString AuthHeader;
-        if ((*Entry)->TryGetObjectField(TEXT("headers"), HeadersObj)
-            && (*HeadersObj)->TryGetStringField(TEXT("Authorization"), AuthHeader)
-            && AuthHeader == TEXT("Bearer ") + Launch.TokenValue)
-        {
-            return EAgentConfigState::Configured;
-        }
-    }
-    return EAgentConfigState::Outdated;
+    // Any difference from what Install would write now (another engine's interpreter, a moved
+    // proxy script, a leftover --url, a pre-auth entry, extra fields) reads Outdated, so the
+    // Install button is the migration path.
+    return AgentMcpConfigurator::ServerEntryMatches(**Entry, *BuildJsonEntry(Spec, Launch))
+               ? EAgentConfigState::Configured
+               : EAgentConfigState::Outdated;
 }
 
 bool ApplyJsonAgent(const FJsonAgentFile& Spec, const FServerLaunch& Launch, FString& OutMessage)
 {
-    const FString FilePath = FPaths::ProjectDir() / Spec.RelativePath;
+    const FString FilePath = ConfigRoot() / Spec.RelativePath;
 
     TSharedPtr<FJsonObject> Root;
     if (FPaths::FileExists(FilePath))
@@ -310,33 +308,7 @@ bool ApplyJsonAgent(const FJsonAgentFile& Spec, const FServerLaunch& Launch, FSt
         Root->SetObjectField(FString(Spec.TopLevelKey), Servers);
     }
 
-    const TSharedPtr<FJsonObject> Entry = MakeShared<FJsonObject>();
-    if (Launch.bStdio)
-    {
-        Entry->SetStringField(TEXT("type"), TEXT("stdio"));
-        Entry->SetStringField(TEXT("command"), Launch.Command);
-        TArray<TSharedPtr<FJsonValue>> ArgsArray;
-        for (const FString& Arg : Launch.Args)
-        {
-            ArgsArray.Add(MakeShared<FJsonValueString>(Arg));
-        }
-        Entry->SetArrayField(TEXT("args"), ArgsArray);
-    }
-    else
-    {
-        if (Spec.bWriteTypeKey)
-        {
-            Entry->SetStringField(FString(TEXT("type")), TEXT("http"));
-        }
-        Entry->SetStringField(FString(Spec.UrlKey), Launch.Url);
-        if (!Launch.TokenValue.IsEmpty())
-        {
-            TSharedPtr<FJsonObject> HeadersObj = MakeShared<FJsonObject>();
-            HeadersObj->SetStringField(TEXT("Authorization"), TEXT("Bearer ") + Launch.TokenValue);
-            Entry->SetObjectField(TEXT("headers"), HeadersObj);
-        }
-    }
-    Servers->SetObjectField(FString(ServerName), Entry);
+    Servers->SetObjectField(FString(ServerName), BuildJsonEntry(Spec, Launch));
 
     FString Output;
     const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Output);
@@ -394,16 +366,6 @@ void FindCodexTableRange(const TArray<FString>& Lines, int32& OutHeaderIdx, int3
     }
 }
 
-bool IsTomlKeyLine(const FString& Line, const TCHAR* Key)
-{
-    const FString Trimmed = Line.TrimStartAndEnd();
-    if (!Trimmed.StartsWith(Key))
-    {
-        return false;
-    }
-    return Trimmed.RightChop(FCString::Strlen(Key)).TrimStart().StartsWith(TEXT("="));
-}
-
 FString ExtractTomlStringValue(const FString& Line)
 {
     int32 FirstQuote = INDEX_NONE;
@@ -420,53 +382,51 @@ FString ExtractTomlStringValue(const FString& Line)
     return Line.Mid(FirstQuote + 1, SecondQuote - FirstQuote - 1);
 }
 
-EAgentConfigState DetectCodex(const FServerLaunch& Launch)
+// Reads the flat "key = value" lines of a table body into a JSON object so Codex detection
+// shares the JSON comparator: a quoted value becomes a string, an array the list of its quoted
+// items, anything else its raw text. Blank and comment lines are skipped; any other line
+// without "=" (e.g. a multi-line array) becomes a key of its own, so it never matches.
+TSharedRef<FJsonObject> ParseTomlBody(const TArray<FString>& Lines)
 {
-    const FString FilePath = FPaths::ProjectDir() / CodexRelativePath;
-    TArray<FString> Lines;
-    if (!FPaths::FileExists(FilePath) || !LoadLines(FilePath, Lines))
+    const TSharedRef<FJsonObject> Obj = MakeShared<FJsonObject>();
+    for (const FString& Line : Lines)
     {
-        return EAgentConfigState::NotConfigured;
-    }
-
-    int32 HeaderIdx, EndIdx;
-    FindCodexTableRange(Lines, HeaderIdx, EndIdx);
-    if (HeaderIdx == INDEX_NONE)
-    {
-        return EAgentConfigState::NotConfigured;
-    }
-
-    for (int32 i = HeaderIdx + 1; i < EndIdx; ++i)
-    {
-        if (Launch.bStdio)
+        const FString Trimmed = Line.TrimStartAndEnd();
+        if (Trimmed.IsEmpty() || Trimmed.StartsWith(TEXT("#")))
         {
-            // The args line must carry the port-file path (the proxy follows the live port from
-            // it; any leftover --url from an older config is harmless) and, when auth is on,
-            // the token-file path; a legacy config missing either reads Outdated so Install
-            // migrates it.
-            if (IsTomlKeyLine(Lines[i], TEXT("args"))
-                && (Launch.PortFilePath.IsEmpty() || Lines[i].Contains(Launch.PortFilePath))
-                && (Launch.TokenFilePath.IsEmpty() || Lines[i].Contains(Launch.TokenFilePath)))
+            continue;
+        }
+        FString Key, Value;
+        if (!Trimmed.Split(TEXT("="), &Key, &Value))
+        {
+            Obj->SetStringField(Trimmed, FString());
+            continue;
+        }
+        Key.TrimEndInline();
+        Value.TrimStartInline();
+        if (Value.StartsWith(TEXT("[")))
+        {
+            // Split on quotes: the odd pieces are the quoted items.
+            TArray<FString> Pieces;
+            Value.ParseIntoArray(Pieces, TEXT("\""), /*InCullEmpty=*/false);
+            TArray<TSharedPtr<FJsonValue>> Items;
+            for (int32 i = 1; i < Pieces.Num(); i += 2)
             {
-                return EAgentConfigState::Configured;
+                Items.Add(MakeShared<FJsonValueString>(Pieces[i]));
             }
+            Obj->SetArrayField(Key, Items);
         }
-        else if (IsTomlKeyLine(Lines[i], TEXT("url")))
+        else
         {
-            return ExtractTomlStringValue(Lines[i]) == Launch.Url
-                       ? EAgentConfigState::Configured
-                       : EAgentConfigState::Outdated;
+            Obj->SetStringField(Key, Value.StartsWith(TEXT("\"")) ? ExtractTomlStringValue(Value) : Value);
         }
     }
-    // Table exists but doesn't match the desired transport - offer an update.
-    return EAgentConfigState::Outdated;
+    return Obj;
 }
 
-bool ApplyCodex(const FServerLaunch& Launch, FString& OutMessage)
+// The table body Install writes (everything after the header); Detect compares against it.
+TArray<FString> BuildCodexBody(const FServerLaunch& Launch)
 {
-    const FString FilePath = FPaths::ProjectDir() / CodexRelativePath;
-
-    // Build the desired table body (everything after the [table] header).
     TArray<FString> Body;
     if (Launch.bStdio)
     {
@@ -485,6 +445,37 @@ bool ApplyCodex(const FServerLaunch& Launch, FString& OutMessage)
     }
     Body.Add(TEXT("startup_timeout_sec = 5.0"));
     Body.Add(TEXT("tool_timeout_sec = 300.0"));
+    return Body;
+}
+
+EAgentConfigState DetectCodex(const FServerLaunch& Launch)
+{
+    const FString FilePath = ConfigRoot() / CodexRelativePath;
+    TArray<FString> Lines;
+    if (!FPaths::FileExists(FilePath) || !LoadLines(FilePath, Lines))
+    {
+        return EAgentConfigState::NotConfigured;
+    }
+
+    int32 HeaderIdx, EndIdx;
+    FindCodexTableRange(Lines, HeaderIdx, EndIdx);
+    if (HeaderIdx == INDEX_NONE)
+    {
+        return EAgentConfigState::NotConfigured;
+    }
+
+    // Same rule as the JSON agents: any difference from the body Install would write reads
+    // Outdated.
+    const TArray<FString> Existing(Lines.GetData() + HeaderIdx + 1, EndIdx - HeaderIdx - 1);
+    return AgentMcpConfigurator::CodexTableBodyMatches(Existing, BuildCodexBody(Launch))
+               ? EAgentConfigState::Configured
+               : EAgentConfigState::Outdated;
+}
+
+bool ApplyCodex(const FServerLaunch& Launch, FString& OutMessage)
+{
+    const FString FilePath = ConfigRoot() / CodexRelativePath;
+    const TArray<FString> Body = BuildCodexBody(Launch);
 
     TArray<FString> Lines;
     if (FPaths::FileExists(FilePath) && !LoadLines(FilePath, Lines))
@@ -533,64 +524,6 @@ bool ApplyCodex(const FServerLaunch& Launch, FString& OutMessage)
     return true;
 }
 
-// --- Cursor (install deeplink into the user-global Cursor config) ---
-
-bool ApplyCursor(const FServerLaunch& Launch, FString& OutMessage)
-{
-    // Cursor's deeplink takes the server config JSON base64-encoded.
-    TSharedPtr<FJsonObject> Config = MakeShared<FJsonObject>();
-    if (Launch.bStdio)
-    {
-        Config->SetStringField(TEXT("type"), TEXT("stdio"));
-        Config->SetStringField(TEXT("command"), Launch.Command);
-        TArray<TSharedPtr<FJsonValue>> ArgsArray;
-        for (const FString& Arg : Launch.Args)
-        {
-            ArgsArray.Add(MakeShared<FJsonValueString>(Arg));
-        }
-        Config->SetArrayField(TEXT("args"), ArgsArray);
-    }
-    else
-    {
-        Config->SetStringField(TEXT("url"), Launch.Url);
-        if (!Launch.TokenValue.IsEmpty())
-        {
-            TSharedPtr<FJsonObject> HeadersObj = MakeShared<FJsonObject>();
-            HeadersObj->SetStringField(TEXT("Authorization"), TEXT("Bearer ") + Launch.TokenValue);
-            Config->SetObjectField(TEXT("headers"), HeadersObj);
-        }
-    }
-
-    FString ConfigJson;
-    const TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
-        TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&ConfigJson);
-    FJsonSerializer::Serialize(Config.ToSharedRef(), Writer);
-
-    const FTCHARToUTF8 Utf8(*ConfigJson);
-    const TArray<uint8> Bytes(reinterpret_cast<const uint8*>(Utf8.Get()), Utf8.Length());
-
-    FString Encoded = FBase64::Encode(Bytes);
-    Encoded.ReplaceInline(TEXT("+"), TEXT("%2B"));
-    Encoded.ReplaceInline(TEXT("/"), TEXT("%2F"));
-    Encoded.ReplaceInline(TEXT("="), TEXT("%3D"));
-
-    const FString DeepLink = FString::Printf(
-        TEXT("cursor://anysphere.cursor-deeplink/mcp/install?name=%s&config=%s"),
-        ServerName, *Encoded);
-
-    FString Error;
-    FPlatformProcess::LaunchURL(*DeepLink, nullptr, &Error);
-    if (!Error.IsEmpty())
-    {
-        OutMessage = TEXT("Could not open the Cursor install deeplink (is Cursor installed?). "
-                          "Use the manual setup instructions instead.");
-        return false;
-    }
-
-    OutMessage = TEXT("Cursor install deeplink opened - confirm the install dialog in Cursor.");
-    return true;
-}
-
 } // namespace AgentMcpConfiguratorPrivate
 
 FString AgentMcpConfigurator::GetEndpointUrl()
@@ -630,18 +563,7 @@ EAgentConfigState AgentMcpConfigurator::Detect(EAgentTool Agent, const FString& 
 {
     using namespace AgentMcpConfiguratorPrivate;
     const FServerLaunch Launch = ResolveServerLaunch(EndpointUrl);
-    switch (Agent)
-    {
-    case EAgentTool::ClaudeCode:
-    case EAgentTool::GeminiCli:
-    case EAgentTool::VsCodeCopilot:
-        return DetectJsonAgent(GetJsonSpec(Agent), Launch);
-    case EAgentTool::CodexCli:
-        return DetectCodex(Launch);
-    case EAgentTool::Cursor:
-    default:
-        return EAgentConfigState::Unknown;
-    }
+    return Agent == EAgentTool::CodexCli ? DetectCodex(Launch) : DetectJsonAgent(GetJsonSpec(Agent), Launch);
 }
 
 bool AgentMcpConfigurator::Apply(EAgentTool Agent, const FString& EndpointUrl, FString& OutMessage)
@@ -653,15 +575,13 @@ bool AgentMcpConfigurator::Apply(EAgentTool Agent, const FString& EndpointUrl, F
     switch (Agent)
     {
     case EAgentTool::ClaudeCode:
+    case EAgentTool::Cursor:
     case EAgentTool::GeminiCli:
     case EAgentTool::VsCodeCopilot:
         bWritten = ApplyJsonAgent(GetJsonSpec(Agent), Launch, OutMessage);
         break;
     case EAgentTool::CodexCli:
         bWritten = ApplyCodex(Launch, OutMessage);
-        break;
-    case EAgentTool::Cursor:
-        bWritten = ApplyCursor(Launch, OutMessage);
         break;
     default:
         OutMessage = TEXT("Unknown agent.");
@@ -694,4 +614,63 @@ bool AgentMcpConfigurator::Apply(EAgentTool Agent, const FString& EndpointUrl, F
     }
 
     return bWritten;
+}
+
+void AgentMcpConfigurator::SetProjectDirOverrideForTests(const FString& Dir)
+{
+    AgentMcpConfiguratorPrivate::ProjectDirOverrideForTests() = Dir;
+}
+
+bool AgentMcpConfigurator::ServerEntryMatches(const FJsonObject& Existing, const FJsonObject& Desired)
+{
+    if (Existing.Values.Num() != Desired.Values.Num())
+    {
+        return false;
+    }
+    for (const auto& Field : Desired.Values)
+    {
+        const FString Key = EARGCompat::JsonKeyToString(Field.Key);
+        const TSharedPtr<FJsonValue> Have = Existing.TryGetField(Key);
+        if (!Have.IsValid() || Have->Type != Field.Value->Type)
+        {
+            return false;
+        }
+        if (Key == TEXT("command"))
+        {
+            if (!FPaths::IsSamePath(Have->AsString(), Field.Value->AsString()))
+            {
+                return false;
+            }
+        }
+        else if (Key == TEXT("args"))
+        {
+            const TArray<TSharedPtr<FJsonValue>>& HaveArgs = Have->AsArray();
+            const TArray<TSharedPtr<FJsonValue>>& WantArgs = Field.Value->AsArray();
+            if (HaveArgs.Num() != WantArgs.Num())
+            {
+                return false;
+            }
+            for (int32 i = 0; i < WantArgs.Num(); ++i)
+            {
+                FString HaveArg;
+                // Flags compare as paths too; that is harmless since both sides resolve alike.
+                if (!HaveArgs[i].IsValid() || !HaveArgs[i]->TryGetString(HaveArg)
+                    || !FPaths::IsSamePath(HaveArg, WantArgs[i]->AsString()))
+                {
+                    return false;
+                }
+            }
+        }
+        else if (!FJsonValue::CompareEqual(*Have, *Field.Value))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool AgentMcpConfigurator::CodexTableBodyMatches(const TArray<FString>& ExistingBody, const TArray<FString>& DesiredBody)
+{
+    using namespace AgentMcpConfiguratorPrivate;
+    return ServerEntryMatches(*ParseTomlBody(ExistingBody), *ParseTomlBody(DesiredBody));
 }
