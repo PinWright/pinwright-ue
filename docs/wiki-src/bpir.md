@@ -46,6 +46,10 @@ Non-default Blueprint node enabled states are preserved with the bare
 instructions; the full grammar and position-marker ordering are documented in
 `bpir.entry-points`.
 
+Key events carry their modifiers inside the signature parens:
+`entry key_pressed J(ctrl)` is Ctrl+J, and `entry key_pressed J()` is plain J.
+The two forms are separate entries (see `bpir.entry-points`).
+
 Use `parent_call Class::Function(...)` when the graph contains a
 `UK2Node_CallParentFunction`; ordinary `call` does not preserve that node
 identity on a decompile/recompile.

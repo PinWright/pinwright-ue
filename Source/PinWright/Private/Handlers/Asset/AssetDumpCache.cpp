@@ -791,7 +791,9 @@ int32 GetAspectVersion(const FString& RelativeFile)
         //    back to the single empty-graph marker.
         // 10: `timeline Name(...)` now carries the template's settings and every track with
         //    its keys, so any Blueprint holding a Timeline with tracks dumps different bytes.
-        { TEXT("bpir.txt"),                 10 },
+        // 11: `entry key_pressed/key_released` now carries the InputKey modifier list
+        //    (`J(ctrl)`), so any Blueprint with a Ctrl/Alt/Shift/Cmd key event dumps different bytes.
+        { TEXT("bpir.txt"),                 11 },
         // 3: entry material blocks now carry the material-level properties (blend mode,
         //    shading model, two-sided, domain, translucency lighting mode, ...) as
         //    `property Name: Value` lines above the graph.

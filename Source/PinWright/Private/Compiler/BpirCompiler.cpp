@@ -2250,6 +2250,12 @@ static void ApplyBpirEnabledState(
     }
 }
 
+static FString GetBlockKeyModifiers(const FBpirEntryBlock& Block)
+{
+    return FBpirInputKeyHelpers::FormatInputKeyModifiers(
+        Block.bKeyCtrl, Block.bKeyAlt, Block.bKeyShift, Block.bKeyCmd);
+}
+
 static bool IsEntryNodeForBlock(const FBpirEntryBlock& Block, UEdGraphNode* Node)
 {
     if (!Node)
@@ -2301,6 +2307,7 @@ static bool IsEntryNodeForBlock(const FBpirEntryBlock& Block, UEdGraphNode* Node
         return FBpirInputKeyHelpers::IsInputKeyNodeForBpirEntry(
             Cast<UK2Node_InputKey>(Node),
             Block.Name,
+            GetBlockKeyModifiers(Block),
             Block.Kind == EBpirEntryKind::KeyReleased);
 
     case EBpirEntryKind::InputAction:
@@ -3063,6 +3070,7 @@ FCompileResult FBpirCompiler::Compile(const FString& Code, EBpirCompileMode Mode
                             if (FBpirInputKeyHelpers::IsInputKeyNodeForBpirEntry(
                                 InputKeyNode,
                                 EntryName,
+                                GetBlockKeyModifiers(Block),
                                 bInputKeyReleased))
                             {
                                 NodesToDelete.Append(
@@ -3687,12 +3695,14 @@ FCompileResult FBpirCompiler::Compile(const FString& Code, EBpirCompileMode Mode
 
                 if (UK2Node_InputKey* InputKeyNode = Cast<UK2Node_InputKey>(Node))
                 {
-                    const FString KeyIdentifier =
+                    FString KeyIdentifier =
                         FBpirInputKeyHelpers::FormatInputKeyAsBpirIdentifier(InputKeyNode->InputKey);
                     if (KeyIdentifier.IsEmpty())
                     {
                         continue;
                     }
+                    // Ctrl+J and J are distinct entries: the modifiers are part of the signature.
+                    KeyIdentifier += TEXT("(") + FBpirInputKeyHelpers::FormatInputKeyModifiers(InputKeyNode) + TEXT(")");
                     if (FBpirInputKeyHelpers::IsInputKeyExecPinActive(InputKeyNode, false))
                     {
                         InputKeyCounts.FindOrAdd(
@@ -4691,10 +4701,8 @@ UEdGraphPin* FBpirCompiler::SetupEntryPoint(FBpirEntryBlock& Block)
         return SetupWidgetEvent(Block.ComponentName, Block.Name, Block.Params);
 
     case EBpirEntryKind::KeyPressed:
-        return SetupKeyEvent(Block.Name, false);
-
     case EBpirEntryKind::KeyReleased:
-        return SetupKeyEvent(Block.Name, true);
+        return SetupKeyEvent(Block);
 
     case EBpirEntryKind::InputAction:
         return SetupInputActionEvent(Block.Name);
@@ -5050,8 +5058,10 @@ void FBpirCompiler::RegisterEntryParamAliases(
     }
 }
 
-UEdGraphPin* FBpirCompiler::SetupKeyEvent(const FString& KeyName, bool bReleased)
+UEdGraphPin* FBpirCompiler::SetupKeyEvent(const FBpirEntryBlock& Block)
 {
+    const FString& KeyName = Block.Name;
+    const bool bReleased = Block.Kind == EBpirEntryKind::KeyReleased;
     if (!CurrentGraph)
     {
         UE_LOG(LogBpirCompiler, Warning, TEXT("SetupKeyEvent: no current graph"));
@@ -5065,6 +5075,10 @@ UEdGraphPin* FBpirCompiler::SetupKeyEvent(const FString& KeyName, bool bReleased
             TEXT("SetupKeyEvent: CreateInputKeyNode failed for key '%s'"), *KeyName);
         return nullptr;
     }
+    InputNode->bControl = Block.bKeyCtrl;
+    InputNode->bAlt = Block.bKeyAlt;
+    InputNode->bShift = Block.bKeyShift;
+    InputNode->bCommand = Block.bKeyCmd;
 
     // Return the Pressed or Released exec output pin
     UEdGraphPin* ExecOutPin = FBpirInputKeyHelpers::FindInputKeyExecPin(InputNode, bReleased);

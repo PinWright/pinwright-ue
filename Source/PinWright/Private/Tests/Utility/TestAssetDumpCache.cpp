@@ -253,15 +253,17 @@ bool FAssetDumpCacheBpirAspectVersionTest::RunTest(const FString& Parameters)
     // AnimGraph-bearing Blueprints go back to the single empty-graph marker.
     // Bumped to 10: `timeline Name(...)` carries the template's settings and tracks
     // (ticket B-decompile-drops-timeline-tracks).
+    // Bumped to 11: `entry key_pressed/key_released` carries the InputKey modifier list,
+    // `J(ctrl)` (ticket B-bpir-inputkey-modifiers-dropped).
     TestEqual(TEXT("bpir.txt explicit aspect version"),
         AssetDumpCache::GetAspectVersion(DumpFileNames::BpirTxt),
-        static_cast<int32>(10));
+        static_cast<int32>(11));
 
     const TArray<FString> WrittenFiles{DumpFileNames::BpirTxt};
     const TMap<FString, int32> AspectVersions = AssetDumpCache::MakeCurrentAspectVersions(WrittenFiles);
     TestEqual(TEXT("bpir.txt current aspect version"),
         AspectVersions.FindRef(DumpFileNames::BpirTxt),
-        static_cast<int32>(10));
+        static_cast<int32>(11));
 
     return true;
 }

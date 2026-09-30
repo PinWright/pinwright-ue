@@ -1886,7 +1886,8 @@ FString FBpirTextEmitter::EmitEntrySignature(
         }
 
         FString Kind = bIsReleased ? TEXT("key_released") : TEXT("key_pressed");
-        return AppendEntryPosition(FString::Printf(TEXT("entry %s %s()"), *Kind, *KeyName));
+        return AppendEntryPosition(FString::Printf(TEXT("entry %s %s(%s)"), *Kind, *KeyName,
+            *FBpirInputKeyHelpers::FormatInputKeyModifiers(InputKeyNode)));
     }
 
     if (UK2Node_Tunnel* Tunnel = Cast<UK2Node_Tunnel>(EntryNode))

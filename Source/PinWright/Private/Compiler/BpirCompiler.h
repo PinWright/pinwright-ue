@@ -128,7 +128,7 @@ private:
     // (SetupWidgetEvent / SetupComponentEvent) and Phase 2 (re-registration after
     // PinResolver->Clear()).
     void RegisterEntryParamAliases(UEdGraphNode* EntryNode, const TArray<FBpirEntryBlock::FParam>& Params);
-    UEdGraphPin* SetupKeyEvent(const FString& KeyName, bool bReleased);
+    UEdGraphPin* SetupKeyEvent(const FBpirEntryBlock& Block);
     UEdGraphPin* SetupInputActionEvent(const FString& InputActionPath);
     UEdGraphPin* SetupConstructionScript();
     UEdGraphPin* SetupOverride(

@@ -240,6 +240,14 @@ struct FBpirEntryBlock
     // "no -> clause present at all" — distinct from an explicit `-> void`.
     FBpirTypeSpec ReturnType;
     FString ComponentName;       // For component_event/widget_event: component/widget name
+
+    // key_pressed / key_released modifiers, spelled inside the signature parens
+    // (`entry key_pressed J(ctrl, shift)`). Mirror UK2Node_InputKey's
+    // bControl / bAlt / bShift / bCommand.
+    bool bKeyCtrl = false;
+    bool bKeyAlt = false;
+    bool bKeyShift = false;
+    bool bKeyCmd = false;
     bool bHasAuthoredEntryPosition = false;
     FVector2D AuthoredEntryPosition = FVector2D::ZeroVector;
 

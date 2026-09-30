@@ -21,11 +21,15 @@ entry component_event BoxCollision.OnComponentBeginOverlap(object<AActor> OtherA
 entry widget_event StartButton.OnClicked() {
 entry key_pressed SpaceBar() {
 entry key_released SpaceBar() {
+entry key_pressed J(ctrl) {
+entry key_released F(alt, shift) {
 entry input_action /Game/Input/IA_Move.IA_Move() {
 entry input_action /Game/Input/IA_Move.IA_Move() [Triggered -> @triggered, Completed -> @completed] {
 ```
 
 For UMG event binding workflow, create or inspect named widgets with [`widget.import_xml`](widget.import_xml.md), [`widget.export_xml`](widget.export_xml.md), or [`widget.describe`](widget.describe.md), compile `entry widget_event ...`, then verify with [`widget.bind_event`](widget.bind_event.md).
+
+**Key modifiers:** `key_pressed` / `key_released` entries take no parameters; their parens hold the InputKey node's modifier list instead. `ctrl`, `alt`, `shift` and `cmd` set `bControl`, `bAlt`, `bShift` and `bCommand`, so `entry key_pressed J(ctrl)` is the node the editor titles "Ctrl J". The parser accepts the modifiers in any order and any case; any other token is a compile error. The decompiler prints them lowercase in the order `ctrl, alt, shift, cmd` and prints `()` for a plain key. The modifiers are part of the entry identity, so `J()` and `J(ctrl)` are separate entries, and a `replace` compile of one leaves the other untouched.
 
 **Custom event parameter references:** Parameters declared on a `custom_event` entry can be referenced in the body using either `$ParamName` (sigil form) or bare `ParamName` (no sigil). The decompiler always emits the `$ParamName` form. The bare name works because the value resolver falls back to the `PinResolver` for registered parameter pins when no `$`-prefixed variable matches. This applies to all entry types with parameters (events, functions, macros), not just custom events.
 

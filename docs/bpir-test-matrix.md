@@ -32,6 +32,7 @@ Total: **329 tests** across 13 files.
 | TestDecompiler.cpp | 38 | E2E | Graph → text topology, entry point discovery, node classification, error cases, external property decompilation, loops, cast, select, switch_enum, macros, variables, return, make/break struct, make_array |
 | TestBpirCompositeEntryName.cpp | 4 | E2E | Decompiler entry-signature naming on composite-bearing graphs: source graph name survives the clone+inline pre-pass (backtick-quoted spaced function name, `entry macro`, `entry override` keyword survival on child BPs), byte-identical repeated decompiles under unique-name-counter perturbation |
 | TestBpirForwardReference.cpp | 2+ | E2E | Forward reference across entry blocks: function calling a later-declared function, custom_event calling a later-declared custom_event — verifies Phase 1 entry-creation + Phase 1.5 skeleton recompile enables cross-entry forward calls |
+| TestBpirInputKeyModifiers.cpp | 7 | Syntax + Fidelity | InputKey modifiers `entry key_pressed J(ctrl)`: parse (Ctrl+J, Shift+Alt+F, plain key, unknown modifier rejected), decompile of flags set directly on the node, compile -> decompile -> replace-compile byte-identical round trip, and upsert identity keeping `J()` and `J(ctrl)` distinct (`B-bpir-inputkey-modifiers-dropped`) |
 | TestBpirMultiBranchReturn.cpp | 2 | E2E + Fidelity | One `UK2Node_FunctionResult` per `return`: a two-branch multi-output function keeps each branch's own data, wires the branch arms to different nodes, orphans nothing, and decompiles to two named `return (...)` lines that recompile to the same shape (`B-bpir-second-return-branch-data-dropped`) |
 | TestNodeLayout.cpp | 25 | Unit | Node layout engine: EstimateNodeSize, GetNodeBounds, BuildFormatXInfoMap (linear/branch/diamond), FormatX (spacing/cluster/grid), FNodeLayoutParameterFormatter (basic/consumer-only), FormatParameterNodes (empty/single/shared-pure), GetPinsOfSameHeight (linear/branch/empty), FormatY (same-row/stacking/collision/obstacles), ResetRelativeToAnchor, SnapToGrid (directional), end-to-end pipeline, kill-switch |
 
@@ -97,8 +98,9 @@ Total: **329 tests** across 13 files.
 | `construction` | `ParseConstructionEntry` | `ConstructionEntry` | --- | --- | Partial |
 | `component_event` | `ParseComponentEventEntry` | `ComponentEventEntry` | --- | --- | Partial |
 | `widget_event` | `ParseWidgetEventEntry` | `WidgetEventEntry` | --- | --- | Partial |
-| `key_pressed` | `ParseKeyPressedEntry` | `KeyPressedEntry` | --- | --- | Partial |
-| `key_released` | `ParseKeyReleasedEntry` | `KeyReleasedEntry` | --- | --- | Partial |
+| `key_pressed` | `ParseKeyPressedEntry` | `KeyPressedEntry` | `input_key_modifiers.DecompileEmitsModifiers` | `input_key_modifiers.RoundTrip` | Full |
+| `key_released` | `ParseKeyReleasedEntry` | `KeyReleasedEntry` | `input_key_modifiers.DecompileEmitsModifiers` | `input_key_modifiers.RoundTrip` | Full |
+| key modifiers `J(ctrl)` | `ParseCtrlJ`, `ParseShiftAltF`, `ParsePlainKey`, `UnknownModifierRejected` | `RoundTrip`, `UpsertKeepsPlainKeyDistinct` | `DecompileEmitsModifiers` | `RoundTrip` | Full |
 
 ### 2.3 Type System
 
@@ -214,8 +216,8 @@ Verified by auditing all 13 test files against the BPIR spec feature list.
 7. **`construction`** — Parser + compiler test. No decompiler or round-trip test.
 8. **`component_event`** — Parser + compiler test (`ComponentEventEntry`). No decompiler or round-trip test.
 9. **`widget_event`** — Parser + compiler test (`WidgetEventEntry`). No decompiler or round-trip test.
-10. **`key_pressed`** — Parser + compiler test (`KeyPressedEntry`). No decompiler or round-trip test.
-11. **`key_released`** — Parser + compiler test (`KeyReleasedEntry`). No decompiler or round-trip test.
+10. **`key_pressed`** — Closed: decompiler and round-trip coverage via `input_key_modifiers.DecompileEmitsModifiers` / `input_key_modifiers.RoundTrip` (plain `J()` and modified `J(ctrl)`).
+11. **`key_released`** — Closed: same tests (`F(alt, shift)`).
 
 ### Type system gaps
 

@@ -247,7 +247,7 @@ bool FCompilerIntegrationKeyPressedEntryTest::RunTest(const FString& Parameters)
     {
         // The identity of the wired exec pin is the property under test, so a bare
         // "an InputKey node exists" flag is not enough: BpirCompiler.cpp routes both
-        // key_pressed and key_released through SetupKeyEvent(Name, bReleased), and
+        // key_pressed and key_released through SetupKeyEvent(Block), and
         // only the pin sense distinguishes them.
         UK2Node_InputKey* InputKeyNode = FindNodeOfType<UK2Node_InputKey>(BP);
         TestNotNull(TEXT("UK2Node_InputKey node was created"), InputKeyNode);

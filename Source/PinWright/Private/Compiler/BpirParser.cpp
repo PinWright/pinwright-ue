@@ -9,6 +9,7 @@
 #include "Compiler/CompilerTypes.h"
 #include "Compiler/BpirTypeSpecParser.h"
 #include "Compiler/BpirSharedConstants.h"
+#include "Decompiler/BpirInputKeyHelpers.h"
 #include "IrCore/IIrGrammar.h"
 #include "IrCore/IrTextUtils.h"
 #include "IrCore/IrTokenizer.h"
@@ -972,6 +973,20 @@ bool FBpirParser::ParseEntryLine(const FString& Line, int32 LineNum, FBpirEntryB
     {
         AddError(OutErrors, LineNum, TEXT("input_action entries do not accept parameters"));
         return false;
+    }
+    if (OutBlock.Kind == EBpirEntryKind::KeyPressed || OutBlock.Kind == EBpirEntryKind::KeyReleased)
+    {
+        // Key entries take no parameters; the parens hold the modifier list: J(ctrl, shift).
+        FString UnknownModifier;
+        if (!FBpirInputKeyHelpers::ParseInputKeyModifiers(ParamsStr,
+                OutBlock.bKeyCtrl, OutBlock.bKeyAlt, OutBlock.bKeyShift, OutBlock.bKeyCmd, UnknownModifier))
+        {
+            AddError(OutErrors, LineNum, FString::Printf(
+                TEXT("Unknown key modifier '%s' in %s entry: expected ctrl, alt, shift or cmd, e.g. 'entry %s %s(ctrl, shift)'"),
+                *UnknownModifier, *KindToken, *KindToken, *OutBlock.Name));
+            return false;
+        }
+        ParamsStr.Reset();
     }
     if (!ParamsStr.IsEmpty())
     {
