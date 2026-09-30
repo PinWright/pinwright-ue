@@ -47,7 +47,7 @@ body:
     id: version
     attributes:
       label: Plugin version
-      description: From the plugin's .uplugin VersionName (e.g. 0.8.0).
+      description: From the plugin's .uplugin VersionName (e.g. 1.0.0).
     validations:
       required: true
   - type: input

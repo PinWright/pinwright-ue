@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.0.0
 
 - Removed `system.run_ubt`. Build the editor target from a shell with the editor closed
   (`Build.bat`/`Build.sh ... -TargetType=Editor`), or use `system.live_coding_compile` to
