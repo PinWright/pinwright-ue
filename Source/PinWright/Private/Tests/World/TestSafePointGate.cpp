@@ -25,6 +25,7 @@
 #include "Logging/LogVerbosity.h"
 #include "Misc/OutputDevice.h"
 #include "Misc/OutputDeviceRedirector.h"
+#include "Misc/ScopedSlowTask.h"
 
 #include "Dispatch/RpcDispatcher.h"
 #include "Dispatch/SafePoint.h"
@@ -851,6 +852,62 @@ bool FSafePointDispatcherDefersFromNestedPumpTest::RunTest(const FString& Parame
     Dispatcher->ProcessPendingRequests();
 
     TestTrue(TEXT("the deferred request ran at the safe point"), Sink->bWasCalled);
+    TestTrue(TEXT("the deferred request succeeded"), Sink->bSuccess);
+
+    return true;
+}
+
+// A request the game thread drains while a slow task is still open must wait until
+// that slow task's stack unwinds - for EVERY method, not only the tick-unsafe table.
+// Board: B-asset-delete-runs-nested-in-validate-on-save-slow-task. asset.delete (not
+// in the table) was drained by the render-fence wait inside the on-save validation's
+// FSlowTask::MakeDialog, opened its own progress UI there and killed the editor.
+//
+// Driven against the ungated `_test.beta` fixture (responds synchronously) inside a
+// real FScopedSlowTask, with no dialog, so no Slate is touched.
+//
+// Counterfactual: drop the IsInsideSlowTask() term from the Saving/GC defer in
+// FRpcDispatcher::ProcessRequest and "did not run inside the slow task" fails,
+// because the fixture handler responds on the caller's stack.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSafePointDispatcherDefersInsideSlowTaskTest,
+    "PinWright.core.safe_point.DispatcherDefersInsideSlowTask",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FSafePointDispatcherDefersInsideSlowTaskTest::RunTest(const FString& Parameters)
+{
+    using namespace SafePointGateTests;
+
+    DispatcherTestHelpers::FSinkPtr Sink;
+    FRpcDispatcher Dispatcher;
+    DispatcherTestHelpers::MakeDispatcher(Sink, Dispatcher);
+
+    const FString Method(GFixtureMethod);
+    TestFalse(TEXT("the fixture is not in the tick-unsafe table"),
+        PinWrightSafePoint::IsTickUnsafeMethod(Method));
+    TestFalse(TEXT("an automation stack is not inside a slow task"),
+        PinWrightSafePoint::IsInsideSlowTask());
+
+    {
+        FScopedSlowTask SlowTask(1.0f, FText::FromString(TEXT("PinWright safe-point test")));
+
+        TestTrue(TEXT("an open FScopedSlowTask is detected"),
+            PinWrightSafePoint::IsInsideSlowTask());
+
+        Dispatcher.ProcessRequest(TEXT("req-safe-point-slow-task"), Method,
+            MakeShared<FJsonObject>());
+
+        // THE COUNTERFACTUAL.
+        TestFalse(TEXT("the request did not run inside the slow task"), Sink->bWasCalled);
+
+        // A drain that lands while the slow task is still open must re-defer, not run.
+        Dispatcher.ProcessPendingRequests();
+        TestFalse(TEXT("a drain inside the slow task still defers"), Sink->bWasCalled);
+    }
+
+    TestFalse(TEXT("the slow task has unwound"), PinWrightSafePoint::IsInsideSlowTask());
+    Dispatcher.ProcessPendingRequests();
+
+    TestTrue(TEXT("the deferred request ran once the slow task ended"), Sink->bWasCalled);
     TestTrue(TEXT("the deferred request succeeded"), Sink->bSuccess);
 
     return true;

@@ -149,6 +149,7 @@
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "Handlers/HandlerContext.h"
+#include "Misc/FeedbackContext.h"
 #include "Templates/Function.h"
 #include "Templates/SharedPointer.h"
 
@@ -274,6 +275,25 @@ inline bool IsSafeNow()
     return !Detail::ForcedUnsafeForTests()
         && !IsAnyWorldTicking()
         && !IsInsideNamedThreadPump();
+}
+
+// True while a slow task (FScopedSlowTask, or legacy BeginSlowTask) is open on the game
+// thread, i.e. this stack is nested inside an engine operation that is still running.
+// Board: B-asset-delete-runs-nested-in-validate-on-save-slow-task. The deferred
+// on-save validation opened its progress dialog (UEditorValidatorSubsystem::
+// ValidateAssetsInternal -> FSlowTask::MakeDialog -> FSlateApplication::AddModalWindow ->
+// FlushRenderingCommands -> FRenderCommandFence::Wait -> ProcessTasksUntilIdle), that
+// fence wait drained a queued asset.delete, and the delete's own progress UI ticked Slate
+// from inside the half-built modal. That verb is not in the tick-unsafe table, and any
+// handler can reach a slow task or a render flush, so the dispatcher applies this check
+// to EVERY request, next to its Saving/GC defer, not through IsSafeNow().
+//
+// FSlowTask::Initialize pushes onto the context's ScopeStack only on the game thread,
+// and every scope is counted, dialog or not (GIsSlowTask alone is raised only once a
+// dialog opens). GIsSlowTask still covers a dialog opened through a non-GWarn context.
+inline bool IsInsideSlowTask()
+{
+    return GIsSlowTask || (GWarn && GWarn->GetScopeStack().Num() > 0);
 }
 
 // Tests only - forces IsSafeNow() to report unsafe so the deferred branch can be

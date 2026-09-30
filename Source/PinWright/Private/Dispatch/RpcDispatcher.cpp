@@ -719,14 +719,18 @@ void FRpcDispatcher::ProcessRequest(const FString& RequestId, const FString& Met
         return;
     }
 
-    // Guard against unsafe engine states (Saving, GC).
+    // Guard against unsafe engine states (Saving, GC, an open slow task whose
+    // message pump or render flush drained this request - see
+    // PinWrightSafePoint::IsInsideSlowTask). A slow task is scoped to one engine
+    // operation, so the defer ends when that operation's stack unwinds.
     // Do not defer solely on async loading; that can starve request processing
     // under editor automation and commandlet runs where async loading is active
     // for long periods.
-    if (UE::IsSavingPackage() || IsGarbageCollecting())
+    if (UE::IsSavingPackage() || IsGarbageCollecting() ||
+        PinWrightSafePoint::IsInsideSlowTask())
     {
         UE_LOG(LogRpcDispatcher, Verbose,
-               TEXT("Deferring request due to active Serialization/GC: "
+               TEXT("Deferring request due to active Serialization/GC/slow task: "
                     "RequestId=%s Method=%s"),
                *RequestId, *Method);
 
