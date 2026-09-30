@@ -33,6 +33,7 @@
 #include "Handlers/HandlerContext.h"
 #include "Handlers/HandlerRegistration.h"
 #include "Handlers/ParamSpec.h"
+#include "Handlers/Drive/DriveInput.h"
 #include "Handlers/Editor/EditorHandlerUtils.h"
 #include "Handlers/Editor/PieNetworkEmulation.h"
 #include "Handlers/Editor/PieWorldSelector.h"
@@ -438,30 +439,22 @@ bool FEditorSimulateInputMouseClickTest::RunTest(const FString& Parameters)
     return true;
 }
 
-// Regression for B-simulate-input-cef-click-noop: editor.simulate_input mouse_click
-// must actually ROUTE the synthesized click to the widget under the point (and then
-// report success honestly from the handled result, not the old unconditional
-// bSuccess = true).
+// Regression for B-simulate-input-cef-click-noop: editor.simulate_input mouse_click must deliver
+// the synthesized click to the widget under the point, and report success only when it did.
 //
-// The reverted handler built its FPointerEvents inline with a nullptr platform
-// window and NO effecting button (the move/delta FPointerEvent constructor), then
-// hardcoded bSuccess = true. That injection silently missed the widget under the
-// cursor (including SViewport-hosted CEF browsers, whose viewport forwards a
-// correctly-routed Slate click into the DOM), yet still reported success. The fix
-// routes through FDriveInput's vetted click primitive (native-window resolution +
-// effecting button + inactive-input flag + move-first) and reports the real handled
-// result.
+// The handler moves the pointer and clicks only once Slate's routing (FDriveInput::WindowUnderPoint)
+// names the top window at the point (FDriveInput::TopWindowAtPoint); otherwise it refuses with
+// INPUT_FAILED carrying `routedWindow` and clicks nothing.
 //
-// The test drives the PRODUCTION editor.simulate_input handler against an in-code
-// Slate fixture: a real top-level SWindow holding a single SButton is clicked at the
-// button's screen-space center; the button's OnClicked must fire AND the handler
-// must report success. Reverting the fix (nullptr window / effecting-button-less
-// FPointerEvent, or a hardcoded-false over-correction) fails one of the two: the
-// reverted injection never routes to the button so OnClicked stays false, and an
-// always-false success fails the success assertion. (An empty-space "not handled"
-// counterfactual proved unreliable headless — Slate's ProcessMouseButtonDownEvent
-// can return handled over a window-less point under -RenderOffScreen mouse capture —
-// so the honest-result guard is anchored on the deterministic routed-click case.)
+// The test drives the production handler against an in-code top-level SWindow holding one SButton,
+// clicked at the button's center, and waits across real frames for the (possibly asynchronous)
+// answer. The fixture window is topmost: under -RenderOffscreen the virtual display is 640x360 and
+// the editor's untitled, topmost notification window overlaps a window placed near its center, so
+// a plain fixture window was covered and the click (correctly) went to the notification. That was
+// the intermittent failure of this test, depending on whether a toast was showing. A success must
+// come with the button's OnClicked having fired. A refusal naming `routedWindow` means this host's
+// platform never followed the pointer within the wait (it is then asserted that nothing was
+// clicked, and the positive assertions are reported skipped rather than silently passed).
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEditorSimulateInputMouseClickHonestSuccessTest,
     "PinWright.editor.simulate_input.MouseClickHonestSuccess",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
@@ -476,27 +469,25 @@ bool FEditorSimulateInputMouseClickHonestSuccessTest::RunTest(const FString& Par
     }
     FSlateApplication& SlateApp = FSlateApplication::Get();
 
-    // Positive routing through the fixed injection: click a real button and require
-    // both that it actuated (OnClicked) and that success was reported honestly.
-    bool bButtonClicked = false;
+    const TSharedRef<bool> bButtonClicked = MakeShared<bool>(false);
     TSharedRef<SWindow> Window = SNew(SWindow)
         .ScreenPosition(FVector2D(140.0f, 140.0f))
         .ClientSize(FVector2D(220.0f, 140.0f))
         .FocusWhenFirstShown(false)
         .CreateTitleBar(false)
+        .IsTopmostWindow(true)
         .SupportsMaximize(false)
         .SupportsMinimize(false);
 
     Window->SetContent(
         SNew(SButton)
-        .OnClicked_Lambda([&bButtonClicked]()
+        .OnClicked_Lambda([bButtonClicked]()
         {
-            bButtonClicked = true;
+            *bButtonClicked = true;
             return FReply::Handled();
         }));
 
     SlateApp.AddWindow(Window, /*bShowImmediately=*/true);
-    ON_SCOPE_EXIT { SlateApp.RequestDestroyWindow(Window); };
 
     // Pump Slate so the window lays out and paints — hit-testing reads the cached
     // geometry / hittest grid populated during paint. Wait (bounded) until the
@@ -518,29 +509,92 @@ bool FEditorSimulateInputMouseClickHonestSuccessTest::RunTest(const FString& Par
 
     // The in-code fixture must lay out — it is constructed here, so a degenerate
     // geometry is a real failure of the test's own window, not a skippable absence.
-    // Drive TestTrue's bool return straight into the guard so the layout condition
-    // lives in one place: assert it, then proceed only if it held.
-    if (TestTrue(TEXT("in-code button laid out with a hit-testable geometry"),
-            ClickPoint.X > 0.0 && ClickPoint.Y > 0.0))
+    if (!TestTrue(TEXT("in-code button laid out with a hit-testable geometry"),
+            ClickPoint.X > 0.0 && ClickPoint.Y > 0.0)
+        || !TestTrue(TEXT("the topmost fixture window is the top window at the click point"),
+            FDriveInput::TopWindowAtPoint(ClickPoint) == TSharedPtr<SWindow>(Window)))
     {
-        FTestResponseCapture Capture;
-        TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
-        Payload->SetStringField(TEXT("type"), TEXT("mouse_click"));
-        Payload->SetNumberField(TEXT("x"), ClickPoint.X);
-        Payload->SetNumberField(TEXT("y"), ClickPoint.Y);
-        Payload->SetStringField(TEXT("button"), TEXT("left"));
-        TestTrue(TEXT("editor.simulate_input handler found (button click)"),
-            InvokeHandlerWithCapture(TEXT("editor.simulate_input"), Payload, Capture));
-
-        // Core routing assertion: the synthesized click actually reached the button.
-        // Reverting the injection fix (nullptr window / no effecting button) leaves
-        // this false.
-        TestTrue(TEXT("synthesized click fired the button's OnClicked (correct native-window routing)"),
-            bButtonClicked);
-        // Success is now the honest handled result, not a hardcoded true.
-        TestTrue(TEXT("click a widget consumed reports success"), Capture.bSuccess);
+        SlateApp.RequestDestroyWindow(Window);
+        return true;
     }
 
+    const TSharedRef<FTestResponseCapture> Capture = MakeShared<FTestResponseCapture>();
+    TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+    Payload->SetStringField(TEXT("type"), TEXT("mouse_click"));
+    Payload->SetNumberField(TEXT("x"), ClickPoint.X);
+    Payload->SetNumberField(TEXT("y"), ClickPoint.Y);
+    Payload->SetStringField(TEXT("button"), TEXT("left"));
+    TestTrue(TEXT("editor.simulate_input handler found (button click)"),
+        InvokeHandlerWithSharedCapture(TEXT("editor.simulate_input"), Payload, Capture));
+
+    const double Deadline = FPlatformTime::Seconds() + 10.0;
+    ADD_LATENT_AUTOMATION_COMMAND(FFunctionLatentCommand([this, Window, bButtonClicked, Capture, Deadline]() -> bool
+    {
+        if (!Capture->bWasCalled && FPlatformTime::Seconds() < Deadline)
+        {
+            return false;
+        }
+        ON_SCOPE_EXIT
+        {
+            if (FSlateApplication::IsInitialized())
+            {
+                FSlateApplication::Get().RequestDestroyWindow(Window);
+            }
+        };
+        if (!Capture->bWasCalled)
+        {
+            AddError(TEXT("editor.simulate_input mouse_click never answered within 10 s."));
+            return true;
+        }
+
+        FString RoutedWindow;
+        if (!Capture->bSuccess && Capture->Result.IsValid()
+            && Capture->Result->TryGetStringField(TEXT("routedWindow"), RoutedWindow))
+        {
+            // The honest refusal: the routing never named the fixture window, so nothing was clicked.
+            TestFalse(TEXT("a refused click reached no widget"), *bButtonClicked);
+            PinWrightTestSkip::SkipAssertions(*this, TEXT("platform-cursor-window-stale"),
+                FString::Printf(TEXT("This host's platform kept routing the point to window '%s': %s"),
+                    *RoutedWindow, *Capture->Message));
+            return true;
+        }
+
+        TestTrue(FString::Printf(TEXT("click on the fixture button reports success (error: %s %s)"),
+            *Capture->ErrorCode, *Capture->Message), Capture->bSuccess);
+        // Core routing assertion: a reported success means the click actually reached the button.
+        TestTrue(TEXT("synthesized click fired the button's OnClicked (correct native-window routing)"),
+            *bButtonClicked);
+        return true;
+    }));
+    return true;
+}
+
+// A click where no window takes input must fail. The unfixed handler reported success from
+// ProcessMouseButtonDownEvent's return value, which is true whatever the press hit, so this
+// answered success for a click that reached nothing.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEditorSimulateInputMouseClickOnNoWindowFailsTest,
+    "PinWright.editor.simulate_input.MouseClickOnNoWindowFails",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FEditorSimulateInputMouseClickOnNoWindowFailsTest::RunTest(const FString& Parameters)
+{
+    // Far outside any display, so no top-level window can contain it.
+    const FVector2D Point(-100000.0, -100000.0);
+    if (!TestFalse(TEXT("no window takes input at the probe point"), FDriveInput::TopWindowAtPoint(Point).IsValid()))
+    {
+        return true;
+    }
+
+    FTestResponseCapture Capture;
+    TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+    Payload->SetStringField(TEXT("type"), TEXT("mouse_click"));
+    Payload->SetNumberField(TEXT("x"), Point.X);
+    Payload->SetNumberField(TEXT("y"), Point.Y);
+    TestTrue(TEXT("editor.simulate_input handler found"),
+        InvokeHandlerWithCapture(TEXT("editor.simulate_input"), Payload, Capture));
+    TestTrue(TEXT("the handler answered synchronously"), Capture.bWasCalled);
+    TestFalse(TEXT("a click on no window is not a success"), Capture.bSuccess);
+    TestEqual(TEXT("the refusal is INPUT_FAILED"), Capture.ErrorCode, FString(TEXT("INPUT_FAILED")));
     return true;
 }
 

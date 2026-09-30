@@ -264,9 +264,15 @@ An unknown FKey name is `INVALID_KEY`; a missing `key` or an unknown `target` is
 With `target: "editor"` (or `target:"auto"` and no PIE) the key goes to the focused editor widget,
 and the response still carries `handled` and `focusedWidget`.
 
-`mouse_click` / `mouse_move` are unchanged — they route through Slate at screen-space coordinates
-and have no game destination; a click aimed at the PIE viewport's screen rectangle already reaches
-the game as a real pointer event. `drive.key` stays the UI verb: it targets the focused widget
+`mouse_click` / `mouse_move` route through Slate at screen-space coordinates and have no game
+destination; a click aimed at the PIE viewport's screen rectangle already reaches the game as a real
+pointer event. `mouse_click` moves the pointer first and clicks only once Slate's routing names the
+top window at the point (waiting up to 0.3 s for the platform's window-under-cursor to follow the
+pointer, which on Linux lags a warp by a frame). Success carries `window`, the window that got the
+click. When the routing still names another window, nothing is clicked and the call fails with
+`INPUT_FAILED` and data `{x, y, window, routedWindow}`; with no window at the point it fails with
+`INPUT_FAILED` too. Success means the click was delivered to that window; it does not prove a widget
+acted on it. `drive.key` stays the UI verb: it targets the focused widget
 (optionally clicking a handle first) and never resolves a game destination.
 
 ### editor.screenshot

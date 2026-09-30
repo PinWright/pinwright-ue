@@ -21,6 +21,7 @@
 #include "Handlers/Blueprint/BlueprintHandlerUtils.h"
 #include "Handlers/Drive/DriveGameInput.h"
 #include "Handlers/Drive/DriveInput.h"
+#include "Dispatch/SafePoint.h"
 #include "Handlers/Editor/EditorHandlerUtils.h"
 #include "Handlers/Editor/EditorSaveAllDiagnostic.h"
 #include "Handlers/Editor/PieWorldSelector.h"
@@ -48,6 +49,8 @@
 #include "FileHelpers.h"
 #endif
 #include "Framework/Application/SlateApplication.h"
+#include "Containers/Ticker.h"
+#include "Widgets/SWindow.h"
 #include "Engine/World.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
@@ -1043,39 +1046,87 @@ REGISTER_RPC_HANDLER("editor.simulate_input", "editor", "Inject a synthetic keyb
   }
 
   if (InputType == TEXT("mouse_click") || InputType == TEXT("click")) {
-    double X = Ctx.GetNumber(TEXT("x"), 0.0);
-    double Y = Ctx.GetNumber(TEXT("y"), 0.0);
+    const FVector2D Point(Ctx.GetNumber(TEXT("x"), 0.0), Ctx.GetNumber(TEXT("y"), 0.0));
 
     FString Button = Ctx.GetString(TEXT("button"));
     if (Button.IsEmpty()) Button = TEXT("left");
 
     const EDriveMouseButton MouseButton = FDriveInput::ParseMouseButton(Button);
 
-    // Route through the vetted FDriveInput click primitive rather than a bare
-    // Slate injection: it resolves the native window under the point, enables
-    // device input while the editor is not the active OS window, dispatches a
-    // real mouse-move first, and builds a full FPointerEvent WITH the effecting
-    // button. The old inline path passed a nullptr window and an effecting-button-
-    // less pointer event, so synthesized clicks silently missed the widget under
-    // the cursor (including SViewport-hosted CEF browsers, whose own viewport
-    // forwards a routed Slate click into the DOM). bWasHandled captures whether a
-    // widget actually consumed the press, so success is reported honestly instead
-    // of the previous unconditional bSuccess = true (a click that landed on
-    // nothing used to still report success — a silent false-success).
-    bool bWasHandled = false;
-    const bool bInjected = FDriveInput::ClickAtReportingHandled(
-        FVector2D((float)X, (float)Y), MouseButton, bWasHandled);
-
-    if (!bInjected) {
-      Message = TEXT("Slate application is not available to inject the mouse click");
-    } else if (bWasHandled) {
-      bSuccess = true;
-      Message = FString::Printf(TEXT("Mouse click at (%f, %f) was handled by a widget"), X, Y);
-    } else {
-      Message = FString::Printf(
-          TEXT("Mouse click at (%f, %f) reached no interactive widget (nothing under the cursor consumed it)"), X, Y);
+    // FDriveInput::ClickAt is the vetted injection (native window, effecting button, inactive-
+    // input flag, move first), but Slate hit-tests it inside whichever window the platform's
+    // window-under-cursor names, and on Linux that cache follows the pointer warp only when SDL's
+    // enter event is pumped on a later frame (under -RenderOffscreen's dummy video driver it may not follow at all).
+    // A stale cache routes the click into another window, and ProcessMouseButtonDownEvent returns
+    // true whatever it hit, so its result proves nothing. So move first and click only once the
+    // routing names the top window at the point, waiting a few frames for the platform to catch
+    // up; otherwise refuse without clicking.
+    if (!FDriveInput::MoveTo(Point)) {
+      Ctx.SendError(ErrorCodes::ERR_INPUT_FAILED, TEXT("Slate application is not available to inject the mouse click"));
+      return true;
     }
-  } else if (InputType == TEXT("mouse_move") || InputType == TEXT("move")) {
+    const TSharedPtr<SWindow> Target = FDriveInput::TopWindowAtPoint(Point);
+    if (!Target.IsValid()) {
+      Ctx.SendError(ErrorCodes::ERR_INPUT_FAILED, FString::Printf(
+          TEXT("No window accepts pointer input at (%.0f, %.0f); nothing was clicked."), Point.X, Point.Y));
+      return true;
+    }
+
+    // Answers and returns true when the routing names the target (click) or on the last chance
+    // (refuse); returns false to keep waiting.
+    const auto TryClick = [InputType, Point, MouseButton](const PinWrightSafePoint::FSafePointResponder& Responder,
+        const TSharedPtr<SWindow>& TargetWindow, bool bLastChance) -> bool {
+      const TSharedPtr<SWindow> Routed = FDriveInput::WindowUnderPoint(Point);
+      const FString TargetTitle = TargetWindow->GetTitle().ToString();
+      if (Routed != TargetWindow) {
+        if (!bLastChance) {
+          return false;
+        }
+        const FString RoutedTitle = Routed.IsValid() ? Routed->GetTitle().ToString() : FString();
+        TSharedPtr<FJsonObject> Details = MakeShared<FJsonObject>();
+        Details->SetNumberField(TEXT("x"), Point.X);
+        Details->SetNumberField(TEXT("y"), Point.Y);
+        Details->SetStringField(TEXT("window"), TargetTitle);
+        Details->SetStringField(TEXT("routedWindow"), RoutedTitle);
+        Responder.SendError(ErrorCodes::ERR_INPUT_FAILED, FString::Printf(
+            TEXT("A click at (%.0f, %.0f) would be routed to %s, not to window '%s' on top at that point: the platform's window-under-cursor has not followed the pointer. Nothing was clicked."),
+            Point.X, Point.Y,
+            Routed.IsValid() ? *FString::Printf(TEXT("window '%s'"), *RoutedTitle) : TEXT("no window"),
+            *TargetTitle), Details);
+        return true;
+      }
+      FDriveInput::ClickAt(Point, MouseButton);
+      TSharedPtr<FJsonObject> Resp = MakeShared<FJsonObject>();
+      Resp->SetBoolField(TEXT("success"), true);
+      Resp->SetStringField(TEXT("type"), InputType);
+      Resp->SetStringField(TEXT("window"), TargetTitle);
+      Resp->SetStringField(TEXT("message"), FString::Printf(
+          TEXT("Mouse click at (%.0f, %.0f) delivered to window '%s'"), Point.X, Point.Y, *TargetTitle));
+      Responder.SendSuccess(Resp);
+      return true;
+    };
+
+    if (TryClick(PinWrightSafePoint::FSafePointResponder(Ctx), Target, /*bLastChance=*/false)) {
+      return true;
+    }
+    constexpr double ClickRouteWaitSeconds = 0.3;
+    const TSharedRef<FAsyncResponseToken> Token = Ctx.MakeAsyncToken();
+    const double Deadline = FPlatformTime::Seconds() + ClickRouteWaitSeconds;
+    const TWeakPtr<SWindow> WeakTarget = Target;
+    FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda(
+        [Token, WeakTarget, Deadline, TryClick](float) -> bool {
+          const TSharedPtr<SWindow> TargetWindow = WeakTarget.Pin();
+          if (!TargetWindow.IsValid()) {
+            Token->SendError(ErrorCodes::ERR_INPUT_FAILED,
+                TEXT("The window under the click point closed before the click could be delivered."));
+            return false;
+          }
+          return !TryClick(PinWrightSafePoint::FSafePointResponder(Token), TargetWindow, FPlatformTime::Seconds() >= Deadline);
+        }));
+    return true;
+  }
+
+  if (InputType == TEXT("mouse_move") || InputType == TEXT("move")) {
     double X = Ctx.GetNumber(TEXT("x"), 0.0);
     double Y = Ctx.GetNumber(TEXT("y"), 0.0);
 

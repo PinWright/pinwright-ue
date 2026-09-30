@@ -6,6 +6,7 @@
 #include "GenericPlatform/GenericApplication.h"
 #include "GenericPlatform/GenericWindow.h"
 #include "GenericPlatform/ICursor.h"
+#include "Input/HittestGrid.h"
 #include "InputCoreTypes.h"
 #include "Layout/WidgetPath.h"
 #include "Misc/ScopeExit.h"
@@ -161,6 +162,48 @@ TSharedPtr<SWindow> FDriveInput::WindowUnderPoint(const FVector2D& ScreenPos)
     return WidgetsUnderCursor.IsValid() ? TSharedPtr<SWindow>(WidgetsUnderCursor.GetWindow()) : nullptr;
 }
 
+namespace
+{
+    // The fallback half of FSlateApplication::LocateWindowUnderMouse: top-most first, child
+    // windows before their parent, without consulting the platform's window-under-cursor.
+    TSharedPtr<SWindow> TopWindowIn(FSlateApplication& SlateApp, const TArray<TSharedRef<SWindow>>& Windows,
+        const FVector2D& ScreenPos, int32 UserIndex)
+    {
+        for (int32 Index = Windows.Num() - 1; Index >= 0; --Index)
+        {
+            const TSharedRef<SWindow>& Window = Windows[Index];
+            if (!Window->IsVisible() || Window->IsWindowMinimized())
+            {
+                continue;
+            }
+            if (TSharedPtr<SWindow> Child = TopWindowIn(SlateApp, Window->GetChildWindows(), ScreenPos, UserIndex))
+            {
+                return Child;
+            }
+            // LocateWidgetInWindow's test (protected there): the window takes input at the point
+            // and its hit-test grid names a widget under it.
+            if (Window->AcceptsInput() && Window->IsScreenspaceMouseWithin(ScreenPos)
+                && Window->GetHittestGrid().GetBubblePath(ScreenPos, SlateApp.GetCursorRadius(),
+                    /*bIgnoreEnabledStatus=*/false, UserIndex).Num() > 0)
+            {
+                return Window;
+            }
+        }
+        return nullptr;
+    }
+}
+
+TSharedPtr<SWindow> FDriveInput::TopWindowAtPoint(const FVector2D& ScreenPos)
+{
+    if (!FSlateApplication::IsInitialized())
+    {
+        return nullptr;
+    }
+
+    FSlateApplication& SlateApp = FSlateApplication::Get();
+    return TopWindowIn(SlateApp, SlateApp.GetInteractiveTopLevelWindows(), ScreenPos, SlateApp.GetUserIndexForMouse());
+}
+
 FModifierKeysState FDriveInput::MakeModifierState(EDriveModifierKeys Modifiers)
 {
     const bool bShift = EnumHasAnyFlags(Modifiers, EDriveModifierKeys::Shift);
@@ -201,17 +244,6 @@ EDriveMouseButton FDriveInput::ParseMouseButton(const FString& Token)
 
 bool FDriveInput::ClickAt(const FVector2D& ScreenPos, EDriveMouseButton Button)
 {
-    // Delegate to the handled-reporting variant; existing callers only care that
-    // the click was injected (true when Slate is up), not whether a widget
-    // consumed it, so the handled result is discarded here.
-    bool bDiscardHandled = false;
-    return ClickAtReportingHandled(ScreenPos, Button, bDiscardHandled);
-}
-
-bool FDriveInput::ClickAtReportingHandled(const FVector2D& ScreenPos, EDriveMouseButton Button, bool& bOutPressHandled)
-{
-    bOutPressHandled = false;
-
     if (!FSlateApplication::IsInitialized())
     {
         return false;
@@ -235,9 +267,7 @@ bool FDriveInput::ClickAtReportingHandled(const FVector2D& ScreenPos, EDriveMous
     FPointerEvent DownEvent(UserIdx, FSlateApplication::CursorPointerIndex,
         ScreenPos, LastPos, SlateApp.GetPressedMouseButtons(),
         ButtonKey, 0.0f, FModifierKeysState());
-    // Capture the handled state Slate returns for the press: this is the honest
-    // "a widget under the point received the click" signal (false for empty space).
-    bOutPressHandled = SlateApp.ProcessMouseButtonDownEvent(NativeWindow, DownEvent);
+    SlateApp.ProcessMouseButtonDownEvent(NativeWindow, DownEvent);
 
     FPointerEvent UpEvent(UserIdx, FSlateApplication::CursorPointerIndex,
         ScreenPos, LastPos, SlateApp.GetPressedMouseButtons(),

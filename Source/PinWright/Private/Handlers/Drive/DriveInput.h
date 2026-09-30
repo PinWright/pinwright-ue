@@ -70,15 +70,6 @@ public:
     // resolving the native window under the point first.
     static bool ClickAt(const FVector2D& ScreenPos, EDriveMouseButton Button = EDriveMouseButton::Left);
 
-    // Same injection as ClickAt, but additionally reports whether a widget under
-    // the point CONSUMED the button-press — the honest "the click landed on an
-    // interactive target" signal callers need instead of assuming success. Sets
-    // bOutPressHandled to the handled state Slate returned for the button-down
-    // (false when the point resolves to empty space / no window). Returns false
-    // only when Slate is not initialized (the click could not be injected at
-    // all); a successful injection returns true regardless of bOutPressHandled.
-    static bool ClickAtReportingHandled(const FVector2D& ScreenPos, EDriveMouseButton Button, bool& bOutPressHandled);
-
     // Dispatch a real mouse-move to ScreenPos so hover enter/leave fire (unlike a
     // bare SetCursorPos). HoverAt is an alias for the same operation.
     static bool MoveTo(const FVector2D& ScreenPos);
@@ -97,8 +88,7 @@ public:
         EDriveKeyAction Action = EDriveKeyAction::Press);
 
     // Same injection as PressKey, but additionally reports whether Slate CONSUMED the
-    // event — the honest "something on the focus path handled it" signal, the keyboard
-    // counterpart of ClickAtReportingHandled. bOutHandled is the OR of the down/up
+    // event — the honest "something on the focus path handled it" signal. bOutHandled is the OR of the down/up
     // handled results for a full press. Returns false only when the event could not be
     // injected at all (Slate not initialized, or an invalid key).
     static bool PressKeyReportingHandled(const FKey& Key, EDriveModifierKeys Modifiers,
@@ -122,6 +112,12 @@ public:
     // once SDL's enter/leave event is pumped on a later frame, so right after a warp into another
     // window it can still name the previous one. Null when no window takes input at the point.
     static TSharedPtr<SWindow> WindowUnderPoint(const FVector2D& ScreenPos);
+
+    // The top-most interactive window at ScreenPos by Slate's own window order, ignoring the
+    // platform's window-under-cursor: the window a pointer event at the point is meant for. When
+    // WindowUnderPoint names a different window, an injection now would be hit-tested in that
+    // other window. Null when no window takes input at the point.
+    static TSharedPtr<SWindow> TopWindowAtPoint(const FVector2D& ScreenPos);
 
     // ---- Pure helpers (no Slate dependency; unit-tested) ----
 
