@@ -78,7 +78,7 @@ Any of these forms work anywhere a class is expected. Full paths remain preferre
 
 **Editor must be running**
 
-Every `call(...)` requires the Unreal Editor to be open with the PinWright plugin active on HTTP port 19880. There is no headless / commandlet mode; the plugin skips init during commandlet execution.
+Every `call(...)` requires the Unreal Editor to be open with the PinWright plugin serving HTTP on loopback. The port is per project by default: `19880 + CRC32(lowercased project dir) % 10240` (range `19880`-`30119`); disabling `bAutoDerivePort` binds the fixed `HttpPort` (default `19880`). The editor publishes the bound port to `Saved/PinWright/gateway-port`, and the stdio proxy re-reads it before every call (details: `call("mcp-transport")`). There is no commandlet mode: the plugin skips init during commandlet execution. An editor without a window still serves `call`: launch it with the proxy tools `editor_start` / `editor_restart` using `mode: "offscreen"` (real RHI) or `mode: "headless"` (`-NullRHI`, no pixels).
 
 **MCP wiki refresh after C++ rebuilds**
 

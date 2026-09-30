@@ -18,9 +18,10 @@ The ground plane, and nothing else.
 
 **`foliage.*` instancing** — `foliage.add_type`, then `foliage.add_instances` with transforms you
 computed. The only pathway that takes the rotation and scale *you* chose, so it is the one to reach
-for whenever the look matters. `foliage.paint` is not a substitute: it writes `FRotator::ZeroRotator`
-and unit scale on every instance **regardless of the foliage type's `AlignToNormal` / `RandomYaw`**,
-which leaves it usable for uniform fill only. Nothing here is transactional — plan around
+for whenever the look matters. `foliage.paint` is not a substitute: rotation comes from the foliage
+type (`RandomYaw` / `RandomPitchAngle` always, `AlignToNormal` only with a `surface`), but scale is
+**hardcoded to 1 regardless of the type's `ScaleX/Y/Z`**, and you cannot choose either per instance.
+Nothing here is transactional — plan around
 `level.save`, not Ctrl+Z — and every instance lands in the level's one shared `InstancedFoliageActor`
 (see *Working in a shared level*).
 
@@ -74,10 +75,10 @@ and it will still never produce an asset. Three structural reasons, all engine-s
 - **The writer lives in the editor toolkit and reads a cache no level actor fills.** Export runs
   from the PV editor window against that window's own inspection cache, which is fed by a default
   execution source rather than by a level component, and then blocks on a modal dialog.
-- **The graph you can build is not safely editable.** Every PV node's `In` pin is
-  single-connection, and `pcg.connect_pins` returns a hardcoded `connected: true` while silently
-  replacing whatever was on that pin. The edge *count* does not change, so diff the edge **set**
-  after every connect if you author one anyway.
+- **Connecting replaces, it does not add.** Every PV node's `In` pin is single-connection, so
+  `pcg.connect_pins` onto one destroys the edge already there. The response reports it:
+  `connected` is read back from the pin, and `replacedExistingEdge` / `replacedEdges[]` plus a
+  `warnings[]` line name each destroyed edge. The write is undoable in the editor.
 
 Separately, `pcg.add_node` gates only on the settings base class with no abstract-class check, so
 abstract classes are reachable over the wire; in an editor build that path logs an ensure, allocates
@@ -330,11 +331,12 @@ because the *check* survives the fix and the shape recurs.
   four minutes idle. Only an editor restart brought it back. Use `grass.Enable 0` then
   `grass.Enable 1`, which drops and rebuilds the components with the edited settings live in ~45 s.
 
-Still live, each a silent wrong answer rather than an error: `foliage.paint`'s zero rotator (above);
-`foliage.create_procedural`'s `minScale`/`maxScale`, which write the paint-time scale range that
-procedural placement never reads, so with `MaxInitialAge` at its default the output lands on a
-four-value ladder; and that verb's `density`, which writes the paint-brush density rather than the
-simulation's seed density.
+Still live, each a silent wrong answer rather than an error: `foliage.paint`'s unit scale (above);
+and `foliage.create_procedural`'s `minScale`/`maxScale`, which write the paint-time scale range that
+procedural placement never reads. Size procedural instances with `proceduralScale` instead; given
+no `maxInitialAge`, the verb raises `MaxInitialAge` to `MaxAge` so the range does not collapse to a
+four-value ladder. That verb's `density` now seeds the simulation (`InitialSeedDensity =
+sqrt(density)` unless `initialSeedDensity` is passed); full contract in `call("foliage")`.
 
 ## Working In A Shared Level Without Destroying Someone Else's Scatter
 

@@ -1643,7 +1643,7 @@ REGISTER_RPC_HANDLER("system.inspect.list_actor_classes", "system.inspect", "Enu
 }
 
 // ---- system.inspect.inspect_class ----
-REGISTER_RPC_HANDLER("system.inspect.inspect_class", "system.inspect", "Resolve a UClass by short name, U/A-prefixed name, /Script/ path, or /Game/ Blueprint path and return its name, full path, and parent class. Errors CLASS_NOT_FOUND if no match.",
+REGISTER_RPC_HANDLER("system.inspect.inspect_class", "system.inspect", "Resolve a UClass by short name, U/A-prefixed name, /Script/ path, or /Game/ Blueprint path and return its name, full path, parent class, inheritanceChain, properties, functions, and interfaces. Errors CLASS_NOT_FOUND if no match.",
     RPC_PARAMS(
         RPC_PARAM_REQ("className", "classref", "Class name (e.g. 'StaticMeshActor', 'AStaticMeshActor') or path (e.g. '/Game/MyBP.MyBP_C').")
     ))

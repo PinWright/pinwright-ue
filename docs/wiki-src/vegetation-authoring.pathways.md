@@ -37,10 +37,11 @@ drop-and-rebuild (about 45 s); `grass.FlushCache` is destructive — see the par
 
 ## `foliage.*` Instancing
 
-**`foliage.paint` writes `FRotator::ZeroRotator` and unit scale unconditionally**, ignoring the
-foliage type's own `AlignToNormal` / `RandomYaw` / `RandomPitchAngle` — including on a type the verb
-itself auto-created with those flags set. Projection is honest (`projected` is on every response and
-the unprojected branch warns), but orientation is not, which limits paint to uniform fill.
+**`foliage.paint` takes rotation from the foliage type and hardcodes scale to 1.** `RandomYaw` and
+`RandomPitchAngle` apply on both branches, `AlignToNormal` only with a `surface` (an unhonoured one
+is named in `warnings[]`); `placed[]` echoes the rotation written. Scale and `ZOffset` ignore the
+type's ranges, so per-instance scale needs `foliage.add_instances`. Projection is honest
+(`projected` is on every response and the unprojected branch warns).
 
 **Painting with a `surface` runs a full seat solve per instance, synchronously, with no `limit`.**
 A few thousand locations in one call holds the game thread. Chunk it.
@@ -69,16 +70,18 @@ callers who tried to save it by package path.
   changes a species' mean scale, divide its collision and shade radii by the same factor, or the
   swap silently changes the distribution rather than the species.
 - **`MaxInitialAge` above 0**, or whole simulation steps are the only thing ageing a seed and every
-  instance lands on a four-value scale ladder — `{Min, Min+0.1D, Min+0.2D, Min+0.3D}`.
+  instance lands on a four-value scale ladder — `{Min, Min+0.1D, Min+0.2D, Min+0.3D}`. The verb
+  raises it to `MaxAge` itself when you pass a `proceduralScale` range and no `maxInitialAge`.
 
 The rest of what the simulation actually reads:
 
-- **`density` is inert.** It writes `UFoliageType::Density`, the paint-brush density. The simulation
-  reads `InitialSeedDensity`, roughly `round(InitialSeedDensity² * TileSize² / 1e6)` seeds per tile.
+- **Seeding reads `InitialSeedDensity`**, roughly `round(InitialSeedDensity² * TileSize² / 1e6)`
+  seeds per tile, not the paint-brush `Density`. The verb derives `sqrt(density)` unless you pass
+  `initialSeedDensity`, and names the source in the response.
 - **`minScale` / `maxScale` are inert for this pathway.** They write `ScaleX/Y/Z`, read only by
   `GetRandomScale()`, which non-procedural placement calls. Procedural instances take
-  `GetScaleForAge()` — i.e. `ProceduralScale`, left at its default. Measured: a 0.25-0.35 request
-  read back correctly on the asset and produced instances at exactly `{1.0, 1.2, 1.4, 1.6}`.
+  `GetScaleForAge()`, i.e. `ProceduralScale`: pass `proceduralScale`. Measured before that key
+  existed: a 0.25-0.35 `minScale`/`maxScale` request produced instances at exactly `{1.0, 1.2, 1.4, 1.6}`.
 - **`alignToNormal` works** on both paths (aligned types measured tilting to 37.7 degrees).
 - **`randomYaw` is dropped into `ignoredFields` and it does not matter** — the underlying default is
   already true and the tile simulation reads it, so procedural scatter always gets full 0-360 yaw.
