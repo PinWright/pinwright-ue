@@ -35,6 +35,8 @@ All entry points are static; the facade has no instance or project-object depend
     do { if (FJournalRecorder::IsRecording()) FJournalRecorder::LogVariable((KeyOrObj), (Tag), (Value)); } while (0)
 ```
 
+**Keys must come from live objects.** Every `FName` is carried by value and resolved later on the game-thread drain, so a name read from freed memory (typically `KeyFor(this)` in a callback that outlived its object, e.g. an async-load lambda capturing a raw `this` across map travel) used to crash the editor in the drain with no trace of the caller. Producers now check every `FName` (key, tag / event name, prop keys) against the name pool at the call site and drop a message carrying a corrupt one, logging `LogJournalRecorder: Warning: Journal: dropped <event|value|object registration> '<name>': it carries a corrupt FName ...`. That warning means a use-after-free in the calling code; the check catches out-of-pool ids, not every possible garbage value.
+
 Every bare `LogVariable`/`LogEvent` call is *already* a no-op while no session is open (it checks `IsRecording` internally and returns). The macro's only added value is skipping an **expensive** `Value` computation on a hot path — use it when the argument itself costs something; a plain `LogVariable` is fine otherwise.
 
 ## Editor-only integration (the part that bites)

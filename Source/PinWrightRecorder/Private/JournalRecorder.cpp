@@ -7,6 +7,8 @@
 #include "HAL/PlatformTime.h"
 #include "UObject/Object.h"
 
+DEFINE_LOG_CATEGORY_STATIC(LogJournalRecorder, Log, All);
+
 std::atomic<bool> FJournalRecorder::GRecording{ false };
 TUniquePtr<FJournalSession> FJournalRecorder::GSession;
 
@@ -23,6 +25,28 @@ namespace
         int64 DomainFrame = -1;
     };
     thread_local FThreadStamp GThreadStamp;
+
+    /**
+     * False for an FName whose entry ids lie outside the name pool: one read from freed or
+     * uninitialised memory, typically KeyFor() on a UObject the caller kept past its GC. The
+     * drain resolves every name on the game thread later, where such a name segfaults with no
+     * trace of the producer, so producers reject it at the call site instead.
+     */
+    bool IsResolvableName(FName Name)
+    {
+        // FName::IsValid() bounds-checks only the comparison id; ToString() resolves the display id,
+        // so bounds-check that too by wrapping it as the comparison id of a scratch FName.
+        const FNameEntryId DisplayId = Name.GetDisplayIndex();
+        return Name.IsValid() && FName(DisplayId, DisplayId, 0).IsValid();
+    }
+
+    /** Report a rejected message; Label (the tag / event name) is printed only if it is itself resolvable. */
+    void WarnCorruptName(const TCHAR* What, FName Label)
+    {
+        UE_LOG(LogJournalRecorder, Warning,
+            TEXT("Journal: dropped %s '%s': it carries a corrupt FName (freed or uninitialised memory at the call site, usually a dangling UObject passed to KeyFor)."),
+            What, IsResolvableName(Label) ? *Label.ToString() : TEXT("<corrupt>"));
+    }
 
     /** Wall-clock seconds for the current call site (primary time axis). */
     FORCEINLINE double NowSeconds()
@@ -114,6 +138,11 @@ void FJournalRecorder::RegisterObject(FName Key, const FString& Label)
     {
         return;
     }
+    if (!IsResolvableName(Key))
+    {
+        WarnCorruptName(TEXT("object registration"), NAME_None);
+        return;
+    }
 
     FRecordMsg Msg;
     Msg.MsgType = EJournalMsgType::RegisterObject;
@@ -150,6 +179,11 @@ void FJournalRecorder::Append(FName Key, FName Tag, const FRecordedValue& Value)
     {
         return;
     }
+    if (!IsResolvableName(Key) || !IsResolvableName(Tag))
+    {
+        WarnCorruptName(TEXT("value"), Tag);
+        return;
+    }
 
     FRecordMsg Msg;
     Msg.MsgType = EJournalMsgType::Value;
@@ -167,6 +201,12 @@ void FJournalRecorder::LogEvent(FName Key, FName Name, TArray<TPair<FName, FReco
 {
     if (!IsRecording())
     {
+        return;
+    }
+    if (!IsResolvableName(Key) || !IsResolvableName(Name)
+        || Props.ContainsByPredicate([](const TPair<FName, FRecordedValue>& Prop) { return !IsResolvableName(Prop.Key); }))
+    {
+        WarnCorruptName(TEXT("event"), Name);
         return;
     }
 
