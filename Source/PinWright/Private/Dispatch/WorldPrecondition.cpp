@@ -9,6 +9,7 @@
 
 #include "Dom/JsonObject.h"
 #include "Editor.h"
+#include "Engine/GameViewportClient.h"
 #include "Engine/World.h"
 #include "UObject/Package.h"
 
@@ -36,8 +37,22 @@ namespace
     }
 }
 
+UWorld* SelectScreenshotWorld(
+    const bool bHasGameViewport, UWorld* GameViewportWorld, UWorld* EditorWorld)
+{
+    return bHasGameViewport ? GameViewportWorld : EditorWorld;
+}
+
 UWorld* ResolveTargetWorldForMethod(const FString& Method)
 {
+    if (Method.Equals(TEXT("editor.screenshot"), ESearchCase::IgnoreCase))
+    {
+        // Same branch test as the handler's capture: the game/PIE viewport whenever it exists.
+        const UGameViewportClient* GameViewport = GEngine ? GEngine->GameViewport.Get() : nullptr;
+        return SelectScreenshotWorld(GameViewport != nullptr,
+            GameViewport ? GameViewport->GetWorld() : nullptr,
+            GEditor ? GEditor->GetEditorWorldContext().World() : nullptr);
+    }
     if (UsesPieAwareWorld(Method))
     {
         return ResolvePieAwareWorld();

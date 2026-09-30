@@ -18,6 +18,11 @@ namespace PinWrightWorldPrecondition
     // use the same PIE-aware selector as their handlers.
     PINWRIGHT_API UWorld* ResolveTargetWorldForMethod(const FString& Method);
 
+    // editor.screenshot captures the game/PIE viewport whenever one exists and the level-editor
+    // viewport otherwise, so the world it reports follows the same branch.
+    PINWRIGHT_API UWorld* SelectScreenshotWorld(
+        bool bHasGameViewport, UWorld* GameViewportWorld, UWorld* EditorWorld);
+
     // Registration metadata is authoritative. This compatibility helper remains
     // for callers that need the old public symbol, but does not use a leaf-name
     // heuristic.

@@ -18,6 +18,7 @@
 
 #include "Dom/JsonObject.h"
 #include "Editor.h"
+#include "Engine/GameViewportClient.h"
 #include "Engine/StaticMeshActor.h"
 #include "Engine/World.h"
 #include "Misc/Guid.h"
@@ -456,6 +457,52 @@ bool FWorldPreconditionDeferredContinuationTest::RunTest(const FString& Paramete
         PinWrightWorldPreconditionTest::ReadString(Capture->Result, TEXT("expectedWorld")),
         ExpectedWorld->GetPathName());
 
+    return true;
+}
+
+// B-editor-screenshot-world-echo-editor-map: editor.screenshot captures the game/PIE viewport
+// whenever GEngine->GameViewport exists, but its decorated `world` used to name the editor world
+// even then. The selector must return the viewport's world on that branch, and the dispatcher's
+// resolution for the verb must route through it.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWorldPreconditionScreenshotWorldTest,
+    "PinWright.world.precondition.ScreenshotReportsCapturedWorld",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FWorldPreconditionScreenshotWorldTest::RunTest(const FString& Parameters)
+{
+    UWorld* EditorWorld = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+    const FString Stamp = FGuid::NewGuid().ToString(EGuidFormats::Digits);
+    UWorld::InitializationValues TransientWorldInitialization =
+        UWorld::InitializationValues().CreateWorldPartition(false);
+    UPackage* ViewportPackage = CreatePackage(*FString::Printf(
+        TEXT("/Temp/PinWrightTests/ScreenshotViewportWorld_%s"), *Stamp));
+    UWorld* ViewportWorld = ViewportPackage
+        ? UWorld::CreateWorld(
+            EWorldType::Editor, false,
+            FName(*FString::Printf(TEXT("ScreenshotViewportWorld_%s"), *Stamp)),
+            ViewportPackage, /*bAddToRoot=*/false, ERHIFeatureLevel::Num,
+            &TransientWorldInitialization)
+        : nullptr;
+    FScopedTransientWorldGuard ViewportWorldGuard(ViewportWorld);
+    if (!EditorWorld || !ViewportWorld)
+    {
+        PinWrightTestSkip::SkipAssertions(*this, TEXT("fixture-unavailable"),
+            TEXT("Needs an editor world and a second transient world to tell them apart."));
+        return true;
+    }
+
+    TestTrue(TEXT("with a game viewport the captured (viewport) world is reported"),
+        PinWrightWorldPrecondition::SelectScreenshotWorld(true, ViewportWorld, EditorWorld)
+            == ViewportWorld);
+    TestTrue(TEXT("without a game viewport the level-editor world is reported"),
+        PinWrightWorldPrecondition::SelectScreenshotWorld(false, ViewportWorld, EditorWorld)
+            == EditorWorld);
+
+    const UGameViewportClient* GameViewport = GEngine ? GEngine->GameViewport.Get() : nullptr;
+    TestTrue(TEXT("editor.screenshot resolution uses the capture-branch selector"),
+        PinWrightWorldPrecondition::ResolveTargetWorldForMethod(TEXT("editor.screenshot"))
+            == PinWrightWorldPrecondition::SelectScreenshotWorld(GameViewport != nullptr,
+                GameViewport ? GameViewport->GetWorld() : nullptr, EditorWorld));
     return true;
 }
 
