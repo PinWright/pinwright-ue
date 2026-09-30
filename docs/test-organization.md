@@ -370,7 +370,10 @@ starved whenever anything else on the box wants CPU, which inflates wall time, w
 yields to interactive work without starving. **The capped supervisor is how builds, suite runs and
 any automated/unattended editor launch are started; a `mode: "visible"` editor session the user is
 working in stays uncapped and at normal priority.** Outside MCP there is no supported capped CLI: a
-commandlet sweep runs through the MCP tools or as a plain, uncapped shell command.
+commandlet sweep runs through the MCP tools or as a plain, uncapped shell command. The one exception
+is multi-engine tooling (the `mcp-version-matrix` skill): other engines' hosts, which the proxy tools
+cannot target, go through the internal `pinwright_supervisor.py --spawn <request.json>`
+(`spawn_request`).
 
 ```
 editor_run_tests {"filter": "PinWright", "reason": "full PinWright suite after <change>", "mode": "offscreen"}

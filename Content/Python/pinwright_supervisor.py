@@ -1,7 +1,12 @@
 # Copyright (c) 2026 Alexander Penkin. MIT License.
 """INTERNAL: the capped, detached supervisor behind mcp_proxy.py's editor_start, editor_restart,
-editor_run_tests and editor_build. Not a public tool and it has no CLI: its only entry point is
-`python pinwright_supervisor.py --supervise` (spec JSON on stdin), which spawn_supervised() starts.
+editor_run_tests and editor_build. Not a public tool and it has no public CLI. Two internal entry
+points:
+    --supervise <spec.json>   the detached supervisor itself, which spawn_supervised() starts.
+    --spawn <request.json>    multi-engine tooling ONLY (the mcp-version-matrix skill): builds and
+                              suites on OTHER engines' host projects, which the proxy tools cannot
+                              reach because they are bound to the MCP client's own project and its
+                              EngineAssociation. See spawn_request() for the request contract.
 
 Stdlib only, Win64 + Linux. Replaces the removed PowerShell scripts (Run-Capped.ps1,
 Run-SuiteCapped.ps1, CappedJob.ps1) and the pinwright_launch.py CLI.
@@ -1157,8 +1162,92 @@ def _mismatch_text(caller_version):
             % (VERSION_MISMATCH, caller_version, PROTOCOL_VERSION))
 
 
+# ------------------------------------------------------------------------------------------------
+# Multi-engine tooling entry point: `python pinwright_supervisor.py --spawn <request.json>`
+# ------------------------------------------------------------------------------------------------
+SPAWN_FLAG = "--spawn"
+_SPAWN_REQUIRED = {
+    "suite": ("kind", "reason", "launchedBy", "mode", "uproject", "editorExe", "filter", "logPath"),
+    "command": ("kind", "reason", "launchedBy", "argv", "outputPath"),
+}
+_SPAWN_OPTIONAL = {"suite": ("extraArgs",), "command": ("mode",)}
+
+
+def spawn_request(request):
+    """Start one capped, detached run from a request dict and describe it. For multi-engine tooling
+    that drives host projects the proxy tools cannot target; everyone else uses the proxy tools.
+
+    kind "suite":   reason, launchedBy, mode (visible | offscreen | headless, no default), uproject,
+                    editorExe (the GUI UnrealEditor.exe; offscreen / headless use its -Cmd twin),
+                    filter, logPath, optional extraArgs (list). The argv is suite_argv(), the same
+                    contract editor_run_tests launches.
+    kind "command": reason, launchedBy, argv (executable first), outputPath (stdout + stderr, the
+                    reason as its first line), optional mode.
+    Cap, priority and timeout are spawn_supervised()'s: 0.60 of RAM, BelowNormal, 120 minutes, and
+    so is the spec it hands --supervise, stamped with PROTOCOL_VERSION: a skew still raises
+    SupervisorVersionMismatch. Unknown or missing keys raise ValueError. Returns the pids and paths the caller waits on: the
+    supervisor exits right after writing resultPath, so waiting on supervisorPid is waiting for
+    the verdict."""
+    kind = request.get("kind")
+    if kind not in _SPAWN_REQUIRED:
+        raise ValueError("kind must be one of %s, got %r" % (tuple(_SPAWN_REQUIRED), kind))
+    missing = [key for key in _SPAWN_REQUIRED[kind] if key not in request]
+    unknown = sorted(set(request) - set(_SPAWN_REQUIRED[kind]) - set(_SPAWN_OPTIONAL[kind]))
+    if missing or unknown:
+        raise ValueError("%s request: missing %s, unknown %s" % (kind, missing, unknown))
+    reason, error = normalize_reason(request["reason"])
+    if error:
+        raise ValueError(error)
+    if kind == "suite":
+        mode = request["mode"]
+        if mode not in MODES:
+            raise ValueError("mode must be one of %s, got %r" % (MODES, mode))
+        argv = [suite_executable(request["editorExe"], mode)] + suite_argv(
+            request["uproject"], request["filter"], request["logPath"], mode,
+            extra_args=request.get("extraArgs", ()))
+        run = spawn_supervised(argv, kind="suite", reason=reason,
+                               launched_by=request["launchedBy"], mode=mode,
+                               log_path=request["logPath"])
+    else:
+        run = spawn_supervised(list(request["argv"]), kind="command", reason=reason,
+                               launched_by=request["launchedBy"], mode=request.get("mode"),
+                               output_path=request["outputPath"],
+                               output_header="PinWright spawn request: reason=%s" % reason)
+    handoff = run.handoff
+    return {"pid": run.pid, "supervisorPid": run.supervisor_pid, "resultPath": run.result_path,
+            "supervisorLogPath": run.supervisor_log_path, "logPath": run.log_path,
+            "outputPath": request.get("outputPath"), "capped": run.capped,
+            "capBytes": handoff.get("capBytes"), "priority": handoff.get("priority"),
+            "detached": run.detached, "launchMechanism": run.launch_mechanism,
+            "detachNote": run.detach_note, "commandLine": handoff.get("commandLine")}
+
+
+def _spawn_main(request_path):
+    """One JSON line on stdout: spawn_request()'s result, or {"error", "code"?}. Exit 0 started,
+    2 bad request, 1 could not start, EXIT_VERSION_MISMATCH when the supervisor refuses the spec."""
+    def answer(payload, code):
+        sys.stdout.write(json.dumps(payload) + "\n")
+        sys.stdout.flush()
+        return code
+
+    try:
+        with open(request_path, encoding="utf-8-sig") as fh:  # PowerShell 5.1 writes a BOM
+            request = json.load(fh)
+        if not isinstance(request, dict):
+            raise ValueError("the request must be a JSON object")
+        return answer(spawn_request(request), 0)
+    except ValueError as exc:
+        return answer({"error": "%s: %s" % (type(exc).__name__, exc)}, 2)
+    except SupervisorVersionMismatch as exc:
+        return answer({"error": str(exc), "code": VERSION_MISMATCH}, EXIT_VERSION_MISMATCH)
+    except (OSError, RuntimeError) as exc:  # unreadable request, no -Cmd twin, start failure
+        return answer({"error": "%s: %s" % (type(exc).__name__, exc)}, 1)
+
+
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
+    if len(argv) == 2 and argv[0] == SPAWN_FLAG:
+        return _spawn_main(argv[1])
     if argv == [SUPERVISE_FLAG]:
         # A protocol-1 proxy: it reads its handoff as one JSON line on our stdout and routes our
         # stderr to its supervisor.log, so both carry the reason instead of a bare refusal.
@@ -1171,7 +1260,8 @@ def main(argv=None):
     if len(argv) != 2 or argv[0] != SUPERVISE_FLAG:
         sys.stderr.write("pinwright_supervisor.py is internal to the PinWright MCP proxy and has no "
                          "command line; use the editor_start / editor_run_tests / editor_build "
-                         "proxy tools.\n")
+                         "proxy tools (multi-engine tooling: --spawn <request.json>, see "
+                         "spawn_request).\n")
         return 2
     with open(argv[1], encoding="utf-8") as fh:
         spec = json.load(fh)

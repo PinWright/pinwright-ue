@@ -5,12 +5,6 @@ description: Drive the PinWright plugin to a green compile + automation suite on
 
 # MCP Version Matrix
 
-> **TODO(deferred): other-engine builds/suites used the retired pinwright_launch.py CLI; port to
-> pinwright_supervisor.spawn_supervised or a proxy tool before the next version-matrix run.** The
-> workflow's C2 (build) and T1 (suite) steps still call that CLI. `editor_build` / `editor_run_tests`
-> cannot replace it: they always use the host project's own `EngineAssociation`, not engines 5.3-5.7.
-> Do not launch this skill until the port lands.
-
 Take the PinWright plugin to green stdio-connector unit tests + a clean compile + green automation suite + a
 clean Rocket packaging gate on **every installed UE version** (5.3-5.8), as a background Workflow. Builds are
 machine-serial on one box, so the run processes **one version at a time**: it syncs that version's host clone
@@ -144,11 +138,17 @@ When the user asks to stop:
 
 ## Notes
 
-- **Offscreen:** the per-version agent runs the full suite through the retired `pinwright_launch.py suite --mode offscreen` (see the TODO at the top)
-  (the `-Cmd` twin with `-RenderOffScreen -unattended -nopause -nosplash -nocefaccelpaint
-  -ddc=InstalledNoZenLocalFallback`, real RHI; a full-suite verdict is taken in `offscreen` until
-  renderer-dependent tests skip cleanly under NullRHI) from a `-WindowStyle Hidden` shell and never `-log`, so
-  no editor or console window appears. The build redirects to a log
+- **Capped launches:** the per-version agent builds (C2) and runs the full suite (T1) through the capped,
+  detached supervisor behind `editor_build` / `editor_run_tests` (`Content/Python/pinwright_supervisor.py`
+  in that host's clone), via its multi-engine entry point `--spawn <request.json>` (`spawn_request`):
+  the proxy tools always target the MCP client's own project and its `EngineAssociation`, never engines
+  5.3-5.7. Same guarantees: 0.60-of-RAM Job Object cap, BelowNormal, kill-on-close, WMI-detached,
+  required `reason` and (suite) `mode`, the one-line `PINWRIGHT_JOB_RESULT` / `PINWRIGHT_SUITE_RESULT`
+  verdict beside the log; the suite verdict comes from `check_suite_log.py`.
+- **Offscreen:** the suite runs with `mode: offscreen` (the `-Cmd` twin with the `editor_run_tests` argv:
+  `-RenderOffScreen -unattended -nopause -nosplash -nocefaccelpaint -ddc=InstalledNoZenLocalFallback`, real
+  RHI; a full-suite verdict is taken in `offscreen` until renderer-dependent tests skip cleanly under
+  NullRHI) and never `-log`, so no editor or console window appears. The build redirects to a log
   file. (See the workflow script for the exact launch.) `-ddc=InstalledNoZenLocalFallback` is required on this
   box: IPv6 loopback is refused machine-wide, so the editor cannot reach ZenServer and the default DDC graph
   comes up with no writable node, aborting startup with "Unable to use default cache graph

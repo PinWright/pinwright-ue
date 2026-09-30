@@ -557,6 +557,78 @@ class InternalEntryPointTest(TempDirTest):
         self.assertIn("exited without a handoff", str(ctx.exception))
 
 
+class SpawnRequestEntryPointTest(TempDirTest):
+    """`--spawn <request.json>`: the multi-engine tooling entry point (mcp-version-matrix)."""
+
+    SUITE = {"kind": "suite", "reason": "matrix T1 on UE 5.6", "launchedBy": "mcp-version-matrix",
+             "mode": "offscreen", "uproject": "C:\\H56\\H56.uproject",
+             "editorExe": "C:\\UE_5.6\\Engine\\Binaries\\Win64\\UnrealEditor.exe",
+             "filter": "PinWright", "logPath": "C:\\H56\\Saved\\Logs\\H56.log",
+             "extraArgs": ["-PinWrightTestGcEvery=25"]}
+
+    def _run(self, request, spawn=None):
+        # A BOM, as PowerShell 5.1's Set-Content -Encoding utf8 writes one.
+        path = os.path.join(self.tmp, "request.json")
+        with open(path, "w", encoding="utf-8-sig") as fh:
+            json.dump(request, fh)
+        fake = pl.SupervisedRun("r", 4242, 1, 77, 1, "res.txt", "sup.log", request.get("logPath"),
+                                {"capped": True, "capBytes": 10, "priority": "BelowNormal",
+                                 "commandLine": "cmd", "detached": True})
+        out = io.StringIO()
+        with mock.patch.object(pl, "spawn_supervised", side_effect=spawn, return_value=fake) as sp, \
+                mock.patch.object(pl, "suite_executable", return_value="C:\\UE\\UnrealEditor-Cmd.exe"), \
+                contextlib.redirect_stdout(out):
+            code = pl.main([pl.SPAWN_FLAG, path])
+        return code, json.loads(out.getvalue().splitlines()[-1]), sp
+
+    def test_suite_request_launches_the_editor_run_tests_argv(self):
+        code, answer, sp = self._run(self.SUITE)
+        self.assertEqual(code, 0)
+        argv = sp.call_args.args[0]
+        self.assertEqual(argv, ["C:\\UE\\UnrealEditor-Cmd.exe"] + pl.suite_argv(
+            self.SUITE["uproject"], "PinWright", self.SUITE["logPath"], "offscreen",
+            extra_args=["-PinWrightTestGcEvery=25"]))
+        self.assertEqual(sp.call_args.kwargs, {"kind": "suite", "reason": "matrix T1 on UE 5.6",
+                                               "launched_by": "mcp-version-matrix",
+                                               "mode": "offscreen",
+                                               "log_path": self.SUITE["logPath"]})
+        self.assertEqual((answer["pid"], answer["supervisorPid"], answer["resultPath"]),
+                         (4242, 77, "res.txt"))
+
+    def test_command_request_writes_the_reason_into_the_output(self):
+        request = {"kind": "command", "reason": "matrix C2", "launchedBy": "mcp-version-matrix",
+                   "argv": ["Build.bat", "HostEditor"], "outputPath": "C:\\H\\build.log"}
+        code, _, sp = self._run(request)
+        self.assertEqual(code, 0)
+        self.assertEqual(sp.call_args.args[0], ["Build.bat", "HostEditor"])
+        kwargs = sp.call_args.kwargs
+        self.assertEqual((kwargs["kind"], kwargs["mode"], kwargs["output_path"]),
+                         ("command", None, "C:\\H\\build.log"))
+        self.assertIn("matrix C2", kwargs["output_header"])
+
+    def test_mode_and_reason_have_no_default(self):
+        for drop in ("mode", "reason", "launchedBy"):
+            request = {k: v for k, v in self.SUITE.items() if k != drop}
+            with self.subTest(drop=drop):
+                code, answer, sp = self._run(request)
+                self.assertEqual(code, 2)
+                self.assertIn(drop, answer["error"])
+                sp.assert_not_called()
+        for bad in ({"mode": "fast"}, {"reason": "  "}, {"memoryFraction": 0.9}, {"kind": "run"}):
+            with self.subTest(bad=bad):
+                code, _, sp = self._run(dict(self.SUITE, **bad))
+                self.assertEqual(code, 2)
+                sp.assert_not_called()
+
+    def test_a_protocol_skew_is_reported_by_code(self):
+        def skew(*_args, **_kwargs):
+            raise pl.SupervisorVersionMismatch(pl._mismatch_text(3))
+
+        code, answer, _ = self._run(self.SUITE, spawn=skew)
+        self.assertEqual(code, pl.EXIT_VERSION_MISMATCH)
+        self.assertEqual(answer["code"], pl.VERSION_MISMATCH)
+
+
 class ProtocolVersionTest(TempDirTest):
     """The proxy keeps this module in memory but launches the file on disk, so the two can differ
     (a proxy started before an edit). Every skew must say so by name, not as a bare refusal."""
