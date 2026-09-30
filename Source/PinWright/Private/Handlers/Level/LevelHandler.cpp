@@ -19,6 +19,7 @@
 #include "Utils/PathUtils.h"
 #include "PinWrightSubsystem.h"
 #include "Dom/JsonObject.h"
+#include "Algo/Count.h"
 
 #include "ActorEditorUtils.h"
 #include "AssetRegistry/AssetRegistryModule.h"
@@ -1392,7 +1393,10 @@ REGISTER_RPC_HANDLER("level.get_info", "level", "Return descriptive metadata abo
     TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
     Result->SetStringField(TEXT("levelPath"), TargetLevel->GetOutermost() ? TargetLevel->GetOutermost()->GetName() : TEXT(""));
     Result->SetStringField(TEXT("levelName"), TargetLevel->GetName());
-    Result->SetNumberField(TEXT("actorCount"), TargetLevel->Actors.Num());
+    // ULevel::Actors keeps a null slot (and, until GC, a garbage actor) for every destroyed actor, so
+    // Num() reads high after a delete; count only the live ones, like actor.list.
+    Result->SetNumberField(TEXT("actorCount"), Algo::CountIf(TargetLevel->Actors,
+        [](const AActor* Actor) { return IsValid(Actor); }));
     Ctx.SendSuccess(Result);
     return true;
 }

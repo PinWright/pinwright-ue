@@ -980,6 +980,54 @@ bool FLevelGetInfoValidParamsNoCrashTest::RunTest(const FString& Parameters)
     return true;
 }
 
+// B-level-get-info-actorcount-counts-destroyed-actors: destroying an editor actor leaves a null
+// slot in ULevel::Actors (UWorld::RemoveActor), so the old Actors.Num() count did not drop.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FLevelGetInfoActorCountDropsOnDestroyTest,
+    "PinWright.level.get_info.ActorCountDropsOnDestroy",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FLevelGetInfoActorCountDropsOnDestroyTest::RunTest(const FString& Parameters)
+{
+    UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+    if (!World)
+    {
+        PinWrightTestSkip::SkipAssertions(*this, TEXT("editor-world-unavailable"),
+            TEXT("level.get_info reads the editor world."));
+        return true;
+    }
+
+    FScopedEditorWorldActorGuard WorldGuard;
+    AStaticMeshActor* Actor = SpawnTransientCubeActor(World,
+        FString::Printf(TEXT("GetInfoCountProbe_%s"), *FGuid::NewGuid().ToString(EGuidFormats::Digits)),
+        FVector::ZeroVector);
+    if (!Actor || !Actor->GetLevel())
+    {
+        PinWrightTestSkip::SkipAssertions(*this, TEXT("fixture-spawn-failed"),
+            TEXT("Could not spawn the probe actor."));
+        return true;
+    }
+
+    TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+    Payload->SetStringField(TEXT("levelPath"), Actor->GetLevel()->GetOutermost()->GetName());
+    const auto ReadActorCount = [this, &Payload]() -> int32
+    {
+        FTestResponseCapture Capture;
+        InvokeHandlerWithCapture(TEXT("level.get_info"), Payload, Capture);
+        int32 Count = -1;
+        if (TestTrue(TEXT("level.get_info succeeds"), Capture.bSuccess && Capture.Result.IsValid()))
+        {
+            Capture.Result->TryGetNumberField(TEXT("actorCount"), Count);
+        }
+        return Count;
+    };
+
+    const int32 Before = ReadActorCount();
+    World->EditorDestroyActor(Actor, /*bShouldModifyLevel=*/false);
+    const int32 After = ReadActorCount();
+    TestEqual(TEXT("actorCount drops by one after the actor is destroyed"), After, Before - 1);
+    return true;
+}
+
 // Shared regression assertion for E-level-getters-require-loaded-not-on-disk: the
 // read-only inspection getters (level.get_info / get_actors / get_bounds) resolve
 // levelPath through FindLevelByPathLevel, which walks only the active world's loaded
