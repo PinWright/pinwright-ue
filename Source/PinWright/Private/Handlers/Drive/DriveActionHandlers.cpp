@@ -66,6 +66,8 @@
         "traverses SDL mouse confinement (LockOnCapture) and relative mode the way a human's " \
         "mouse does, and nothing forces the Slate inactive-input flag (default false). " \
         "Linux/X11 only — INVALID_ARGUMENT elsewhere or when no X display can be opened. " \
+        "TARGET_OCCLUDED, with nothing injected, when the top X window at the target belongs " \
+        "to another process (occluding_window / occluding_pid name it). " \
         "Mouse only; drive.key has no os_input. Blocks the editor for ~0.5s while the motion " \
         "path and button hold are paced. The response's input_path reports which path ran.", \
         "false")

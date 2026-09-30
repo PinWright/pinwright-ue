@@ -1,8 +1,8 @@
 // Copyright (c) 2026 Alexander Penkin. MIT License.
 
 // Unit tests for the pure half of FDriveOsInput (the X11/XTEST injection path behind
-// drive.click / drive.hover os_input): the interpolated motion path and the X button
-// mapping. The injection itself needs a live X display and is not covered here; these two
+// drive.click / drive.hover os_input): the interpolated motion path, the X button
+// mapping and the point-ownership decision. The injection itself needs a live X display and is not covered here; these two
 // are the parts that can be silently wrong — a path that does not end on the target, or a
 // middle/right button swap, both of which look like "the click did nothing".
 
@@ -54,5 +54,45 @@ bool FDriveOsInputButtonMappingTest::RunTest(const FString& Parameters)
     TestEqual(TEXT("left maps to X button 1"), FDriveOsInput::ButtonToXButton(EDriveMouseButton::Left), 1);
     TestEqual(TEXT("middle maps to X button 2"), FDriveOsInput::ButtonToXButton(EDriveMouseButton::Middle), 2);
     TestEqual(TEXT("right maps to X button 3"), FDriveOsInput::ButtonToXButton(EDriveMouseButton::Right), 3);
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveOsInputPointOwnershipTest,
+    "PinWright.drive.os_input.PointOwnership",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FDriveOsInputPointOwnershipTest::RunTest(const FString& Parameters)
+{
+    // The guard that keeps os_input from pressing into another process's window on a shared
+    // X display: the pids are the _NET_WM_PID of each window containing the point, outermost
+    // first, 0 where a window names none (a WM frame, the desktop).
+    constexpr uint32 Self = 1000;
+    constexpr uint32 Peer = 2000;
+    constexpr uint32 Wm = 3000;
+    int32 Owner = 0;
+
+    TestTrue(TEXT("our own override-redirect window (no frame) is ours"),
+        FDriveOsInput::IsPointOwnedBy({ Self }, Self, Owner));
+    TestEqual(TEXT("... and it is the deciding window"), Owner, 0);
+
+    TestTrue(TEXT("our client under an unnamed WM frame is ours"),
+        FDriveOsInput::IsPointOwnedBy({ 0, Self }, Self, Owner));
+    TestEqual(TEXT("... decided by the client, not the frame"), Owner, 1);
+
+    TestTrue(TEXT("a frame carrying the WM's pid does not steal our client"),
+        FDriveOsInput::IsPointOwnedBy({ Wm, Self }, Self, Owner));
+    TestEqual(TEXT("... the deepest named window decides"), Owner, 1);
+
+    TestFalse(TEXT("a peer editor's window stacked over ours is foreign"),
+        FDriveOsInput::IsPointOwnedBy({ 0, Peer }, Self, Owner));
+    TestEqual(TEXT("... and names the peer's window"), Owner, 1);
+
+    TestFalse(TEXT("a point on a window frame with no pid is not ours"),
+        FDriveOsInput::IsPointOwnedBy({ 0 }, Self, Owner));
+    TestEqual(TEXT("... with no deciding window"), Owner, static_cast<int32>(INDEX_NONE));
+
+    TestFalse(TEXT("bare root (nothing mapped at the point) is not ours"),
+        FDriveOsInput::IsPointOwnedBy({}, Self, Owner));
+    TestEqual(TEXT("... with no deciding window"), Owner, static_cast<int32>(INDEX_NONE));
     return true;
 }

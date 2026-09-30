@@ -1488,6 +1488,7 @@ namespace ErrorCodes
     // drive.* pointer verbs: the target's center is routed to a different top-level window (one
     // stacked over it, e.g. a Message Log the editor opened on PIE start) or to no window at all,
     // so the injected input would land there instead. Refused before any button/wheel event.
+    // With os_input, also when the top X window at the point belongs to another process.
     inline constexpr TCHAR ERR_TARGET_OCCLUDED[]                            = TEXT("TARGET_OCCLUDED");
     inline constexpr TCHAR ERR_TARGET_STATE_NOT_FOUND[]                    = TEXT("TARGET_STATE_NOT_FOUND");
     inline constexpr TCHAR ERR_TEMP_FILE_WRITE_FAILED[]                     = TEXT("TEMP_FILE_WRITE_FAILED");

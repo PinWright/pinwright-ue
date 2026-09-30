@@ -44,8 +44,23 @@ public:
     // geometry.absolute already reports) along ComputeMotionPath. Blocks ~250 ms.
     static bool MoveTo(const FVector2D& ScreenPos, FString& OutError);
 
-    // MoveTo, then a real button press held ~80 ms and released. Blocks ~450 ms.
+    // MoveTo, then a real button press held ~80 ms and released. Blocks ~450 ms. Refuses
+    // (no press) when a foreign window took the point during the motion.
     static bool ClickAt(const FVector2D& ScreenPos, EDriveMouseButton Button, FString& OutError);
+
+    // The X window that would receive real pointer input at a point when it does NOT belong
+    // to this process: a peer editor, a game or a desktop panel stacked over the target.
+    struct FForeignWindow
+    {
+        uint64 WindowId = 0;
+        uint32 Pid = 0;     // 0 when no window at the point names a _NET_WM_PID
+        FString Title;
+    };
+
+    // True, filling Out, when the top-most X window at ScreenPos is not this editor's, so
+    // XTEST input there would reach another application. False when this process owns the
+    // point, and when X is unavailable (IsAvailable already refused os_input then).
+    static bool FindForeignWindowAt(const FVector2D& ScreenPos, FForeignWindow& Out);
 
     // ---- Pure helpers (no X11 dependency; unit-tested) ----
 
@@ -56,4 +71,12 @@ public:
 
     // X button number for a drive button: left 1, middle 2, right 3.
     static int32 ButtonToXButton(EDriveMouseButton Button);
+
+    // Who owns input at a point, from the _NET_WM_PID values (0 = unset) of the X windows
+    // containing it, outermost (the root's child) first. The DEEPEST window naming a pid
+    // decides: a reparenting window manager's frame sits above the client window and may
+    // carry the WM's own pid. Sets OutOwnerIndex to that window (INDEX_NONE when none names
+    // a pid) and returns whether it is SelfPid; an unnamed point is never ours, because
+    // SDL stamps _NET_WM_PID on every window it creates.
+    static bool IsPointOwnedBy(const TArray<uint32>& PathPids, uint32 SelfPid, int32& OutOwnerIndex);
 };

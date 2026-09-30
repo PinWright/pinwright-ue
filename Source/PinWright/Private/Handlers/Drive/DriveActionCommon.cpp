@@ -8,6 +8,7 @@
 #include "Handlers/Drive/DriveInput.h"
 #include "Handlers/Drive/DriveJson.h"
 #include "Handlers/Drive/DriveLiveResolver.h"
+#include "Handlers/Drive/DriveOsInput.h"
 #include "Handlers/Drive/DriveSettleDriver.h"
 #include "Handlers/HandlerContext.h"
 #include "Handlers/ErrorCodes.h"
@@ -58,6 +59,25 @@ namespace DriveActionCommonLocal
                 : FString::Printf(
                     TEXT("No window accepts pointer input at element '%s''s center (%.0f, %.0f), so the input would land nowhere."),
                     *Handle, Point.X, Point.Y),
+            Details);
+    }
+
+    // os_input's TARGET_OCCLUDED: the same contract as SendOccluded, for an X window of
+    // another process, which Slate cannot see and which would take the real input.
+    void SendOsOccluded(FHandlerContext& Ctx, const FString& Handle, const FVector2D& Point,
+        const FDriveOsInput::FForeignWindow& Foreign)
+    {
+        TSharedPtr<FJsonObject> Details = MakeShared<FJsonObject>();
+        Details->SetStringField(TEXT("handle"), Handle);
+        Details->SetNumberField(TEXT("x"), Point.X);
+        Details->SetNumberField(TEXT("y"), Point.Y);
+        Details->SetStringField(TEXT("occluding_window"), Foreign.Title);
+        Details->SetNumberField(TEXT("occluding_window_id"), static_cast<double>(Foreign.WindowId));
+        Details->SetNumberField(TEXT("occluding_pid"), Foreign.Pid);
+        Ctx.SendError(ErrorCodes::ERR_TARGET_OCCLUDED,
+            FString::Printf(
+                TEXT("Element '%s' is covered at (%.0f, %.0f) by X window 0x%llx '%s' (pid %u), which is not this editor's and would receive the real input. Nothing was injected. Raise this editor's window or move that one, then retry."),
+                *Handle, Point.X, Point.Y, Foreign.WindowId, *Foreign.Title, Foreign.Pid),
             Details);
     }
 }
@@ -367,6 +387,16 @@ void FDriveActionCommon::RunAction(FHandlerContext& Ctx, const FString& Handle, 
     // no_change_within_budget. So move the pointer first and inject only once the routing names
     // the target's window. os_input is left alone: it never warps the Slate cursor, and the X
     // server routes its events itself. A retainer's virtual window never appears in that routing.
+    // os_input's counterpart: the X server routes real input to the top-most X window at the
+    // point, which may be another process's (a peer editor or game on a shared display).
+    // Check before anything is injected; ClickAt re-checks before the press.
+    FDriveOsInput::FForeignWindow Foreign;
+    if (InputPathLabel == TEXT("os_x11") && FDriveOsInput::FindForeignWindowAt(TargetCenter, Foreign))
+    {
+        SendOsOccluded(Ctx, Handle, TargetCenter, Foreign);
+        return;
+    }
+
     const bool bGatePointer = TargetWindow.IsValid() && !TargetWindow->IsVirtualWindow()
         && InputPathLabel != TEXT("os_x11");
     if (bGatePointer)
