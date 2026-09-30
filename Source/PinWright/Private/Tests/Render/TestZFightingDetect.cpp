@@ -15,8 +15,10 @@
 // production call site deleted.
 
 #include "Misc/AutomationTest.h"
+#include "Compat/EngineVersionCompat.h"
 #include "Handlers/HandlerContext.h"
 #include "Handlers/HandlerRegistration.h"
+#include "Handlers/Render/SceneCaptureProbeUtils.h"
 #include "Handlers/Render/ZFightingAnalysis.h"
 #include "Tests/TestUtils.h"
 #include "Tests/TestWorldUtils.h"
@@ -564,5 +566,46 @@ bool FRenderZFightingClipExclusionTest::RunTest(const FString& Parameters)
     TestEqual(TEXT("only the in-range pixel counts as affected"),
         PinWrightZFighting::CountAffected(Mask), 1);
 
+    return true;
+}
+
+// The probe's float render targets must use a format EVERY RHI can convert in
+// ReadLinearColorPixels. PF_R32_FLOAT is the trap: D3D11 special-cases it, so a Windows run
+// passes, while Vulkan's ConvertRawDataToFLinearColor (VulkanRenderTarget.cpp) has no R32_SFLOAT
+// case and check()-fails, crashing the editor on the first render.detect_z_fighting call on Linux.
+// The allow-list is the intersection of Vulkan's FLinearColor switch and the shared
+// ConvertRAWSurfaceDataToFLinearColor path D3D11/D3D12/Metal use. Pure check, no render: the
+// crash is invisible on a DX host, so a render-driven test there could never catch it.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRenderZFightingProbeTargetFormatPortableTest,
+    "PinWright.render.detect_z_fighting.ProbeTargetFormatsAreRhiPortable",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FRenderZFightingProbeTargetFormatPortableTest::RunTest(const FString& Parameters)
+{
+    const EPixelFormat PortableFormats[] = {
+        PF_A32B32G32R32F, PF_FloatRGBA, PF_FloatR11G11B10, PF_A2B10G10R10,
+        PF_R8G8B8A8, PF_B8G8R8A8, PF_A16B16G16R16, PF_G16R16, PF_G16, PF_R16F };
+
+    const ESceneCaptureSource Sources[] = { SCS_SceneDepth, SCS_BaseColor, SCS_Normal };
+    for (const ESceneCaptureSource Source : Sources)
+    {
+        const EPixelFormat Format = PinWrightSceneCaptureProbe::AnalysisTargetFormat(
+            PinWrightSceneCaptureProbe::SourceIsSingleChannelDepth(Source));
+        bool bPortable = false;
+        for (const EPixelFormat Portable : PortableFormats)
+        {
+            bPortable |= Format == Portable;
+        }
+        TestTrue(FString::Printf(TEXT("source %d uses an RHI-portable readback format (got %s)"),
+            static_cast<int32>(Source), GetPixelFormatString(Format)), bPortable);
+    }
+
+#if UE_VERSION_NEWER_THAN_OR_EQUAL(5, 4, 0)
+    // Depth is centimetres out to kilometres; a half float (11-bit mantissa, max 65504) would
+    // quantise it into the z-fight noise the detector is trying to separate.
+    const EPixelFormat DepthFormat = PinWrightSceneCaptureProbe::AnalysisTargetFormat(true);
+    TestEqual(TEXT("scene depth keeps 32-bit float precision per channel"),
+        static_cast<int32>(GPixelFormats[DepthFormat].BlockBytes / GPixelFormats[DepthFormat].NumComponents), 4);
+#endif
     return true;
 }

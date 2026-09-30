@@ -6,6 +6,7 @@
 #include "Engine/EngineBaseTypes.h" // EViewModeIndex
 #include "Engine/EngineTypes.h" // ESceneCaptureSource
 #include "Handlers/Render/CaptureDefaults.h"
+#include "PixelFormat.h"
 #include "UObject/StrongObjectPtr.h"
 
 class UWorld;
@@ -25,7 +26,7 @@ struct FEngineShowFlags;
 //
 //   - non-colour capture sources (scene depth as float centimetres, G-buffer base colour,
 //     G-buffer world normal),
-//   - float render targets (PF_R32_FLOAT / PF_FloatRGBA) instead of BGRA8,
+//   - float render targets (PF_A32B32G32R32F / PF_FloatRGBA) instead of BGRA8,
 //   - a caller-chosen NEAR CLIPPING PLANE, which is the perturbation lever
 //     render.detect_z_fighting is built on,
 //   - no viewport, so it works with no Level Editor window open.
@@ -114,6 +115,11 @@ namespace PinWrightSceneCaptureProbe
     // True when Source needs a single-channel float target (scene depth) rather than an
     // RGBA float one. Exposed so a caller can reason about the readback layout.
     bool SourceIsSingleChannelDepth(ESceneCaptureSource Source);
+
+    // Pixel format of the float analysis render target Capture() creates for a source of the
+    // given kind. Every returned format must be one that ReadLinearColorPixels can convert on
+    // every RHI; exposed so a test can pin that without rendering.
+    EPixelFormat AnalysisTargetFormat(bool bSingleChannelDepth);
 
     // Owns the transient capture component and render target for the lifetime of one RPC.
     //

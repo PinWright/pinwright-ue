@@ -27,6 +27,15 @@ namespace PinWrightSceneCaptureProbe
         return Source == SCS_SceneDepth;
     }
 
+    EPixelFormat AnalysisTargetFormat(bool bSingleChannelDepth)
+    {
+#if UE_VERSION_NEWER_THAN_OR_EQUAL(5, 4, 0)
+        return bSingleChannelDepth ? PF_A32B32G32R32F : PF_FloatRGBA;
+#else
+        return PF_FloatRGBA;
+#endif
+    }
+
     FSceneCaptureProbe::FSceneCaptureProbe(UWorld* InWorld)
         : World(InWorld)
     {
@@ -125,15 +134,20 @@ namespace PinWrightSceneCaptureProbe
             return false;
         }
 
-        // PF_R32_FLOAT for depth: SCS_SceneDepth writes raw linear centimetres with no clamp,
+        // PF_A32B32G32R32F for depth: SCS_SceneDepth writes raw linear centimetres with no clamp,
         // so an 8-bit UNORM target (the format every other capture in this plugin uses) would
-        // saturate to white past 1 cm and silently return a uniform image. PF_FloatRGBA for
+        // saturate to white past 1 cm and silently return a uniform image. Depth needs a full
+        // 32-bit float, and PF_R32_FLOAT is NOT an option even though it is the natural fit: the
+        // Vulkan RHI's FLinearColor readback has no R32_SFLOAT case and check()-fails on it
+        // (VulkanRenderTarget.cpp, ConvertRawDataToFLinearColor), which crashed the editor on
+        // Linux. RGBA32F is converted by Vulkan and by the shared RHISurfaceDataConversion path
+        // D3D11/D3D12/Metal use; the depth sits in R. PF_FloatRGBA for
         // the G-buffer sources: half floats carry the channel exactly enough that two renders
         // of an unchanged surface come back bit-identical, which is the whole basis of the
         // comparison built on top of this.
-        // UE 5.3's FTextureRenderTargetResource::IsSupportedFormat does not list PF_R32_FLOAT
-        // (TextureRenderTarget.cpp:73-90; 5.4 widened the list), and InitCustomFormat check()s it,
-        // so asking for it there is a hard assert rather than a soft rejection. PF_FloatRGBA is
+        // UE 5.3's FTextureRenderTargetResource::IsSupportedFormat list (TextureRenderTarget.cpp:73-90;
+        // 5.4 widened it) is not verified to include PF_A32B32G32R32F, and InitCustomFormat check()s
+        // it, so asking there risks a hard assert rather than a soft rejection. PF_FloatRGBA is
         // supported on every supported engine and is still a float format, so depth stays linear
         // and unclamped instead of saturating the way an 8-bit UNORM target would. The cost on 5.3
         // is half-float precision (~11-bit mantissa, finite up to 65504 cm) in the R channel, which
@@ -149,11 +163,7 @@ namespace PinWrightSceneCaptureProbe
         }
         else
         {
-#if UE_VERSION_NEWER_THAN_OR_EQUAL(5, 4, 0)
-            const EPixelFormat Format = bSingleChannelDepth ? PF_R32_FLOAT : PF_FloatRGBA;
-#else
-            const EPixelFormat Format = PF_FloatRGBA;
-#endif
+            const EPixelFormat Format = AnalysisTargetFormat(bSingleChannelDepth);
             // bForceLinearGamma: these pixels are measurements. An sRGB encode on the way out
             // would apply a non-linear curve to depth centimetres and to normal components.
             Target->InitCustomFormat(Width, Height, Format, /*bInForceLinearGamma=*/true);
