@@ -1743,7 +1743,7 @@ class ProxyEditorRunTestsTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             project = self._project(temp)
             proxy = self._proxy(uproject=project, url=self.URL)
-            result, supervised, engine_root, editor_exe = self._run(proxy)
+            result, supervised, _engine_root, _editor_exe = self._run(proxy)
         self.assertFalse(result["isError"], result)
         structured = result["structuredContent"]
         self.assertEqual(structured["status"], "TESTS_STARTED")
@@ -1758,7 +1758,6 @@ class ProxyEditorRunTestsTest(unittest.TestCase):
 
         argv = supervised.call_args.args[0]
         kwargs = supervised.call_args.kwargs
-        self.assertEqual(argv[0], os.path.abspath(_editor_cmd_from_editor(editor_exe)))
         self.assertEqual(argv[1], os.path.abspath(project))
         self.assertIn("-ExecCmds=Automation RunTests PinWright,Quit", argv)
         self.assertIn("-TestExit=Automation Test Queue Empty", argv)
@@ -1772,14 +1771,27 @@ class ProxyEditorRunTestsTest(unittest.TestCase):
         self.assertEqual(kwargs["launched_by"], "editor_run_tests")
         self.assertEqual(kwargs["log_path"], structured["logPath"])
 
-    def test_headless_run_adds_nullrhi_and_keeps_the_windowless_binary(self):
+    @unittest.skipUnless(sys.platform == "win32",
+                         "the UnrealEditor-Cmd console twin exists only on Windows (a subsystem "
+                         "workaround); Linux runs the plain binary, pinned by "
+                         "SuiteExecutableTest.test_linux_windowless_is_plain_binary")
+    def test_windowless_runs_use_the_cmd_console_twin(self):
+        for mode in ("offscreen", "headless"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temp:
+                proxy = self._proxy(uproject=self._project(temp), url=self.URL)
+                result, supervised, _root, editor_exe = self._run(
+                    proxy, {"filter": "PinWright", "reason": REASON, "mode": mode})
+                self.assertFalse(result["isError"], result)
+                self.assertEqual(supervised.call_args.args[0][0],
+                                 os.path.abspath(_editor_cmd_from_editor(editor_exe)))
+
+    def test_headless_run_adds_nullrhi_to_the_offscreen_flags(self):
         with tempfile.TemporaryDirectory() as temp:
             proxy = self._proxy(uproject=self._project(temp), url=self.URL)
-            result, supervised, _root, editor_exe = self._run(
+            result, supervised, _root, _editor_exe = self._run(
                 proxy, {"filter": "PinWright", "reason": REASON, "mode": "headless"})
         self.assertFalse(result["isError"], result)
         argv = supervised.call_args.args[0]
-        self.assertEqual(argv[0], os.path.abspath(_editor_cmd_from_editor(editor_exe)))
         self.assertIn("-NullRHI", argv)
         self.assertIn("-RenderOffscreen", argv)
         self.assertEqual(supervised.call_args.kwargs["mode"], "headless")

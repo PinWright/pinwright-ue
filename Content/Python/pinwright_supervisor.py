@@ -779,6 +779,10 @@ def _start_child(spec):
         proc = subprocess.Popen(command_line, creationflags=flags, stdin=subprocess.DEVNULL,
                                 stdout=out, stderr=err, close_fds=True, env=env)
         return _Child(proc, uncapped_reason="capped=False requested"), command_line
+    if shutil.which(argv[0]) is None:
+        # Under systemd-run the Popen below starts systemd-run, not argv[0], so a missing
+        # executable would otherwise hand off as a started child and surface only as exit 1.
+        raise FileNotFoundError(2, "No such executable file", argv[0])
     prefix, reason = (systemd_scope_prefix(spec["capBytes"]) if capped
                       else (None, "capped=False requested"))
     cmd = (prefix or []) + argv
