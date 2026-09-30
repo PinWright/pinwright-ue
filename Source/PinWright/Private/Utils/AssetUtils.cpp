@@ -1426,6 +1426,29 @@ UMaterialInterface* McpLoadMaterialWithFallback(
     return nullptr;
 }
 
+bool MarkNeverSavedPackageDirty(UPackage* Package)
+{
+    if (!Package || Package->IsDirty() || Package == GetTransientPackage()
+        || Package->HasAnyFlags(RF_Transient)
+        || Package->HasAnyPackageFlags(PKG_PlayInEditor | PKG_CompiledIn)
+        || FPackageName::IsTempPackage(Package->GetName()))
+    {
+        return false;
+    }
+    // TryConvert + FileSize rather than DoesPackageExist, which logs a warning for an unmounted
+    // name. No mount root means no file can ever be written, so there is nothing to owe.
+    FString Filename;
+    if (!FPackageName::TryConvertLongPackageNameToFilename(Package->GetName(), Filename,
+            Package->ContainsMap() ? FPackageName::GetMapPackageExtension()
+                                   : FPackageName::GetAssetPackageExtension())
+        || IFileManager::Get().FileSize(*Filename) >= 0)
+    {
+        return false;
+    }
+    Package->SetDirtyFlag(true);
+    return true;
+}
+
 bool WasSavePersisted(ESaveLoadedAssetOutcome Outcome)
 {
     return Outcome == ESaveLoadedAssetOutcome::Saved
@@ -1456,6 +1479,11 @@ ESaveLoadedAssetOutcome SaveLoadedAssetThrottled(UObject* Asset, double Throttle
     FString Key = Asset->GetPathName();
     if (Key.IsEmpty())
         Key = Asset->GetName();
+
+    // Ahead of every dirty-flag read below: a never-written package is owed a save even when
+    // its flag is clean, so it must not reach the already-clean verdicts (throttle skip, PIE
+    // gate bypass, bOnlyIfIsDirty no-op). Left dirty on a refusal, so save_all still sees it.
+    MarkNeverSavedPackageDirty(Package);
 
     // The PIE gate, ahead of the throttle on purpose (board
     // B-asset-save-pie-failure-reports-pendingflush). UEditorAssetLibrary::SaveLoadedAsset

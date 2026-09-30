@@ -20,7 +20,9 @@
 #include "Misc/ConfigCacheIni.h"
 #include "Misc/Parse.h"
 #include "Misc/ScopeLock.h"
+#include "AssetRegistry/IAssetRegistry.h"
 #include "Utils/ActorUtils.h"
+#include "Utils/AssetUtils.h"
 #include "Utils/GatewayPortFile.h"
 #include "Utils/HttpResponseSpill.h"
 #include "Utils/JobMonitorLog.h"
@@ -215,6 +217,18 @@ void UPinWrightSubsystem::Initialize(
     ThrottleGuard = MakeShared<FBackgroundThrottleGuard>();
     ThrottleGuard->Register();
 
+    // One hook instead of a fix in every create verb: the engine can refuse the verb's own
+    // MarkPackageDirty (e.g. under GIsPlayInEditorWorld), and a clean never-saved package is
+    // invisible to editor.save_all, editor.list_dirty_packages and the quit prompt.
+    InMemoryAssetCreatedHandle = IAssetRegistry::GetChecked().OnInMemoryAssetCreated().AddLambda(
+        [](UObject* Asset)
+        {
+            if (Asset)
+            {
+                MarkNeverSavedPackageDirty(Asset->GetOutermost());
+            }
+        });
+
     // Register ticker
     TickHandle = FTSTicker::GetCoreTicker().AddTicker(
         FTickerDelegate::CreateUObject(this,
@@ -250,6 +264,15 @@ void UPinWrightSubsystem::Deinitialize()
     {
         FPluginState::Get().GetJobRegistry().OnJobEvent().Remove(JobEventHandle);
         JobEventHandle.Reset();
+    }
+
+    if (InMemoryAssetCreatedHandle.IsValid())
+    {
+        if (IAssetRegistry* AssetRegistry = IAssetRegistry::Get())
+        {
+            AssetRegistry->OnInMemoryAssetCreated().Remove(InMemoryAssetCreatedHandle);
+        }
+        InMemoryAssetCreatedHandle.Reset();
     }
     StreamingJobRequests.Empty();
 

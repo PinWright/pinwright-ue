@@ -477,6 +477,18 @@ ESaveLoadedAssetOutcome SaveLoadedAssetThrottled(UObject* Asset,
                               bool bForce = false,
                               bool bAllowDivergedOverwrite = false);
 
+// A saveable package with no file on disk is unsaved work whatever its dirty flag says, so this
+// sets the flag on one that is clean. Returns true only when it did.
+//
+// Why the flag can be wrong: UObjectBaseUtility::MarkPackageDirty is silently refused while
+// GIsPlayInEditorWorld, GIsTransacting or a package load is in progress, and FactoryCreateNew
+// never sets it. A new asset caught by either sat clean in memory: an unforced save skipped it
+// as already clean, editor.list_dirty_packages / editor.save_all never saw it, and quit dropped
+// it (board B-asset-save-skips-never-saved-clean-package). Called from SaveLoadedAssetThrottled
+// and from the subsystem's IAssetRegistry::OnInMemoryAssetCreated hook, so every create path
+// that registers its asset is covered without a per-verb fix.
+bool MarkNeverSavedPackageDirty(UPackage* Package);
+
 // Force a synchronous scan of a specific package or folder path.
 void ScanPathSynchronous(const FString& InPath, bool bRecursive = true);
 

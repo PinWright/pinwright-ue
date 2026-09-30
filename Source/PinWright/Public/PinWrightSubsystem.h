@@ -209,6 +209,10 @@ private:
     // Handle for the FJobRegistry::OnJobEvent subscription.
     FDelegateHandle JobEventHandle;
 
+    // Handle for the IAssetRegistry::OnInMemoryAssetCreated subscription that keeps a newly
+    // created, never-saved asset's package dirty (MarkNeverSavedPackageDirty, Utils/AssetUtils.h).
+    FDelegateHandle InMemoryAssetCreatedHandle;
+
     // Ticker handle
     FTSTicker::FDelegateHandle TickHandle;
 

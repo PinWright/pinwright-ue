@@ -20,7 +20,9 @@
 #include "Misc/AutomationTest.h"
 
 #include "AssetRegistry/AssetRegistryModule.h"
+#include "CoreGlobals.h"
 #include "Dom/JsonObject.h"
+#include "FileHelpers.h"
 #include "HAL/FileManager.h"
 #include "Materials/Material.h"
 #include "Misc/Guid.h"
@@ -410,5 +412,101 @@ bool FAssetSaveStateTransientIsNotPersistableTest::RunTest(const FString& /*Para
     AddAssetSaveReport(Result, /*bSaveRequested=*/true, bDurable, State);
     TestNotEqual(TEXT("a transient asset is not reported as deferred"),
         AssetSaveStateTest_Str(Result, TEXT("saveState")), FString(TEXT("deferred")));
+    return true;
+}
+
+// ============================================================================
+// Never-saved packages whose dirty flag is clean
+// (board B-asset-save-skips-never-saved-clean-package)
+// ============================================================================
+
+// A new asset whose package the engine left clean - MarkPackageDirty refused under
+// GIsPlayInEditorWorld, or a FactoryCreateNew path that never set it - has nothing on disk to
+// fall back on. Pre-fix the unforced save took the bOnlyIfIsDirty no-op, returned
+// SkippedAlreadyClean, found no file and reported failed with nothing written.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetSaveStateNeverSavedCleanPackageIsWrittenTest,
+    "PinWright.assets.AssetSaveState.NeverSavedCleanPackageIsWritten",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetSaveStateNeverSavedCleanPackageIsWrittenTest::RunTest(const FString& /*Parameters*/)
+{
+    const FString PackagePath = AssetSaveStateTest_UniquePackagePath();
+    ON_SCOPE_EXIT { CleanupTestAsset(PackagePath); };
+
+    const FString Filename = AssetSaveStateTest_PackageFilename(PackagePath);
+    if (!TestFalse(TEXT("the test package path resolves to a filename"), Filename.IsEmpty()))
+    {
+        return false;
+    }
+
+    UMaterial* Material = AssetSaveStateTest_MakeMaterial(PackagePath);
+    if (!TestNotNull(TEXT("probe material created"), Material))
+    {
+        return false;
+    }
+    UPackage* Package = Material->GetOutermost();
+    Package->SetDirtyFlag(false);
+
+    IFileManager& Files = IFileManager::Get();
+    TestTrue(TEXT("no .uasset on disk before the save"), Files.FileSize(*Filename) < 0);
+
+    EAssetSaveState State = EAssetSaveState::NotRequested;
+    const bool bDurable = SaveAssetToDiskReportingPresence(
+        Material, /*bForce=*/false, nullptr, nullptr, &State);
+
+    TestEqual(TEXT("an unforced save of a clean never-saved package reports written"),
+        FString(AssetSaveStateToWire(State)), FString(TEXT("written")));
+    TestTrue(TEXT("written is durable"), bDurable);
+    TestTrue(TEXT("the .uasset is on disk"), Files.FileSize(*Filename) > 0);
+    TestFalse(TEXT("the save left the package clean"), Package->IsDirty());
+    return true;
+}
+
+// The create side: registering a new asset must leave its package dirty even when the engine
+// refused the verb's own MarkPackageDirty, or editor.list_dirty_packages / editor.save_all
+// (both FEditorFileUtils dirty lists) and the quit prompt never see it.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetSaveStateCreatedCleanAssetIsDirtyTest,
+    "PinWright.assets.AssetSaveState.CreatedCleanAssetIsListedDirty",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetSaveStateCreatedCleanAssetIsDirtyTest::RunTest(const FString& /*Parameters*/)
+{
+    const FString PackagePath = AssetSaveStateTest_UniquePackagePath();
+    UPackage* Package = CreatePackage(*PackagePath);
+    if (!TestNotNull(TEXT("package created"), Package))
+    {
+        return false;
+    }
+    ON_SCOPE_EXIT
+    {
+        Package->SetDirtyFlag(false);
+        CleanupTestAsset(PackagePath);
+    };
+    UMaterial* Material = NewObject<UMaterial>(
+        Package, FName(*FPackageName::GetLongPackageAssetName(PackagePath)),
+        RF_Public | RF_Standalone);
+    if (!TestNotNull(TEXT("probe material created"), Material))
+    {
+        return false;
+    }
+
+    // The reported shape: a create verb issued while a PIE world is the tick context.
+    {
+        TGuardValue<bool> PieWorldFlagGuard(GIsPlayInEditorWorld, true);
+        Material->MarkPackageDirty();
+    }
+    if (!TestFalse(TEXT("precondition: the engine refused MarkPackageDirty under a PIE world"),
+            Package->IsDirty()))
+    {
+        return false;
+    }
+
+    FAssetRegistryModule::AssetCreated(Material);
+
+    TestTrue(TEXT("registering the never-saved asset left its package dirty"), Package->IsDirty());
+    TArray<UPackage*> DirtyPackages;
+    FEditorFileUtils::GetDirtyContentPackages(DirtyPackages);
+    TestTrue(TEXT("the package is in the dirty list save_all and list_dirty_packages read"),
+        DirtyPackages.Contains(Package));
     return true;
 }

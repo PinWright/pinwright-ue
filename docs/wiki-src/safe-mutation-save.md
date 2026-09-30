@@ -71,6 +71,8 @@ A save report is `saveRequested` + `saved`; requested non-durable work normally 
 
 `pendingFlush:true` is the legacy requested-but-not-durable signal. `blockedByPie` deliberately overrides it to `false`: no flush can run until PIE ends, and the caller must issue a new save request afterwards. Read `saveState` before retrying.
 
+A package with no file on disk is never `alreadyCurrent`: an unforced `asset.save` writes it even when its dirty flag is clean. A newly created asset's package is kept dirty, including when it was created during PIE (where the engine refuses to mark packages dirty), so `editor.list_dirty_packages` lists it and `editor.save_all` writes it.
+
 `sizeBytes`, where a save verb reports it, is the size of the `.uasset` **on disk after the call** — not the number of bytes this call wrote. On a `saved:false` over an asset that already existed it is therefore the previous revision's size, which reads exactly like a successful write; the response then carries `sizeBytesIsStale: true`. Never treat a plausible `sizeBytes`, or one equal to a known-good earlier save's, as evidence of durability.
 
 A response carrying `saveRequested` but no `saveState` comes from a handler not yet threaded through; `saved` is then the only claim it makes.
