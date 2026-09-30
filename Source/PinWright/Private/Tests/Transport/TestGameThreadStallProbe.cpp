@@ -22,6 +22,8 @@
 #include "JsonRpc.h"
 #include "Transport/McpRequestCore.h"
 #include "Transport/ModalStateProbe.h"
+#include "Tests/TestSkipReporting.h"
+#include "Tests/Transport/SocketTestClient.h"
 
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
@@ -563,6 +565,181 @@ bool FGameThreadStallNotReadyDetailsAgreeTest::RunTest(const FString& Parameters
         }
     }
 
+    return true;
+}
+
+
+// ============================================================================
+// Board B-screenshot-designer-hangs-game-thread: the editor wedged right after a
+// widget.screenshot_designer call, and ping answered "No PinWright RPC is in
+// flight ... engine-internal" - true of the handler stack, but it named no
+// request while that call sat queued behind the wedge. A request handed to the
+// game thread and still unanswered is now named as awaiting, and only when no
+// handler is in flight (an in-flight one is the better explanation).
+//
+// Counterfactual: drop the AwaitingMethod branch in BuildPingResult and the
+// awaiting* fields vanish; drop it from GameThreadStalledMessage and the message
+// goes back to "engine-internal" without the method.
+// ============================================================================
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGameThreadStallPingNamesAwaitingRequestTest,
+    "PinWright.transport.liveness.Ping.StalledNamesAwaitingRequest",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FGameThreadStallPingNamesAwaitingRequestTest::RunTest(const FString& Parameters)
+{
+    using namespace PinWrightStallProbeTest;
+
+    McpRequestCore::FRequestConfig Config = HealthyConfig();
+    Config.bGameThreadStalled = true;
+    Config.GameThreadStalledSeconds = 128.0;
+    Config.AwaitingMethod = TEXT("widget.screenshot_designer");
+    Config.AwaitingRequestId = TEXT("req-awaiting");
+    Config.AwaitingSeconds = 130.0;
+
+    TSharedPtr<FJsonObject> Result = Ping(Config, 9);
+    if (!TestTrue(TEXT("ping produced a result object"), Result.IsValid())) return true;
+
+    TestEqual(TEXT("still the stall error code"),
+        Result->GetStringField(TEXT("error")),
+        FString(ErrorCodes::ERR_EDITOR_GAME_THREAD_STALLED));
+    TestFalse(TEXT("no in-flight claim"), Result->HasField(TEXT("inFlightMethod")));
+    TestEqual(TEXT("awaiting method named"),
+        Result->GetStringField(TEXT("awaitingMethod")), FString(TEXT("widget.screenshot_designer")));
+    TestEqual(TEXT("awaiting request id named"),
+        Result->GetStringField(TEXT("awaitingRequestId")), FString(TEXT("req-awaiting")));
+    double AwaitingSeconds = 0.0;
+    TestTrue(TEXT("awaitingSeconds present"),
+        Result->TryGetNumberField(TEXT("awaitingSeconds"), AwaitingSeconds));
+    TestEqual(TEXT("awaitingSeconds carries the handoff age"), AwaitingSeconds, 130.0);
+
+    FString Message;
+    TestTrue(TEXT("message present"), Result->TryGetStringField(TEXT("message"), Message));
+    TestTrue(TEXT("message names the awaiting verb"),
+        Message.Contains(TEXT("widget.screenshot_designer")));
+    TestFalse(TEXT("message no longer says no PinWright RPC is involved"),
+        Message.Contains(TEXT("engine-internal")));
+
+    // An executing handler outranks a queued one: same config plus an in-flight RPC
+    // reports only the in-flight fields.
+    Config.InFlightMethod = TEXT("python.execute");
+    Config.InFlightRequestId = TEXT("req-running");
+    Config.InFlightSeconds = 127.0;
+    TSharedPtr<FJsonObject> Busy = Ping(Config, 10);
+    if (!TestTrue(TEXT("busy ping produced a result object"), Busy.IsValid())) return true;
+    TestEqual(TEXT("in-flight method wins"),
+        Busy->GetStringField(TEXT("inFlightMethod")), FString(TEXT("python.execute")));
+    TestFalse(TEXT("awaiting fields omitted while a handler runs"),
+        Busy->HasField(TEXT("awaitingMethod")));
+    return true;
+}
+
+// End to end through FSocketHttpServer, in the ticket's order: the request is handed
+// off, its caller times out and disconnects (dropping the completion), then the
+// thread is stale and a fresh client pings. The awaiting record must outlive the
+// dropped completion - that is the ticket's exact state.
+//
+// Counterfactual: remove the AwaitingRequests fill in HandleCompleteRequest, or key the
+// record off PendingCompletions, and awaitingMethod is absent from the ping.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGameThreadStallAwaitingSurvivesDisconnectTest,
+    "PinWright.transport.liveness.Awaiting.SurvivesClientDisconnect",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FGameThreadStallAwaitingSurvivesDisconnectTest::RunTest(const FString& Parameters)
+{
+    using namespace PinWrightSocketTest;
+
+    const UPinWrightSettings* Settings = GetDefault<UPinWrightSettings>();
+    const double Threshold = Settings
+        ? static_cast<double>(Settings->GameThreadStallReportSeconds)
+        : 90.0;
+    if (Threshold <= 0.0)
+    {
+        PinWrightTestSkip::SkipAssertions(*this, TEXT("stall-probe-disabled"),
+            TEXT("GameThreadStallReportSeconds <= 0 disables the stall probe; skipping."));
+        return true;
+    }
+
+    FScopedAuthRequirement Auth(false);
+    uint32 Port = 0;
+    TSharedPtr<FSocketHttpServer> Server = StartServerOnFreePort(Port);
+    if (!Server.IsValid())
+    {
+        PinWrightTestSkip::SkipAssertions(*this, TEXT("test-port-unbindable"),
+            TEXT("Could not bind a test port for FSocketHttpServer; skipping."));
+        return true;
+    }
+    ON_SCOPE_EXIT
+    {
+        Server->Stop();
+        ModalStateProbe::ResetForTests();
+    };
+    TSharedRef<FDispatchCapture> Capture = MakeShared<FDispatchCapture>();
+    BindCaptureDispatcher(*Server, Capture, EDispatchMode::Hold);
+
+    FString RequestId;
+    {
+        FSocketTestClient Caller;
+        if (!TestTrue(TEXT("caller connected"), Caller.Connect(Port))) return true;
+        const FEstablishedStream Stream =
+            EstablishSseStream(*this, Caller, Server.Get(), Capture, 41);
+        if (!Stream.bOk) return true;
+        RequestId = Stream.RequestId;
+        Caller.Close();
+    }
+    const FString RequestIdCopy = RequestId;
+    TestTrue(TEXT("the disconnected caller's completion was dropped"),
+        WaitForCondition([&Server, RequestIdCopy]()
+            { return !Server->IsStreamingRequest(RequestIdCopy); }, Server.Get()));
+
+    // Wedged with no handler on the stack. From here on nothing may tick the core
+    // ticker: the live subsystem would re-stamp the heartbeat.
+    ModalStateProbe::ResetForTests();
+    ModalStateProbe::SetLastAliveSecondsForTests(FPlatformTime::Seconds() - (Threshold + 60.0));
+
+    FSocketTestClient Pinger;
+    if (!TestTrue(TEXT("pinger connected"), Pinger.Connect(Port))) return true;
+    const FString PingRequest = BuildHttpRequest(TEXT("POST"), TEXT("/mcp"),
+        {{TEXT("Content-Type"), TEXT("application/json")}}, BuildPingBody(42));
+    FTCHARToUTF8 PingUtf8(*PingRequest);
+    int32 Sent = 0;
+    TestTrue(TEXT("ping sent in one write"),
+        Pinger.Sock->Send(reinterpret_cast<const uint8*>(PingUtf8.Get()), PingUtf8.Length(), Sent)
+        && Sent == PingUtf8.Length());
+
+    // The I/O thread answers ping on its own; poll the socket only.
+    FParsedHttpResponse Response;
+    int32 Next = 0;
+    const double Deadline = FPlatformTime::Seconds() + kDefaultTimeoutSeconds;
+    while (!ParseOneHttpResponse(Pinger.Received, 0, Response, Next)
+        && FPlatformTime::Seconds() < Deadline)
+    {
+        if (Pinger.RecvStep() != ERecvStep::Data)
+        {
+            FPlatformProcess::Sleep(0.001f);
+        }
+    }
+    if (!TestTrue(TEXT("ping answered while the game thread is 'wedged'"), Response.bComplete))
+    {
+        return true;
+    }
+
+    const TSharedPtr<FJsonObject> Envelope = ParseJsonObject(Response.Body);
+    const TSharedPtr<FJsonObject>* ResultPtr = nullptr;
+    if (!TestTrue(TEXT("ping result object"),
+            Envelope.IsValid() && Envelope->TryGetObjectField(TEXT("result"), ResultPtr) && ResultPtr))
+    {
+        return true;
+    }
+    const TSharedPtr<FJsonObject> Result = *ResultPtr;
+    TestEqual(TEXT("stall reported"),
+        Result->GetStringField(TEXT("error")),
+        FString(ErrorCodes::ERR_EDITOR_GAME_THREAD_STALLED));
+    TestFalse(TEXT("no handler in flight"), Result->HasField(TEXT("inFlightMethod")));
+    TestEqual(TEXT("the queued request is named although its caller left"),
+        Result->GetStringField(TEXT("awaitingMethod")), FString(TEXT("test.stream")));
+    TestEqual(TEXT("its request id is named"),
+        Result->GetStringField(TEXT("awaitingRequestId")), RequestId);
     return true;
 }
 

@@ -71,6 +71,15 @@ namespace McpRequestCore
         FString InFlightRequestId;
         double InFlightSeconds = 0.0;
 
+        // Filled only when InFlightMethod is empty: the oldest request the transport
+        // handed to the game thread that is still unanswered. Without it a request
+        // parked behind the wedge (queued for its safe point, never started) read as
+        // "no PinWright RPC", which named no request at all
+        // (B-screenshot-designer-hangs-game-thread). Omitted when empty.
+        FString AwaitingMethod;
+        FString AwaitingRequestId;
+        double AwaitingSeconds = 0.0;
+
         PINWRIGHT_API static FRequestConfig FromSettings();
     };
 

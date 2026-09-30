@@ -6,11 +6,13 @@
 #include "Tests/TestSkipReporting.h"
 
 #include "Tests/Widget/WidgetTestFixtures.h"
+#include "Tests/WidgetXml/TestWidgetConstructProbeFixture.h"
 #include "Blueprint/UserWidget.h"
 #include "Blueprint/WidgetTree.h"
 #include "BlueprintModes/WidgetBlueprintApplicationModes.h"
 #include "Components/CanvasPanel.h"
 #include "Components/CanvasPanelSlot.h"
+#include "Components/SizeBox.h"
 #include "Components/TextBlock.h"
 #include "Components/Widget.h"
 #include "Editor.h"
@@ -830,5 +832,114 @@ bool FWidgetScreenshotDesignerMaxSizePreviewTest::RunTest(const FString& Paramet
     RunOneCase(TEXT("WBP_DesignerMaxSizeDefault"), FVector2D(800.0, 400.0),
         /*MaxSizeOpt=*/nullptr, /*ExpectedLong=*/1024, /*ExpectedShort=*/512, /*bExpectLandscape=*/true);
 
+    return true;
+}
+
+// Board B-screenshot-designer-hangs-game-thread, the reported shape: a Widget Blueprint whose
+// parent is a native C++ UUserWidget subclass, edited (SizeBox with a child) and compiled but
+// never saved, captured with four visibilityOverrides and max_size 1400 while its Designer is
+// closed. On the reporting host the call never returned and the editor was killed; the Linux
+// host never reproduced it. This pins the scenario: the verb must return, succeed, apply all
+// four overrides, and - because the Designer preview is design-time - never run the native
+// parent's NativeConstruct. A regression here shows as a failed assertion, or as a suite that
+// stops at this test (check_suite_log DID_NOT_COMPLETE naming it last).
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWidgetScreenshotDesignerNativeParentOverridesTest,
+    "PinWright.widget.screenshot_designer.NativeParentDirtyWithVisibilityOverrides",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FWidgetScreenshotDesignerNativeParentOverridesTest::RunTest(const FString& Parameters)
+{
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
+    const FString WidgetPath = MakeWidgetDesignerScreenshotAssetPath(TEXT("WBP_NativeParentCapture"));
+    UWidgetBlueprint* WBP = MakeWidgetDesignerScreenshotBlueprint(
+        WidgetPath, UTestWidgetConstructProbe::StaticClass());
+    if (!TestTrue(TEXT("native-parented widget blueprint allocated"),
+            WBP && WBP->WidgetTree && Cast<UCanvasPanel>(WBP->WidgetTree->RootWidget)))
+    {
+        return false;
+    }
+    UCanvasPanel* RootCanvas = Cast<UCanvasPanel>(WBP->WidgetTree->RootWidget);
+    WidgetTestFixtures::AddSizedPreviewLabel(WBP);
+    USizeBox* Box = WBP->WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass(), TEXT("Box"));
+    UTextBlock* BoxLabel = WBP->WidgetTree->ConstructWidget<UTextBlock>(
+        UTextBlock::StaticClass(), TEXT("BoxLabel"));
+    UTextBlock* Hidden = WBP->WidgetTree->ConstructWidget<UTextBlock>(
+        UTextBlock::StaticClass(), TEXT("Hidden"));
+    if (!TestTrue(TEXT("fixture children constructed"), Box && BoxLabel && Hidden))
+    {
+        return false;
+    }
+    Box->SetWidthOverride(120.0f);
+    Box->SetHeightOverride(40.0f);
+    Box->AddChild(BoxLabel);
+    RootCanvas->AddChild(Box);
+    RootCanvas->AddChild(Hidden);
+    WidgetTestFixtures::RegisterWidgetVariable(WBP, Box->GetFName());
+    WidgetTestFixtures::RegisterWidgetVariable(WBP, BoxLabel->GetFName());
+    WidgetTestFixtures::RegisterWidgetVariable(WBP, Hidden->GetFName());
+    FKismetEditorUtilities::CompileBlueprint(WBP);
+
+    FString ScreenshotPath;
+    ON_SCOPE_EXIT
+    {
+        if (!ScreenshotPath.IsEmpty())
+        {
+            IFileManager::Get().Delete(*ScreenshotPath);
+        }
+        if (GEditor)
+        {
+            if (UAssetEditorSubsystem* AssetEditorSubsystem = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>())
+            {
+                AssetEditorSubsystem->CloseAllEditorsForAsset(WBP);
+            }
+        }
+        if (UPackage* Package = WBP->GetOutermost())
+        {
+            Package->SetDirtyFlag(false);
+        }
+        CleanupTestAsset(WidgetPath);
+    };
+    if (GEditor)
+    {
+        if (UAssetEditorSubsystem* AssetEditorSubsystem = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>())
+        {
+            AssetEditorSubsystem->CloseAllEditorsForAsset(WBP);
+        }
+    }
+    TestTrue(TEXT("package is dirty and unsaved, as reported"),
+        WBP->GetOutermost() && WBP->GetOutermost()->IsDirty());
+
+    TSharedPtr<FJsonObject> Overrides = MakeShared<FJsonObject>();
+    Overrides->SetStringField(TEXT("Box"), TEXT("Visible"));
+    Overrides->SetStringField(TEXT("PreviewLabel"), TEXT("SelfHitTestInvisible"));
+    Overrides->SetStringField(TEXT("BoxLabel"), TEXT("Collapsed"));
+    Overrides->SetStringField(TEXT("Hidden"), TEXT("Collapsed"));
+    TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+    Payload->SetStringField(TEXT("widgetPath"), WidgetPath);
+    Payload->SetNumberField(TEXT("max_size"), 1400);
+    Payload->SetObjectField(TEXT("visibilityOverrides"), Overrides);
+
+    UTestWidgetConstructProbe::ResetCounters();
+    FTestResponseCapture Capture;
+    TestTrue(TEXT("widget.screenshot_designer handler found"),
+        InvokeHandlerWithCapture(TEXT("widget.screenshot_designer"), Payload, Capture));
+    TestTrue(TEXT("capture of a native-parented dirty widget succeeds"), Capture.bSuccess);
+    if (!Capture.Result.IsValid())
+    {
+        return true;
+    }
+    Capture.Result->TryGetStringField(TEXT("path"), ScreenshotPath);
+
+    const int32 Width = static_cast<int32>(Capture.Result->GetNumberField(TEXT("width")));
+    const int32 Height = static_cast<int32>(Capture.Result->GetNumberField(TEXT("height")));
+    TestEqual(TEXT("max_size caps the longer axis"), FMath::Max(Width, Height), 1400);
+    const TSharedPtr<FJsonObject>* Applied = nullptr;
+    if (TestTrue(TEXT("overridesApplied returned"),
+            Capture.Result->TryGetObjectField(TEXT("overridesApplied"), Applied) && Applied))
+    {
+        TestEqual(TEXT("all four visibility overrides applied"),
+            static_cast<int32>((*Applied)->GetNumberField(TEXT("visibilityOverrideCount"))), 4);
+    }
+    TestEqual(TEXT("design-time preview never ran the native parent's NativeConstruct"),
+        UTestWidgetConstructProbe::NativeConstructCalls, 0);
     return true;
 }

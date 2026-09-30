@@ -351,14 +351,22 @@ FString GameThreadStalledMessage(const McpRequestCore::FRequestConfig& Config)
     // Naming the in-flight verb is the difference between "something is wrong" and
     // "your python.execute is the thing that is wrong". When nothing is in flight
     // the stall is engine-internal, which is a different instruction to the agent:
-    // wait, do not go looking for a PinWright bug.
-    const FString CauseClause = Config.InFlightMethod.IsEmpty()
-        ? FString(TEXT("No PinWright RPC is in flight, so the stall is engine-internal work "
-                       "(asset compile, map load, package save) rather than a PinWright call."))
-        : FString::Printf(
+    // wait, do not go looking for a PinWright bug. A request that was received but
+    // never started is named too - "no RPC" was the wrong answer for it.
+    const FString CauseClause = !Config.InFlightMethod.IsEmpty()
+        ? FString::Printf(
             TEXT("The game thread is inside PinWright RPC '%s' (request %s), which has been "
                  "running for %.0f s."),
-            *Config.InFlightMethod, *Config.InFlightRequestId, Config.InFlightSeconds);
+            *Config.InFlightMethod, *Config.InFlightRequestId, Config.InFlightSeconds)
+        : !Config.AwaitingMethod.IsEmpty()
+        ? FString::Printf(
+            TEXT("No PinWright handler is executing. RPC '%s' (request %s) was handed to the "
+                 "game thread %.0f s ago and is still unanswered: it is queued (or its job is "
+                 "parked) behind whatever owns the thread, so the thread is not inside its "
+                 "handler call."),
+            *Config.AwaitingMethod, *Config.AwaitingRequestId, Config.AwaitingSeconds)
+        : FString(TEXT("No PinWright RPC is in flight, so the stall is engine-internal work "
+                       "(asset compile, map load, package save) rather than a PinWright call."));
 
     return FString::Printf(
         TEXT("The Unreal editor's game thread has not completed a tick for %.0f s. Every "
@@ -423,6 +431,12 @@ TSharedPtr<FJsonObject> BuildPingResult(const McpRequestCore::FRequestConfig& Co
             {
                 Result->SetStringField(TEXT("inFlightRequestId"), Config.InFlightRequestId);
             }
+        }
+        else if (!Config.AwaitingMethod.IsEmpty())
+        {
+            Result->SetStringField(TEXT("awaitingMethod"), Config.AwaitingMethod);
+            Result->SetStringField(TEXT("awaitingRequestId"), Config.AwaitingRequestId);
+            Result->SetNumberField(TEXT("awaitingSeconds"), Config.AwaitingSeconds);
         }
     }
     else if (!bReady)

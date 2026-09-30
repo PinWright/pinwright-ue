@@ -114,7 +114,9 @@ namespace WidgetTestFixtures
 
     // Builds a Widget Blueprint with an empty CanvasPanel root. Caller is expected
     // to add sized children if the designer-preview bounds need to resolve.
-    inline UWidgetBlueprint* MakeWidgetDesignerScreenshotBlueprint(const FString& PackagePath)
+    // ParentClass lets a test stand in for a C++-parented project widget.
+    inline UWidgetBlueprint* MakeWidgetDesignerScreenshotBlueprint(const FString& PackagePath,
+        UClass* ParentClass = UUserWidget::StaticClass())
     {
         const FString AssetName = FPackageName::GetLongPackageAssetName(PackagePath);
         UPackage* Package = CreatePackage(*PackagePath);
@@ -124,7 +126,7 @@ namespace WidgetTestFixtures
         }
 
         UWidgetBlueprint* WBP = Cast<UWidgetBlueprint>(FKismetEditorUtilities::CreateBlueprint(
-            UUserWidget::StaticClass(),
+            ParentClass,
             Package,
             FName(*AssetName),
             BPTYPE_Normal,

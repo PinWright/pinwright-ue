@@ -239,5 +239,20 @@ private:
     FCriticalSection RequestIntakeMutex;
 
     TMap<FString, FPendingCompletion> PendingCompletions;
+
+    // Every request handed to the dispatcher and not yet answered: method + wall-clock
+    // handoff time, keyed by request id, guarded by CompletionMutex. Separate from
+    // PendingCompletions on purpose - a client that times out and disconnects drops its
+    // completion, but the request is still queued on the game thread, and that is the
+    // request a stall report must name when no handler is executing
+    // (B-screenshot-designer-hangs-game-thread). Removed only when the response is
+    // resolved (or the server stops).
+    struct FAwaitingRequest
+    {
+        FString Method;
+        double HandoffSeconds = 0.0;
+    };
+    TMap<FString, FAwaitingRequest> AwaitingRequests;
+
     mutable FCriticalSection CompletionMutex;
 };

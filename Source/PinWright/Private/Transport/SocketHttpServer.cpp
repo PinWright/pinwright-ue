@@ -965,6 +965,24 @@ void FSocketHttpServer::HandleCompleteRequest(const TSharedPtr<FConnection>& Con
             ModalStateProbe::GetInFlightRpc(RequestConfig.InFlightMethod,
                                             RequestConfig.InFlightRequestId,
                                             RequestConfig.InFlightSeconds);
+            if (RequestConfig.InFlightMethod.IsEmpty())
+            {
+                // No handler on the stack. Name the oldest request still waiting for the
+                // game thread instead of reporting "no PinWright RPC" while one sits queued.
+                FScopeLock Lock(&CompletionMutex);
+                double OldestHandoff = TNumericLimits<double>::Max();
+                for (const TPair<FString, FAwaitingRequest>& Pair : AwaitingRequests)
+                {
+                    if (Pair.Value.HandoffSeconds < OldestHandoff)
+                    {
+                        OldestHandoff = Pair.Value.HandoffSeconds;
+                        RequestConfig.AwaitingRequestId = Pair.Key;
+                        RequestConfig.AwaitingMethod = Pair.Value.Method;
+                        RequestConfig.AwaitingSeconds =
+                            FMath::Max(0.0, FPlatformTime::Seconds() - OldestHandoff);
+                    }
+                }
+            }
         }
     }
 
@@ -1083,6 +1101,10 @@ void FSocketHttpServer::HandleCompleteRequest(const TSharedPtr<FConnection>& Con
 
     const TSharedPtr<FJsonObject> Args =
         Decision.Args.IsValid() ? Decision.Args : MakeShared<FJsonObject>();
+    {
+        FScopeLock Lock(&CompletionMutex);
+        AwaitingRequests.Add(RequestId, { Decision.Method, FPlatformTime::Seconds() });
+    }
     OnRequestReceived.Execute(RequestId, Decision.Method, Args);
 }
 
@@ -1168,6 +1190,9 @@ bool FSocketHttpServer::ResolveCompletion(const FString& RequestId, bool bSucces
     FPendingCompletion Pending;
     {
         FScopeLock Lock(&CompletionMutex);
+        // Before the early return: a request whose client already disconnected still
+        // stops awaiting once its handler answers.
+        AwaitingRequests.Remove(RequestId);
         if (!PendingCompletions.RemoveAndCopyValue(RequestId, Pending))
         {
             return false;
@@ -1310,6 +1335,7 @@ void FSocketHttpServer::FailAllCompletions(const FString& Message, const FString
             PendingCallbacks.Add(MoveTemp(Pair.Value));
         }
         PendingCompletions.Empty();
+        AwaitingRequests.Empty();
     }
 
     for (int32 Index = 0; Index < PendingCallbacks.Num(); ++Index)
