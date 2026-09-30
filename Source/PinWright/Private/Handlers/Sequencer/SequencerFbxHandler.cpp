@@ -18,6 +18,7 @@
 #include "Handlers/ParamSpec.h"
 #include "Utils/AtomicFileWriter.h"
 #include "Utils/AssetUtils.h"
+#include "Utils/PathUtils.h"
 #include "Utils/MovieSceneJsonUtils.h"
 
 #include "LevelSequence.h"
@@ -239,11 +240,7 @@ namespace
     // files. Anchor a relative path under the project dir first, then normalize to absolute.
     FString SequencerFbxResolveFilePath(const FString& InFilePath)
     {
-        if (FPaths::IsRelative(InFilePath))
-        {
-            return FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectDir(), InFilePath));
-        }
-        return FPaths::ConvertRelativePathToFull(InFilePath);
+        return ResolveProjectFilePath(InFilePath);
     }
 }
 

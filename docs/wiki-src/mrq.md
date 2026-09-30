@@ -26,7 +26,7 @@ When package-only spellings are supplied, the queued job stores the resolver's c
 paths so MRQ receives the concrete sequence and map assets rather than package-only soft paths.
 
 The preset's `UMoviePipelineOutputSetting::OutputDirectory` is also checked before allocation.
-`{project_dir}` is expanded for the check, and a temporary file probe verifies that the nearest
+`{project_dir}` is expanded to the absolute project directory for the check, and a temporary file probe verifies that the nearest
 existing ancestor is writable; nested output directories do not need to exist yet. An empty,
 traversal, file-valued, file-ancestor, or unwritable output directory returns `INVALID_PATH` and
 leaves the queue unchanged.

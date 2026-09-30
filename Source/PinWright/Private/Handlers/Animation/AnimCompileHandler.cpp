@@ -9,6 +9,7 @@
 #include "Handlers/HandlerContext.h"
 #include "Handlers/ErrorCodes.h"
 #include "Utils/AssetUtils.h"
+#include "Utils/PathUtils.h"
 #include "Utils/JsonUtils.h"
 
 #include "PwAnim/PwAnimCompiler.h"
@@ -34,14 +35,7 @@ bool AnimHandler_HasField(const FHandlerContext& Ctx, const TCHAR* Key)
 
 FString AnimHandler_ResolveSourcePath(const FString& RawPath)
 {
-    FString Resolved = RawPath;
-    if (FPaths::IsRelative(Resolved))
-    {
-        Resolved = FPaths::Combine(FPaths::ProjectDir(), Resolved);
-    }
-    Resolved = FPaths::ConvertRelativePathToFull(Resolved);
-    FPaths::NormalizeFilename(Resolved);
-    return Resolved;
+    return ResolveProjectFilePath(RawPath);
 }
 
 FString AnimHandler_ProvenancePath(const FString& ResolvedPath)

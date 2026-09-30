@@ -762,3 +762,43 @@ bool FComposeAssetPackagePathChecksComposedPathTest::RunTest(const FString& Para
         PinWrightComposeAssetPackagePath(TEXT("/Game/Materials//"), TEXT("MI_Probe"), Composed, Error));
     return true;
 }
+
+// ============================================================================
+// ResolveProjectFilePath
+// ============================================================================
+
+// Where the project shares a filesystem root with the engine, FPaths::ProjectDir() is relative to
+// the process BaseDir ("../../../../proj/"), and so is every Project*Dir() built on it. The
+// handlers used to treat any relative path as project-relative and join it onto ProjectDir(), so a
+// path the engine itself produced came out doubled ("../../../../proj/../../../../proj/Saved/x")
+// and resolved outside the project. On such a host the first assertion fails without the fix; where
+// ProjectDir() is absolute it holds either way, and the project-relative controls carry the test.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FResolveProjectFilePathEngineProducedTest,
+    "PinWright.core.path.resolve_project_file_path.EngineProducedPathResolvesOnce",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FResolveProjectFilePathEngineProducedTest::RunTest(const FString& Parameters)
+{
+    const FString FullProjectDir = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
+    const FString FullSavedDir = FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir());
+    AddInfo(FString::Printf(TEXT("ProjectDir() = '%s'"), *FPaths::ProjectDir()));
+
+    TestEqual(TEXT("a ProjectSavedDir()-derived path resolves to the file the engine means"),
+        ResolveProjectFilePath(FPaths::ProjectSavedDir() / TEXT("x.png")),
+        FullSavedDir / TEXT("x.png"));
+    TestEqual(TEXT("ProjectDir() itself resolves to the project dir"),
+        ResolveProjectFilePath(FPaths::ProjectDir()), FullProjectDir);
+    FString ProjectDirNoSlash = FPaths::ProjectDir();
+    ProjectDirNoSlash.LeftChopInline(1);
+    TestEqual(TEXT("ProjectDir() spelled without its trailing '/' resolves to the project dir"),
+        ResolveProjectFilePath(ProjectDirNoSlash), FullProjectDir.LeftChop(1));
+
+    // Controls: a plain relative path is still project-relative, never BaseDir- or CWD-relative,
+    // and an absolute path passes through.
+    TestEqual(TEXT("a plain relative path is project-relative"),
+        ResolveProjectFilePath(TEXT("Saved/x.png")), FullProjectDir / TEXT("Saved/x.png"));
+    TestEqual(TEXT("an absolute path is unchanged"),
+        ResolveProjectFilePath(FullSavedDir / TEXT("x.png")), FullSavedDir / TEXT("x.png"));
+    TestTrue(TEXT("an empty path stays empty"), ResolveProjectFilePath(TEXT("  ")).IsEmpty());
+    return true;
+}

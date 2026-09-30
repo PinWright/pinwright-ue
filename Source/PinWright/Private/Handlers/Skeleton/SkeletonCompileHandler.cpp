@@ -15,6 +15,7 @@
 #include "PwSource/PwSourcePathUtils.h"
 #include "PwSource/PwSuggest.h"
 #include "Utils/AssetUtils.h"
+#include "Utils/PathUtils.h"
 #include "Utils/JsonUtils.h"
 
 #include "Containers/StringView.h"
@@ -35,14 +36,7 @@ namespace PinWrightSkeletonHandlers
 
     FString ResolveSourcePath(const FString& RawPath)
     {
-        FString Resolved = RawPath;
-        if (FPaths::IsRelative(Resolved))
-        {
-            Resolved = FPaths::Combine(FPaths::ProjectDir(), Resolved);
-        }
-        Resolved = FPaths::ConvertRelativePathToFull(Resolved);
-        FPaths::NormalizeFilename(Resolved);
-        return Resolved;
+        return ResolveProjectFilePath(RawPath);
     }
 
     FString ProvenancePath(const FString& ResolvedPath)

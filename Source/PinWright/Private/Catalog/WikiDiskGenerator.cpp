@@ -4,6 +4,7 @@
 #include "Catalog/WikiHandler.h"
 #include "PinWrightProjectSettings.h"
 #include "Utils/AtomicFileWriter.h"
+#include "Utils/PathUtils.h"
 
 #include "Containers/Array.h"
 #include "Containers/Map.h"
@@ -961,12 +962,8 @@ namespace WikiDiskGenerator
         {
             return WikiDiskGenerator_CanonicalOwnedOutputDirectory();
         }
-        else if (FPaths::IsRelative(Dir))
-        {
-            Dir = FPaths::ProjectDir() / Dir;
-        }
         FPaths::NormalizeDirectoryName(Dir);
-        return FPaths::ConvertRelativePathToFull(Dir);
+        return ResolveProjectFilePath(Dir);
     }
 
     FString RootIndexSlug()

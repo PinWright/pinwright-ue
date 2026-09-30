@@ -98,6 +98,15 @@ PINWRIGHT_API FString NormalizeContentAssetPath(const FString& InPath);
 // this function accepts any project-relative file path while still enforcing security.
 PINWRIGHT_API FString SanitizeProjectFilePath(const FString& InPath);
 
+// Resolve a caller-supplied FILESYSTEM path (not a /Game/ asset path) to an absolute one. A
+// relative path is project-relative ("Saved/x.png"), never CWD- or BaseDir-relative - EXCEPT one
+// that already begins with FPaths::ProjectDir(). Where the project shares a filesystem root with
+// the engine, ProjectDir() and every Project*Dir() derived from it are themselves relative to the
+// process BaseDir ("../../../../proj/"), and a path the engine produced in that form is resolved
+// as the engine means it, not joined onto the project dir a second time. Where ProjectDir() is
+// absolute no relative path can begin with it, so that case keeps the plain project-relative join.
+PINWRIGHT_API FString ResolveProjectFilePath(const FString& InPath);
+
 // Validate a basic asset path format.
 PINWRIGHT_API bool IsValidAssetPath(const FString& Path);
 

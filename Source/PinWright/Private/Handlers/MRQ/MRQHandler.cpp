@@ -110,8 +110,10 @@ namespace
             return false;
         }
 
-        ExpandedPath.ReplaceInline(TEXT("{project_dir}"), *FPaths::ProjectDir(),
-            ESearchCase::IgnoreCase);
+        // Absolute: where the project shares a root with the engine, ProjectDir() is a
+        // "../../.."-prefixed BaseDir-relative path, which the traversal check would refuse.
+        ExpandedPath.ReplaceInline(TEXT("{project_dir}"),
+            *FPaths::ConvertRelativePathToFull(FPaths::ProjectDir()), ESearchCase::IgnoreCase);
         if (HasMRQTraversalComponent(ExpandedPath))
         {
             OutError = FString::Printf(TEXT("MRQ output directory '%s' may not contain '..'"),

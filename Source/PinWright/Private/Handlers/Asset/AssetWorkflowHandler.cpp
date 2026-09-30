@@ -17,6 +17,7 @@
 #include "Utils/AssetBatchResult.h"
 #include "Utils/AssetCompilePump.h"
 #include "Utils/AssetUtils.h"
+#include "Utils/PathUtils.h"
 #include "Utils/MeshRebuildRenderGuard.h"
 #include "Utils/RedirectorFixupPolicy.h"
 #include "PinWrightHelpers.h"
@@ -1435,12 +1436,7 @@ REGISTER_RPC_HANDLER("asset.generate_thumbnail", "asset", "Render an asset's thu
     {
         if (ColorData.Num() > 0)
         {
-            FString AbsolutePath = OutputPath;
-            if (FPaths::IsRelative(OutputPath))
-            {
-                AbsolutePath =
-                    FPaths::ConvertRelativePathToFull(FPaths::ProjectDir(), OutputPath);
-            }
+            const FString AbsolutePath = ResolveProjectFilePath(OutputPath);
 
             // Encoder chosen by the output extension, and alpha stamped opaque inside it.
             // Never FImageUtils::ThumbnailCompressImageArray, which emits JPEG for anything

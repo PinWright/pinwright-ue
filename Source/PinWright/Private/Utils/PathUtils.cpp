@@ -214,6 +214,23 @@ FString SanitizeProjectFilePath(const FString& InPath)
     return CleanPath;
 }
 
+FString ResolveProjectFilePath(const FString& InPath)
+{
+    FString Path = InPath.TrimStartAndEnd();
+    if (Path.IsEmpty())
+    {
+        return Path;
+    }
+    FPaths::NormalizeFilename(Path);
+    const FString ProjectDir = FPaths::ProjectDir();
+    // The trailing '/' lets the project dir itself, spelled without one, match too.
+    if (FPaths::IsRelative(Path) && !(Path + TEXT("/")).StartsWith(ProjectDir))
+    {
+        return FPaths::ConvertRelativePathToFull(FPaths::ConvertRelativePathToFull(ProjectDir), Path);
+    }
+    return FPaths::ConvertRelativePathToFull(Path);
+}
+
 bool IsValidAssetPath(const FString& Path)
 {
     return !Path.IsEmpty() &&

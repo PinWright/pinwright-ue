@@ -16,6 +16,7 @@
 #include "Dispatch/SafePoint.h"
 #include "PinWrightGlobals.h"
 #include "PinWrightHelpers.h"
+#include "Utils/PathUtils.h"
 #include "PinWrightSubsystem.h"
 #include "Dom/JsonObject.h"
 
@@ -1045,10 +1046,7 @@ REGISTER_RPC_HANDLER("level.export", "level", "Export a level to a text-format .
     // ExportMap and IFileManager resolve relative paths against the engine CWD,
     // not FPaths::ProjectDir(), so without this the FileExists guard below and the
     // echoed exportPath could disagree with where the file actually lands.
-    if (FPaths::IsRelative(ExportPath))
-    {
-        ExportPath = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir(), ExportPath);
-    }
+    ExportPath = ResolveProjectFilePath(ExportPath);
 
     IFileManager::Get().MakeDirectory(*FPaths::GetPath(ExportPath), true);
 

@@ -27,6 +27,7 @@
 #include "Serialization/JsonWriter.h"
 #include "Handlers/ErrorCodes.h"
 #include "Utils/AssetUtils.h"
+#include "Utils/PathUtils.h"
 #include "Utils/JsonUtils.h"
 
 #include "Utils/MeshRebuildRenderGuard.h"
@@ -87,14 +88,7 @@ bool ModelHandler_HasField(const FHandlerContext& Ctx, const TCHAR* Key)
 // idiom, and the only reading of a relative path an author would predict.
 FString ModelHandler_ResolveSourcePath(const FString& RawPath)
 {
-    FString Resolved = RawPath;
-    if (FPaths::IsRelative(Resolved))
-    {
-        Resolved = FPaths::Combine(FPaths::ProjectDir(), Resolved);
-    }
-    Resolved = FPaths::ConvertRelativePathToFull(Resolved);
-    FPaths::NormalizeFilename(Resolved);
-    return Resolved;
+    return ResolveProjectFilePath(RawPath);
 }
 
 // The value written into the asset's provenance stamp: project-relative when the source lies

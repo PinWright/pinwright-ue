@@ -4,6 +4,7 @@
 
 #include "Handlers/ErrorCodes.h"
 #include "Utils/JsonUtils.h"
+#include "Utils/PathUtils.h"
 #include "Utils/ScreenshotUtils.h"
 
 #include "HAL/FileManager.h"
@@ -840,21 +841,7 @@ namespace PinWrightImage
 
     FString ResolveInputPath(const FString& Requested)
     {
-        FString Path = Requested.TrimStartAndEnd();
-        if (Path.IsEmpty())
-        {
-            return Path;
-        }
-        FPaths::NormalizeFilename(Path);
-        if (FPaths::IsRelative(Path))
-        {
-            Path = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir(), Path);
-        }
-        else
-        {
-            Path = FPaths::ConvertRelativePathToFull(Path);
-        }
-        return Path;
+        return ResolveProjectFilePath(Requested);
     }
 
     FString ResolveOutputDir(const FString& RequestedDir, const FString& DefaultSubdir)
@@ -865,15 +852,7 @@ namespace PinWrightImage
             Dir = FPaths::ProjectSavedDir() / TEXT("PinWright") / TEXT("image") / DefaultSubdir;
         }
         FPaths::NormalizeDirectoryName(Dir);
-        if (FPaths::IsRelative(Dir))
-        {
-            Dir = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir(), Dir);
-        }
-        else
-        {
-            Dir = FPaths::ConvertRelativePathToFull(Dir);
-        }
-        return Dir;
+        return ResolveProjectFilePath(Dir);
     }
 
     FString SanitizeBaseName(const FString& Requested, const FString& Fallback)

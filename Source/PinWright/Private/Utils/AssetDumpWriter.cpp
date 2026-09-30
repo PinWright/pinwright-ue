@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Alexander Penkin. MIT License.
 
 #include "Utils/AssetDumpWriter.h"
+#include "Utils/PathUtils.h"
 #include "Utils/UnifiedDiff.h"
 #include "Compat/EngineVersionCompat.h"
 #include "PinWrightProjectSettings.h"
@@ -34,8 +35,9 @@ FString ResolveDumpRoot(const FString& OutRoot)
         // join: where the project lives outside the engine tree, ProjectDir()
         // is itself a "../../../.." path relative to the executable's BaseDir,
         // and joining onto that form makes the resolved root depend on where
-        // the process was started from.
-        Root = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir()) / Root;
+        // the process was started from. ResolveProjectFilePath does both, and
+        // resolves a root already in that engine-produced form as the engine means it.
+        Root = ResolveProjectFilePath(Root);
     }
     FPaths::NormalizeDirectoryName(Root);
     return FPaths::ConvertRelativePathToFull(Root);
