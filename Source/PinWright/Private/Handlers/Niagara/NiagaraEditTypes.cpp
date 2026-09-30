@@ -2337,6 +2337,7 @@ namespace NiagaraEdit
                 else if (const UNiagaraNodeFunctionCall* DynamicInputCall = Cast<UNiagaraNodeFunctionCall>(Upstream))
                 {
                     Info.ValueMode = TEXT("dynamicInput");
+                    Info.DynamicInputNode = DynamicInputCall;
                     Info.DynamicInputScript = DynamicInputCall->FunctionScript
                         ? DynamicInputCall->FunctionScript->GetPathName()
                         : DynamicInputCall->GetFunctionName();

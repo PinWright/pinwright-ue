@@ -740,7 +740,9 @@ int32 GetAspectVersion(const FString& RelativeFile)
         // 8: `defaultValue` is read off the script variable's `Variable` rather than its
         //    `DefaultValueVariant`, which a panel-authored declaration leaves zero-filled; a 7
         //    dump reports the type's zero for every such input.
-        { TEXT("niagara_stack.json"),       8 },
+        // 9: a `valueMode: "dynamicInput"` moduleInputs entry carries `inputs`, the dynamic-input
+        //    node's own inputs in the same entry shape (recursively).
+        { TEXT("niagara_stack.json"),       9 },
         // 2: every rapid-iteration entry whose module input also carries a graph override pin now
         //    carries `overridden` plus an `override` object naming that pin's mode and value, and
         //    the document carries a `rapidIterationNote` stating what this store can and cannot

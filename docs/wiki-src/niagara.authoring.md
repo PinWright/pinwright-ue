@@ -41,10 +41,13 @@ Emitter ownership gotcha: emitters are owned assets. Editing an emitter can affe
 
 ## Module inputs: literal value vs linked parameter
 
-`niagara.set_module_input` accepts two value shapes:
+`niagara.set_module_input` accepts three value shapes:
 
 - A **literal** value (`bool` / `number` / vector array or object / color object) writes a hardcoded default into the module's override store. A literal that happens to equal a `User.*` parameter's current value is **not** a live binding — changing the parameter later does not retint/retune the input. Use a literal only when the value is genuinely fixed.
 - A **linked parameter** value of the form `{ "link": "User.WispColor" }` (alias `{ "parameter": "..." }`) binds the input to *read from* that parameter, so editing the parameter drives the effect. This is the canonical "expose a tunable" pattern (color/spawn-rate/lifetime/speed driven by `User.*`). The response carries `linked: true, parameter, parameterType`.
+- A **dynamic input** value `{ "dynamicInput": "<ScriptPath>", "inputs": { "<input>": <literal | { dynamicInput, inputs }> } }` drives the input from a dynamic-input script (random range, curve, add/multiply chain), and sets that script's own inputs in the same call. `inputs` is optional and nests. The response's `inputs[]` lists the dynamic input's inputs as the graph now holds them. See `niagara.set_module_input` for the rules.
+
+A linked-parameter write:
 
 ```json
 {

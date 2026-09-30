@@ -1683,7 +1683,7 @@ namespace NiagaraDumpBuilder
         return Result;
     }
 
-    TArray<TSharedPtr<FJsonValue>> BuildModuleInputsJson(const UNiagaraNodeFunctionCall* Node)
+    TArray<TSharedPtr<FJsonValue>> BuildModuleInputsJson(const UNiagaraNodeFunctionCall* Node, int32 Depth)
     {
         TArray<TSharedPtr<FJsonValue>> Result;
         if (!Node || !Node->FunctionScript)
@@ -1766,6 +1766,13 @@ namespace NiagaraDumpBuilder
                 else if (Binding->ValueMode == TEXT("dynamicInput"))
                 {
                     Entry->SetStringField(TEXT("dynamicInput"), Binding->DynamicInputScript);
+                    // The dynamic input's own inputs, read off its placed node the same way — what
+                    // niagara.set_module_input's { dynamicInput, inputs } writes. Bounded like the
+                    // dynamic-input model readback; a graph is acyclic, so the bound only caps size.
+                    if (Binding->DynamicInputNode && Depth < 8)
+                    {
+                        Entry->SetArrayField(TEXT("inputs"), BuildModuleInputsJson(Binding->DynamicInputNode, Depth + 1));
+                    }
                 }
             }
             else

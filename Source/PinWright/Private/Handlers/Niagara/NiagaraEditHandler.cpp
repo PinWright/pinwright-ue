@@ -3,6 +3,7 @@
 #include "Handlers/HandlerRegistration.h"
 #include "Handlers/HandlerContext.h"
 #include "Compat/EngineVersionCompat.h"
+#include "Handlers/Niagara/NiagaraDumpBuilder.h"
 #include "Handlers/Niagara/NiagaraEditTypes.h"
 #include "Handlers/Niagara/NiagaraJsonHelpers.h"
 #include "Handlers/Niagara/NiagaraModuleInputDataInterface.h"
@@ -15,6 +16,7 @@
 #include "Handlers/Niagara/NiagaraRapidIteration.h"
 #include "Utils/JsonUtils.h"
 #include "Utils/PropertyUtils.h"
+#include "Utils/TransactionUtils.h"
 
 #include "NiagaraCommon.h"
 #include "NiagaraEffectType.h"
@@ -906,8 +908,25 @@ namespace
     // function-call node onto the module input's override pin (the write-side peer of the linked-
     // parameter mode). Helpers are defined later in this TU; forward-declared here for the branch above.
     bool TryGetDynamicInputRequest(const TSharedPtr<FJsonValue>& Value, FString& OutScriptPath);
-    UNiagaraScript* LoadDynamicInputScript(const FString& ScriptPath, FNiagaraEditError& OutError);
-    FNiagaraTypeDefinition GetDynamicInputOutputType(UNiagaraScript* Script);
+    FNiagaraEditError ResolveDynamicInputAssignment(
+        const FString& ScriptPath,
+        const FNiagaraTypeDefinition& DeclaredInputType,
+        const FString& InputName,
+        UNiagaraScript*& OutScript,
+        FNiagaraTypeDefinition& OutPinType);
+    UNiagaraNodeFunctionCall* AssignDynamicInputToOverridePin(
+        UNiagaraNodeFunctionCall& OwnerNode,
+        const FNiagaraParameterHandle& AliasedInputHandle,
+        const FNiagaraTypeDefinition& PinType,
+        UNiagaraScript* Script,
+        FGuid& OutPinId);
+    FNiagaraEditError ApplyDynamicInputNestedInputs(
+        FNiagaraResolvedTarget& Target,
+        ENiagaraScriptUsage OwningUsage,
+        UNiagaraNodeFunctionCall& DynamicInputNode,
+        const TSharedPtr<FJsonValue>& Value,
+        const FString& InputPath,
+        int32 Depth);
 
     // What a SetModuleInput write displaced from the input's override pin, plus the literal
     // mode's opt-in for displacing it at all.
@@ -1256,41 +1275,14 @@ namespace
             FString DynamicInputScriptPath;
             if (TryGetDynamicInputRequest(Payload.Value, DynamicInputScriptPath))
             {
-                FNiagaraEditError LoadError;
-                UNiagaraScript* DynamicInputScript = LoadDynamicInputScript(DynamicInputScriptPath, LoadError);
-                if (!DynamicInputScript)
+                UNiagaraScript* DynamicInputScript = nullptr;
+                FNiagaraTypeDefinition OverridePinType;
+                if (FNiagaraEditError ResolveError = ResolveDynamicInputAssignment(
+                        DynamicInputScriptPath, DeclaredInputType, Payload.InputName, DynamicInputScript, OverridePinType);
+                    ResolveError.HasError())
                 {
-                    return LoadError;
+                    return ResolveError;
                 }
-
-                const FNiagaraTypeDefinition OutputType = GetDynamicInputOutputType(DynamicInputScript);
-                if (!OutputType.IsValid())
-                {
-                    return FNiagaraEditError::Make(TEXT("DYNAMIC_INPUT_NO_OUTPUT_TYPE"),
-                        FString::Printf(TEXT("Could not determine the value output type of dynamic-input script '%s'."), *DynamicInputScriptPath));
-                }
-
-                // Reject a dynamic input whose output type is incompatible with the module input's
-                // declared type, mirroring the linked-parameter path's PARAMETER_TYPE_MISMATCH guard.
-                // Skip the check only when the declared type could not be discovered (invalid) — the
-                // engine schema still enforces type when the graph compiles in that case.
-                if (DeclaredInputType.IsValid()
-                    && !AreNiagaraParameterTypesCompatible(DeclaredInputType, OutputType))
-                {
-                    return FNiagaraEditError::Make(TEXT("PARAMETER_TYPE_MISMATCH"),
-                        FString::Printf(
-                            TEXT("Dynamic input '%s' outputs type '%s' but module input '%s' expects '%s'."),
-                            *DynamicInputScriptPath,
-                            *OutputType.GetName(),
-                            *Payload.InputName,
-                            *DeclaredInputType.GetName()));
-                }
-
-                // Type the override pin from the module input's declared type (what the engine's
-                // GetOrCreateOverridePin uses), falling back to the dynamic input's own output type only
-                // when the declared type is unknown. In the accepted (type-compatible) case these coincide.
-                const FNiagaraTypeDefinition OverridePinType =
-                    DeclaredInputType.IsValid() ? DeclaredInputType : OutputType;
 
                 // Clear any prior override (literal default, dynamic-input chain, or stale link)
                 // before creating the fresh override pin the dynamic-input node wires into — the
@@ -1300,29 +1292,25 @@ namespace
                 // nested one the response cannot reconstruct — so record what it displaced.
                 ClearOverrideAndRecordReplacement(*Target.ModuleNode, AliasedInputHandle, *Target.Graph, InOutReplacedOverride);
 
-                UEdGraphPin& OverridePin = FNiagaraStackGraphUtilities::GetOrCreateStackFunctionInputOverridePin(
-                    *Target.ModuleNode,
-                    AliasedInputHandle,
-                    OverridePinType,
-                    FGuid(),
-                    FGuid());
-                OverridePin.Modify();
-
-                UNiagaraNodeFunctionCall* DynamicInputNode = nullptr;
-                FNiagaraStackGraphUtilities::SetDynamicInputForFunctionInput(
-                    OverridePin,
-                    DynamicInputScript,
-                    DynamicInputNode,
-                    FGuid(),
-                    FString(),
-                    FGuid());
+                FGuid OverridePinId;
+                UNiagaraNodeFunctionCall* DynamicInputNode = AssignDynamicInputToOverridePin(
+                    *Target.ModuleNode, AliasedInputHandle, OverridePinType, DynamicInputScript, OverridePinId);
                 if (!DynamicInputNode)
                 {
                     return FNiagaraEditError::Make(TEXT("DYNAMIC_INPUT_SET_FAILED"),
                         TEXT("Failed to create the dynamic-input function-call node on the module input override pin."));
                 }
 
-                OutNodeId = OverridePin.PinId.ToString();
+                // value.inputs authors the new node's own inputs (recursively). A failure here comes
+                // after the override was already replaced; the handler rolls the transaction back.
+                if (FNiagaraEditError NestedError = ApplyDynamicInputNestedInputs(
+                        Target, OutputNode->GetUsage(), *DynamicInputNode, Payload.Value, Payload.InputName, 1);
+                    NestedError.HasError())
+                {
+                    return NestedError;
+                }
+
+                OutNodeId = OverridePinId.ToString();
                 if (OutDynamicInput)
                 {
                     *OutDynamicInput = DynamicInputScriptPath;
@@ -1840,9 +1828,8 @@ namespace
 
     // Dynamic-input value mode detector: value = { dynamicInput: "<ScriptAssetPath>" } requests that the
     // module input be driven by a dynamic-input script node rather than a literal or a linked parameter.
-    // Parallel to TryGetLinkedParameterRequest. (Recursive nested-input authoring — { dynamicInput,
-    // inputs } — is tracked in F-niagara-dynamic-input-nested-inputs; it needs resolver-based stack-input
-    // enumeration that EnumerateScriptInputs, which only surfaces the parameter-map pin, cannot provide.)
+    // Parallel to TryGetLinkedParameterRequest. An optional sibling `inputs` object authors the
+    // dynamic input's own inputs; see ApplyDynamicInputNestedInputs.
     bool TryGetDynamicInputRequest(const TSharedPtr<FJsonValue>& Value, FString& OutScriptPath)
     {
         if (!Value.IsValid() || Value->Type != EJson::Object)
@@ -1924,6 +1911,217 @@ namespace
             }
         }
         return FNiagaraTypeDefinition();
+    }
+
+    // Load a { dynamicInput } script and check its output type against the input it will drive,
+    // mirroring the linked-parameter path's PARAMETER_TYPE_MISMATCH guard: the engine's
+    // UNiagaraStackFunctionInput::SetDynamicInput types the override pin from the input's declared
+    // type, so an incompatible dynamic input must be rejected, not wired into a mistyped override.
+    // OutPinType is the declared type, or the script's output type when the declared type is unknown
+    // (the engine schema still enforces type when the graph compiles in that case).
+    FNiagaraEditError ResolveDynamicInputAssignment(
+        const FString& ScriptPath,
+        const FNiagaraTypeDefinition& DeclaredInputType,
+        const FString& InputName,
+        UNiagaraScript*& OutScript,
+        FNiagaraTypeDefinition& OutPinType)
+    {
+        FNiagaraEditError LoadError;
+        OutScript = LoadDynamicInputScript(ScriptPath, LoadError);
+        if (!OutScript)
+        {
+            return LoadError;
+        }
+        const FNiagaraTypeDefinition OutputType = GetDynamicInputOutputType(OutScript);
+        if (!OutputType.IsValid())
+        {
+            return FNiagaraEditError::Make(TEXT("DYNAMIC_INPUT_NO_OUTPUT_TYPE"),
+                FString::Printf(TEXT("Could not determine the value output type of dynamic-input script '%s'."), *ScriptPath));
+        }
+        if (DeclaredInputType.IsValid() && !AreNiagaraParameterTypesCompatible(DeclaredInputType, OutputType))
+        {
+            return FNiagaraEditError::Make(TEXT("PARAMETER_TYPE_MISMATCH"),
+                FString::Printf(
+                    TEXT("Dynamic input '%s' outputs type '%s' but input '%s' expects '%s'."),
+                    *ScriptPath,
+                    *OutputType.GetName(),
+                    *InputName,
+                    *DeclaredInputType.GetName()));
+        }
+        OutPinType = DeclaredInputType.IsValid() ? DeclaredInputType : OutputType;
+        return FNiagaraEditError();
+    }
+
+    // Create OwnerNode's override pin for the aliased input and wire a new dynamic-input node running
+    // Script into it. OwnerNode is the module for a module input, or the dynamic-input node one level
+    // up for a nested input — the engine's stack uses the same two utilities for both. The pin must
+    // carry no link (SetDynamicInputForFunctionInput checkf()s that).
+    UNiagaraNodeFunctionCall* AssignDynamicInputToOverridePin(
+        UNiagaraNodeFunctionCall& OwnerNode,
+        const FNiagaraParameterHandle& AliasedInputHandle,
+        const FNiagaraTypeDefinition& PinType,
+        UNiagaraScript* Script,
+        FGuid& OutPinId)
+    {
+        UEdGraphPin& OverridePin = FNiagaraStackGraphUtilities::GetOrCreateStackFunctionInputOverridePin(
+            OwnerNode, AliasedInputHandle, PinType, FGuid(), FGuid());
+        OverridePin.Modify();
+        OutPinId = OverridePin.PinId;
+        UNiagaraNodeFunctionCall* DynamicInputNode = nullptr;
+        FNiagaraStackGraphUtilities::SetDynamicInputForFunctionInput(
+            OverridePin, Script, DynamicInputNode, FGuid(), FString(), FGuid());
+        return DynamicInputNode;
+    }
+
+    // Deepest { dynamicInput, inputs } chain one set_module_input call authors; the same bound the
+    // dynamic-input model readback uses.
+    constexpr int32 MaxNestedDynamicInputDepth = 8;
+
+    // Author value.inputs on a freshly assigned dynamic-input node: { "<input>": <literal | { dynamicInput,
+    // inputs }> }. This is what the engine's stack does for a dynamic input's child input — the owning
+    // function call is the dynamic-input node, so each override pin lands on that node's own override
+    // node, aliased by its (graph-unique) function name. Names and types come from the placed node via
+    // TryFindModuleStackInput (GetStackFunctionInputs), not from the script's parameter-map input.
+    // InputPath ("SpawnRate.A") names the input in errors. The node is new, so there is nothing to clear.
+    FNiagaraEditError ApplyDynamicInputNestedInputs(
+        FNiagaraResolvedTarget& Target,
+        ENiagaraScriptUsage OwningUsage,
+        UNiagaraNodeFunctionCall& DynamicInputNode,
+        const TSharedPtr<FJsonValue>& Value,
+        const FString& InputPath,
+        int32 Depth)
+    {
+        const TSharedPtr<FJsonObject> ValueObject = Value.IsValid() && Value->Type == EJson::Object ? Value->AsObject() : nullptr;
+        if (!ValueObject.IsValid() || !ValueObject->HasField(TEXT("inputs")))
+        {
+            return FNiagaraEditError();
+        }
+        const TSharedPtr<FJsonObject>* Inputs = nullptr;
+        if (!ValueObject->TryGetObjectField(TEXT("inputs"), Inputs) || !Inputs || !Inputs->IsValid())
+        {
+            return FNiagaraEditError::Make(TEXT("INVALID_INPUT_VALUE"), FString::Printf(
+                TEXT("'inputs' of the dynamic input at '%s' must be an object mapping input name to value."), *InputPath));
+        }
+        if (Depth > MaxNestedDynamicInputDepth)
+        {
+            return FNiagaraEditError::Make(TEXT("INVALID_INPUT_VALUE"), FString::Printf(
+                TEXT("Dynamic inputs nest deeper than %d levels at '%s'."), MaxNestedDynamicInputDepth, *InputPath));
+        }
+
+        const UEdGraphSchema_Niagara* Schema = GetDefault<UEdGraphSchema_Niagara>();
+        for (const TPair<FString, TSharedPtr<FJsonValue>> Pair : (*Inputs)->Values)
+        {
+            const FString NestedPath = InputPath + TEXT(".") + Pair.Key;
+            FNiagaraTypeDefinition DeclaredType;
+            TArray<FString> AvailableNames;
+            if (!TryFindModuleStackInput(&DynamicInputNode, Pair.Key, &DeclaredType, &AvailableNames) || !DeclaredType.IsValid())
+            {
+                return FNiagaraEditError::Make(TEXT("MODULE_INPUT_NOT_FOUND"), FString::Printf(
+                    TEXT("Dynamic input '%s' at '%s' declares no input '%s'. Its inputs are: %s."),
+                    *DynamicInputNode.GetFunctionName(),
+                    *InputPath,
+                    *Pair.Key,
+                    AvailableNames.Num() > 0 ? *FString::Join(AvailableNames, TEXT(", ")) : TEXT("(none)")));
+            }
+            const FNiagaraParameterHandle AliasedHandle = FNiagaraParameterHandle::CreateAliasedModuleParameterHandle(
+                FNiagaraParameterHandle::CreateModuleParameterHandle(FName(*Pair.Key)), &DynamicInputNode);
+
+            FString NestedScriptPath;
+            if (TryGetDynamicInputRequest(Pair.Value, NestedScriptPath))
+            {
+                UNiagaraScript* NestedScript = nullptr;
+                FNiagaraTypeDefinition PinType;
+                if (FNiagaraEditError Error = ResolveDynamicInputAssignment(NestedScriptPath, DeclaredType, NestedPath, NestedScript, PinType);
+                    Error.HasError())
+                {
+                    return Error;
+                }
+                FGuid IgnoredPinId;
+                UNiagaraNodeFunctionCall* NestedNode = AssignDynamicInputToOverridePin(DynamicInputNode, AliasedHandle, PinType, NestedScript, IgnoredPinId);
+                if (!NestedNode)
+                {
+                    return FNiagaraEditError::Make(TEXT("DYNAMIC_INPUT_SET_FAILED"), FString::Printf(
+                        TEXT("Failed to create the dynamic-input function-call node for '%s'."), *NestedPath));
+                }
+                if (FNiagaraEditError Error = ApplyDynamicInputNestedInputs(Target, OwningUsage, *NestedNode, Pair.Value, NestedPath, Depth + 1);
+                    Error.HasError())
+                {
+                    return Error;
+                }
+                continue;
+            }
+
+            // Literal. Matrix / Quat go through the typed schema codec; everything else must spell the
+            // declared type (a number on an int / enum input is written as an integer).
+            bool bTyped = false;
+            FString DefaultValue;
+            FNiagaraVariable ExpectedValue;
+            if (FNiagaraEditError Error = EncodeTypedModuleInputLiteral(NestedPath, DeclaredType, Pair.Value, bTyped, DefaultValue, ExpectedValue);
+                Error.HasError())
+            {
+                return Error;
+            }
+            if (!bTyped)
+            {
+                FNiagaraTypeDefinition ValueType;
+                if (Pair.Value.IsValid() && Pair.Value->Type == EJson::String)
+                {
+                    DefaultValue = Pair.Value->AsString();
+                }
+                else if (Pair.Value.IsValid() && Pair.Value->Type == EJson::Number
+                    && DeclaredType.GetStruct() == FNiagaraTypeDefinition::GetIntDef().GetStruct())
+                {
+                    DefaultValue = FString::Printf(TEXT("%lld"), static_cast<int64>(FMath::RoundToDouble(Pair.Value->AsNumber())));
+                }
+                else if (!InferNiagaraInputType(Pair.Value, ValueType, DefaultValue)
+                    || !(AreNiagaraParameterTypesCompatible(DeclaredType, ValueType)
+                        || (DeclaredType == FNiagaraTypeDefinition::GetPositionDef() && ValueType == FNiagaraTypeDefinition::GetVec3Def())))
+                {
+                    DefaultValue.Reset();
+                }
+            }
+            if (DefaultValue.IsEmpty())
+            {
+                return FNiagaraEditError::Make(TEXT("INVALID_INPUT_VALUE"), FString::Printf(
+                    TEXT("Input '%s' is type '%s'; its value must be a literal of that type or a { dynamicInput, inputs } object."),
+                    *NestedPath,
+                    *DeclaredType.GetName()));
+            }
+
+            UEdGraphPin& OverridePin = FNiagaraStackGraphUtilities::GetOrCreateStackFunctionInputOverridePin(
+                DynamicInputNode, AliasedHandle, DeclaredType, FGuid(), FGuid());
+            OverridePin.Modify();
+            Schema->TrySetDefaultValue(OverridePin, DefaultValue, true);
+            const bool bVerified = UEdGraphSchema_Niagara::PinToTypeDefinition(&OverridePin) == DeclaredType
+                && (bTyped ? VerifyTypedModuleInputPin(OverridePin, ExpectedValue) : OverridePin.GetDefaultAsString() == DefaultValue);
+            if (!bVerified)
+            {
+                return FNiagaraEditError::Make(TEXT("INVALID_INPUT_VALUE"), FString::Printf(
+                    TEXT("Input '%s' failed override-pin read-back verification after writing declared type '%s'."),
+                    *NestedPath,
+                    *DeclaredType.GetName()));
+            }
+
+            // Same reconciliation as a module-input literal: a rapid-iteration constant left under this
+            // input's name (e.g. by an earlier dynamic input with the same function name) would shadow
+            // the pin, so push the value through to any store that already holds it.
+            const FNiagaraVariable PinVariable = UEdGraphSchema_Niagara::PinToNiagaraVariable(&OverridePin, /*bNeedsValue=*/true);
+            if (PinVariable.IsDataAllocated())
+            {
+                PinWrightNiagara::FRapidIterationWriteThrough IgnoredReport;
+                PinWrightNiagara::WriteThroughModuleInputConstant(
+                    Target.System,
+                    Target.Emitter,
+                    PinWrightNiagara::MakeRapidIterationConstantName(
+                        AliasedHandle.GetParameterHandleString(),
+                        Target.Emitter ? Target.Emitter->GetUniqueEmitterName() : FString(),
+                        OwningUsage),
+                    PinVariable.GetType(),
+                    PinVariable.GetData(),
+                    IgnoredReport);
+            }
+        }
+        return FNiagaraEditError();
     }
 
     // True when the parameter name lives in a namespace whose values are supplied by the
@@ -3092,7 +3290,7 @@ REGISTER_RPC_HANDLER("niagara.set_module_input", "niagara", "Set one Niagara mod
         RPC_PARAM_REQ("assetPath", "path", "Path to the Niagara System or Niagara Emitter asset"),
         RPC_PARAM_REQ("entryId", "string", "Module entry id or node id, or the owner-qualified entryKey 'owner:id' (a bare id is unique only within one emitter)"),
         RPC_PARAM_REQ("inputName", "string", "Module input name"),
-        RPC_PARAM_REQ("value", "any", "Literal value, or { link: \"User.X\" } to bind an existing parameter, or { dynamicInput: \"/Path/Script.Script\" } to assign a dynamic-input node. A link or dynamicInput REPLACES whatever the input's override pin already carried (a dynamic-input chain, a parameter binding or a literal) without an opt-in, because both take effect as asked; the response reports what was destroyed as replacedOverride {valueMode, source, value}. Only a literal over an inbound link is refused, since that write would never be read - see breakExistingLink."),
+        RPC_PARAM_REQ("value", "any", "Literal value, or { link: \"User.X\" } to bind an existing parameter, or { dynamicInput: \"/Path/Script.Script\", inputs?: { \"<input>\": <literal | { dynamicInput, inputs }> } } to assign a dynamic-input node and optionally set its own inputs (recursively; the response reads them back as inputs[]). A link or dynamicInput REPLACES whatever the input's override pin already carried (a dynamic-input chain, a parameter binding or a literal) without an opt-in, because both take effect as asked; the response reports what was destroyed as replacedOverride {valueMode, source, value}. Only a literal over an inbound link is refused, since that write would never be read - see breakExistingLink."),
         RPC_PARAM_OPT("target", "object", "Module target descriptor"),
         RPC_PARAM_OPT("emitter", "string", "Emitter name for Niagara System assets"),
         RPC_PARAM_OPT("scriptUsage", "string", "Script usage"),
@@ -3133,6 +3331,13 @@ REGISTER_RPC_HANDLER("niagara.set_module_input", "niagara", "Set one Niagara mod
         {
             NotifyNiagaraGraphChanged(Target);
         }
+        else if (Payload.Value.IsValid() && Payload.Value->Type == EJson::Object && Payload.Value->AsObject()->HasField(TEXT("inputs")))
+        {
+            // A nested { dynamicInput, inputs } value is validated as it is built, so a refusal can
+            // arrive after the module input's override was already replaced and part of the chain
+            // wired. Undo the whole write rather than leave a half-authored chain behind.
+            PinWrightTransactionUtils::ApplyAndCancelTransaction(Transaction);
+        }
     }
     if (MutationError.HasError())
     {
@@ -3164,8 +3369,16 @@ REGISTER_RPC_HANDLER("niagara.set_module_input", "niagara", "Set one Niagara mod
     }
     else if (!DynamicInput.IsEmpty())
     {
-        // A dynamic-input chain was assigned; report the script the override pin now reads from.
+        // A dynamic-input chain was assigned; report the script the override pin now reads from,
+        // and read the new node's own inputs back from the graph (names, types, value modes, nested
+        // chains) in the same shape niagara.inspect publishes for moduleInputs[].inputs.
         Result->SetStringField(TEXT("dynamicInput"), DynamicInput);
+        TMap<FName, NiagaraEdit::FModuleInputBindingInfo> Bindings;
+        NiagaraEdit::ClassifyModuleInputBindings(*Target.ModuleNode, Bindings);
+        if (const NiagaraEdit::FModuleInputBindingInfo* Binding = Bindings.Find(FName(*Payload.InputName)))
+        {
+            Result->SetArrayField(TEXT("inputs"), NiagaraDumpBuilder::BuildModuleInputsJson(Binding->DynamicInputNode, 1));
+        }
     }
     else if (!WrittenValue.IsEmpty())
     {

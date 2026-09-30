@@ -19,8 +19,10 @@ namespace NiagaraDumpBuilder
     // current value/linked-parameter/dynamic-input script, and enum options when the
     // input type is an enum. Surfaced under the per-module object in niagara.inspect's
     // stack aspect and the niagara_stack.json dump so agents can read the input schema
-    // instead of guessing names/types against niagara.set_module_input.
-    PINWRIGHT_API TArray<TSharedPtr<FJsonValue>> BuildModuleInputsJson(const UNiagaraNodeFunctionCall* Node);
+    // instead of guessing names/types against niagara.set_module_input. A dynamicInput entry
+    // carries the dynamic-input node's own inputs as `inputs` (same shape, recursively); Depth
+    // counts that nesting and stops it at the dynamic-input readback bound.
+    PINWRIGHT_API TArray<TSharedPtr<FJsonValue>> BuildModuleInputsJson(const UNiagaraNodeFunctionCall* Node, int32 Depth = 0);
     PINWRIGHT_API TSharedPtr<FJsonObject> BuildSystemScalabilityModel(const UNiagaraSystem* System);
     PINWRIGHT_API TSharedPtr<FJsonObject> BuildEmitterScalabilityModel(const FVersionedNiagaraEmitterData* EmitterData);
     PINWRIGHT_API TSharedPtr<FJsonObject> BuildSystemJson(const UNiagaraSystem* System);

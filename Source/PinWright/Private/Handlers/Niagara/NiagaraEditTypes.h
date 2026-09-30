@@ -509,6 +509,7 @@ namespace NiagaraEdit
         FString LiteralValue;       // set when ValueMode == "local"
         FString LinkedParameter;    // set when ValueMode == "linked"
         FString DynamicInputScript; // object path, set when ValueMode == "dynamicInput"
+        const UNiagaraNodeFunctionCall* DynamicInputNode = nullptr; // set when ValueMode == "dynamicInput"
     };
 
     // Classify each of ModuleNode's stack-input overrides by walking the module's

@@ -163,6 +163,10 @@ namespace FixtureOwnershipContractHelpers
         TEXT("PinWright/Private/Tests/Niagara/TestNiagaraSetModuleInputDynamicInput.cpp|1"),
         TEXT("PinWright/Private/Tests/Niagara/TestNiagaraSetModuleInputLinkedOverride.cpp|1"),
         TEXT("PinWright/Private/Tests/Niagara/TestNiagaraSetModuleInputMatrixQuat.cpp|1"),
+        // 1: FNestedDiFixture::Build binds BuildEmptySystemWithEmitter's rooted system to a member
+        // whose destructor calls NIRTestFixtures::DestroyFixture (unroots the system and every
+        // handle's emitter), so each of the three tests releases it on every return path.
+        TEXT("PinWright/Private/Tests/Niagara/TestNiagaraSetModuleInputNestedDynamicInput.cpp|1"),
         TEXT("PinWright/Private/Tests/Niagara/TestNiagaraSetModuleInputReplacedOverride.cpp|2"),
         TEXT("PinWright/Private/Tests/Niagara/TestNiagaraSetModuleScript.cpp|1"),
         TEXT("PinWright/Private/Tests/Niagara/TestNIRDecompiler.cpp|4"),
