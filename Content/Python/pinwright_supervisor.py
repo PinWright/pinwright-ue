@@ -62,7 +62,9 @@ SUPERVISOR
             oom_backup_pool=.. watermark_markers=.. capSeenByEditor=.. wall_min=.. log=..
         PINWRIGHT_JOB_RESULT verdict=.. exit=.. priority=.. cap_gb=.. peak_gb=.. wall_min=..
             command=.. output=..
-    Verdict ladder: TIMEOUT > MEMORY_CAP_HIT > {EDITOR|COMMAND}_EXIT_NONZERO > {..}_EXITED.
+    Verdict ladder: TIMEOUT > MEMORY_CAP_HIT > EDITOR_STARTUP_CEF_RACE (suites: non-zero exit, no
+    test started, and the log's last CEF line is the concurrent-CEF retry warning; relaunch) >
+    {EDITOR|COMMAND}_EXIT_NONZERO > {..}_EXITED.
     The suite verdict authority stays
     check_suite_log.check_log(); this module never classifies a suite.
 
@@ -103,6 +105,12 @@ import tempfile
 import threading
 import time
 import uuid
+
+try:  # by module rather than os.name, which tests patch to exercise the other platform's paths
+    import fcntl
+except ImportError:
+    fcntl = None
+    import msvcrt
 
 START_MATCH_TOLERANCE_MS = 2000
 REASON_MAX_CHARS = 300
@@ -617,8 +625,8 @@ def _scan_log(path):
     """One streaming pass: test progress plus the memory evidence of an out-of-memory run."""
     scan = {"exists": False, "started": 0, "succeeded": 0, "failed": 0, "lastTest": None,
             "oomAlloc": 0, "oomBackupPool": 0, "watermarkMarkers": 0,
-            "capSeenByEditor": None, "memoryTotalLine": None}
-    last = None
+            "capSeenByEditor": None, "memoryTotalLine": None, "cefRaceLine": None}
+    last = last_cef = None
     try:
         fh = open(path, encoding="utf-8", errors="replace")
     except OSError:
@@ -643,9 +651,13 @@ def _scan_log(path):
                 scan["capSeenByEditor"] = line.strip()
             if scan["memoryTotalLine"] is None and "Memory total: Physical=" in line:
                 scan["memoryTotalLine"] = line.strip()
+            if _CEF_CATEGORY_RE.search(line):
+                last_cef = line
     if last is not None:
         match = _PATH_RE.search(last)
         scan["lastTest"] = match.group(1) if match else last.strip()
+    if last_cef is not None and not scan["started"]:
+        scan["cefRaceLine"] = cef_race_line([last_cef])
     return scan
 
 
@@ -654,18 +666,95 @@ def scan_test_progress(log_path):
     return {key: scan[key] for key in ("exists", "started", "succeeded", "failed", "lastTest")}
 
 
+# CEF picks its cache dir (<user settings>/webcache_<n>) by probing a lockfile, so two editors
+# initializing CEF at the same moment can pick the same dir (Runtime/WebBrowser/Private/
+# WebBrowserSingleton.cpp GenerateWebCacheFolderName). On Windows the loser logs CEF_RACE_MARKER,
+# unloads and reloads the CEF DLLs and retries; an editor that dies inside that retry leaves the
+# marker as its last CEF line. CEF_INIT_MARKER is logged from FCEFBrowserApp::
+# OnBeforeCommandLineProcessing, i.e. at the start of every CefInitialize attempt.
+CEF_RACE_MARKER = "Detected concurrent CEF initialization"
+CEF_INIT_MARKER = "LogCEFBrowser: CEF GPU acceleration"
+_CEF_CATEGORY_RE = re.compile(r"\bLog(?:WebBrowser|CEFBrowser):")
+_ENGINE_INITIALIZED = "Engine is initialized"
+
+
+def read_lines(path):
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            return fh.read().splitlines()
+    except OSError:
+        return []
+
+
+def cef_race_line(lines):
+    """The concurrent-CEF retry warning when it is the LAST CEF line of the log (the editor never
+    got back to CefInitialize after it), else None."""
+    last = None
+    for line in lines:
+        if _CEF_CATEGORY_RE.search(line):
+            last = line
+    return last.strip() if last is not None and CEF_RACE_MARKER in last else None
+
+
+def cef_settled(log_path):
+    """Whether an editor's log shows it is past CEF initialization: a line of another category
+    follows the last CefInitialize attempt with no race retry after it, or the engine finished
+    initializing without ever starting CEF (-nocef, no WebBrowser module)."""
+    lines = read_lines(log_path)
+    attempts = [i for i, line in enumerate(lines) if CEF_INIT_MARKER in line]
+    if not attempts:
+        return any(_ENGINE_INITIALIZED in line for line in lines)
+    after = lines[attempts[-1] + 1:]
+    return (not any(CEF_RACE_MARKER in line for line in after)
+            and any(not _CEF_CATEGORY_RE.search(line) for line in after))
+
+
+def launches_cef(argv):
+    """False for editors that never initialize CEF, so cannot race on its cache dir: -NullRHI
+    cannot render (FApp::CanEverRender) and -nocef turns it off (WebBrowserSingleton.cpp)."""
+    return not ({"-nullrhi", "-nocef"} & {str(arg).lower() for arg in argv})
+
+
+def try_lock_file(path):
+    """Take an exclusive, non-blocking OS lock on path. Returns the open handle (the lock lives
+    until unlock_file or the holder process dies), or None while another handle holds it."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    handle = open(path, "a+b")
+    try:
+        if fcntl is None:
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        handle.close()
+        return None
+    return handle
+
+
+def unlock_file(handle):
+    if fcntl is None:
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+    handle.close()
+
+
 def is_cap_hit(cap_bytes, peak_bytes, violation_is_memory, oom_alloc=0, oom_backup_pool=0):
     """Allocation-failure lines, a memory violation, or a peak pinned within 2% of the cap."""
     return (oom_alloc > 0 or oom_backup_pool > 0 or violation_is_memory
             or (cap_bytes > 0 and peak_bytes > 0 and peak_bytes >= int(cap_bytes * 0.98)))
 
 
-def verdict_for(kind, timed_out, cap_hit, exit_code):
+def verdict_for(kind, timed_out, cap_hit, exit_code, cef_race=False):
+    """cef_race: the editor's log ends its CEF lines on the concurrent-initialization retry and
+    no test started, so a non-zero exit is a startup death in that retry (relaunch it)."""
     prefix = "COMMAND" if kind == "command" else "EDITOR"
     if timed_out:
         return "TIMEOUT"
     if cap_hit:
         return "MEMORY_CAP_HIT"
+    if cef_race and exit_code != 0:
+        return "EDITOR_STARTUP_CEF_RACE"
     return prefix + ("_EXIT_NONZERO" if exit_code != 0 else "_EXITED")
 
 
@@ -860,12 +949,14 @@ def supervise(spec):
     if spec["kind"] == "suite":
         scan = _scan_log(spec["logPath"])
         hit = is_cap_hit(cap, peak, violation_is_memory, scan["oomAlloc"], scan["oomBackupPool"])
-        verdict = verdict_for("suite", timed_out, hit, code)
+        verdict = verdict_for("suite", timed_out, hit, code, cef_race=bool(scan["cefRaceLine"]))
         _say("cap seen by editor: %s" % (scan["capSeenByEditor"] or
              "NOT LOGGED -- the editor did not report a job memory limit; the run may be uncapped"))
         _say("editor memory total: %s" % (scan["memoryTotalLine"] or "<not logged>"))
         _say("oom_alloc=%d oom_backup_pool=%d watermark=%d last Test Started: %s" % (
             scan["oomAlloc"], scan["oomBackupPool"], scan["watermarkMarkers"], scan["lastTest"]))
+        if scan["cefRaceLine"]:
+            _say("startup death in the concurrent-CEF retry, relaunch: %s" % scan["cefRaceLine"])
         line = format_suite_result(verdict, cap, peak, spec["priority"], code, scan, wall, spec["logPath"])
     else:
         verdict = verdict_for(spec["kind"], timed_out, is_cap_hit(cap, peak, violation_is_memory), code)

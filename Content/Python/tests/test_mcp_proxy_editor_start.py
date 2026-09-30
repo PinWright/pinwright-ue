@@ -54,6 +54,22 @@ from mcp_proxy import (
 )
 
 
+_LOCK_DIR = tempfile.TemporaryDirectory()
+_LOCK_PATCH = mock.patch("mcp_proxy._launch_lock_path",
+                         return_value=os.path.join(_LOCK_DIR.name, "editor-launch.lock"))
+
+
+def setUpModule():
+    # A real PinWright launch on this machine holds the machine-wide editor-launch lock; these
+    # tests must neither wait on it nor block it.
+    _LOCK_PATCH.start()
+
+
+def tearDownModule():
+    _LOCK_PATCH.stop()
+    _LOCK_DIR.cleanup()
+
+
 # Every launch verb requires an explicit mode and reason; tests that are not about those two
 # parameters pass these.
 REASON = "unit test: proxy lifecycle"

@@ -60,6 +60,7 @@ import shlex
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import unicodedata
@@ -1079,6 +1080,9 @@ def parse_automation_log(log_path):
         # and the working set stayed above the hard fraction. The run may still have completed;
         # what it did NOT do is stay inside its memory budget.
         "memoryPressure": 0,
+        # The concurrent-CEF retry warning when a run that started no test ends its CEF lines on
+        # it: a startup death in CEF's retry, not a truncation (pinwright_supervisor.cef_race_line).
+        "cefRaceLine": None,
     }
     try:
         with open(log_path, encoding="utf-8", errors="replace") as fh:
@@ -1178,6 +1182,8 @@ def parse_automation_log(log_path):
         "skippedTests": sorted(skipped_tests),
         "oom": oom_markers,
         "memoryPressure": memory_pressure_markers,
+        "cefRaceLine": (None if starts
+                        else pinwright_supervisor.cef_race_line(text.splitlines())),
     })
     return result
 
@@ -1551,6 +1557,11 @@ def classify_run_evidence(report_result, log_result, crash_result=None):
                 % (crash_result.get("dir"),
                    (", %d ensure-only" % len(ensures)) if ensures else ""))
 
+    if not evidence.get("valid") and log_result.get("cefRaceLine"):
+        return outcome(STATE_DID_NOT_COMPLETE, (
+            "the editor died at startup inside CEF's concurrent-initialization retry: another "
+            "editor initialized CEF on the same cache dir at the same moment. No test ran; "
+            "relaunch the run. Last CEF line: %s" % log_result["cefRaceLine"]))
     if not evidence.get("valid"):
         return outcome(STATE_DID_NOT_COMPLETE, (
             "no automation evidence in log (%s)"
@@ -1872,6 +1883,52 @@ def _abslog_path(extra_args):
     return None
 
 
+# Editor launches that initialize CEF are serialized machine-wide (per user: CEF's cache dir lives
+# under the user's profile). CEF picks its cache dir by probing a lockfile, so two editors in
+# CefInitialize at the same moment can pick the same dir and one of them exits or dies in the
+# retry (pinwright_supervisor.CEF_RACE_MARKER). A launch holds this lock from spawn until its log
+# shows the editor past CEF initialization, or until its launch wait ends. Editors started outside
+# PinWright do not take it and can still race.
+LAUNCH_LOCK_WAIT = 600.0
+
+
+def _launch_lock_path():
+    uid = getattr(os, "getuid", None)
+    return os.path.join(tempfile.gettempdir(), "pinwright-supervisor",
+                        "editor-launch%s.lock" % ("-%d" % uid() if uid else ""))
+
+
+class _LaunchLock:
+    """A held editor-launch lock (handle None: nothing to hold). release_if_settled() drops it
+    once log_path, written since the lock was taken, shows the editor past CEF initialization."""
+
+    def __init__(self, handle, log_path):
+        self.handle, self.log_path, self.since = handle, log_path, time.time()
+
+    def release_if_settled(self):
+        if self.handle is None or not self.log_path:
+            return
+        try:
+            # A reused -Abslog still holds the previous run until the new editor truncates it.
+            fresh = os.path.getmtime(self.log_path) >= self.since - 1.0
+        except OSError:
+            fresh = False
+        if fresh and pinwright_supervisor.cef_settled(self.log_path):
+            self.release()
+
+    def release(self):
+        if self.handle is not None:
+            pinwright_supervisor.unlock_file(self.handle)
+            self.handle = None
+
+
+def _cef_race_failure(log_path):
+    """The concurrent-CEF retry line an editor that exited before readiness died on, or None."""
+    if not log_path:
+        return None
+    return pinwright_supervisor.cef_race_line(pinwright_supervisor.read_lines(log_path))
+
+
 def _visible_via_supervisor():
     """Whether a visible editor is started through the (uncapped) supervisor. Windows: yes, so it
     is created through WMI and survives a tree kill of the MCP client. Linux: no; the direct spawn
@@ -2186,6 +2243,7 @@ class Proxy:
         self.uproject = uproject  # explicit override; None => port-file/script resolution
         self.start_timeout = start_timeout  # wait=ready ceiling for editor_start
         self.test_start_timeout = TEST_START_TIMEOUT  # first-test ceiling for editor_run_tests
+        self.launch_lock_wait = LAUNCH_LOCK_WAIT  # ceiling on queueing behind another launch
         self.stream_max_seconds = STREAM_MAX_SECONDS  # overall ceiling per streamed relay
         self._token_warned = False
         self._port_warned = False
@@ -2568,6 +2626,27 @@ class Proxy:
             return refuse("INVALID_REASON", reason_error, "reason")
         return None, mode, reason
 
+    def _acquire_launch_lock(self, argv, log_path):
+        """(lock, error_result): the machine-wide editor-launch lock for an editor about to be
+        spawned with argv, waiting up to launch_lock_wait for another launch to release it. An
+        editor that never initializes CEF gets an empty lock without waiting."""
+        if not pinwright_supervisor.launches_cef(argv):
+            return _LaunchLock(None, None), None
+        path = _launch_lock_path()
+        deadline = time.monotonic() + self.launch_lock_wait
+        while True:
+            handle = pinwright_supervisor.try_lock_file(path)
+            if handle is not None:
+                return _LaunchLock(handle, log_path), None
+            if time.monotonic() >= deadline or self._shutdown_requested.wait(0.5):
+                return None, self._start_result(
+                    "EDITOR_LAUNCH_QUEUE_TIMEOUT: another PinWright editor launch on this machine "
+                    "still held the editor-launch lock (%s) after %.0fs; nothing was started. A "
+                    "launch holds it until its editor is past CEF initialization, so that two "
+                    "editors never race on CEF's shared cache dir. Retry, or check editor_list "
+                    "for an editor stuck in startup." % (path, self.launch_lock_wait),
+                    {"error": "EDITOR_LAUNCH_QUEUE_TIMEOUT", "lockPath": path}, is_error=True)
+
     def _editor_start(self, args, launched_by="editor_start"):
         """Launch the editor for this project and block on the selected completion condition. The
         engine is resolved from the project's EngineAssociation and spawned directly and DETACHED
@@ -2630,65 +2709,71 @@ class Proxy:
             identity_args=pinwright_supervisor.launch_identity_args(reason, launched_by))
         cmdline = subprocess.list2cmdline(cmd)
         supervised = not visible or _visible_via_supervisor()
-        if not supervised:
-            spawn_kwargs = _spawn_kwargs(True)
-            display_env = _visible_launch_env()
-            if display_env is None:
-                return self._start_result(
-                    "EDITOR_NO_DISPLAY: a visible editor needs an X display, but this proxy has "
-                    "no DISPLAY and no local desktop session of this user was found. Log in to "
-                    "the desktop, set DISPLAY and XAUTHORITY in the MCP client's environment, or "
-                    "start without a window with mode offscreen or headless.",
-                    {"error": "EDITOR_NO_DISPLAY", "commandLine": cmdline}, is_error=True)
-            if display_env:
-                log("visible launch borrows %s from the desktop session"
-                    % ", ".join("%s=%s" % item for item in sorted(display_env.items())))
-                spawn_kwargs["env"] = dict(os.environ, **display_env)
-            try:
-                proc = subprocess.Popen(cmd, **spawn_kwargs)
-            except Exception as exc:
-                return self._start_result(
-                    "EDITOR_START_FAILED: could not spawn %s (%s)" % (exe, exc),
-                    {"error": "CREATEPROC_FAILED", "commandLine": cmdline}, is_error=True)
-        else:
-            # offscreen and headless editors run under the capped supervisor (memory cap,
-            # below-normal priority, kill-on-close for the editor's own children); the switches
-            # are already in cmd, which the supervisor detects and does not repeat. A visible
-            # Windows editor goes through it UNCAPPED at normal priority, only so that it is
-            # started through WMI and survives the MCP client's tree kill; with no job, the
-            # editor also outlives the supervisor itself.
-            try:
-                proc = pinwright_supervisor.spawn_supervised(
-                    cmd, kind="editor", reason=reason, launched_by=launched_by,
-                    mode=mode, log_path=_abslog_path(extra_args),
-                    # A session editor has no natural end; only suites get the 2-hour ceiling.
-                    timeout_minutes=None, capped=not visible,
-                    priority="Normal" if visible else "BelowNormal")
-            except pinwright_supervisor.SupervisorVersionMismatch as exc:
-                return self._start_result(str(exc), {
-                    "error": pinwright_supervisor.VERSION_MISMATCH, "commandLine": cmdline},
-                    is_error=True)
-            except Exception as exc:
-                return self._start_result(
-                    "EDITOR_START_FAILED: the %ssupervisor could not start %s (%s)"
-                    % ("" if visible else "capped ", exe, exc),
-                    {"error": "CREATEPROC_FAILED", "commandLine": cmdline}, is_error=True)
+        launch_lock, lock_error = self._acquire_launch_lock(cmd, _abslog_path(extra_args))
+        if lock_error is not None:
+            return lock_error
+        try:
+            if not supervised:
+                spawn_kwargs = _spawn_kwargs(True)
+                display_env = _visible_launch_env()
+                if display_env is None:
+                    return self._start_result(
+                        "EDITOR_NO_DISPLAY: a visible editor needs an X display, but this proxy "
+                        "has no DISPLAY and no local desktop session of this user was found. Log "
+                        "in to the desktop, set DISPLAY and XAUTHORITY in the MCP client's "
+                        "environment, or start without a window with mode offscreen or headless.",
+                        {"error": "EDITOR_NO_DISPLAY", "commandLine": cmdline}, is_error=True)
+                if display_env:
+                    log("visible launch borrows %s from the desktop session"
+                        % ", ".join("%s=%s" % item for item in sorted(display_env.items())))
+                    spawn_kwargs["env"] = dict(os.environ, **display_env)
+                try:
+                    proc = subprocess.Popen(cmd, **spawn_kwargs)
+                except Exception as exc:
+                    return self._start_result(
+                        "EDITOR_START_FAILED: could not spawn %s (%s)" % (exe, exc),
+                        {"error": "CREATEPROC_FAILED", "commandLine": cmdline}, is_error=True)
+            else:
+                # offscreen and headless editors run under the capped supervisor (memory cap,
+                # below-normal priority, kill-on-close for the editor's own children); the switches
+                # are already in cmd, which the supervisor detects and does not repeat. A visible
+                # Windows editor goes through it UNCAPPED at normal priority, only so that it is
+                # started through WMI and survives the MCP client's tree kill; with no job, the
+                # editor also outlives the supervisor itself.
+                try:
+                    proc = pinwright_supervisor.spawn_supervised(
+                        cmd, kind="editor", reason=reason, launched_by=launched_by,
+                        mode=mode, log_path=_abslog_path(extra_args),
+                        # A session editor has no natural end; only suites get the 2-hour ceiling.
+                        timeout_minutes=None, capped=not visible,
+                        priority="Normal" if visible else "BelowNormal")
+                except pinwright_supervisor.SupervisorVersionMismatch as exc:
+                    return self._start_result(str(exc), {
+                        "error": pinwright_supervisor.VERSION_MISMATCH, "commandLine": cmdline},
+                        is_error=True)
+                except Exception as exc:
+                    return self._start_result(
+                        "EDITOR_START_FAILED: the %ssupervisor could not start %s (%s)"
+                        % ("" if visible else "capped ", exe, exc),
+                        {"error": "CREATEPROC_FAILED", "commandLine": cmdline}, is_error=True)
 
-        if wait == "exit":
-            result = self._wait_for_exit(proc, cmdline, extra_args)
-        else:
-            result = self._wait_for_ready(proc, cmdline, extra_args)
-        if supervised:
-            _stamp_detach(result, proc)
-        else:
-            _reap_on_exit(proc)
-        structured = result.get("structuredContent")
-        if isinstance(structured, dict):
-            structured.update({
-                "reason": reason, "launchedBy": launched_by, "mode": mode,
-                "capped": bool(getattr(proc, "capped", False)),
-            })
-        return result
+            if wait == "exit":
+                result = self._wait_for_exit(proc, cmdline, extra_args, launch_lock)
+            else:
+                result = self._wait_for_ready(proc, cmdline, extra_args, launch_lock)
+            if supervised:
+                _stamp_detach(result, proc)
+            else:
+                _reap_on_exit(proc)
+            structured = result.get("structuredContent")
+            if isinstance(structured, dict):
+                structured.update({
+                    "reason": reason, "launchedBy": launched_by, "mode": mode,
+                    "capped": bool(getattr(proc, "capped", False)),
+                })
+            return result
+        finally:
+            launch_lock.release()
 
     def _editor_restart(self, args):
         """Quit any editor answering this project's endpoint, wait for it to go down, then run
@@ -2986,24 +3071,33 @@ class Proxy:
             "engineRoot": os.path.abspath(engine_root) if engine_root else None,
             "editorGuard": editor_guard,
         }
+        launch_lock, lock_error = self._acquire_launch_lock(argv, paths["logPath"])
+        if lock_error is not None:
+            lock_error["structuredContent"].update(base)
+            return lock_error
         try:
-            run = pinwright_supervisor.spawn_supervised(
-                argv, kind="suite", reason=reason, launched_by="editor_run_tests",
-                mode=base["mode"], log_path=paths["logPath"], env=env)
-        except pinwright_supervisor.SupervisorVersionMismatch as exc:
-            return self._start_result(
-                str(exc), dict(base, error=pinwright_supervisor.VERSION_MISMATCH), is_error=True)
-        except Exception as exc:
-            return self._start_result(
-                "EDITOR_START_FAILED: the capped supervisor could not start %s (%s)" % (exe, exc),
-                dict(base, error="CREATEPROC_FAILED"), is_error=True)
-        base.update({"pid": run.pid, "capped": bool(getattr(run, "capped", False))})
-        return _stamp_detach(self._wait_for_tests_started(run, base), run)
+            try:
+                run = pinwright_supervisor.spawn_supervised(
+                    argv, kind="suite", reason=reason, launched_by="editor_run_tests",
+                    mode=base["mode"], log_path=paths["logPath"], env=env)
+            except pinwright_supervisor.SupervisorVersionMismatch as exc:
+                return self._start_result(
+                    str(exc), dict(base, error=pinwright_supervisor.VERSION_MISMATCH),
+                    is_error=True)
+            except Exception as exc:
+                return self._start_result(
+                    "EDITOR_START_FAILED: the capped supervisor could not start %s (%s)"
+                    % (exe, exc), dict(base, error="CREATEPROC_FAILED"), is_error=True)
+            base.update({"pid": run.pid, "capped": bool(getattr(run, "capped", False))})
+            return _stamp_detach(self._wait_for_tests_started(run, base, launch_lock), run)
+        finally:
+            launch_lock.release()
 
-    def _wait_for_tests_started(self, run, base):
+    def _wait_for_tests_started(self, run, base, launch_lock=None):
         """Block until the first 'Test Started' line lands in the run's log, or report why it
         never will. The run is never stopped here: every error leaves it to its own timeout and
-        names the pid, so the caller decides."""
+        names the pid, so the caller decides. launch_lock is released as soon as the log shows
+        the editor past CEF initialization."""
         log_path = base["logPath"]
         start = time.monotonic()
         deadline = start + self.test_start_timeout
@@ -3014,6 +3108,8 @@ class Proxy:
 
         try:
             while True:
+                if launch_lock is not None:
+                    launch_lock.release_if_settled()
                 progress = pinwright_supervisor.scan_test_progress(log_path)
                 if progress["started"]:
                     elapsed = round(time.monotonic() - start, 1)
@@ -3026,6 +3122,14 @@ class Proxy:
                         % (run.pid, progress["started"], elapsed, log_path),
                         structured, is_error=False)
                 code = run.poll()
+                cef_race = _cef_race_failure(log_path) if code is not None else None
+                if cef_race:
+                    return failure(
+                        "EDITOR_STARTUP_CEF_RACE",
+                        "the test editor (pid %d) exited with code %s during CEF initialization, "
+                        "which another editor started at the same moment was also running (same "
+                        "CEF cache dir). No test ran; relaunch it. Last CEF line: %s"
+                        % (run.pid, code, cef_race), exitCode=code, cefLine=cef_race)
                 if code is not None:
                     return failure(
                         "EDITOR_EXITED_BEFORE_TESTS",
@@ -3303,15 +3407,28 @@ class Proxy:
             text += "\n" + "\n".join(scan["errors"][:20])
         return self._start_result(text, structured, is_error=False)
 
-    def _wait_for_ready(self, proc, cmdline, extra_args):
+    def _wait_for_ready(self, proc, cmdline, extra_args, launch_lock=None):
         """Block until the editor reports operational readiness or start_timeout elapses. Poll the child so a
-        boot crash fails fast; never kill a still-starting child."""
+        boot crash fails fast; never kill a still-starting child. launch_lock is released as soon
+        as the editor's log shows it past CEF initialization."""
         log_path = _abslog_path(extra_args)
         start = time.monotonic()
         deadline = start + self.start_timeout
         try:
             while True:
+                if launch_lock is not None:
+                    launch_lock.release_if_settled()
                 code = proc.poll()
+                cef_race = _cef_race_failure(log_path) if code is not None else None
+                if cef_race:
+                    return self._start_result(
+                        "EDITOR_STARTUP_CEF_RACE: editor (pid %d) exited with code %s during CEF "
+                        "initialization, which another editor started at the same moment was also "
+                        "running (same CEF cache dir). Relaunch it. Last CEF line: %s"
+                        % (proc.pid, code, cef_race),
+                        {"error": "EDITOR_STARTUP_CEF_RACE", "pid": proc.pid, "exitCode": code,
+                         "cefLine": cef_race, "logPath": log_path, "commandLine": cmdline},
+                        is_error=True)
                 if code is not None:
                     structured = {
                         "error": "EDITOR_EXITED_BEFORE_READY",
@@ -3391,7 +3508,7 @@ class Proxy:
     def shutdown_requested(self):
         return self._shutdown_requested.is_set()
 
-    def _wait_for_exit(self, proc, cmdline, extra_args):
+    def _wait_for_exit(self, proc, cmdline, extra_args, launch_lock=None):
         """Wait without a duration cutoff for a run-to-completion editor. The editor is detached,
         so a client disconnect ends only this wait, never the editor."""
         log_path = _abslog_path(extra_args)
@@ -3408,6 +3525,8 @@ class Proxy:
 
         try:
             while True:
+                if launch_lock is not None:
+                    launch_lock.release_if_settled()
                 code = proc.poll()
                 if code is not None:
                     break
