@@ -150,6 +150,8 @@ The generic track-addition entry. Pair with `sequencer.list_track_types` to disc
 
 **`trackName` in the request and `trackName` in the response are different things.** The response's `trackName` is the created track's object name (`MovieSceneAudioTrack_0`), read back off the track — it is the identifier `add_section`, `set_track_muted`, `set_track_solo`, `set_track_locked`, `remove_track` and the `list_sections` filter resolve by, and it is what `list_tracks` reports. The request's optional `trackName` is a *display name*: it is written to the track's `DisplayName` and echoed back as the response's separate `displayName` field. Track lookups accept either string (they match object name or display name, substring), but only the response's `trackName` is guaranteed unique.
 
+`trackName` is **required** on those five mutating verbs. An absent `trackName` is `MISSING_REQUIRED_PARAM` and an empty one is `TRACK_NOT_FOUND`; neither touches a track. (Before this an omitted name substring-matched the first track walked, so `remove_track` with no name deleted an arbitrary track.) `remove_track` is one editor undo transaction (`Remove Sequencer Track`).
+
 A `trackName` that cannot be stored — the resolved class is not a `UMovieSceneNameableTrack` — is rejected with `TRACK_NAME_NOT_APPLIED` and **no track is added**; a `trackType` that resolves to no class is `CLASS_NOT_FOUND`. Neither leaves anything behind. (Before this, the request's `trackName` was accepted, never applied, and echoed back as the response's `trackName`, so the next call resolved nothing.)
 
 ### sequencer.add_actor

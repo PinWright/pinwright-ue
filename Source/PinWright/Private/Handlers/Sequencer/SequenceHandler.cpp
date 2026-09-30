@@ -168,12 +168,13 @@ namespace SequenceHelpers
     // list_tracks reports both (SetStringField "trackName"/"displayName") and add_track writes
     // the caller's requested name into the display name — so a trackName piped back from any of
     // them resolves the same regardless of which field it came from. Substring (Contains)
-    // semantics are preserved verbatim from the pre-existing predicates, including the fact
-    // that an empty Query matches the first track: tightening that is a separate behaviour
-    // change with its own callers to consider.
+    // semantics are preserved from the pre-existing predicates, EXCEPT that an empty Query
+    // matches nothing: FString::Contains("") is true, so an omitted trackName used to resolve
+    // to whichever track was walked first and remove_track deleted it
+    // (B-sequencer-empty-trackname-matches-first). Callers now get TRACK_NOT_FOUND instead.
     static bool TrackMatchesIdentifier(const UMovieSceneTrack* Track, const FString& Query)
     {
-        return Track
+        return Track && !Query.IsEmpty()
             && (Track->GetName().Contains(Query)
                 || Track->GetDisplayName().ToString().Contains(Query));
     }
@@ -3178,7 +3179,7 @@ REGISTER_RPC_HANDLER("sequencer.get_binding_transform", "Sequencer",
 REGISTER_RPC_HANDLER("sequencer.add_section", "Sequencer", "Add a section to a track in a level sequence",
     RPC_PARAMS(
         RPC_PARAM_OPT("path", "path", "Sequence asset path"),
-        RPC_PARAM_OPT("trackName", "string", "Name of the track to add section to"),
+        RPC_PARAM_REQ("trackName", "string", "Name of the track to add section to"),
         RPC_PARAM_OPT("actorName", "string", "Filter bindings by actor name"),
         RPC_PARAM_DEF("startFrame", "integer", "Start frame of the section", "0"),
         RPC_PARAM_DEF("endFrame", "integer", "End frame of the section", "100")
@@ -3412,7 +3413,7 @@ REGISTER_RPC_HANDLER("sequencer.set_view_range", "Sequencer", "Set the view rang
 REGISTER_RPC_HANDLER("sequencer.set_track_muted", "Sequencer", "Mute or unmute a track in a level sequence",
     RPC_PARAMS(
         RPC_PARAM_OPT("path", "path", "Sequence asset path"),
-        RPC_PARAM_OPT("trackName", "string", "Name of the track"),
+        RPC_PARAM_REQ("trackName", "string", "Name of the track"),
         RPC_PARAM_DEF("muted", "boolean", "Whether to mute the track", "true")
     ))
 {
@@ -3488,7 +3489,7 @@ REGISTER_RPC_HANDLER("sequencer.set_track_muted", "Sequencer", "Mute or unmute a
 REGISTER_RPC_HANDLER("sequencer.set_track_solo", "Sequencer", "Solo a track (simulated by muting all others)",
     RPC_PARAMS(
         RPC_PARAM_OPT("path", "path", "Sequence asset path"),
-        RPC_PARAM_OPT("trackName", "string", "Name of the track to solo"),
+        RPC_PARAM_REQ("trackName", "string", "Name of the track to solo"),
         RPC_PARAM_DEF("solo", "boolean", "Whether to enable solo", "true")
     ))
 {
@@ -3569,7 +3570,7 @@ REGISTER_RPC_HANDLER("sequencer.set_track_solo", "Sequencer", "Solo a track (sim
 REGISTER_RPC_HANDLER("sequencer.set_track_locked", "Sequencer", "Lock or unlock a track's sections in a level sequence",
     RPC_PARAMS(
         RPC_PARAM_OPT("path", "path", "Sequence asset path"),
-        RPC_PARAM_OPT("trackName", "string", "Name of the track"),
+        RPC_PARAM_REQ("trackName", "string", "Name of the track"),
         RPC_PARAM_DEF("locked", "boolean", "Whether to lock the track", "true")
     ))
 {
@@ -3649,7 +3650,7 @@ REGISTER_RPC_HANDLER("sequencer.set_track_locked", "Sequencer", "Lock or unlock 
 REGISTER_RPC_HANDLER("sequencer.remove_track", "Sequencer", "Remove a track from a level sequence",
     RPC_PARAMS(
         RPC_PARAM_OPT("path", "path", "Sequence asset path"),
-        RPC_PARAM_OPT("trackName", "string", "Name of the track to remove")
+        RPC_PARAM_REQ("trackName", "string", "Name of the track to remove")
     ))
 {
     auto Payload = Ctx.GetRawPayload();
@@ -3671,8 +3672,7 @@ REGISTER_RPC_HANDLER("sequencer.remove_track", "Sequencer", "Remove a track from
     }
 
     UMovieScene* MovieScene = Sequence->GetMovieScene();
-    bool bRemoved = false;
-    FString RemovedTrackName;
+    UMovieSceneTrack* TrackToRemove = nullptr;
 
     for (UMovieSceneTrack* Track : MovieScene->GetTracks())
     {
@@ -3681,14 +3681,12 @@ REGISTER_RPC_HANDLER("sequencer.remove_track", "Sequencer", "Remove a track from
         // add_track resolves the same regardless of which field it came from.
         if (SequenceHelpers::TrackMatchesIdentifier(Track, TrackName))
         {
-            RemovedTrackName = SequenceHelpers::GetTrackIdentifier(Track);
-            MovieScene->RemoveTrack(*Track);
-            bRemoved = true;
+            TrackToRemove = Track;
             break;
         }
     }
 
-    if (!bRemoved)
+    if (!TrackToRemove)
     {
         for (const FMovieSceneBinding& Binding :
              const_cast<const UMovieScene*>(MovieScene)->GetBindings())
@@ -3697,13 +3695,11 @@ REGISTER_RPC_HANDLER("sequencer.remove_track", "Sequencer", "Remove a track from
             {
                 if (SequenceHelpers::TrackMatchesIdentifier(Track, TrackName))
                 {
-                    RemovedTrackName = SequenceHelpers::GetTrackIdentifier(Track);
-                    MovieScene->RemoveTrack(*Track);
-                    bRemoved = true;
+                    TrackToRemove = Track;
                     break;
                 }
             }
-            if (bRemoved)
+            if (TrackToRemove)
                 break;
         }
     }
@@ -3715,32 +3711,32 @@ REGISTER_RPC_HANDLER("sequencer.remove_track", "Sequencer", "Remove a track from
     // Match the cut track by GetName()/GetDisplayName() (both fields list_tracks reports)
     // and clear it via the engine's dedicated RemoveCameraCutTrack() — a bare
     // MovieScene->RemoveTrack() only mutates the Tracks array and would NOT clear this slot.
-    if (!bRemoved)
+    UMovieSceneTrack* CameraCutTrack = MovieScene->GetCameraCutTrack();
+    if (!TrackToRemove && SequenceHelpers::TrackMatchesIdentifier(CameraCutTrack, TrackName))
     {
-        if (UMovieSceneTrack* CameraCutTrack = MovieScene->GetCameraCutTrack())
-        {
-            if (SequenceHelpers::TrackMatchesIdentifier(CameraCutTrack, TrackName))
-            {
-                RemovedTrackName = SequenceHelpers::GetTrackIdentifier(CameraCutTrack);
-                MovieScene->RemoveCameraCutTrack();
-                bRemoved = true;
-            }
-        }
+        TrackToRemove = CameraCutTrack;
     }
 
-    if (bRemoved)
-    {
-        MovieScene->Modify();
-        TSharedPtr<FJsonObject> Resp = MakeShared<FJsonObject>();
-        Resp->SetStringField(TEXT("trackName"), RemovedTrackName);
-        Ctx.SendSuccess(Resp);
-        return true;
-    }
-    else
+    if (!TrackToRemove)
     {
         Ctx.SendError(ErrorCodes::ERR_TRACK_NOT_FOUND, "Track not found");
         return true;
     }
+
+    // Undoable delete (convention: FScopedTransaction after validation, before the first
+    // mutation). RemoveTrack / RemoveCameraCutTrack call MovieScene->Modify() themselves.
+    const FScopedTransaction Transaction(
+        NSLOCTEXT("PinWright", "SequencerRemoveTrack", "Remove Sequencer Track"));
+    const FString RemovedTrackName = SequenceHelpers::GetTrackIdentifier(TrackToRemove);
+    if (TrackToRemove == CameraCutTrack)
+        MovieScene->RemoveCameraCutTrack();
+    else
+        MovieScene->RemoveTrack(*TrackToRemove);
+
+    TSharedPtr<FJsonObject> Resp = MakeShared<FJsonObject>();
+    Resp->SetStringField(TEXT("trackName"), RemovedTrackName);
+    Ctx.SendSuccess(Resp);
+    return true;
 }
 
 // ============================================================================
