@@ -88,7 +88,11 @@ namespace DriveObserveCompositeTestHelpers
         const int32 W = bDecoded ? static_cast<int32>(ImageWrapper->GetWidth()) : 0;
         const int32 H = bDecoded ? static_cast<int32>(ImageWrapper->GetHeight()) : 0;
         const bool bUsable = bDecoded && W > LocalX + BoxW && H > LocalY + BoxH && Raw.Num() >= W * H * 4;
-        Test.TestTrue(TEXT("image decodes"), bUsable);
+        Test.TestTrue(FString::Printf(
+            TEXT("image decodes and exceeds the %dx%d mark box (decoded=%d format=%d bytes=%d W=%d H=%d raw=%d; "
+                 "reported %dx%d %s)"),
+            LocalX + BoxW, LocalY + BoxH, bDecoded ? 1 : 0, static_cast<int32>(Format), Encoded.Num(), W, H,
+            Raw.Num(), Shot.Width, Shot.Height, *Shot.Mime), bUsable);
         if (!bUsable)
         {
             return;
