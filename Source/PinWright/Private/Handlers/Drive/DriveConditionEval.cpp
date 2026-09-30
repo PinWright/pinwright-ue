@@ -75,34 +75,46 @@ namespace
         }
         return { Element.Label, TEXT("label") };
     }
+
+    // The exact rule: the whole handle (case-sensitive) or the label (case-insensitive).
+    bool DriveMatchesExactly(const FDriveElement& Element, const FString& Target)
+    {
+        return (!Element.Handle.IsEmpty() && Element.Handle.Equals(Target, ESearchCase::CaseSensitive))
+            || (!Element.Label.IsEmpty() && Element.Label.Equals(Target, ESearchCase::IgnoreCase));
+    }
+
+    // Target is a whole '/'-delimited run of the handle's segments (case-sensitive): a UMG
+    // widget name such as "OkButton" in "W_Popup_C_0/OkButton/SCommonButton", or a sub-path
+    // such as "OkButton/SCommonButton". Never a partial segment ("Ok" does not match).
+    bool DriveHandleHasSubPath(const FString& Handle, const FString& Target)
+    {
+        if (Target.IsEmpty())
+        {
+            return false;
+        }
+        const FString Padded = TEXT("/") + Handle + TEXT("/");
+        return Padded.Contains(TEXT("/") + Target + TEXT("/"), ESearchCase::CaseSensitive);
+    }
 }
 
 bool FDriveConditionEval::ElementMatchesTarget(const FDriveElement& Element, const FString& Target)
 {
-    // Exact, case-sensitive Handle match takes precedence; otherwise a
-    // case-insensitive Label match. Empty fields never match (so an empty
-    // Target matches nothing).
-    if (!Element.Handle.IsEmpty() && Element.Handle.Equals(Target, ESearchCase::CaseSensitive))
-    {
-        return true;
-    }
-    if (!Element.Label.IsEmpty() && Element.Label.Equals(Target, ESearchCase::IgnoreCase))
-    {
-        return true;
-    }
-    return false;
+    // Empty fields never match (so an empty Target matches nothing).
+    return DriveMatchesExactly(Element, Target) || DriveHandleHasSubPath(Element.Handle, Target);
 }
 
 const FDriveElement* FDriveConditionEval::FindMatch(const TArray<FDriveElement>& Elements, const FString& Target)
 {
-    for (const FDriveElement& Element : Elements)
+    // An exact handle/label match wins over an earlier element that merely contains Target
+    // as a handle sub-path (a descendant listed before it), so a full handle still reads
+    // that element's own text/state.
+    if (const FDriveElement* Exact = Elements.FindByPredicate(
+            [&Target](const FDriveElement& Element) { return DriveMatchesExactly(Element, Target); }))
     {
-        if (ElementMatchesTarget(Element, Target))
-        {
-            return &Element;
-        }
+        return Exact;
     }
-    return nullptr;
+    return Elements.FindByPredicate(
+        [&Target](const FDriveElement& Element) { return DriveHandleHasSubPath(Element.Handle, Target); });
 }
 
 int32 FDriveConditionEval::CountMatches(const TArray<FDriveElement>& Elements, const FString& Target)

@@ -278,6 +278,12 @@ bool FDriveJson::ParseCondition(const TSharedPtr<FJsonObject>& Json, FDriveCondi
     }
 
     OutCondition.Target = GetJsonStringField(Json, TEXT("target"));
+    // Every condition but journal_severity names what it is about. An empty target
+    // matches nothing, which widget_absent (and count == 0) would report as met.
+    if (OutCondition.Target.IsEmpty() && OutCondition.Type != EDriveConditionType::JournalSeverity)
+    {
+        return false;
+    }
     OutCondition.ExpectedText = GetJsonStringField(Json, TEXT("expected_text"));
     OutCondition.ExpectedCount = GetJsonIntField(Json, TEXT("expected_count"), OutCondition.ExpectedCount);
 

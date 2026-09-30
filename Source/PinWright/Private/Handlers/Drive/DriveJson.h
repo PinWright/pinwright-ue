@@ -36,8 +36,9 @@ public:
     static TSharedPtr<FJsonObject> WriteDiffSummary(const FDriveDiff& Diff);
 
     // Parses a condition from a handler's args object. Returns false when a `type`
-    // field is present but unrecognized (or the object is null); missing optional
-    // fields fall back to FDriveCondition defaults.
+    // field is present but unrecognized (or the object is null), and when `target` is
+    // empty for any type but journal_severity; missing optional fields fall back to
+    // FDriveCondition defaults.
     static bool ParseCondition(const TSharedPtr<FJsonObject>& Json, FDriveCondition& OutCondition);
 
     // Parses a settle config from a handler's args object. Missing fields keep the

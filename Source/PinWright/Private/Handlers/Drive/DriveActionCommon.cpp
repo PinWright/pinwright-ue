@@ -92,6 +92,16 @@ bool FDriveActionCommon::IsActionable(const FDriveElement& Element)
     return Element.bVisible && Element.bEnabled && !Element.bGeometryStale;
 }
 
+bool FDriveActionCommon::IsAbsenceUnverifiable(const TOptional<FDriveCondition>& WaitFor,
+    const TArray<FDriveElement>& Baseline)
+{
+    // An empty baseline (the pre-action sample failed) carries no evidence either way.
+    return WaitFor.IsSet() && WaitFor->Type == EDriveConditionType::WidgetAbsent
+        && Baseline.Num() > 0
+        && !Baseline.ContainsByPredicate([&WaitFor](const FDriveElement& Element)
+            { return FDriveConditionEval::ElementMatchesTarget(Element, WaitFor->Target); });
+}
+
 EDriveObserveMode FDriveActionCommon::ParseObserveMode(const FHandlerContext& Ctx)
 {
     // DEFAULT changed to none: action / wait verbs no longer embed a full observation the
@@ -230,7 +240,7 @@ void FDriveActionCommon::RunAction(FHandlerContext& Ctx, const FString& Handle, 
     if (!FDriveJson::ParseSettleConfig(Ctx.GetRawPayload(), Config))
     {
         Ctx.SendError(ErrorCodes::ERR_CONDITION_INVALID,
-            TEXT("The 'wait_for' object has an unrecognized 'type'."));
+            TEXT("The 'wait_for' object has an unrecognized 'type', or has no 'target' (every type but journal_severity needs one)."));
         return;
     }
     // The action-verb wire name for the wait_for timeout is `timeout_ms`; honor it
@@ -319,6 +329,17 @@ void FDriveActionCommon::RunAction(FHandlerContext& Ctx, const FString& Handle, 
             // miss as an empty baseline rather than failing the action.
             PreElements.Reset();
         }
+    }
+
+    // A widget_absent wait whose target is not there before the action would be met on the
+    // first tick whatever the action did. Refuse before injecting instead.
+    if (IsAbsenceUnverifiable(Config.WaitFor, PreElements))
+    {
+        Ctx.SendError(ErrorCodes::ERR_CONDITION_INVALID,
+            FString::Printf(
+                TEXT("wait_for widget_absent target '%s' matches no element before the action (%d observed), so its absence would prove nothing. Use a handle, a handle segment (the UMG widget name) or a label from drive.observe."),
+                *Config.WaitFor->Target, PreElements.Num()));
+        return;
     }
 
     // Everything after a successful injection: run the settle loop and resolve the request

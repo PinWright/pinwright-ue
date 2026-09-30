@@ -367,6 +367,27 @@ bool FDriveConditionParseTest::RunTest(const FString& Parameters)
     return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveConditionTargetRequiredTest,
+    "PinWright.drive.contract.ConditionTargetRequired",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FDriveConditionTargetRequiredTest::RunTest(const FString& Parameters)
+{
+    // An empty target matches nothing, so widget_absent would be met on the first tick.
+    FDriveCondition Unused;
+    TSharedPtr<FJsonObject> NoTarget = MakeShared<FJsonObject>();
+    NoTarget->SetStringField(TEXT("type"), TEXT("widget_absent"));
+    TestFalse(TEXT("widget_absent without a target is rejected"), FDriveJson::ParseCondition(NoTarget, Unused));
+
+    NoTarget->SetStringField(TEXT("target"), FString());
+    TestFalse(TEXT("widget_absent with an empty target is rejected"), FDriveJson::ParseCondition(NoTarget, Unused));
+
+    TSharedPtr<FJsonObject> Severity = MakeShared<FJsonObject>();
+    Severity->SetStringField(TEXT("type"), TEXT("journal_severity"));
+    Severity->SetStringField(TEXT("severity"), TEXT("error"));
+    TestTrue(TEXT("journal_severity needs no target"), FDriveJson::ParseCondition(Severity, Unused));
+    return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveSettleConfigParseTest,
     "PinWright.drive.contract.SettleConfigParse",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)

@@ -68,6 +68,14 @@ public:
     // drift, and pure so the rule is testable without a live target.
     static bool IsActionable(const FDriveElement& Element);
 
+    // Whether an action's wait_for is a widget_absent whose target matches no element of the
+    // pre-action Baseline. widget_absent after an action means "the action made it go away",
+    // so such a target (a typo, or a name the matcher cannot resolve) would read as absent on
+    // the first tick and report wait_for_met whatever the action did. RunAction refuses it
+    // with CONDITION_INVALID before injecting. Pure, like IsActionable.
+    static bool IsAbsenceUnverifiable(const TOptional<FDriveCondition>& WaitFor,
+        const TArray<FDriveElement>& Baseline);
+
     // Parse the `observe` mode param (none | list | list+screenshot). A MISSING param
     // resolves to None (the compact default for action / wait verbs); an explicit but
     // unrecognized token resolves to ListAndScreenshot.

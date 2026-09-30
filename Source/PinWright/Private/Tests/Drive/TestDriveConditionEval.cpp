@@ -7,6 +7,7 @@
 
 #include "Misc/AutomationTest.h"
 
+#include "Handlers/Drive/DriveActionCommon.h"
 #include "Handlers/Drive/DriveConditionEval.h"
 #include "Handlers/Drive/DriveTypes.h"
 
@@ -583,5 +584,78 @@ bool FDriveCondActualExpectedTest::RunTest(const FString& Parameters)
         TestFalse(TEXT("Expected is non-empty"), R.Expected.IsEmpty());
     }
 
+    return true;
+}
+
+// ============================================================================
+// Handle path-segment matching: a UMG widget name names the element whose handle
+// carries it, so widget_absent cannot be met while that widget is on screen.
+// ============================================================================
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveCondHandleSegmentTest,
+    "PinWright.drive.condition.HandleSegmentMatch",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FDriveCondHandleSegmentTest::RunTest(const FString& Parameters)
+{
+    TArray<FDriveElement> Elements;
+    Elements.Add(MakeCondTestElement(TEXT("W_Popup_C_0/OkButton/SCommonButton"), TEXT("Ok")));
+
+    // The reported case: the widget is on screen, named by its UMG name.
+    {
+        const FDriveConditionResult R = FDriveConditionEval::Evaluate(
+            MakeCond(EDriveConditionType::WidgetAbsent, TEXT("OkButton")), Elements, FDriveJournalDelta());
+        TestFalse(TEXT("widget_absent is not met while a handle segment names an on-screen widget"), R.bMet);
+        TestEqual(TEXT("... and reads present"), R.Actual, TEXT("present"));
+    }
+    TestTrue(TEXT("widget_present by UMG name is met"), FDriveConditionEval::Evaluate(
+        MakeCond(EDriveConditionType::WidgetPresent, TEXT("OkButton")), Elements, FDriveJournalDelta()).bMet);
+
+    const FDriveElement& Button = Elements[0];
+    TestTrue(TEXT("a multi-segment sub-path matches"), FDriveConditionEval::ElementMatchesTarget(Button, TEXT("OkButton/SCommonButton")));
+    TestTrue(TEXT("the root segment matches"), FDriveConditionEval::ElementMatchesTarget(Button, TEXT("W_Popup_C_0")));
+    TestFalse(TEXT("a partial segment does not match"), FDriveConditionEval::ElementMatchesTarget(Button, TEXT("OkBut")));
+    TestFalse(TEXT("segments are case-sensitive"), FDriveConditionEval::ElementMatchesTarget(Button, TEXT("okbutton")));
+    TestFalse(TEXT("a non-contiguous path does not match"), FDriveConditionEval::ElementMatchesTarget(Button, TEXT("W_Popup_C_0/SCommonButton")));
+
+    // An exact handle wins over an earlier element that only contains it as a sub-path.
+    TArray<FDriveElement> Nested;
+    Nested.Add(MakeCondTestElement(TEXT("Root/Score/STextBlock"), TEXT("child")));
+    Nested.Add(MakeCondTestElement(TEXT("Root/Score"), TEXT("parent")));
+    FDriveCondition Text = MakeCond(EDriveConditionType::TextEquals, TEXT("Root/Score"));
+    Text.ExpectedText = TEXT("parent");
+    TestTrue(TEXT("text_equals reads the exact-handle element, not the earlier descendant"),
+        FDriveConditionEval::Evaluate(Text, Nested, FDriveJournalDelta()).bMet);
+    return true;
+}
+
+// ============================================================================
+// An action's widget_absent wait must name something present before the action.
+// ============================================================================
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveCondAbsenceBaselineTest,
+    "PinWright.drive.condition.AbsenceNeedsBaselineMatch",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FDriveCondAbsenceBaselineTest::RunTest(const FString& Parameters)
+{
+    TArray<FDriveElement> Baseline;
+    Baseline.Add(MakeCondTestElement(TEXT("W_Popup_C_0/OkButton/SCommonButton"), TEXT("Ok")));
+
+    TOptional<FDriveCondition> Absent = MakeCond(EDriveConditionType::WidgetAbsent, TEXT("OkButtn"));
+    TestTrue(TEXT("a widget_absent target matching nothing before the action is unverifiable"),
+        FDriveActionCommon::IsAbsenceUnverifiable(Absent, Baseline));
+
+    Absent = MakeCond(EDriveConditionType::WidgetAbsent, TEXT("OkButton"));
+    TestFalse(TEXT("a target present before the action is verifiable"),
+        FDriveActionCommon::IsAbsenceUnverifiable(Absent, Baseline));
+
+    Absent = MakeCond(EDriveConditionType::WidgetAbsent, TEXT("OkButtn"));
+    TestFalse(TEXT("an empty baseline (sample failed) proves nothing either way"),
+        FDriveActionCommon::IsAbsenceUnverifiable(Absent, TArray<FDriveElement>()));
+
+    const TOptional<FDriveCondition> Present = MakeCond(EDriveConditionType::WidgetPresent, TEXT("NotYetThere"));
+    TestFalse(TEXT("widget_present may name something the action creates"),
+        FDriveActionCommon::IsAbsenceUnverifiable(Present, Baseline));
+    TestFalse(TEXT("no wait_for, nothing to verify"),
+        FDriveActionCommon::IsAbsenceUnverifiable(TOptional<FDriveCondition>(), Baseline));
     return true;
 }

@@ -405,7 +405,7 @@ void FDriveWebHandlers::ExpectWeb(FHandlerContext& Ctx)
     if (!FDriveJson::ParseCondition(Ctx.GetObject(TEXT("condition")), Condition))
     {
         Ctx.SendError(ErrorCodes::ERR_CONDITION_INVALID,
-            TEXT("The 'condition' object is missing or has an unrecognized 'type'."));
+            TEXT("The 'condition' object is missing, has an unrecognized 'type', or has no 'target' (every type but journal_severity needs one)."));
         return;
     }
 
@@ -678,7 +678,7 @@ void FDriveWebHandlers::WaitForWeb(FHandlerContext& Ctx)
     if (!FDriveJson::ParseCondition(Ctx.GetObject(TEXT("condition")), Condition))
     {
         Ctx.SendError(ErrorCodes::ERR_CONDITION_INVALID,
-            TEXT("The 'condition' object is missing or has an unrecognized 'type'."));
+            TEXT("The 'condition' object is missing, has an unrecognized 'type', or has no 'target' (every type but journal_severity needs one)."));
         return;
     }
 
