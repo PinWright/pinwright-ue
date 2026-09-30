@@ -569,10 +569,13 @@ bool CoerceStringToPersistedFText(
     FString ExistingKey;
     if (ExistingText && HasLocalizationIdentity(*ExistingText, &ExistingNamespace, &ExistingKey))
     {
+        // Keep the existing identity but take the parsed source string, so identity-less
+        // macros (INVTEXT, namespace-less LOCTEXT) store their payload, not their syntax.
+        // Plain strings parse to themselves.
         OutText = FText::ChangeKey(
             FTextKey(*ExistingNamespace),
             FTextKey(*ExistingKey),
-            FText::FromString(TextValue));
+            FText::FromString(ParsedText.ToString()));
         return true;
     }
 

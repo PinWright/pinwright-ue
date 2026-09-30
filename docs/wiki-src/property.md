@@ -50,7 +50,7 @@ For runtime instances the change is not persisted to the asset.
 
 Use `blueprint.set_default` instead when the intent is specifically "set this Blueprint CDO default, compile, save, and read back the post-compile value." Use `property.set` for the generic UObject writer or one-off live edits.
 
-`property.set` shares FText parsing with `widget.set`: string values for FText fields may be raw text or UE text macros. Supported macro forms: `NSLOCTEXT`, `LOCTEXT`, `LOCTABLE("TableId","Key")` (string-table backed FText), and `INVTEXT`. Use the macro forms when setting localizable text. Both `namespace` and `key` in NSLOCTEXT must be readable, stable strings — do not write hex GUIDs, even when carrying over from an existing entry that uses one.
+`property.set` shares FText parsing with `widget.set`: string values for FText fields may be raw text or UE text macros. Supported macro forms: `NSLOCTEXT`, `LOCTEXT`, `LOCTABLE("TableId","Key")` (string-table backed FText), and `INVTEXT`. Use the macro forms when setting localizable text. A value with no namespace/key of its own (`INVTEXT("x")`, namespace-less `LOCTEXT`, or a plain string) written over an FText that already has one keeps that namespace/key and stores the parsed source string (`x`), not the macro text. Both `namespace` and `key` in NSLOCTEXT must be readable, stable strings — do not write hex GUIDs, even when carrying over from an existing entry that uses one.
 
 **Reflected scalar conversion is strict and atomic.** Boolean, numeric, integer, byte,
 and enum values are parsed into scratch storage before `property.set` calls `Modify()`
