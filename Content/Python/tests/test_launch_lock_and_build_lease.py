@@ -1,6 +1,7 @@
 # Copyright (c) 2026 Alexander Penkin. MIT License.
 
-"""Editor-launch serialization against the CEF cache-dir race and the typed CEF startup death.
+"""Editor-launch serialization against the CEF cache-dir race, the typed CEF startup death, and
+editor_build's build lease and mid-build source-edit check.
 
 Pure stdlib; spawning is faked except one real child process that holds a file lock. No Unreal
 process is started.
@@ -212,3 +213,125 @@ class LaunchLockTest(_Temp):
         self.assertEqual(result["structuredContent"]["error"], "EDITOR_STARTUP_CEF_RACE")
         result = self.proxy._wait_for_ready(_Exited(777003), "cmd", [])
         self.assertEqual(result["structuredContent"]["error"], "EDITOR_EXITED_BEFORE_READY")
+
+
+class BuildSourceWindowTest(_Temp):
+    def touch(self, rel, mtime):
+        path = self.write(rel, "x")
+        os.utime(path, (mtime, mtime))
+        return path
+
+    def test_only_compiled_sources_edited_inside_the_window_are_listed(self):
+        start, end = 1000.0, 2000.0
+        inside = [self.touch("Source/Mod/Public/A.h", 1500),
+                  self.touch("Plugins/Group/P/Source/P/Private/B.cpp", 1999),
+                  self.touch("Plugins/P2/Source/P2/P2.Build.cs", 1000)]
+        self.touch("Source/Mod/Public/Before.h", 999)
+        self.touch("Source/Mod/Public/After.h", 2001)  # newer than its objects: recompiled next
+        self.touch("Plugins/P/Intermediate/Build/G.generated.h", 1500)
+        self.touch("Plugins/P/Content/Notes.h", 1500)
+        self.touch("Plugins/P/Resources/Readme.txt", 1500)
+        self.assertEqual(mcp_proxy.sources_changed_between(self.tmp, start, end), sorted(inside))
+
+    def _build(self, started):
+        project = self.write("Host.uproject", "{}")
+        log = self.write("Saved/PinWright/builds/b1/build.log", (
+            "PinWright editor_build: reason=x; project=decoy; target=HostEditor Linux Development; "
+            "project=%s; startedAt=%.3f\nResult: Succeeded\n" % (project, started)))
+        result = self.write("Saved/PinWright/builds/b1/build.log.result.txt",
+                            "PINWRIGHT_JOB_RESULT verdict=COMMAND_EXITED exit=0 priority=Normal\n")
+        return log, result
+
+    def test_a_header_edited_mid_build_makes_a_succeeded_build_stale(self):
+        now = time.time()
+        log, result = self._build(now - 100)
+        os.utime(result, (now, now))
+        header = self.touch("Source/Mod/Public/A.h", now - 50)
+        state = mcp_proxy.build_state(log)
+        self.assertEqual(state["status"], "stale")
+        self.assertEqual(state["sourcesChangedDuringBuild"], [header])
+        text = Proxy(None, 0.1, 0.1, 0.1, None, None)._editor_build_status(
+            {"logPath": log})["content"][0]["text"]
+        self.assertTrue(text.startswith("STALE"))
+        self.assertIn(header, text)
+
+    def test_an_edit_after_the_build_ended_leaves_it_succeeded(self):
+        now = time.time()
+        log, result = self._build(now - 100)
+        os.utime(result, (now - 10, now - 10))
+        self.touch("Source/Mod/Public/A.h", now)
+        state = mcp_proxy.build_state(log)
+        self.assertEqual(state["status"], "succeeded")
+        self.assertEqual(state["sourcesChangedDuringBuild"], [])
+
+
+class BuildLeaseTest(_Temp):
+    def setUp(self):
+        super().setUp()
+        self.project = self.write("Host/Host.uproject", '{"EngineAssociation": "5.8"}')
+        self.checkout = os.path.dirname(self.project)
+        self.engine = os.path.join(self.tmp, "UE_5.8")
+        self.editor = os.path.join(self.engine, "Engine", "Binaries", "Linux", "UnrealEditor")
+        self.proxy = Proxy(None, 0.1, 0.1, 0.1, None, None, uproject=self.project)
+
+    def _build(self, spawn=None):
+        run = mock.Mock(pid=2468, capped=True, detached=True, detach_note=None,
+                        launch_mechanism="setsid")
+        with mock.patch("mcp_proxy._editor_processes", return_value=[]), \
+                mock.patch("mcp_proxy.resolve_editor", return_value=(self.engine, self.editor)), \
+                mock.patch("mcp_proxy.os.path.isfile", return_value=True), \
+                mock.patch("mcp_proxy.pinwright_supervisor.spawn_supervised",
+                           side_effect=spawn, return_value=run) as supervised:
+            return self.proxy._editor_build({"reason": "unit test"}), supervised
+
+    def _alive(self, alive):
+        return mock.patch("mcp_proxy.pinwright_supervisor.process_start_ms",
+                          return_value=123 if alive else None)
+
+    def test_start_writes_the_lease_and_the_start_time(self):
+        result, supervised = self._build()
+        self.assertFalse(result["isError"], result)
+        header = supervised.call_args.kwargs["output_header"]
+        match = mcp_proxy._BUILD_HEADER_RE.match(header)
+        self.assertEqual(match.group(1), os.path.abspath(self.project))
+        with open(mcp_proxy._build_lease_path(self.checkout), encoding="utf-8") as fh:
+            lease = json.load(fh)
+        structured = result["structuredContent"]
+        self.assertEqual((lease["buildId"], lease["logPath"], lease["pid"], lease["reason"]),
+                         (structured["buildId"], structured["logPath"], 2468, "unit test"))
+        self.assertEqual(lease["startedAt"], structured["startedAt"])
+        self.assertEqual(lease["ownerPid"], os.getpid())
+
+    def test_a_second_build_is_refused_while_the_first_runs_and_editor_list_shows_it(self):
+        first, _ = self._build()
+        log = first["structuredContent"]["logPath"]
+        self.write(os.path.relpath(log + ".supervisor.log", self.tmp),
+                   "[t] started pid 2468: Build.sh HostEditor\n")
+        with self._alive(True):
+            second, supervised = self._build(spawn=AssertionError("must not spawn"))
+            with mock.patch("mcp_proxy._editor_processes", return_value=[]):
+                listed = self.proxy._editor_list({})
+        self.assertTrue(second["isError"])
+        structured = second["structuredContent"]
+        self.assertEqual(structured["error"], "BUILD_ALREADY_RUNNING")
+        self.assertEqual(structured["build"]["logPath"], log)
+        self.assertIn(first["structuredContent"]["buildId"], second["content"][0]["text"])
+        supervised.assert_not_called()
+        self.assertEqual(listed["structuredContent"]["activeBuild"]["logPath"], log)
+        with self._alive(False):
+            third, supervised = self._build()
+            with mock.patch("mcp_proxy._editor_processes", return_value=[]):
+                listed = self.proxy._editor_list({})
+        self.assertFalse(third["isError"], third)
+        self.assertIsNone(listed["structuredContent"]["activeBuild"])
+
+    def test_a_build_being_claimed_by_another_session_is_refused(self):
+        handle = pl.try_lock_file(mcp_proxy._build_lease_path(self.checkout) + ".lock")
+        self.addCleanup(pl.unlock_file, handle)
+        result, supervised = self._build(spawn=AssertionError("must not spawn"))
+        self.assertEqual(result["structuredContent"]["error"], "BUILD_ALREADY_RUNNING")
+        supervised.assert_not_called()
+
+
+if __name__ == "__main__":
+    unittest.main()

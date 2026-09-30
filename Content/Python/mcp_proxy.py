@@ -450,9 +450,11 @@ EDITOR_BUILD_TOOL = {
         "resolves to. Returns at once with logPath and pid; poll editor_build_status with "
         "logPath. reason is required and is written as the first line of the build log. Refuses "
         "with BUILD_BLOCKED_BY_EDITOR, naming the pids, while an Unreal editor of THIS checkout "
-        "is running (the link replaces its DLLs); editors of other checkouts do not block. For a "
-        "one-file compile check, run Build.bat / Build.sh with -SingleFile from a shell instead: "
-        "it writes no binaries."
+        "is running (the link replaces its DLLs); editors of other checkouts do not block. Holds "
+        "this project's build lease while it runs: a second editor_build is refused with "
+        "BUILD_ALREADY_RUNNING naming the running build, and editor_list shows it as "
+        "activeBuild. For a one-file compile check, run Build.bat / Build.sh with -SingleFile "
+        "from a shell instead: it writes no binaries."
     ),
     "inputSchema": {
         "type": "object",
@@ -474,9 +476,11 @@ EDITOR_BUILD_TOOL = {
 EDITOR_BUILD_STATUS_TOOL = {
     "name": "editor_build_status",
     "description": (
-        "Non-blocking status of a build started by editor_build: running, succeeded, failed or "
-        "lost (the supervisor died without a result), UnrealBuildTool's 'Result:' line, the exit "
-        "code, and every compiler / linker / UBT error line in the log (the whole log is read)."
+        "Non-blocking status of a build started by editor_build: running, succeeded, stale (UBT "
+        "succeeded but sourcesChangedDuringBuild lists source files edited while it ran: touch "
+        "them and build again), failed or lost (the supervisor died without a result), "
+        "UnrealBuildTool's 'Result:' line, the exit code, and every compiler / linker / UBT "
+        "error line in the log (the whole log is read)."
     ),
     "inputSchema": {
         "type": "object",
@@ -2169,12 +2173,22 @@ _BUILD_ERROR_RE = re.compile(
     re.IGNORECASE)
 _UBT_RESULT_RE = re.compile(r"^\s*Result:\s*(Succeeded|Failed\b.*)$")
 _BUILD_ERROR_LINE_LIMIT = 200
+# editor_build's header line ends "; project=<uproject>; startedAt=<epoch seconds>". The leading
+# greedy .* makes a reason that itself contains "; project=" harmless.
+_BUILD_HEADER_RE = re.compile(
+    r"^PinWright editor_build: .*; project=(.+?); startedAt=(\d+(?:\.\d+)?)$")
+# What UBT compiles for the editor target: sources and rules under the project's Source/ and under
+# each project plugin's Source/. Build outputs and content are pruned from the walk.
+_BUILD_SOURCE_EXTS = (".h", ".hpp", ".inl", ".c", ".cc", ".cpp", ".cs")
+_BUILD_PRUNED_DIRS = {"Binaries", "Intermediate", "Saved", "Content", "DerivedDataCache", ".git"}
 
 
 def scan_build_log(log_path):
-    """{'exists', 'ubtResult', 'errors', 'errorCount'} from one streaming pass over the whole build
-    log. errors keeps the first _BUILD_ERROR_LINE_LIMIT distinct lines; errorCount counts all."""
-    result = {"exists": False, "ubtResult": None, "errors": [], "errorCount": 0}
+    """{'exists', 'ubtResult', 'errors', 'errorCount', 'project', 'startedAt'} from one streaming
+    pass over the whole build log. errors keeps the first _BUILD_ERROR_LINE_LIMIT distinct lines;
+    errorCount counts all; project and startedAt come from editor_build's header line."""
+    result = {"exists": False, "ubtResult": None, "errors": [], "errorCount": 0,
+              "project": None, "startedAt": None}
     try:
         fh = open(log_path, encoding="utf-8", errors="replace")
     except OSError:
@@ -2182,8 +2196,11 @@ def scan_build_log(log_path):
     result["exists"] = True
     seen = set()
     with fh:
-        for raw in fh:
+        for index, raw in enumerate(fh):
             line = raw.rstrip("\r\n")
+            header = _BUILD_HEADER_RE.match(line) if index == 0 else None
+            if header:
+                result["project"], result["startedAt"] = header.group(1), float(header.group(2))
             match = _UBT_RESULT_RE.match(line)
             if match:
                 result["ubtResult"] = match.group(1).strip()
@@ -2196,6 +2213,30 @@ def scan_build_log(log_path):
     return result
 
 
+def sources_changed_between(checkout_root, start, end):
+    """Sorted paths of the source files UBT compiles for this checkout (Source/ and every project
+    plugin's Source/) last modified within [start, end], i.e. edited while a build ran. A file
+    edited again after the build is newer than its objects, so the next build recompiles it; only
+    an edit inside the window can leave objects compiled against two versions of a header."""
+    changed = []
+    for top in ("Source", "Plugins"):
+        for dirpath, dirnames, filenames in os.walk(os.path.join(checkout_root, top)):
+            dirnames[:] = [name for name in dirnames if name not in _BUILD_PRUNED_DIRS]
+            if "Source" not in os.path.relpath(dirpath, checkout_root).split(os.sep):
+                continue
+            for name in filenames:
+                if not name.lower().endswith(_BUILD_SOURCE_EXTS):
+                    continue
+                path = os.path.join(dirpath, name)
+                try:
+                    mtime = os.path.getmtime(path)
+                except OSError:
+                    continue
+                if start <= mtime <= end:
+                    changed.append(path)
+    return sorted(changed)
+
+
 def _supervised_child_pid(supervisor_log_path):
     """The child pid a supervisor logged ('started pid N'), or None."""
     try:
@@ -2204,6 +2245,66 @@ def _supervised_child_pid(supervisor_log_path):
     except OSError:
         return None
     return int(match.group(1)) if match else None
+
+
+def build_state(log_path):
+    """editor_build_status's view of one build from its log, supervisor log and result line, or
+    None when none of them exists. A finished build whose sources changed while it ran
+    (sourcesChangedDuringBuild) is 'stale' instead of 'succeeded'."""
+    scan = scan_build_log(log_path)
+    result_path = log_path + ".result.txt"
+    result_line, verdict, exit_code = pinwright_supervisor.read_result(result_path)
+    child_pid = _supervised_child_pid(log_path + ".supervisor.log")
+    if not scan["exists"] and result_line is None and child_pid is None:
+        return None
+    if result_line is not None:
+        succeeded = exit_code == 0 and (scan["ubtResult"] in (None, "Succeeded"))
+        status = "succeeded" if succeeded else "failed"
+    elif child_pid is not None and pinwright_supervisor.process_start_ms(child_pid) is not None:
+        status = "running"
+    elif scan["ubtResult"] is not None:
+        # UBT finished; the supervisor is still writing its result line.
+        status = "succeeded" if scan["ubtResult"] == "Succeeded" else "failed"
+    else:
+        status = "lost"
+    changed = None
+    if status != "running" and scan["startedAt"] is not None and scan["project"]:
+        try:
+            ended = os.path.getmtime(result_path if result_line is not None else log_path)
+        except OSError:
+            ended = time.time()
+        changed = sources_changed_between(os.path.dirname(scan["project"]), scan["startedAt"],
+                                          ended)
+        if changed and status == "succeeded":
+            status = "stale"
+    return {
+        "logPath": log_path,
+        "status": status,
+        "pid": child_pid,
+        "ubtResult": scan["ubtResult"],
+        "exitCode": exit_code,
+        "verdict": verdict,
+        "supervisorResult": result_line,
+        "errorCount": scan["errorCount"],
+        "errors": scan["errors"],
+        "sourcesChangedDuringBuild": changed,
+    }
+
+
+def _build_lease_path(checkout_root):
+    return os.path.join(checkout_root, "Saved", "PinWright", "builds", "lease.json")
+
+
+def running_build(checkout_root):
+    """The build lease of this checkout (buildId, logPath, reason, project, startedAt, pid,
+    ownerPid: the MCP proxy that started it) while that editor_build still runs, else None."""
+    try:
+        with open(_build_lease_path(checkout_root), encoding="utf-8") as fh:
+            lease = json.load(fh)
+        state = build_state(lease["logPath"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    return dict(lease, status="running") if state and state["status"] == "running" else None
 
 
 _START_MODE_HELP = (
@@ -3241,6 +3342,12 @@ class Proxy:
         editors = sorted((describe_editor_process(row, this_project) for row in rows),
                          key=lambda entry: (entry["startMs"] or 0, entry["pid"]))
         lines = ["%d Unreal editor process(es) running." % len(editors)]
+        active_build = running_build(os.path.dirname(this_project)) if this_project else None
+        if active_build:
+            lines.append("editor_build %s of this project is running (pid %s, reason: %s); hold "
+                         "source edits until it ends." % (active_build.get("buildId"),
+                                                          active_build.get("pid"),
+                                                          active_build.get("reason")))
         for entry in editors:
             lines.append("- pid %d, %s, %s%s: %s" % (
                 entry["pid"], entry["mode"], entry["project"] or entry["projectName"]
@@ -3249,7 +3356,8 @@ class Proxy:
                 else "reason unknown (not launched by PinWright)"))
         return self._start_result(
             "\n".join(lines),
-            {"editors": editors, "count": len(editors), "thisProject": this_project},
+            {"editors": editors, "count": len(editors), "thisProject": this_project,
+             "activeBuild": active_build},
             is_error=False)
 
     def _editor_build(self, args):
@@ -3334,21 +3442,50 @@ class Proxy:
         # the target rules as additional arguments (TargetDescriptor.cs ParseCommandLine ->
         # UEBuildTarget.cs CreateTargetRules), so a per-build string would become part of the
         # target's inputs. It is the log's first line instead.
-        header = "PinWright editor_build: reason=%s; target=%s %s Development; project=%s" % (
-            reason, target, platform, uproject)
+        # startedAt opens the window editor_build_status checks for sources edited mid-build.
+        started = time.time()
+        header = ("PinWright editor_build: reason=%s; target=%s %s Development; project=%s; "
+                  "startedAt=%.3f" % (reason, target, platform, uproject, started))
         base = {"logPath": log_path, "buildId": build_id, "reason": reason, "target": target,
                 "platform": platform, "configuration": "Development", "project": uproject,
-                "engineRoot": engine_root, "commandLine": subprocess.list2cmdline(argv)}
+                "engineRoot": engine_root, "commandLine": subprocess.list2cmdline(argv),
+                "startedAt": _utc_iso_from_ms(started * 1000)}
+
+        # The build lease: one editor_build per checkout at a time, visible to every session
+        # through editor_list. The OS lock only guards check-then-claim; the lease itself lives as
+        # long as the build it names runs (running_build).
+        lease_path = _build_lease_path(checkout_root)
+        lease_lock = pinwright_supervisor.try_lock_file(lease_path + ".lock")
+        if lease_lock is None:
+            return refuse("BUILD_ALREADY_RUNNING", "another editor_build of this project is "
+                          "starting right now. Check editor_list's activeBuild and retry.")
         try:
-            run = pinwright_supervisor.spawn_supervised(
-                argv, kind="command", reason=reason, launched_by="editor_build", mode=None,
-                output_path=log_path, output_header=header)
-        except pinwright_supervisor.SupervisorVersionMismatch as exc:
-            return self._start_result(
-                str(exc), dict(base, error=pinwright_supervisor.VERSION_MISMATCH), is_error=True)
-        except Exception as exc:
-            return refuse("BUILD_START_FAILED",
-                          "the capped supervisor could not start the build (%s)." % exc, **base)
+            holder = running_build(checkout_root)
+            if holder is not None:
+                return refuse(
+                    "BUILD_ALREADY_RUNNING",
+                    "editor_build %s of this project is still running (pid %s, started %s, "
+                    "reason: %s). Poll editor_build_status with logPath %s and hold source edits "
+                    "until it ends." % (holder.get("buildId"), holder.get("pid"),
+                                        holder.get("startedAt"), holder.get("reason"),
+                                        holder.get("logPath")), build=holder)
+            try:
+                run = pinwright_supervisor.spawn_supervised(
+                    argv, kind="command", reason=reason, launched_by="editor_build", mode=None,
+                    output_path=log_path, output_header=header)
+            except pinwright_supervisor.SupervisorVersionMismatch as exc:
+                return self._start_result(
+                    str(exc), dict(base, error=pinwright_supervisor.VERSION_MISMATCH),
+                    is_error=True)
+            except Exception as exc:
+                return refuse("BUILD_START_FAILED",
+                              "the capped supervisor could not start the build (%s)." % exc,
+                              **base)
+            pinwright_supervisor._write_atomic(lease_path, json.dumps({
+                "buildId": build_id, "logPath": log_path, "reason": reason, "project": uproject,
+                "startedAt": base["startedAt"], "pid": run.pid, "ownerPid": os.getpid()}))
+        finally:
+            pinwright_supervisor.unlock_file(lease_lock)
         base.update({"status": "BUILD_STARTED", "pid": run.pid,
                      "capped": bool(getattr(run, "capped", False))})
         return _stamp_detach(self._start_result(
@@ -3374,37 +3511,20 @@ class Proxy:
             return refuse("INVALID_LOG_PATH", "logPath must be a non-empty string.")
         log_path = os.path.abspath(log_path.strip())
 
-        scan = scan_build_log(log_path)
-        result_line, verdict, exit_code = pinwright_supervisor.read_result(log_path + ".result.txt")
-        child_pid = _supervised_child_pid(log_path + ".supervisor.log")
-        if not scan["exists"] and result_line is None and child_pid is None:
+        structured = build_state(log_path)
+        if structured is None:
             return refuse("BUILD_NOT_FOUND", "no build log at %s." % log_path)
-
-        if result_line is not None:
-            succeeded = exit_code == 0 and (scan["ubtResult"] in (None, "Succeeded"))
-            status = "succeeded" if succeeded else "failed"
-        elif child_pid is not None and pinwright_supervisor.process_start_ms(child_pid) is not None:
-            status = "running"
-        elif scan["ubtResult"] is not None:
-            # UBT finished; the supervisor is still writing its result line.
-            status = "succeeded" if scan["ubtResult"] == "Succeeded" else "failed"
-        else:
-            status = "lost"
-        structured = {
-            "logPath": log_path,
-            "status": status,
-            "pid": child_pid,
-            "ubtResult": scan["ubtResult"],
-            "exitCode": exit_code,
-            "verdict": verdict,
-            "supervisorResult": result_line,
-            "errorCount": scan["errorCount"],
-            "errors": scan["errors"],
-        }
         text = "%s: UBT result %s, %d error line(s)." % (
-            status.upper(), scan["ubtResult"] or "not yet written", scan["errorCount"])
-        if scan["errors"]:
-            text += "\n" + "\n".join(scan["errors"][:20])
+            structured["status"].upper(), structured["ubtResult"] or "not yet written",
+            structured["errorCount"])
+        changed = structured["sourcesChangedDuringBuild"]
+        if changed:
+            text += (" %d source file(s) changed while the build ran, so some objects may be "
+                     "compiled against the old and some against the new version (a header's "
+                     "class layout mixed this way crashes the editor at load). Touch them and "
+                     "run editor_build again: %s" % (len(changed), ", ".join(changed[:20])))
+        if structured["errors"]:
+            text += "\n" + "\n".join(structured["errors"][:20])
         return self._start_result(text, structured, is_error=False)
 
     def _wait_for_ready(self, proc, cmdline, extra_args, launch_lock=None):
