@@ -54,6 +54,22 @@ namespace PinWrightRpc::Insights
     bool RequestTraceStop(double TimeoutSeconds)
     {
         const double Deadline = FPlatformTime::Seconds() + TimeoutSeconds;
+#if !UE_VERSION_NEWER_THAN_OR_EQUAL(5, 4, 0)
+        // UE 5.3's Writer_SendSync sends the 3 post-connect sync packets without checking the data
+        // handle (5.4 added the check), so a trace closed within 3 worker updates of connecting
+        // writes to the closed handle and logs "WriteError (error code 6)". Let them go out first.
+        // ponytail: fixed 100 ms covers the default 17 ms worker tick; a raised Trace SleepTimeInMS
+        // would need a wait derived from it.
+        if (FTraceAuxiliary::IsConnected())
+        {
+            const double SyncDeadline = FPlatformTime::Seconds() + 0.1;
+            while (FPlatformTime::Seconds() < SyncDeadline)
+            {
+                UE::Trace::Update();
+                FPlatformProcess::Sleep(0.005f);
+            }
+        }
+#endif
         for (;;)
         {
             if (!FTraceAuxiliary::IsConnected())

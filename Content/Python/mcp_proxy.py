@@ -1299,7 +1299,10 @@ def _read_crash_context(path, limit=16384):
     except Exception:
         return False, None, None, None
     crash_type = re.search(r"<CrashType>([^<]*)</CrashType>", head)
-    is_ensure = bool(re.search(r"<IsEnsure>\s*true\s*</IsEnsure>", head, re.IGNORECASE))
+    # A Stall report (FStallDetector, e.g. UE 5.3's 2 s budget on OpenEditorForAsset) is written by
+    # a still-running editor exactly like an ensure, so it is counted with them, never as a crash.
+    is_ensure = bool(re.search(r"<IsEnsure>\s*true\s*</IsEnsure>", head, re.IGNORECASE)
+                     or (crash_type and crash_type.group(1).strip().lower() == "stall"))
     pid = re.search(r"<ProcessId>\s*(\d+)\s*</ProcessId>", head)
     command_line = re.search(r"<CommandLine>(.*?)</CommandLine>", head, re.DOTALL)
     abslog = None

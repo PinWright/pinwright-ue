@@ -1123,6 +1123,10 @@ namespace PwAnimCurveEdit
                 FString::Printf(TEXT("Could not load animation sequence: %s"), *OutAssetPath));
             return nullptr;
         }
+        // A model edit runs ClearAllCachedCookedPlatformData, which cancels the compression the
+        // previous edit started; a cancel landing after the task's last IsCanceled check logs
+        // "Failed to generate compressed animation data" at Error (AnimationCompressionDerivedData.cpp).
+        Sequence->WaitOnExistingCompression(/*bWantResults*/ true);
         return Sequence;
     }
 

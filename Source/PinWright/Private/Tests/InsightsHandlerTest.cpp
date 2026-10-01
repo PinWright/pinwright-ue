@@ -483,7 +483,10 @@ bool FInsightsExportTimeoutIsTypedAndCleansArtifactsTest::RunTest(const FString&
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
     Payload->SetStringField(TEXT("tracePath"), TracePath);
     Payload->SetStringField(TEXT("outDir"), OutDir);
-    Payload->SetNumberField(TEXT("timeoutSeconds"), 0.1);
+    // The forced-slow seam times the job out by itself; the deadline only has to outlast the real
+    // analysis (~0.15 s with the editor's 32 MB tail), because UE 5.3's CpuProfilerTraceAnalysis
+    // ensures (PendingEvents.Num() == 0) when an analysis is stopped mid-stream.
+    Payload->SetNumberField(TEXT("timeoutSeconds"), 2.0);
     TArray<TSharedPtr<FJsonValue>> Kinds;
     Kinds.Add(MakeShared<FJsonValueString>(TEXT("frame_series")));
     Payload->SetArrayField(TEXT("kind"), Kinds);

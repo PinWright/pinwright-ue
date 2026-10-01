@@ -52,7 +52,7 @@ bool FJournalCorruptNameRejectedTest::RunTest(const FString& Parameters)
     }
 
     AddExpectedMessage(TEXT("carries a corrupt FName"), ELogVerbosity::Warning,
-        EAutomationExpectedMessageFlags::Contains, /*Occurrences*/ 4, /*IsRegex*/ false);
+        EAutomationExpectedMessageFlags::Contains, /*Occurrences*/ 4);
 
     FJournalRecorder::LogEvent(Corrupt, FName(TEXT("test:corrupt_key")), {});
     FJournalRecorder::LogEvent(FName(TEXT("test:corrupt_prop")),

@@ -664,6 +664,13 @@ class CompletenessSelfTest(unittest.TestCase):
         self.assertEqual(len(result["crash"]["ensures"]), 2)
         self.assertIn("2 ensure-only", result["reason"])
 
+    def test_a_stall_report_is_not_a_crash(self):
+        self.write_crash("UECC-Windows-SSS_0000", is_ensure=False, crash_type="Stall")
+        result = check_suite_log.check_log(self.completed_clean())
+        self.assertEqual(result["state"], STATE_COMPLETED_CLEAN)
+        self.assertEqual(result["crash"]["crashes"], [])
+        self.assertEqual(len(result["crash"]["ensures"]), 1)
+
     def test_a_non_ensure_report_in_the_window_makes_it_a_crash(self):
         self.write_crash("UECC-Windows-BBB_0000", is_ensure=False, crash_type="Assert")
         result = check_suite_log.check_log(self.truncated())
