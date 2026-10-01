@@ -38,6 +38,64 @@
 // Only define when the builder header is actually present in the include path.
 // ---------------------------------------------------------------------------
 #if __has_include("MetasoundFrontendDocumentBuilder.h")
+#if !UE_VERSION_OLDER_THAN(5, 5, 0) && UE_VERSION_OLDER_THAN(5, 8, 0) && PW_METASOUND_PATHUTILS_HAS_DOCUMENT_INTERFACE
+#include "MetasoundFrontendDocumentBuilder.h"
+#include "Misc/Optional.h"
+
+namespace PinWright::MetaSound
+{
+    // The engine's document builder registry keeps the builder it begins for a MetaSound (the
+    // factory's frontend registration, a save's serialization pass) as the document's active
+    // builder. Beginning a second one logs "OnBeginActiveBuilder() call while prior builder is
+    // still active" and leaves two caches over one document, so edit through the registry's
+    // builder while it holds the document. (5.8 moved the registry interface to its own header.)
+    inline FMetaSoundFrontendDocumentBuilder* FindActiveRegistryBuilder(UObject* DocumentObject)
+    {
+        TScriptInterface<IMetaSoundDocumentInterface> DocInterface(DocumentObject);
+        Metasound::Frontend::IDocumentBuilderRegistry* Registry =
+            Metasound::Frontend::IDocumentBuilderRegistry::Get();
+        if (!DocInterface.GetInterface() || !Registry || !DocInterface->IsActivelyBuilding())
+        {
+            return nullptr;
+        }
+        return Registry->FindBuilder(DocInterface);
+    }
+
+    inline FMetaSoundFrontendDocumentBuilder& FindOrMakeBuilder(
+        TOptional<FMetaSoundFrontendDocumentBuilder>& OwnedStorage,
+        const TScriptInterface<IMetaSoundDocumentInterface>& DocInterface)
+    {
+        if (FMetaSoundFrontendDocumentBuilder* Active = FindActiveRegistryBuilder(DocInterface.GetObject()))
+        {
+            return *Active;
+        }
+#if UE_VERSION_OLDER_THAN(5, 6, 0)
+        return OwnedStorage.Emplace(DocInterface);
+#else
+        return OwnedStorage.Emplace(DocInterface, nullptr, true);
+#endif
+    }
+
+    // A borrowed registry builder stays alive: finishing it would detach the registry's builder
+    // from its document while the registry still hands it out.
+    inline void FinishBuildingUnlessRegistryOwned(FMetaSoundFrontendDocumentBuilder& Builder)
+    {
+        if (Builder.IsValid()
+            && FindActiveRegistryBuilder(&Builder.CastDocumentObjectChecked<UObject>()) == &Builder)
+        {
+            return;
+        }
+        Builder.FinishBuilding();
+    }
+}
+
+#define PW_METASOUND_MAKE_BUILDER(VarName, ScriptInterface) \
+    TOptional<FMetaSoundFrontendDocumentBuilder> VarName##OwnedStorage; \
+    FMetaSoundFrontendDocumentBuilder& VarName = \
+        PinWright::MetaSound::FindOrMakeBuilder(VarName##OwnedStorage, ScriptInterface)
+#define PW_METASOUND_FINISH_BUILDING(Builder) \
+    PinWright::MetaSound::FinishBuildingUnlessRegistryOwned(Builder)
+#else
 #if UE_VERSION_OLDER_THAN(5, 6, 0)
 #define PW_METASOUND_MAKE_BUILDER(VarName, ScriptInterface) \
     FMetaSoundFrontendDocumentBuilder VarName(ScriptInterface)
@@ -55,6 +113,7 @@
 #else
 #define PW_METASOUND_FINISH_BUILDING(Builder) (Builder).FinishBuilding()
 #endif
+#endif // 5.5 <= UE < 5.8
 #endif // __has_include("MetasoundFrontendDocumentBuilder.h")
 
 // IMetaSoundDocumentInterface::GetConstDocument() was added in UE 5.4 as an explicit const

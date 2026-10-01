@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Alexander Penkin. MIT License.
 
 #include "Misc/AutomationTest.h"
+#include "Runtime/Launch/Resources/Version.h"
 #include "Handlers/Debug/TraceExportCore.h"
 #include "Handlers/Debug/InsightsHandlerInternal.h"
 #include "Handlers/ErrorCodes.h"
@@ -36,6 +37,20 @@ namespace PwInsightsTestTrace
     FString UniqueTraceName(const TCHAR* Prefix)
     {
         return FString::Printf(TEXT("%s_%s"), Prefix, *FGuid::NewGuid().ToString(EGuidFormats::Digits));
+    }
+
+    // Analysing this editor's own trace on UE 5.6, TraceServices' GPU profiler analyzer reports the
+    // RHI's interleaved GPU timestamps at Error ("[GPU] WORK BEGIN ... !!!" per event, then
+    // "[GpuProfiler] Number of interleaved ..."); 5.7 logs those summaries at Warning
+    // (GpuProfilerTraceAnalysis.cpp). How many appear depends on GPU timing, including none, so
+    // the declaration accepts any count. Exact lines only - any other Error still fails the test.
+    void ExpectGpuAnalyzerTimestampNoise(FAutomationTestBase& Test)
+    {
+#if ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION == 6
+        Test.AddExpectedErrorPlain(TEXT("[GPU] WORK "), EAutomationExpectedErrorFlags::Contains, -1);
+        Test.AddExpectedErrorPlain(TEXT("[GpuProfiler] Number of interleaved"),
+            EAutomationExpectedErrorFlags::Contains, -1);
+#endif
     }
 }
 
@@ -208,6 +223,7 @@ bool FInsightsExportWriteFailureIsTypedAndAtomicTest::RunTest(const FString& Par
     Kinds.Add(MakeShared<FJsonValueString>(TEXT("counters")));
     Payload->SetArrayField(TEXT("kind"), Kinds);
 
+    PwInsightsTestTrace::ExpectGpuAnalyzerTimestampNoise(*this);
     PinWrightRpc::TraceExport::SetWriteFailureInjectionForTests(true);
     FTestResponseCapture Capture;
     TestTrue(TEXT("export handler is registered"),
@@ -344,6 +360,7 @@ bool FInsightsExportNoGameFramesIsTypedFailureTest::RunTest(const FString& Param
     Kinds.Add(MakeShared<FJsonValueString>(TEXT("frame_series")));
     Payload->SetArrayField(TEXT("kind"), Kinds);
 
+    PwInsightsTestTrace::ExpectGpuAnalyzerTimestampNoise(*this);
     PinWrightRpc::TraceExport::SetForceNoGameFramesForTests(true);
     FTestResponseCapture Capture;
     TestTrue(TEXT("export handler is registered"),

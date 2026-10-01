@@ -70,6 +70,10 @@
 #define MCP_HAS_BLENDSPACE_FACTORY 0
 #endif
 #include "ControlRig.h"
+#include "IControlRigObjectBinding.h"
+#include "MovieScene.h"
+#include "MovieSceneSequence.h"
+#include "Sequencer/MovieSceneControlRigParameterTrack.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetToolsModule.h"
 #include "EditorAssetLibrary.h"
@@ -1339,6 +1343,24 @@ REGISTER_RPC_HANDLER("animation.setup_retargeting", "animation",
             FText::FromString(TEXT("Retarget stage skeleton update")),
             /*bShouldTransact=*/false);
         StagedSequence->GetController().UpdateWithSkeleton(TargetSkeleton, false);
+      }
+      // Through UE 5.6 UpdateWithSkeleton rebinds the FK ControlRig only when a bone or curve
+      // must be removed, so a target that carries every tracked bone leaves the rig bound to the
+      // source skeleton, and the next RemoveBoneTracksMissingFromSkeleton (publish rename/save)
+      // logs "Provided Skeleton ... does not match bound ControlRigObject". Bind it here.
+      if (UMovieSceneSequence *ModelSequence = Cast<UMovieSceneSequence>(
+              StagedSequence->GetDataModelInterface().GetObject())) {
+        UMovieScene *ModelMovieScene = ModelSequence->GetMovieScene();
+        UMovieSceneControlRigParameterTrack *RigTrack =
+            ModelMovieScene
+                ? ModelMovieScene->FindTrack<UMovieSceneControlRigParameterTrack>()
+                : nullptr;
+        UControlRig *FKRig = RigTrack ? RigTrack->GetControlRig() : nullptr;
+        TSharedPtr<IControlRigObjectBinding> RigBinding =
+            FKRig ? FKRig->GetObjectBinding() : nullptr;
+        if (RigBinding.IsValid() && RigBinding->GetBoundObject() != TargetSkeleton) {
+          RigBinding->BindToObject(TargetSkeleton);
+        }
       }
       StagedSequence->SetSkeleton(TargetSkeleton);
       McpSafeAssetSave(StagedSequence);
