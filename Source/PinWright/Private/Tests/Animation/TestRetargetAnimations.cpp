@@ -19,7 +19,7 @@
 #include "Dom/JsonValue.h"
 #include "EditorAssetLibrary.h"
 #include "Engine/SkeletalMesh.h"
-#include "Misc/EngineVersionComparison.h"
+#include "Compat/EngineVersionCompat.h"
 #include "Misc/FrameNumber.h"
 #include "Misc/FrameRate.h"
 #include "Misc/Guid.h"

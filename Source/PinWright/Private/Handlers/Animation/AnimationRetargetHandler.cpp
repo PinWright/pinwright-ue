@@ -25,7 +25,7 @@
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "EditorAssetLibrary.h"
 #include "Engine/SkeletalMesh.h"
-#include "Misc/EngineVersionComparison.h"
+#include "Compat/EngineVersionCompat.h"
 #include "Misc/PackageName.h"
 #include "ObjectTools.h"
 
