@@ -50,8 +50,7 @@ bool FLightingConfigureShadowsFollowsCVarVetoTest::RunTest(const FString& Parame
     // run green on the very path this test exists to exercise. Negative occurrence = optional: how
     // many times the engine logs a refusal is an engine detail, and the assertions below do the real
     // verification.
-    AddExpectedMessagePlain(TEXT("was ignored as it is lower priority"),
-        ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, -1);
+    AddOptionalExpectedMessage(*this, TEXT("was ignored as it is lower priority"));
 
     const int32 OriginalValue = ShadowCVar->GetInt();
     const EConsoleVariableFlags OriginalFlags = ShadowCVar->GetFlags();

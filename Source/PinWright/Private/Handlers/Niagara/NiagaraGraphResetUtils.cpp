@@ -2,6 +2,8 @@
 
 #include "Handlers/Niagara/NiagaraGraphResetUtils.h"
 
+#include "Compat/EngineVersionCompat.h"
+
 #include "EdGraph/EdGraphPin.h"
 #include "EdGraphSchema_Niagara.h"
 #include "NiagaraCommon.h"
@@ -403,5 +405,70 @@ namespace PinWrightNiagara
         }
 
         return CreatedNodes;
+    }
+
+    // In-order upstream traversal from the output node that owns a script usage.
+    //
+    // UNiagaraGraph::BuildTraversal is unreachable from a plugin before UE 5.6: the class is
+    // UCLASS(MinimalAPI) and the NIAGARAEDITOR_API on this member (and on FindOutputNode) arrived in
+    // 5.6, so the call compiles and fails to link. On older engines this reproduces the engine's own
+    // walk with bEvaluateStaticSwitches=false - locate the output node for the usage, then visit
+    // every node feeding an input pin depth first, appending each node after its own inputs.
+    void BuildNiagaraUsageTraversal(
+        UNiagaraGraph* Graph,
+        ENiagaraScriptUsage Usage,
+        const FGuid& UsageId,
+        TArray<UNiagaraNode*>& OutNodesTraversed)
+    {
+        if (!Graph)
+        {
+            return;
+        }
+#if UE_VERSION_NEWER_THAN_OR_EQUAL(5, 6, 0)
+        Graph->BuildTraversal(OutNodesTraversed, Usage, UsageId);
+#else
+        UNiagaraNodeOutput* OutputNode = nullptr;
+        for (UEdGraphNode* GraphNode : Graph->Nodes)
+        {
+            UNiagaraNodeOutput* Candidate = Cast<UNiagaraNodeOutput>(GraphNode);
+            if (Candidate && Candidate->GetUsage() == Usage && Candidate->GetUsageId() == UsageId)
+            {
+                OutputNode = Candidate;
+                break;
+            }
+        }
+        if (!OutputNode)
+        {
+            return;
+        }
+
+        TFunction<void(UNiagaraNode*)> Visit;
+        Visit = [&Visit, &OutNodesTraversed](UNiagaraNode* Node)
+        {
+            if (!Node)
+            {
+                return;
+            }
+            for (UEdGraphPin* Pin : Node->GetAllPins())
+            {
+                if (!Pin || Pin->Direction != EEdGraphPinDirection::EGPD_Input)
+                {
+                    continue;
+                }
+                for (UEdGraphPin* LinkedPin : Pin->LinkedTo)
+                {
+                    UNiagaraNode* LinkedNode = LinkedPin
+                        ? Cast<UNiagaraNode>(LinkedPin->GetOwningNode())
+                        : nullptr;
+                    if (LinkedNode && !OutNodesTraversed.Contains(LinkedNode))
+                    {
+                        Visit(LinkedNode);
+                    }
+                }
+            }
+            OutNodesTraversed.Add(Node);
+        };
+        Visit(OutputNode);
+#endif
     }
 }

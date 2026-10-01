@@ -531,8 +531,7 @@ bool FLightingCreateLevelReportsHonestPersistenceTest::RunTest(const FString& Pa
     // assertions below (which bypass log capture) still do the real verification.
     bSuppressLogs = true;
 #else
-    AddExpectedError(TEXT("create_lighting_enabled_level: save reported="),
-        EAutomationExpectedErrorFlags::Contains, -1, /*IsRegex=*/false);
+    AddOptionalExpectedMessage(*this, TEXT("create_lighting_enabled_level: save reported="));
 #endif
 
     FTestResponseCapture Capture;

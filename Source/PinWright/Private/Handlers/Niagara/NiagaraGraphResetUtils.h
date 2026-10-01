@@ -24,6 +24,14 @@ namespace PinWrightNiagara
         const FGuid& PreferredOutputNodeGuid = FGuid(),
         const FGuid& PreferredInputNodeGuid = FGuid());
 
+    // In-order upstream traversal from the output node owning Usage/UsageId (the engine's
+    // UNiagaraGraph::BuildTraversal, which is not linkable from a plugin before UE 5.6).
+    void BuildNiagaraUsageTraversal(
+        UNiagaraGraph* Graph,
+        ENiagaraScriptUsage Usage,
+        const FGuid& UsageId,
+        TArray<UNiagaraNode*>& OutNodesTraversed);
+
     // Returns the first parameter-map-typed pin in the supplied range, or nullptr.
     UEdGraphPin* FindParameterMapPin(TArrayView<UEdGraphPin* const> Pins);
 

@@ -56,8 +56,7 @@ bool FNaniteRebuildShapePreservationTest::RunTest(const FString& Parameters)
     // error by default (UAutomationControllerSettings::bElevateLogWarningsToErrors). Negative
     // occurrence = optional: how many times it logs is an engine detail, and the settings
     // assertions below do the real verification.
-    AddExpectedMessagePlain(TEXT("has no source models"),
-        ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, -1);
+    AddOptionalExpectedMessage(*this, TEXT("has no source models"));
 
     // The declaration, not just the body: InvokeHandlerWithCapture skips the dispatcher's
     // unknown-param gate, so a wire name the body reads but RPC_PARAMS omits would work here and

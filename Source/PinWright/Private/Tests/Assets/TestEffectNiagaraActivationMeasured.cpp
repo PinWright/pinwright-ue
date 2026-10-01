@@ -87,8 +87,7 @@ namespace PinWrightEffectActivationTest
     // enabled the cvar.
     void AllowNullAssetActivationWarning(FAutomationTestBase& Test)
     {
-        Test.AddExpectedMessagePlain(TEXT("Failed to activate Niagara Component due to missing or invalid asset"),
-            ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, -1);
+        AddOptionalExpectedMessage(Test, TEXT("Failed to activate Niagara Component due to missing or invalid asset"));
     }
 }
 

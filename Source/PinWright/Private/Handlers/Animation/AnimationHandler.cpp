@@ -1529,7 +1529,16 @@ REGISTER_RPC_HANDLER("animation.setup_retargeting", "animation",
               TEXT("Published overwrite but could not discard in-memory backup: %s"),
               *BackupAssetPath)));
         }
-        UEditorAssetLibrary::DeleteAsset(StagedAssetPath);
+        // The publish rename moved the staged object out, leaving its package empty in memory
+        // while the stage .uasset stays on disk. DeleteAsset loads by object path: 5.6+ reloads
+        // the stale file and deletes it, but through 5.5 the empty in-memory package wins, the
+        // load fails and DeleteAsset logs an Error. Retire the empty package the way
+        // ObjectTools::DeleteObjects finishes a delete: file, registry entry and package.
+        if (UPackage *StagePackage = FindPackage(nullptr, *StagedAssetPath)) {
+          ObjectTools::CleanupAfterSuccessfulDelete({StagePackage});
+        } else {
+          UEditorAssetLibrary::DeleteAsset(StagedAssetPath);
+        }
       }
 
       DuplicatedAssets.Add(DestinationSequence->GetPathName());

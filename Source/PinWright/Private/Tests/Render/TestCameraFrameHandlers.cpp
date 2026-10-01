@@ -876,6 +876,13 @@ bool FCameraOrbitShotsOrthographicCountTest::RunTest(const FString& Parameters)
     Payload->SetNumberField(TEXT("width"), 256.0);
     Payload->SetNumberField(TEXT("height"), 256.0);
 
+#if UE_VERSION_OLDER_THAN(5, 6, 0)
+    // The pre-5.6 GPU profiler trace logs an Error and drops the frame when one frame's draw
+    // events overflow its 32 kB scratch buffer (GpuProfilerTrace.cpp), which back-to-back shot
+    // renders can do. Profiler bookkeeping only; the assertions below check the shots.
+    AddOptionalExpectedMessage(*this, TEXT("GpuProfiler's scratch buffer is out of space"));
+#endif
+
     FTestResponseCapture Capture;
     InvokeHandlerWithCapture(TEXT("camera.orbit_shots"), Payload, Capture);
 

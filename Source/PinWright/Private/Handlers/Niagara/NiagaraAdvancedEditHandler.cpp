@@ -16,6 +16,7 @@
 #include "NiagaraDataInterface.h"
 #include "NiagaraEmitter.h"
 #include "NiagaraGraph.h"
+#include "NiagaraNode.h"
 #include "NiagaraParameterStore.h"
 #include "NiagaraScript.h"
 #include "NiagaraScriptSource.h"
@@ -471,12 +472,35 @@ REGISTER_RPC_HANDLER("niagara.remove_simulation_stage", "niagara", "Remove a Nia
         }
     }
 
+    // The stage's output node and its chain must leave the graph with it, as the editor's own
+    // UNiagaraStackSimulationStageGroup::Delete does: a sim-stage output node with no matching
+    // stage trips FNiagaraCompileRequestData::SortOutputNodesByDependencies' ensures on the next
+    // compile of every system using this emitter.
+    UNiagaraScriptSource* StageSource = Cast<UNiagaraScriptSource>(Target.EmitterData->GraphSource);
+    UNiagaraGraph* StageGraph = StageSource ? StageSource->NodeGraph : nullptr;
+    TArray<UNiagaraNode*> StageNodes;
+    PinWrightNiagara::BuildNiagaraUsageTraversal(
+        StageGraph, ENiagaraScriptUsage::ParticleSimulationStageScript, UsageId, StageNodes);
+
     {
         FScopedTransaction Transaction(FText::FromString(TEXT("MCP: niagara.remove_simulation_stage")));
         BeginEmitterMutationScope(Target);
 
+        if (StageGraph)
+        {
+            StageGraph->Modify();
+        }
+        for (UNiagaraNode* Node : StageNodes)
+        {
+            Node->Modify();
+        }
+
         const FGuid VersionGuid = NiagaraEdit::ResolveEmitterVersionGuid(Target);
         Target.Emitter->RemoveSimulationStage(Stage, VersionGuid);
+        for (UNiagaraNode* Node : StageNodes)
+        {
+            Node->DestroyNode();
+        }
         Target.EmitterData = Target.Emitter->GetLatestEmitterData();
     }
 

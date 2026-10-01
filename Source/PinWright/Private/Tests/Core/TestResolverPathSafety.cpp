@@ -49,6 +49,7 @@
 #include "Utils/ClassUtils.h"
 #include "Utils/PathUtils.h"
 #include "Tests/TestSkipReporting.h"
+#include "Tests/TestUtils.h"
 
 #include "AssetRegistry/AssetData.h"
 #include "AssetRegistry/AssetRegistryModule.h"
@@ -156,8 +157,7 @@ bool FResolverPathSafetyResolveUEnumTest::RunTest(const FString& Parameters)
     // UObjectGlobals.cpp:863) - and a captured Warning is elevated to a test error. The names used
     // are unique today, so this is declared with a NEGATIVE occurrence count: tolerated if a host's
     // loaded set makes one ambiguous, never required.
-    AddExpectedMessagePlain(TEXT("StaticFindFirstObject: Ambiguous object name"),
-        ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, -1);
+    AddOptionalExpectedMessage(*this, TEXT("StaticFindFirstObject: Ambiguous object name"));
 
     if (!PredicateIsSound(*this))
     {
@@ -200,8 +200,7 @@ bool FResolverPathSafetyResolveUScriptStructTest::RunTest(const FString& Paramet
     // UObjectGlobals.cpp:863) - and a captured Warning is elevated to a test error. The names used
     // are unique today, so this is declared with a NEGATIVE occurrence count: tolerated if a host's
     // loaded set makes one ambiguous, never required.
-    AddExpectedMessagePlain(TEXT("StaticFindFirstObject: Ambiguous object name"),
-        ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, -1);
+    AddOptionalExpectedMessage(*this, TEXT("StaticFindFirstObject: Ambiguous object name"));
 
     if (!PredicateIsSound(*this))
     {

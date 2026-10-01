@@ -290,10 +290,8 @@ bool FLevelSaveWritesToProjectContentNotDriveRootTest::RunTest(const FString& Pa
     // Suppress log capture instead; the TestTrue/TestFalse assertions below bypass log capture.
     bSuppressLogs = true;
 #else
-    AddExpectedError(TEXT("level.save: save reported success but no .umap on disk"),
-        EAutomationExpectedErrorFlags::Contains, -1, /*IsRegex=*/false);
-    AddExpectedError(TEXT("McpSafeLevelSave: All "),
-        EAutomationExpectedErrorFlags::Contains, -1, /*IsRegex=*/false);
+    AddOptionalExpectedMessage(*this, TEXT("level.save: save reported success but no .umap on disk"));
+    AddOptionalExpectedMessage(*this, TEXT("McpSafeLevelSave: All "));
 #endif
 
     TSharedPtr<FJsonObject> CreatePayload = MakeShared<FJsonObject>();
@@ -397,10 +395,8 @@ bool FLevelSaveRewritesExistingUmapTest::RunTest(const FString& Parameters)
 #if UE_VERSION_OLDER_THAN(5, 4, 0)
     bSuppressLogs = true;
 #else
-    AddExpectedError(TEXT("level.save: save reported success but no .umap on disk"),
-        EAutomationExpectedErrorFlags::Contains, -1, /*IsRegex=*/false);
-    AddExpectedError(TEXT("McpSafeLevelSave: All "),
-        EAutomationExpectedErrorFlags::Contains, -1, /*IsRegex=*/false);
+    AddOptionalExpectedMessage(*this, TEXT("level.save: save reported success but no .umap on disk"));
+    AddOptionalExpectedMessage(*this, TEXT("McpSafeLevelSave: All "));
 #endif
 
     TSharedPtr<FJsonObject> CreatePayload = MakeShared<FJsonObject>();
@@ -516,8 +512,7 @@ bool FLevelCreateVerifiesUmapOnDiskTest::RunTest(const FString& Parameters)
 #if UE_VERSION_OLDER_THAN(5, 4, 0)
     bSuppressLogs = true;
 #else
-    AddExpectedError(TEXT("McpSafeLevelSave: All "),
-        EAutomationExpectedErrorFlags::Contains, -1, /*IsRegex=*/false);
+    AddOptionalExpectedMessage(*this, TEXT("McpSafeLevelSave: All "));
 #endif
 
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();

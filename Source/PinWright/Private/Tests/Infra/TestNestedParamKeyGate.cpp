@@ -44,7 +44,7 @@
 #include "Tests/TestSkipReporting.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
-#include "Misc/EngineVersionComparison.h"
+#include "Compat/EngineVersionCompat.h"
 
 // StaticLoadObject's not-found warning names a null outer: through 5.7 it prints
 // "<Class> None.<path>" (UObjectGlobals.cpp), 5.8 prints "<Class> <path>". File-local; #undef at

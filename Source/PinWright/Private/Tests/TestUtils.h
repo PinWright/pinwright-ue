@@ -19,6 +19,7 @@
 #include "Misc/Guid.h"
 #include "Misc/ScopeExit.h"
 #include "Misc/EngineVersionComparison.h"
+#include "Compat/EngineVersionCompat.h"
 #include "Async/TaskGraphInterfaces.h"
 #include "Containers/Ticker.h"
 #include "HAL/PlatformProcess.h"
@@ -38,6 +39,22 @@
 #include "Tests/TestAssetTeardown.h"
 
 // FTestResponseCapture is defined in HandlerContext.h (guarded by WITH_DEV_AUTOMATION_TESTS).
+
+// Declares a plain-substring log message the test tolerates but does not require. UE 5.6+ spells
+// that as a negative Occurrences count. Through 5.5 AddExpectedMessage refuses a negative count
+// (logging an Error that fails the test) and has no optional mode, so register it as one-or-more
+// (0) and credit one occurrence up front: AddWarning routes a matching string through
+// IsExpectedMessage, which counts it and records nothing.
+inline void AddOptionalExpectedMessage(FAutomationTestBase& Test, const FString& Pattern,
+    ELogVerbosity::Type Verbosity = ELogVerbosity::Warning)
+{
+#if UE_VERSION_OLDER_THAN(5, 6, 0)
+    Test.AddExpectedMessagePlain(Pattern, Verbosity, EAutomationExpectedMessageFlags::Contains, 0);
+    Test.AddWarning(Pattern);
+#else
+    Test.AddExpectedMessagePlain(Pattern, Verbosity, EAutomationExpectedMessageFlags::Contains, -1);
+#endif
+}
 
 // Returns the first UActorComponent on Actor whose name equals Name (case-insensitive),
 // or nullptr. Centralizes the TInlineComponentArray + GetComponents + name-match scan that

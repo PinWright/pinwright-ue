@@ -8,7 +8,7 @@
 #include "AssetRegistry/IAssetRegistry.h"
 #include "AutoReimport/AssetSourceFilenameCache.h"
 #include "EditorAssetLibrary.h"
-#include "Misc/EngineVersionComparison.h"
+#include "Compat/EngineVersionCompat.h"
 #include "ObjectTools.h"
 #include "UObject/Package.h"
 #include "UObject/UObjectGlobals.h"

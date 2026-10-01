@@ -212,7 +212,10 @@ namespace DriveGameInputTestHelpers
         return false;
     }
 
-    class FConsumeF9InputProcessor : public IInputProcessor
+    // F10 carries no DebugExecBinding on any supported engine. F9 is bound to "shot showui", so a
+    // press delivered to UPlayerInput took a screenshot, which stalled a 5.5 offscreen run past
+    // the response deadline.
+    class FConsumeF10InputProcessor : public IInputProcessor
     {
     public:
         virtual void Tick(const float DeltaTime, FSlateApplication& SlateApp,
@@ -222,17 +225,17 @@ namespace DriveGameInputTestHelpers
 
         virtual bool HandleKeyDownEvent(FSlateApplication& SlateApp, const FKeyEvent& Event) override
         {
-            return Event.GetKey() == EKeys::F9;
+            return Event.GetKey() == EKeys::F10;
         }
         virtual bool HandleKeyUpEvent(FSlateApplication& SlateApp, const FKeyEvent& Event) override
         {
-            return Event.GetKey() == EKeys::F9;
+            return Event.GetKey() == EKeys::F10;
         }
     };
 
     struct FPieDeliveryState
     {
-        TSharedPtr<FConsumeF9InputProcessor> Consumer;
+        TSharedPtr<FConsumeF10InputProcessor> Consumer;
         TSharedPtr<FTestResponseCapture> DownCapture;
         TSharedPtr<FTestResponseCapture> UpCapture;
         double Deadline = 0.0;
@@ -298,7 +301,7 @@ bool FRunOwnedPieInputDelivery::Update()
         State->DownCapture = MakeShared<FTestResponseCapture>();
         TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
         Payload->SetStringField(TEXT("type"), TEXT("key_down"));
-        Payload->SetStringField(TEXT("key"), TEXT("F9"));
+        Payload->SetStringField(TEXT("key"), TEXT("F10"));
         Payload->SetStringField(TEXT("target"), TEXT("game"));
         FHandlerContext Ctx = FHandlerContext::MakeTestContextWithSharedCapture(
             TEXT("pie-input-down"), TEXT("editor.simulate_input"), Payload, State->DownCapture.ToSharedRef());
@@ -330,14 +333,14 @@ bool FRunOwnedPieInputDelivery::Update()
             State->DownCapture->Result.IsValid()
             && State->DownCapture->Result->TryGetStringField(TEXT("consumingRoute"), Route)
             && Route == TEXT("player_input"));
-        Test->TestTrue(TEXT("selected UPlayerInput observes the F9 press"),
-            Target.PlayerController->PlayerInput->WasJustPressed(EKeys::F9)
-            && Target.PlayerController->PlayerInput->IsPressed(EKeys::F9));
+        Test->TestTrue(TEXT("selected UPlayerInput observes the F10 press"),
+            Target.PlayerController->PlayerInput->WasJustPressed(EKeys::F10)
+            && Target.PlayerController->PlayerInput->IsPressed(EKeys::F10));
 
         State->UpCapture = MakeShared<FTestResponseCapture>();
         TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
         Payload->SetStringField(TEXT("type"), TEXT("key_up"));
-        Payload->SetStringField(TEXT("key"), TEXT("F9"));
+        Payload->SetStringField(TEXT("key"), TEXT("F10"));
         Payload->SetStringField(TEXT("target"), TEXT("game"));
         FHandlerContext Ctx = FHandlerContext::MakeTestContextWithSharedCapture(
             TEXT("pie-input-up"), TEXT("editor.simulate_input"), Payload, State->UpCapture.ToSharedRef());
@@ -367,9 +370,9 @@ bool FRunOwnedPieInputDelivery::Update()
         State->UpCapture->Result.IsValid()
         && State->UpCapture->Result->TryGetStringField(TEXT("consumingRoute"), Route)
         && Route == TEXT("player_input"));
-    Test->TestTrue(TEXT("selected UPlayerInput observes the F9 release"),
-        Target.PlayerController->PlayerInput->WasJustReleased(EKeys::F9)
-        && !Target.PlayerController->PlayerInput->IsPressed(EKeys::F9));
+    Test->TestTrue(TEXT("selected UPlayerInput observes the F10 release"),
+        Target.PlayerController->PlayerInput->WasJustReleased(EKeys::F10)
+        && !Target.PlayerController->PlayerInput->IsPressed(EKeys::F10));
     return true;
 }
 
@@ -445,7 +448,7 @@ bool FEditorSimulateInputPiePlayerInputDeliveryTest::RunTest(const FString& Para
     }
 
     const TSharedRef<FPieDeliveryState> State = MakeShared<FPieDeliveryState>();
-    State->Consumer = MakeShared<FConsumeF9InputProcessor>();
+    State->Consumer = MakeShared<FConsumeF10InputProcessor>();
     State->bConsumerRegistered = FSlateApplication::Get().RegisterInputPreProcessor(State->Consumer, 0);
     TestTrue(TEXT("negative Slate preprocessor fixture is registered"), State->bConsumerRegistered);
     if (!State->bConsumerRegistered)

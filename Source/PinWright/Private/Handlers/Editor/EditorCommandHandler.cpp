@@ -275,6 +275,16 @@ bool SaveDirtyPackagesWithIntegrityGate(TSharedPtr<FJsonObject>& OutResult, FStr
             continue;
         }
 
+        // SaveAsset resolves an asset through the registry and logs an Error for a package
+        // that holds none (emptied by a rename or delete, or only transient objects), so it
+        // could only fail here; report it without the call.
+        if (!Package->FindAssetInPackage())
+        {
+            bSuccess = false;
+            FailedAssets.Emplace(PackagePath, TEXT("NoAsset"));
+            continue;
+        }
+
         if (UEditorAssetLibrary::SaveAsset(PackagePath, false))
         {
             ++SavedCount;
