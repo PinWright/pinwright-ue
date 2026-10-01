@@ -1073,7 +1073,7 @@ def _wmi_create(command_line, cwd):
     line travels in the environment, so no PowerShell quoting applies to it. Raises RuntimeError.
     """
     powershell = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32",
-                              "WindowsPowerShell", "v1.0", "powershell.exe")
+                              "WindowsPowerShell", "v1.0", "powershell")
     env = dict(os.environ, PINWRIGHT_WMI_COMMAND=command_line, PINWRIGHT_WMI_CWD=cwd,
                PINWRIGHT_WMI_FLAGS=str(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP))
     try:
@@ -1273,7 +1273,7 @@ def spawn_request(request):
     that drives host projects the proxy tools cannot target; everyone else uses the proxy tools.
 
     kind "suite":   reason, launchedBy, mode (visible | offscreen | headless, no default), uproject,
-                    editorExe (the GUI UnrealEditor.exe; offscreen / headless use its -Cmd twin),
+                    editorExe (the GUI UnrealEditor binary; offscreen / headless use its -Cmd twin),
                     filter, logPath, optional extraArgs (list). The argv is suite_argv(), the same
                     contract editor_run_tests launches.
     kind "command": reason, launchedBy, argv (executable first), outputPath (stdout + stderr, the

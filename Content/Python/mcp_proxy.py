@@ -1998,7 +1998,7 @@ def _windows_editor_processes(run=subprocess.run):
     caller can see. Raises RuntimeError when the query itself fails, so a failed census is never
     reported as 'no editors'."""
     completed = run(
-        ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", _WINDOWS_EDITOR_QUERY],
+        ["powershell", "-NoProfile", "-NonInteractive", "-Command", _WINDOWS_EDITOR_QUERY],
         capture_output=True, timeout=60,
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )

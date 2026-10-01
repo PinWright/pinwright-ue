@@ -586,6 +586,8 @@ function Assert-ProductFactsConsistent {
         # Which array an Input Mapping Context stores its mappings in, per engine, not the
         # supported range: 5.7 moved the live data to DefaultKeyMappings.Mappings.
         'docs\wiki-src\input.md' = @('5.3-5.6')
+        # A cvar's per-engine default (fx.Niagara.OnDemandCompileEnabled), not the supported range.
+        'docs\wiki-src\niagara.compile-state.md' = @('5.3-5.5')
     }
     $textExtensions = @('.md', '.uplugin')
 
