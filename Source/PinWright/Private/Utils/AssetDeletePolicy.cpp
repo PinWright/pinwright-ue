@@ -6,7 +6,9 @@
 
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetRegistry/IAssetRegistry.h"
+#include "AutoReimport/AssetSourceFilenameCache.h"
 #include "EditorAssetLibrary.h"
+#include "Misc/EngineVersionComparison.h"
 #include "ObjectTools.h"
 #include "UObject/Package.h"
 #include "UObject/UObjectGlobals.h"
@@ -132,6 +134,15 @@ static FString AssetDeletePolicy_RefusalMessage(const FString& Subject, int32 On
     return Message;
 }
 
+void AssetDeletePolicy::DrainSourceFilenameCache()
+{
+#if !UE_VERSION_NEWER_THAN_OR_EQUAL(5, 8, 0)
+    IAssetRegistry& Registry =
+        FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get();
+    FAssetSourceFilenameCache::Get().GetAssetsPertainingToFile(Registry, FString());
+#endif
+}
+
 AssetDeletePolicy::FResult AssetDeletePolicy::DeleteAsset(const FString& AssetPath, bool bForce)
 {
     FResult Result;
@@ -178,6 +189,7 @@ AssetDeletePolicy::FResult AssetDeletePolicy::DeleteAsset(const FString& AssetPa
 
     // CancelNotAllowed: an RPC has no user at the progress dialog, so consulting
     // GWarn->ReceivedUserCancel() could only ever produce a spurious abort.
+    DrainSourceFilenameCache();
     const int32 NumDeleted = ObjectTools::DeleteObjects(
         ObjectsToDelete, /*bShowConfirmation=*/false,
         ObjectTools::EAllowCancelDuringDelete::CancelNotAllowed);
@@ -256,6 +268,7 @@ AssetDeletePolicy::FResult AssetDeletePolicy::DeleteDirectory(const FString& Dir
 
     if (ObjectsToDelete.Num() > 0)
     {
+        DrainSourceFilenameCache();
         ObjectTools::DeleteObjects(ObjectsToDelete, /*bShowConfirmation=*/false,
             ObjectTools::EAllowCancelDuringDelete::CancelNotAllowed);
     }

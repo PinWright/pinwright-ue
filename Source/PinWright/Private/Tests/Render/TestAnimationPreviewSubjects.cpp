@@ -38,6 +38,7 @@
 
 #include "Tests/TestUtils.h"
 #include "Tests/TestSkipReporting.h"
+#include "Tests/Render/EngineSkeletalMeshEditorNoise.h"
 
 // File-unique named namespace: the test module is a Unity build, so an anonymous namespace here
 // would collide with the same-shaped helpers in sibling Tests/Render/*.cpp files.
@@ -346,6 +347,7 @@ bool FAnimPreviewColdFirstFrameTest::RunTest(const FString& Parameters)
     // one must close it rather than rely on a default staying put.
     Payload->SetBoolField(TEXT("closeAfterCapture"), true);
 
+    ExpectEngineSkeletalMeshEditorOpenError(*this, EngineSkeletalMeshPath);
     FTestResponseCapture Capture;
     if (!TestTrue(TEXT("handler is registered and invoked"),
             InvokeHandlerWithCapture(Verb, Payload, Capture)))
@@ -461,6 +463,7 @@ bool FAnimPreviewAnglesAndViewsTest::RunTest(const FString& Parameters)
     Payload->SetNumberField(TEXT("height"), 192);
     Payload->SetBoolField(TEXT("closeAfterCapture"), true);
 
+    ExpectEngineSkeletalMeshEditorOpenError(*this, EngineSkeletalMeshPath);
     FTestResponseCapture Capture;
     if (!TestTrue(TEXT("handler is registered and invoked"),
             InvokeHandlerWithCapture(Verb, Payload, Capture)))

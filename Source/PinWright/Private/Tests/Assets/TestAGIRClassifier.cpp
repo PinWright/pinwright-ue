@@ -109,6 +109,9 @@ bool FAGIRClassifierAnimFunctionTest::RunTest(const FString& Parameters)
         return false;
     }
 
+    // The schema's result node: without it the skeleton compile MarkBlueprintAsStructurallyModified
+    // runs logs "Could not find a root node for the graph" (AnimBlueprintCompiler.cpp).
+    FuncGraph->GetSchema()->CreateDefaultNodesForGraph(*FuncGraph);
     SourceBP->FunctionGraphs.Add(FuncGraph);
 
     // Drop a single LinkedInputPose into the function body so the classifier

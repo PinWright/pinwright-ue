@@ -24,6 +24,8 @@
 #include "PropertyEditorModule.h"
 #include "Framework/Docking/TabManager.h"
 #include "Interfaces/IMainFrameModule.h"
+#include "Misc/App.h"
+#include "Misc/ConfigCacheIni.h"
 #include "Misc/CoreDelegates.h"
 #include "Styling/AppStyle.h"
 #include "Textures/SlateIcon.h"
@@ -170,8 +172,39 @@ private:
             TEXT("Auto-saved packages remain under Saved/Autosaves/ and can be recovered manually."));
     }
 
+    // FAudioDeviceManager is what loads the audio decoder modules (RegisterAudioInfoFactories:
+    // [Audio] AudioInfoModules in Engine.ini, else the built-in list below). Under -nosound no
+    // device manager starts, so no format has a decoder factory, and before 5.8 every sound wave
+    // that builds its FSoundWaveData ensures "Decoder for AudioFormat '<fmt>' not found"
+    // (SoundWave.cpp, CacheRuntimeFormatDependentState; 5.8 exempts hosts that cannot render
+    // audio). Loading the same modules gives the sound-wave verbs what an audio-enabled editor has.
+    static void RegisterAudioDecodersWithoutAudioDevice()
+    {
+#if !UE_VERSION_NEWER_THAN_OR_EQUAL(5, 8, 0)
+        if (FApp::CanEverRenderAudio())
+        {
+            return;
+        }
+        TArray<FString> Modules;
+        if (!GConfig->GetArray(TEXT("Audio"), TEXT("AudioInfoModules"), Modules, GEngineIni))
+        {
+            Modules = { TEXT("OpusAudioDecoder"), TEXT("VorbisAudioDecoder"), TEXT("AdpcmAudioDecoder"),
+                TEXT("BinkAudioDecoder"), TEXT("RadAudioDecoder") };
+        }
+        for (const FString& Module : Modules)
+        {
+            if (FModuleManager::Get().ModuleExists(*Module))
+            {
+                FModuleManager::Get().LoadModule(*Module);
+            }
+        }
+#endif
+    }
+
     void OnPostEngineInit()
     {
+        RegisterAudioDecodersWithoutAudioDevice();
+
         // Both run before the Slate gate below: the decline does not need Slate at
         // all, and registering the probe here (rather than later) is what makes the
         // Restore Packages prompt itself reportable when the decline is switched off.

@@ -148,6 +148,7 @@ namespace DriveGameInputLocal
             // removes every binding and releases this explicit self-reference.
             SelfKeepAlive = AsShared();
             Deadline = FPlatformTime::Seconds() + 2.0;
+            StartFrame = GFrameCounter;
             PostTickHandle = FWorldDelegates::OnWorldPostActorTick.AddSP(
                 AsShared(), &FPendingGameKeyRequest::OnWorldPostActorTick);
             WorldCleanupHandle = FWorldDelegates::OnWorldCleanup.AddSP(
@@ -271,7 +272,14 @@ namespace DriveGameInputLocal
 
         bool OnDeadline(float DeltaSeconds)
         {
-            if (FPlatformTime::Seconds() >= Deadline)
+            // Wall time alone expires a request whose next world tick simply has not come yet:
+            // the core ticker runs after GEngine->Tick in the same frame, so one slow frame (the
+            // editor's own F9 screenshot on a PIE key press measured 3.8 s) outlasts the budget
+            // between the injection and the tick that observes it. Expire only once a whole
+            // frame has passed since the last step without the world ticking.
+            const uint64 LastStepFrame =
+                Phase == EPhase::AwaitInjection ? StartFrame : Observation.InjectionFrame;
+            if (FPlatformTime::Seconds() >= Deadline && GFrameCounter > LastStepFrame)
             {
                 Complete(TEXT("player_input_not_processed"));
                 return false;
@@ -308,6 +316,7 @@ namespace DriveGameInputLocal
         EPhase Phase = EPhase::AwaitInjection;
         int32 PieInstance = INDEX_NONE;
         double Deadline = 0.0;
+        uint64 StartFrame = 0;
         bool bTerminal = false;
         FDriveGameKeyObservation Observation;
         TFunction<void(const FDriveGameKeyObservation&)> Completion;

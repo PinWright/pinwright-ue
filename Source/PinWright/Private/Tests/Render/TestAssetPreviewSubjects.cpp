@@ -40,6 +40,7 @@
 #include "Handlers/ParamSpec.h"
 #include "Tests/TestUtils.h"
 #include "Tests/TestSkipReporting.h"
+#include "Tests/Render/EngineSkeletalMeshEditorNoise.h"
 #include "Tests/Infra/DispatcherTestHelpers.h"
 
 namespace
@@ -539,6 +540,7 @@ bool FAssetPreviewSkeletalMeshSixSidesTest::RunTest(const FString& Parameters)
     Payload->SetNumberField(TEXT("width"), 256);
     Payload->SetNumberField(TEXT("height"), 256);
 
+    ExpectEngineSkeletalMeshEditorOpenError(*this, PWAssetSubjSkeletalCubePath);
     FTestResponseCapture Capture;
     if (!TestTrue(TEXT("render.capture_asset_preview handler found"),
             InvokeHandlerWithCapture(TEXT("render.capture_asset_preview"), Payload, Capture)))

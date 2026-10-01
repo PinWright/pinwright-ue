@@ -38,7 +38,7 @@ class _Temp(unittest.TestCase):
         self.tmp = self._temp.name
 
     def write(self, rel, text):
-        path = os.path.join(self.tmp, rel)
+        path = os.path.join(self.tmp, *rel.split("/"))  # native separators, as os.walk yields
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as fh:
             fh.write(text)

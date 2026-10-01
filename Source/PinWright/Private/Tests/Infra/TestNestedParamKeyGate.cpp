@@ -44,6 +44,16 @@
 #include "Tests/TestSkipReporting.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
+#include "Misc/EngineVersionComparison.h"
+
+// StaticLoadObject's not-found warning names a null outer: through 5.7 it prints
+// "<Class> None.<path>" (UObjectGlobals.cpp), 5.8 prints "<Class> <path>". File-local; #undef at
+// the end keeps it out of the sibling TUs a Unity blob merges after this one.
+#if UE_VERSION_NEWER_THAN_OR_EQUAL(5, 8, 0)
+#define PW_NESTED_GATE_NULL_OUTER TEXT("")
+#else
+#define PW_NESTED_GATE_NULL_OUTER TEXT("None.")
+#endif
 
 // ---------------------------------------------------------------------------
 // Test-only registration. Carries one ADOPTED object slot, one ADOPTED array slot, one ADOPTED slot
@@ -429,9 +439,9 @@ bool FNestedParamKeyGateRealVerbsTest::RunTest(const FString& Parameters)
     // The provoked refusal's own log lines, declared with exact counts (docs/rpc-design.md s12).
     AddExpectedMessagePlain(TEXT("[material.authoring.create_material_instance] Unknown nested key(s): 'parameters.r' is not a key of 'parameters'"),
         ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
-    AddExpectedMessagePlain(TEXT("Failed to find object 'MaterialInstanceConstant /Game/PinWrightNestedGateProbe/MI_DoesNotExist'"),
+    AddExpectedMessagePlain(TEXT("Failed to find object 'MaterialInstanceConstant ") PW_NESTED_GATE_NULL_OUTER TEXT("/Game/PinWrightNestedGateProbe/MI_DoesNotExist'"),
         ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
-    AddExpectedMessagePlain(TEXT("Failed to find object 'Object /Game/PinWrightNestedGateProbe/MI_DoesNotExist'"),
+    AddExpectedMessagePlain(TEXT("Failed to find object 'Object ") PW_NESTED_GATE_NULL_OUTER TEXT("/Game/PinWrightNestedGateProbe/MI_DoesNotExist'"),
         ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
 
     FRpcDispatcher Dispatcher;
@@ -629,19 +639,19 @@ bool FNestedInputClosureConfirmedCasesTest::RunTest(const FString& Parameters)
     // The provoked refusal's own log lines, declared with exact counts (docs/rpc-design.md s12).
     AddExpectedMessagePlain(TEXT("[animation.create_state_machine] Unknown nested key(s): 'states[0].animation' is not a key of 'states[0]'"),
         ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
-    AddExpectedMessagePlain(TEXT("Failed to find object 'AnimBlueprint /Game/DoesNotExist/ABP_Missing'"),
+    AddExpectedMessagePlain(TEXT("Failed to find object 'AnimBlueprint ") PW_NESTED_GATE_NULL_OUTER TEXT("/Game/DoesNotExist/ABP_Missing'"),
         ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
     AddExpectedMessagePlain(TEXT("[material.authoring.create_material_instance] Unknown nested key(s): 'parameters.r' is not a key of 'parameters'"),
         ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
-    AddExpectedMessagePlain(TEXT("Failed to find object 'Material /Game/DoesNotExist/M_Missing'"),
+    AddExpectedMessagePlain(TEXT("Failed to find object 'Material ") PW_NESTED_GATE_NULL_OUTER TEXT("/Game/DoesNotExist/M_Missing'"),
         ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
-    AddExpectedMessagePlain(TEXT("Failed to find object 'Object /Game/DoesNotExist/M_Missing'"),
+    AddExpectedMessagePlain(TEXT("Failed to find object 'Object ") PW_NESTED_GATE_NULL_OUTER TEXT("/Game/DoesNotExist/M_Missing'"),
         ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
     AddExpectedMessagePlain(TEXT("[render.capture_annotated] Unknown nested key(s): 'grid.between' is not a key of 'grid'"),
         ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
-    AddExpectedMessagePlain(TEXT("Failed to find object 'Blueprint /Game/DoesNotExist/BP_Missing'"),
+    AddExpectedMessagePlain(TEXT("Failed to find object 'Blueprint ") PW_NESTED_GATE_NULL_OUTER TEXT("/Game/DoesNotExist/BP_Missing'"),
         ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
-    AddExpectedMessagePlain(TEXT("Failed to find object 'EnvQuery /Game/DoesNotExist/EQS_Missing'"),
+    AddExpectedMessagePlain(TEXT("Failed to find object 'EnvQuery ") PW_NESTED_GATE_NULL_OUTER TEXT("/Game/DoesNotExist/EQS_Missing'"),
         ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 2);
 
     FRpcDispatcher Dispatcher;
@@ -844,3 +854,5 @@ bool FNestedInputClosureConfirmedCasesTest::RunTest(const FString& Parameters)
 
     return true;
 }
+
+#undef PW_NESTED_GATE_NULL_OUTER

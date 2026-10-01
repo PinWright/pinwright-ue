@@ -480,7 +480,12 @@ FString FAGIRTextEmitter::EmitBlendSpaceGraph(UAnimGraphNode_Base* Node)
         // wrong without any signal.
         FObjectProperty* BlendSpaceProp = FindFProperty<FObjectProperty>(BlendSpaceNode->GetClass(), TEXT("BlendSpace"));
         check(BlendSpaceProp);
-        if (UObject* BlendSpaceAsset = BlendSpaceProp->GetObjectPropertyValue_InContainer(BlendSpaceNode))
+        // A node placed without an asset owns a stand-in in the transient package
+        // (AnimGraphNode_BlendSpaceGraphBase::PostPlacedNewNode, "/Engine/Transient.BlendSpace_0");
+        // that path never loads, so emitting it only makes the compiler's asset= lookup log a
+        // failed load.
+        UObject* BlendSpaceAsset = BlendSpaceProp->GetObjectPropertyValue_InContainer(BlendSpaceNode);
+        if (BlendSpaceAsset && BlendSpaceAsset->GetOutermost() != GetTransientPackage())
         {
             AssetClause = FString::Printf(TEXT(" asset=%s"), *Quote(BlendSpaceAsset->GetPathName()));
         }

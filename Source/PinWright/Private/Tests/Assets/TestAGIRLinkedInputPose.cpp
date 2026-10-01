@@ -88,6 +88,9 @@ UEdGraph* SeedAnimFunctionGraphWithLinkedInputPose(
     {
         return nullptr;
     }
+    // The schema's result node: without it the skeleton compile MarkBlueprintAsStructurallyModified
+    // runs logs "Could not find a root node for the graph" (AnimBlueprintCompiler.cpp).
+    FuncGraph->GetSchema()->CreateDefaultNodesForGraph(*FuncGraph);
     AnimBP->FunctionGraphs.Add(FuncGraph);
 
     FGraphNodeCreator<UAnimGraphNode_LinkedInputPose> NodeCreator(*FuncGraph);

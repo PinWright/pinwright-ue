@@ -56,6 +56,7 @@
 
 #include "Tests/TestUtils.h"
 #include "Tests/TestSkipReporting.h"
+#include "Tests/Render/EngineSkeletalMeshEditorNoise.h"
 
 #include "Compat/EngineVersionCompat.h"
 
@@ -379,6 +380,7 @@ bool FCaptureSubjectMeshSkeletalBoundsFromAssetTest::RunTest(const FString& Para
         Facts.CaptureSource, FString(TEXT("personaPreviewViewport")));
 
     // ---- The same values must survive into the resolved descriptor a verb reads.
+    ExpectEngineSkeletalMeshEditorOpenError(*this, PWMeshSubjectSkeletalCubePath);
     PWMeshSubjectProbe Probe;
     PWMeshSubjectResolve(Request, Probe);
 
@@ -499,6 +501,7 @@ bool FCaptureSubjectMeshSkeletalNoAnimationNoTimeAxisTest::RunTest(const FString
         TestNull(TEXT("No animation asset was resolved"), Facts.AnimationAsset);
     }
 
+    ExpectEngineSkeletalMeshEditorOpenError(*this, PWMeshSubjectSkeletalCubePath);
     PWMeshSubjectProbe Probe;
     PWMeshSubjectResolve(Request, Probe);
     if (!Probe.bResolved && !PWMeshSubjectIsHostLimitedCode(Probe.ErrCode))

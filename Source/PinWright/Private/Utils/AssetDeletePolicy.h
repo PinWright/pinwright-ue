@@ -92,4 +92,15 @@ namespace AssetDeletePolicy
     // held from outside the folder therefore refuses the whole folder. Partial folder
     // deletes are available by naming paths instead.
     PINWRIGHT_API FResult DeleteDirectory(const FString& DirectoryPath, bool bForce);
+
+    // Call right before ObjectTools::DeleteObjects. FAssetDeleteModel asks
+    // FAssetSourceFilenameCache for the assets sharing each doomed object's source file; that
+    // lookup is an Inline task on the cache's pipe and runs inline only when the pipe is idle.
+    // Behind a queued HandleOnAssetsAdded (any import just before) it runs on a background
+    // worker, where GetAssetByObjectPath builds FAssetData from the loaded asset - for a
+    // texture that reaches UTexture::GetResource() const, which before 5.8 ensures off the game
+    // and render threads (Texture.cpp; 5.8 answers every non-render thread). A lookup for a file
+    // no asset imports waits out the queue without building any FAssetData, so the delete
+    // model's own lookup then runs inline on the game thread. No-op on 5.8+.
+    PINWRIGHT_API void DrainSourceFilenameCache();
 }

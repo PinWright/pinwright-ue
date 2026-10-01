@@ -62,6 +62,7 @@
 #include "Tests/TestWorldUtils.h"
 #include "Tests/Infra/DispatcherTestHelpers.h"
 #include "Tests/TestSkipReporting.h"
+#include "Tests/Render/EngineSkeletalMeshEditorNoise.h"
 
 namespace
 {
@@ -943,6 +944,7 @@ bool FRenderAnimationPreviewBurstWritesDistinctPoseImagesTest::RunTest(const FSt
     Payload->SetNumberField(TEXT("height"), 768.0);
     Payload->SetBoolField(TEXT("closeAfterCapture"), true);
 
+    ExpectEngineSkeletalMeshEditorOpenError(*this, PWAnimCapFixtureMeshPath);
     FTestResponseCapture Capture;
     if (!TestTrue(TEXT("the burst handler is registered and invoked"),
             InvokeHandlerWithCapture(TEXT("render.capture_animation_preview"), Payload, Capture)))

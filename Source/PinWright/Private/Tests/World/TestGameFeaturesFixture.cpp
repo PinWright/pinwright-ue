@@ -31,6 +31,43 @@
 
 #include "Tests/TestUtils.h"
 
+#include "Compat/EngineVersionCompat.h"
+#include "Interfaces/IPluginManager.h"
+#include "Modules/ModuleManager.h"
+
+// Mounting the synthetic plugin makes AssetReferenceRestrictions rebuild its domain DB once, on the
+// next tick. Through 5.7 that rebuild resolves each enabled plugin's dependencies with
+// IPluginManager::FindPlugin, which also returns DISABLED plugins, so every disabled content
+// plugin some enabled plugin lists (PinWright's optional PoseSearch / InterchangeOpenUSD on a host
+// without them) becomes a referenced-but-never-built domain and logs one Error
+// (AssetReferencingDomains.cpp, ValidateAllDomains). 5.8 uses FindEnabledPlugin and logs nothing.
+static void ExpectDisabledDependencyDomainErrors(FAutomationTestBase& Test)
+{
+#if !UE_VERSION_NEWER_THAN_OR_EQUAL(5, 8, 0)
+    if (!FModuleManager::Get().IsModuleLoaded(TEXT("AssetReferenceRestrictions")))
+    {
+        return;
+    }
+    TSet<FString> MissingDomains;
+    for (const TSharedRef<IPlugin>& Referencer : IPluginManager::Get().GetEnabledPluginsWithContent())
+    {
+        for (const FPluginReferenceDescriptor& Dependency : Referencer->GetDescriptor().Plugins)
+        {
+            const TSharedPtr<IPlugin> Target = IPluginManager::Get().FindPlugin(Dependency.Name);
+            if (Dependency.bEnabled && Target.IsValid() && Target->CanContainContent() && !Target->IsEnabled())
+            {
+                MissingDomains.Add(Dependency.Name);
+            }
+        }
+    }
+    for (const FString& Domain : MissingDomains)
+    {
+        Test.AddExpectedErrorPlain(FString::Printf(TEXT("Asset domain %s was referenced by"), *Domain),
+            EAutomationExpectedErrorFlags::Contains, 1);
+    }
+#endif
+}
+
 // Latent commands mirror the engine's own GameFeaturePluginTests.cpp pattern: the GFP
 // state machine advances across real engine frames, so the async Registered->Active
 // round-trip must be driven with latent commands, not a manual ticker pump.
@@ -76,6 +113,7 @@ bool FGameFeaturesLiveFixtureTest::RunTest(const FString& Parameters)
     }
 
     const FString URL = Plugin->PluginURL;
+    ExpectDisabledDependencyDomainErrors(*this);
 
     // Drive Installed->Registered->Loaded->Active via the real latent API.
     TSharedRef<bool> bActivateDone = MakeShared<bool>(false);

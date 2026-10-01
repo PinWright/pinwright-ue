@@ -16,6 +16,7 @@
 #include "Dispatch/SafePoint.h"
 #include "Utils/AssetBatchResult.h"
 #include "Utils/AssetCompilePump.h"
+#include "Utils/AssetDeletePolicy.h"
 #include "Utils/AssetUtils.h"
 #include "Utils/PathUtils.h"
 #include "Utils/MeshRebuildRenderGuard.h"
@@ -1008,6 +1009,7 @@ REGISTER_RPC_HANDLER("asset.bulk_delete", "asset", "Delete many assets in a sing
     // .uasset the count already scored as deleted. In the other direction
     // AddExtraObjectsToDelete appends secondary and external-package objects, so the count
     // can exceed the request outright.
+    AssetDeletePolicy::DrainSourceFilenameCache();
     const int32 EngineDeletedCount =
         ObjectTools::DeleteObjects(ObjectsToDelete, bShowConfirmation);
 

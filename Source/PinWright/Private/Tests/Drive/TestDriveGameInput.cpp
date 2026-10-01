@@ -318,7 +318,8 @@ bool FRunOwnedPieInputDelivery::Update()
     if (State->Phase == 1)
     {
         Test->TestEqual(TEXT("key_down answers exactly once"), State->DownCapture->CallCount, 1);
-        Test->TestTrue(TEXT("key_down is delivered to game"), State->DownCapture->bSuccess);
+        Test->TestTrue(FString::Printf(TEXT("key_down is delivered to game (%s: %s)"),
+            *State->DownCapture->ErrorCode, *State->DownCapture->Message), State->DownCapture->bSuccess);
         bool bDelivered = false;
         FString Route;
         Test->TestTrue(TEXT("key_down reports authoritative delivery"),
