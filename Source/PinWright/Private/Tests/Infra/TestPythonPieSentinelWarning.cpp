@@ -88,3 +88,59 @@ bool FPythonExecutePieSentinelWarningTest::RunTest(const FString& Parameters)
         bFoundSentinelWarning);
     return true;
 }
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPythonExecutePieRpcLocalWarningTest,
+    "PinWright.python.execute.PieRpcRunsLocallyWarning",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+// Counterfactual: without the handler's RPC warning, no Warning log entry names
+// object.call_function and the final assertion fails.
+bool FPythonExecutePieRpcLocalWarningTest::RunTest(const FString& Parameters)
+{
+    TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+    Payload->SetStringField(TEXT("code"), TEXT("2 + 2"));
+    Payload->SetStringField(TEXT("mode"), TEXT("evaluate_statement"));
+
+    FTestResponseCapture Capture;
+    {
+        TGuardValue<bool> PieWorldFlagGuard(GIsPlayInEditorWorld, true);
+        if (!InvokeHandlerWithCapture(TEXT("python.execute"), Payload, Capture))
+        {
+            AddError(TEXT("Handler 'python.execute' not registered"));
+            return false;
+        }
+    }
+
+    if (!Capture.bSuccess || !Capture.Result.IsValid())
+    {
+        if (Capture.ErrorCode == TEXT("PYTHON_NOT_AVAILABLE") ||
+            Capture.ErrorCode == TEXT("PYTHON_INIT_FAILED"))
+        {
+            PinWrightTestSkip::SkipAssertions(*this, TEXT("python-interpreter-unavailable"),
+                FString::Printf(TEXT("python.execute answered %s"), *Capture.ErrorCode));
+            return true;
+        }
+        AddError(FString::Printf(TEXT("python.execute failed (errorCode='%s')"), *Capture.ErrorCode));
+        return false;
+    }
+
+    const TArray<TSharedPtr<FJsonValue>>* LogEntries = nullptr;
+    Capture.Result->TryGetArrayField(TEXT("log"), LogEntries);
+    bool bFoundRpcWarning = false;
+    for (const TSharedPtr<FJsonValue>& EntryValue : LogEntries ? *LogEntries : TArray<TSharedPtr<FJsonValue>>())
+    {
+        const TSharedPtr<FJsonObject>* Entry = nullptr;
+        FString Type;
+        FString Output;
+        if (EntryValue.IsValid() && EntryValue->TryGetObject(Entry) && Entry &&
+            (*Entry)->TryGetStringField(TEXT("type"), Type) && Type == TEXT("Warning") &&
+            (*Entry)->TryGetStringField(TEXT("output"), Output) &&
+            Output.Contains(TEXT("RPC")) && Output.Contains(TEXT("ran locally")) &&
+            Output.Contains(TEXT("object.call_function")))
+        {
+            bFoundRpcWarning = true;
+        }
+    }
+    TestTrue(TEXT("PIE response warns that RPCs from script-called UFUNCTIONs run locally"), bFoundRpcWarning);
+    return true;
+}

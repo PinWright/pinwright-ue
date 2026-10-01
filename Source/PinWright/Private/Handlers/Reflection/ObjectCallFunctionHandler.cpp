@@ -9,6 +9,7 @@
 
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
+#include "Engine/World.h"
 #include "Misc/ScopeExit.h"
 #include "UObject/Object.h"
 #include "UObject/Script.h"
@@ -57,6 +58,27 @@ namespace
             }
         }
         return nullptr;
+    }
+
+    // GAllowActorScriptExecutionInEditor decides two things at once. AActor::ProcessEvent
+    // no-ops in an editor world unless it is set, so editor-world and world-less targets
+    // (assets, subsystems) need FEditorScriptExecutionGuard. But AActor::GetFunctionCallspace
+    // answers Local first thing whenever it is set, so in a game world (PIE) it turns every
+    // Server/Client/NetMulticast RPC into a local call: a client's Server RPC runs its
+    // _Implementation on the client, and one that re-sends from its _Implementation recurses
+    // until the stack overflows. Game-world targets therefore run with the flag cleared, also
+    // when an outer scope (a Python-invoked UFUNCTION) already set it.
+    static void ProcessEventWithNetCallspace(UObject* Target, UFunction* Fn, void* Parms)
+    {
+        const UWorld* World = Target->GetWorld();
+        if (World && World->IsGameWorld())
+        {
+            TGuardValue<bool> NetCallspace(GAllowActorScriptExecutionInEditor, false);
+            Target->ProcessEvent(Fn, Parms);
+            return;
+        }
+        FEditorScriptExecutionGuard ScriptGuard;
+        Target->ProcessEvent(Fn, Parms);
     }
 }
 
@@ -127,12 +149,7 @@ REGISTER_RPC_HANDLER("object.call_function", "object",
 
     if (Fn->ParmsSize == 0)
     {
-        // AActor::ProcessEvent silently no-ops in editor worlds unless
-        // GAllowActorScriptExecutionInEditor is true (Actor.cpp ~L1444). The
-        // guard flips that flag for the duration of this call so reflective
-        // setters/getters actually run on editor-spawned actors.
-        FEditorScriptExecutionGuard ScriptGuard;
-        Target->ProcessEvent(Fn, nullptr);
+        ProcessEventWithNetCallspace(Target, Fn, nullptr);
 
         TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
         Data->SetStringField(TEXT("objectPath"), Target->GetPathName());
@@ -269,12 +286,7 @@ REGISTER_RPC_HANDLER("object.call_function", "object",
         return true;
     }
 
-    {
-        // See note above the zero-param ProcessEvent: editor-world AActors
-        // skip reflective UFUNCTION execution unless this guard is in scope.
-        FEditorScriptExecutionGuard ScriptGuard;
-        Target->ProcessEvent(Fn, Parms);
-    }
+    ProcessEventWithNetCallspace(Target, Fn, Parms);
 
     TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
     Data->SetStringField(TEXT("objectPath"), Target->GetPathName());

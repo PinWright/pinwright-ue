@@ -82,6 +82,10 @@
 - Added: an MCP server started before the plugin's Python changed now fails a supervised launch
   with `SUPERVISOR_VERSION_MISMATCH` (restart the MCP server) instead of an unexplained
   `exited without a handoff`.
+- Fixed: `object.call_function` on a PIE object no longer runs every RPC locally: a client's
+  `Server` RPC is sent to the server instead of running its `_Implementation` on the client (which
+  recursed into a stack-overflow crash for RPCs that re-send themselves). `python.execute` under PIE
+  warns that the Python plugin still runs RPCs locally.
 
 ## 0.8.0
 

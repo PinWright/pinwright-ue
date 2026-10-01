@@ -312,6 +312,19 @@ REGISTER_RPC_HANDLER("python.execute", "python", "Execute Python code or a .py f
                 TEXT("StaticMeshEditorSubsystem.get_lod_count returns -1 and get_num_uv_channels returns 0 in this state. ")
                 TEXT("Do not treat those values as measurements; use a typed PinWright verb or retry after PIE ends."));
             LogArray.Add(MakeShared<FJsonValueObject>(LogEntry));
+
+            // The Python plugin wraps every UFUNCTION it invokes in FEditorScriptExecutionGuard
+            // (PyUtil.cpp, InvokeFunctionCall), and AActor::GetFunctionCallspace answers Local
+            // while that guard is up. Engine-side, so all PinWright can do is say so.
+            TSharedPtr<FJsonObject> RpcEntry = MakeShared<FJsonObject>();
+            RpcEntry->SetStringField(TEXT("type"), LexToString(EPythonLogOutputType::Warning));
+            RpcEntry->SetStringField(TEXT("output"),
+                TEXT("PIE is active. Every Server/Client/NetMulticast RPC reached from a UFUNCTION this script called ")
+                TEXT("ran locally in the calling world and was never sent: a Server RPC called on a client object did ")
+                TEXT("nothing on the server, and an RPC that re-sends from its own _Implementation recurses until the ")
+                TEXT("editor crashes. Use object.call_function (it keeps the engine's RPC routing in PIE) or change ")
+                TEXT("the server world's object instead."));
+            LogArray.Add(MakeShared<FJsonValueObject>(RpcEntry));
         }
 
         // A tick or shutdown callback registered here outlives this call, PIE, and every
