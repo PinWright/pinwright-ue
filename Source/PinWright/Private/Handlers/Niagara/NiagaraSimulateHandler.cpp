@@ -22,7 +22,8 @@
 
 #include "Engine/World.h"
 #include "HAL/IConsoleManager.h"
-#include "Misc/EngineVersionComparison.h"
+// Compat header, not the raw engine one: UE 5.3-5.5 do not define UE_VERSION_NEWER_THAN_OR_EQUAL.
+#include "Compat/EngineVersionCompat.h"
 #include "Misc/ScopeExit.h"
 #include "NiagaraComponent.h"
 #include "NiagaraComputeExecutionContext.h"
