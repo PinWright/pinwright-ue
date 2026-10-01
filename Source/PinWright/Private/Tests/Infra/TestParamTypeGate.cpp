@@ -40,6 +40,7 @@
 #include "Tests/Infra/ParamSpecTestHelpers.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
+#include "Compat/EngineVersionCompat.h"
 
 // ---------------------------------------------------------------------------
 // Test-only registrations. Deliberately read NO parameter: every assertion here is about whether

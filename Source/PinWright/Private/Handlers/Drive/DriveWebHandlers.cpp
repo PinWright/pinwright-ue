@@ -23,6 +23,7 @@
 #include "HAL/PlatformTime.h"
 #include "Layout/WidgetPath.h"
 #include "Misc/DateTime.h"
+#include "Misc/EngineVersionComparison.h"
 #include "WebBrowser.h"
 #include "Widgets/SWindow.h"
 
@@ -545,7 +546,15 @@ namespace DriveWebHandlersLocal
             return false;
         }
         FSlateApplication& SlateApp = FSlateApplication::Get();
-        const TSharedPtr<SWidget> View = FindBrowserView(Browser->GetCachedWidget());
+        TSharedPtr<SWidget> View = FindBrowserView(Browser->GetCachedWidget());
+#if UE_VERSION_OLDER_THAN(5, 4, 0)
+        // SWebBrowserView::OnFocusReceived, which hands focus on to the inner viewport that forwards
+        // keys to CEF, arrived in 5.4; through 5.3 focus that viewport (the view's only child) directly.
+        if (View.IsValid() && View->GetChildren() && View->GetChildren()->Num() > 0)
+        {
+            View = View->GetChildren()->GetChildAt(0);
+        }
+#endif
         SlateApp.SetKeyboardFocus(View.IsValid() ? View : Browser->GetCachedWidget(), EFocusCause::SetDirectly);
 
         if (Action != EDriveKeyAction::Up && Key.IsValid())

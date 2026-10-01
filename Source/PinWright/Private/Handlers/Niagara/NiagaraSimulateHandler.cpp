@@ -22,6 +22,7 @@
 
 #include "Engine/World.h"
 #include "HAL/IConsoleManager.h"
+#include "Misc/EngineVersionComparison.h"
 #include "Misc/ScopeExit.h"
 #include "NiagaraComponent.h"
 #include "NiagaraComputeExecutionContext.h"
@@ -306,7 +307,12 @@ REGISTER_RPC_HANDLER("niagara.simulate", "niagara",
             FEmitterTrack& Track = Tracks[EmitterIndex++];
             const FNiagaraEmitterInstance& Emitter = EmitterRef.Get();
             const int32 Count = Emitter.GetNumParticles();
+#if UE_VERSION_NEWER_THAN_OR_EQUAL(5, 4, 0)
             const ENiagaraExecutionState State = Emitter.GetExecutionState();
+#else
+            // GetExecutionState is non-const through 5.3; it only reads the member.
+            const ENiagaraExecutionState State = const_cast<FNiagaraEmitterInstance&>(Emitter).GetExecutionState();
+#endif
             // FNiagaraEmitterInstance::GetNumParticles reads the GPU context only once this fence
             // has passed, and returns TotalSpawnedParticles otherwise.
             bool bExact = true;

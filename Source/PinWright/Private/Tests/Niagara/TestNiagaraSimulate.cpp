@@ -24,6 +24,7 @@
 #include "Engine/Level.h"
 #include "Engine/World.h"
 #include "HAL/IConsoleManager.h"
+#include "Misc/EngineVersionComparison.h"
 #include "Misc/ScopeExit.h"
 #include "NiagaraEmitter.h"
 #include "NiagaraEmitterHandle.h"
@@ -203,7 +204,14 @@ bool FNiagaraSimulateZeroSpawnCountReportsNotEmittedTest::RunTest(const FString&
     // parameters live; settle any compile first so none can rebuild the stores after the write.
     if (!System->ShouldUseRapidIterationParameters())
     {
+#if UE_VERSION_NEWER_THAN_OR_EQUAL(5, 4, 0)
         System->SetCompileForEdit(true);
+#else
+        // 5.3 has no SetCompileForEdit: the flag is a public member, and the setter's
+        // bNeedsRequestCompile is protected, so request the recompile directly.
+        System->bCompileForEdit = true;
+        System->RequestCompile(/*bForce=*/false);
+#endif
     }
     PinWrightNiagara::WaitForSystemCompile(*System, /*bMayFlushRequestCompile=*/true);
     if (!System->ShouldUseRapidIterationParameters())

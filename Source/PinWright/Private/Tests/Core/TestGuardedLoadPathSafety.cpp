@@ -44,6 +44,7 @@
 #include "Misc/Guid.h"
 #include "UObject/Class.h"
 #include "UObject/Object.h"
+#include "Compat/EngineVersionCompat.h"
 
 // Named (not anonymous) namespace: the plugin's tests share one module with Unity builds enabled,
 // where same-named anonymous-namespace helpers collide across merged translation units.

@@ -38,6 +38,7 @@
 #include "Tests/Infra/DispatcherTestHelpers.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
+#include "Compat/EngineVersionCompat.h"
 
 // ---------------------------------------------------------------------------
 // Test-only registration: one parameter of each path-shaped token, one array-of-paths union, and one

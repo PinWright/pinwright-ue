@@ -215,6 +215,22 @@ namespace PinWrightStackIssueHandler
         return ViewModel;
     }
 
+    // Declare before a diagnostics view model so it outlives it, on every return path. Through 5.3
+    // the view model's Cleanup resets bCompileForEdit and calls RequestCompile(false) directly,
+    // which always launches an active compilation, so the system would read as compiling and the
+    // next call be refused COMPILE_IN_PROGRESS. 5.4+ only queues the request (SetCompileForEdit).
+    // This verb started that compile, so it drains it.
+    struct FScopedViewModelTeardownSettle
+    {
+        UNiagaraSystem& System;
+        ~FScopedViewModelTeardownSettle()
+        {
+#if UE_VERSION_OLDER_THAN(5, 4, 0)
+            PinWrightNiagara::WaitForSystemCompile(System, /*bMayFlushRequestCompile=*/false);
+#endif
+        }
+    };
+
     const TCHAR* SeverityToString(EStackIssueSeverity Severity)
     {
         switch (Severity)
@@ -361,6 +377,7 @@ REGISTER_RPC_HANDLER("niagara.list_stack_issues", "niagara",
         // refreshes stack editor data that may Modify() the asset.
         PinWright::PackageDirty::FScopedPackageDirtyRestore DirtyGuard;
         DirtyGuard.Capture(System);
+        const FScopedViewModelTeardownSettle TeardownSettle{ *System };
         const TSharedRef<FNiagaraSystemViewModel> ViewModel = MakeDiagnosticsViewModel(*System);
         AddIssues(*Result, CollectIssues(*ViewModel));
     }
@@ -415,6 +432,7 @@ REGISTER_RPC_HANDLER("niagara.apply_issue_fix", "niagara",
     FString AppliedFixId;
     FString AppliedFixDescription;
     {
+        const FScopedViewModelTeardownSettle TeardownSettle{ *System };
         const TSharedRef<FNiagaraSystemViewModel> ViewModel = MakeDiagnosticsViewModel(*System);
         const TArray<FFoundIssue> Before = CollectIssues(*ViewModel);
         BeforeIds = IssueIds(Before);
@@ -504,6 +522,7 @@ REGISTER_RPC_HANDLER("niagara.apply_issue_fix", "niagara",
     {
         // A NEW view model: the one the fix ran in keeps external/validation issues across
         // RefreshChildren, so only a fresh build shows what the fix actually changed.
+        const FScopedViewModelTeardownSettle TeardownSettle{ *System };
         const TSharedRef<FNiagaraSystemViewModel> ViewModel = MakeDiagnosticsViewModel(*System);
         const TArray<FFoundIssue> After = CollectIssues(*ViewModel);
         const TArray<FString> AfterIds = IssueIds(After);
