@@ -208,7 +208,11 @@ bool FPwGraphLayoutSharedDataTest::RunTest(const FString& Parameters)
     const FLayoutGraph G = ArrangeAndCheck(*this, F.Graph, TestSpacing());
     TestTrue(TEXT("the shared node sits left of its first consumer"), Right(G, Shared.Node) <= Left(G, First.Node));
     TestTrue(TEXT("the shared node sits right of the event"), Left(G, Shared.Node) >= Right(G, Event.Node));
-    TestTrue(TEXT("the wire to the first consumer is horizontal"), IsHorizontal(G, ToFirst));
+    // The event -> first exec wire crosses the shared node's column at First's exec row; the data
+    // node stays below it rather than straddling it (so its own wire bends slightly).
+    TestTrue(TEXT("the shared node stays below the incoming exec wire"),
+        Top(G, Shared.Node) > PinScreenY(G, First.Node, First.FlowIn));
+    TestTrue(TEXT("the wire to the first consumer still runs forwards"), Right(G, Shared.Node) <= Left(G, G.Wires[ToFirst].ToNode));
     return true;
 }
 
@@ -227,7 +231,8 @@ bool FPwGraphLayoutDataChainTest::RunTest(const FString& Parameters)
     const FShape D2 = F.Add(TEXT("d2"), false, 0, 1, 1, 220.0);
     const FShape D3 = F.Add(TEXT("d3"), false, 0, 0, 1);
     F.Flow(Event, 0, Consumer);
-    const TArray<int32> Wires = { F.Data(D1, 0, Consumer, 0), F.Data(D2, 0, D1, 0), F.Data(D3, 0, D2, 0) };
+    F.Data(D1, 0, Consumer, 0);
+    const TArray<int32> Wires = { F.Data(D2, 0, D1, 0), F.Data(D3, 0, D2, 0) };
     F.Graph.Roots = { Event.Node };
 
     const FLayoutGraph G = ArrangeAndCheck(*this, F.Graph, TestSpacing());
@@ -236,7 +241,14 @@ bool FPwGraphLayoutDataChainTest::RunTest(const FString& Parameters)
     TestTrue(TEXT("the chain fits between the event and its consumer"), Left(G, D3.Node) >= Right(G, Event.Node));
     for (int32 Wire : Wires)
     {
-        TestTrue(*FString::Printf(TEXT("data wire %d is horizontal"), Wire), IsHorizontal(G, Wire));
+        TestTrue(*FString::Printf(TEXT("data wire %d inside the chain is horizontal"), Wire), IsHorizontal(G, Wire));
+    }
+    // The event -> consumer exec wire crosses all three columns at the consumer's exec row; the
+    // chain sits below it instead of having that wire run through its nodes.
+    for (const FShape& Data : { D1, D2, D3 })
+    {
+        TestTrue(*FString::Printf(TEXT("%s stays below the incoming exec wire"), *G.Nodes[Data.Node].Key),
+            Top(G, Data.Node) > PinScreenY(G, Consumer.Node, Consumer.FlowIn));
     }
     return true;
 }

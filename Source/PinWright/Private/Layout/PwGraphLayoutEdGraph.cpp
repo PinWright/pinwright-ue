@@ -118,8 +118,6 @@ namespace PwGraphLayout
             Out.Size = Sizer.EstimateNodeSize(Node);
             Out.bMovable = Movable.Contains(Node);
 
-            int32 InputRow = 0;
-            int32 OutputRow = 0;
             for (const UEdGraphPin* Pin : Node->Pins)
             {
                 if (!GraphLayout::FBlueprintNodeSizeAdapter::IsPinShown(Pin))
@@ -129,9 +127,7 @@ namespace PwGraphLayout
                 FPinSlot Slot;
                 Slot.Side = Pin->Direction == EGPD_Input ? EPinSide::Input : EPinSide::Output;
                 Slot.Kind = Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_Exec ? EWireKind::Flow : EWireKind::Data;
-                Slot.OffsetY = GraphLayout::FBlueprintNodeSizeAdapter::IsPinInTitle(Pin)
-                    ? Sizer.TitlePinOffsetY()
-                    : Sizer.PinOffsetY(Slot.Side == EPinSide::Input ? InputRow++ : OutputRow++);
+                Slot.OffsetY = Sizer.PinOffsetY(Pin);
                 SlotOfPin.Add(Pin, TPair<int32, int32>(Index, Out.Pins.Add(Slot)));
             }
         }

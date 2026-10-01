@@ -609,6 +609,17 @@ namespace PwGraphLayoutCore
             }
             BlockReach[Owner] = Reach;
 
+            // A flow owner's incoming exec wire crosses the whole block at the owner's flow-input
+            // row; every block node stays below it, so that wire never runs through a data node.
+            double ExecClearance = TNumericLimits<double>::Lowest();
+            for (const FPinSlot& Pin : Node(Owner).Pins)
+            {
+                if (Pin.Side == EPinSide::Input && Pin.Kind == EWireKind::Flow)
+                {
+                    ExecClearance = FMath::Max(ExecClearance, Pin.OffsetY + 0.25 * Spacing.RowGap);
+                }
+            }
+
             RelY[Owner] = 0.0;
             for (int32 Column = 1; Column <= Depth; ++Column)
             {
@@ -631,6 +642,10 @@ namespace PwGraphLayoutCore
                     if (bHasAbove && Top < Floor + Spacing.RowGap)
                     {
                         Top = SnapUp(Floor + Spacing.RowGap);
+                    }
+                    if (Top < ExecClearance)
+                    {
+                        Top = SnapUp(ExecClearance);
                     }
                     RelY[Member] = Top;
                     Floor = Top + Height(Member);

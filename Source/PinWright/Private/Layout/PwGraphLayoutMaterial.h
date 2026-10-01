@@ -6,7 +6,7 @@
 // Every wire is data. A material's output node (at Material->EditorX/Y) is a fixed root, so the
 // graph grows leftwards from it; a function's outputs are sinks and root their own trees. Only
 // expressions still at (0,0) move: positioned expressions are fixed obstacles. Sizes are estimated
-// from the caption and the pin counts.
+// from the caption, the pin counts and an open preview.
 
 #pragma once
 

@@ -2,8 +2,11 @@
 
 // PwGraphLayoutRigVM.h - PwGraphLayout adapter for RigVM (Control Rig) graphs.
 //
-// Execute-context pins are flow; every other pin is data. An IO pin occupies one row on both
-// sides. Sizes are estimated from the title and the row count. Comment nodes are left out.
+// Execute-context pins are flow; every other pin is data. Rows follow the editor's order (execute
+// pins, outputs, other IO pins, inputs). An IO pin occupies one row on both
+// sides, and an expanded pin's sub-pins take rows of their own (a link to a collapsed sub-pin lands
+// on its nearest shown parent). Sizes are estimated from the title and the row count, with the
+// width of the value editors RigVM nodes draw. Comment nodes are left out.
 
 #pragma once
 

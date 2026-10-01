@@ -15,6 +15,7 @@
 #include "EdGraph/EdGraphPin.h"
 #include "BpirLayoutSettings.h"
 #include "K2Node_CustomEvent.h"
+#include "Kismet/KismetMathLibrary.h"
 #include "EdGraph/EdGraph.h"
 #include "Engine/Blueprint.h"
 
@@ -113,8 +114,9 @@ bool FGraphLayoutMetricsEdgeCrossingsTest::RunTest(const FString& Parameters)
 }
 
 // ============================================================================
-// BlueprintNodeSizeAdapter — the adapter seam sizes a UEdGraphNode from its shown pin rows and
-// places pin row centres inside that height.
+// BlueprintNodeSizeAdapter — the adapter seam sizes a UEdGraphNode from its title lines, shown pin
+// rows and value boxes, and places pin centres the way the editor draws them (deeper header under a
+// subtitle, centred pins on compact nodes).
 // ============================================================================
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGraphLayoutBlueprintAdapterTest,
@@ -144,6 +146,7 @@ bool FGraphLayoutBlueprintAdapterTest::RunTest(const FString& Parameters)
     const FBlueprintNodeSizeAdapter Adapter(*Settings);
     const FVector2D ViaAdapter = Adapter.EstimateNodeSize(Node);
 
+    const double Row = Settings->PinRowHeightPx;
     int32 Inputs = 0;
     int32 Outputs = 0;
     for (const UEdGraphPin* Pin : Node->Pins)
@@ -155,11 +158,32 @@ bool FGraphLayoutBlueprintAdapterTest::RunTest(const FString& Parameters)
     }
     const int32 Rows = FMath::Max(Inputs, Outputs);
     TestTrue(TEXT("Custom event shows at least one pin row"), Rows >= 1);
-    TestEqual(TEXT("Height is header plus the shown pin rows"),
-        ViaAdapter.Y, FMath::Max(64.0, Settings->HeaderHeightPx + (Rows + 0.5) * Settings->PinRowHeightPx));
-    TestTrue(TEXT("Last pin row centre lies inside the node"), Adapter.PinOffsetY(Rows - 1) < ViaAdapter.Y);
-    TestEqual(TEXT("First pin row centre sits half a row under the header"),
-        Adapter.PinOffsetY(0), Settings->HeaderHeightPx + 0.5 * Settings->PinRowHeightPx);
+
+    // A custom event's title has a "Custom Event" subtitle line, which the editor draws as a deeper
+    // header: its exec output sits one title line (16 px) lower than a plain node's first row.
+    const double SubtitledHeader = Settings->HeaderHeightPx + 16.0;
+    TestEqual(TEXT("Height is the subtitled header plus the shown pin rows"),
+        ViaAdapter.Y, FMath::Max(64.0, SubtitledHeader + (Rows + 0.5) * Row));
+    const UEdGraphPin* Then = Node->FindPin(UEdGraphSchema_K2::PN_Then, EGPD_Output);
+    TestTrue(TEXT("The event's exec output sits half a row under the subtitled header"),
+        Then && Adapter.PinOffsetY(Then) == SubtitledHeader + 0.5 * Row);
+
+    // A plain call: exec input on the first row under a one-line header; a long literal on an
+    // unlinked input widens the node by its value box.
+    UK2Node_CallFunction* Print = CompilerTestUtils::SpawnPrintStringCall(EventGraph, 0, 0);
+    const double ShortWidth = Adapter.EstimateNodeSize(Print).X;
+    Print->FindPin(TEXT("InString"))->DefaultValue = TEXT("a deliberately long literal that the value box has to show in full");
+    TestTrue(TEXT("A long default value widens the node"), Adapter.EstimateNodeSize(Print).X > ShortWidth + 100.0);
+    TestEqual(TEXT("A plain node's exec input sits half a row under the header"),
+        Adapter.PinOffsetY(Print->FindPin(UEdGraphSchema_K2::PN_Execute)), Settings->HeaderHeightPx + 0.5 * Row);
+
+    // A compact pure node has no header and centres its pins.
+    UK2Node_CallFunction* Add = CompilerTestUtils::SpawnNode<UK2Node_CallFunction>(EventGraph, 0, 0);
+    Add->FunctionReference.SetExternalMember(GET_FUNCTION_NAME_CHECKED(UKismetMathLibrary, Add_IntInt), UKismetMathLibrary::StaticClass());
+    Add->ReconstructNode();
+    const UEdGraphPin* Sum = Add->FindPin(UEdGraphSchema_K2::PN_ReturnValue);
+    TestTrue(TEXT("A compact node's single output sits at its vertical centre"),
+        Sum && FMath::IsNearlyEqual(Adapter.PinOffsetY(Sum), 0.5 * Adapter.EstimateNodeSize(Add).Y));
     TestTrue(TEXT("Adapter width respects 160px minimum"), ViaAdapter.X >= 160.0);
     const UEdGraphPin* Delegate = Node->FindPin(UK2Node_Event::DelegateOutputName, EGPD_Output);
     TestTrue(TEXT("The event's delegate output sits in the title bar"),

@@ -14,7 +14,8 @@
 //   2. Data blocks. Data-only nodes (no flow pins) are claimed by the first consumer in traversal
 //      order (tree, then flow rank, then DFS preorder) and form that consumer's block: columns to
 //      its left, one per dependency level (longest path), right-aligned, ordered by barycenter
-//      sweeps. Unclaimed data nodes go to fixed consumers, then become roots of their own (sinks).
+//      sweeps, and kept below the consumer's incoming exec wire. Unclaimed data nodes go to fixed
+//      consumers, then become roots of their own (sinks).
 //   3. X. Flow nodes take longest-path X with real widths: the maximum over their flow predecessors
 //      of (right edge + column gap), plus room for their own data block.
 //   4. Y. Each node is first placed where its incoming wire is horizontal (pin aligned), then moved

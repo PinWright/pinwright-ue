@@ -16,8 +16,11 @@ namespace PwGraphLayoutMaterialImpl
 {
     using namespace PwGraphLayout;
 
-    constexpr double HeaderHeight = 32.0;
-    constexpr double RowHeight = 24.0;
+    // Measured on the material editor's drawn nodes: first pin row centre ~38 px below the top,
+    // ~28 px pitch, and a 106 px expression preview (+ padding) under the pins when it is open.
+    constexpr double HeaderHeight = 24.0;
+    constexpr double RowHeight = 28.0;
+    constexpr double PreviewHeight = 112.0;
     constexpr double MinWidth = 144.0;
     constexpr double MinHeight = 64.0;
     constexpr double CaptionCharWidth = 8.0;
@@ -137,6 +140,10 @@ namespace PwGraphLayout
             Node.Position = FVector2D(Expression->MaterialExpressionEditorX, Expression->MaterialExpressionEditorY);
             Node.Size = EstimateSize(Captions.Num() > 0 ? Captions[0] : Expression->GetClass()->GetName(),
                 FMath::Max(Inputs, Outputs));
+            if (!Expression->bHidePreviewWindow && !Expression->bCollapsed)
+            {
+                Node.Size.Y += PreviewHeight;
+            }
             Node.bMovable = Expression->MaterialExpressionEditorX == 0 && Expression->MaterialExpressionEditorY == 0;
             AddRows(Node, Inputs, Outputs);
             FirstOutputSlot.Add(Inputs);

@@ -4,8 +4,8 @@
 
 UBpirLayoutSettings::UBpirLayoutSettings()
     : bEnableBpirLayoutPass(true)
-    , PinRowHeightPx(22)
-    , HeaderHeightPx(44)
+    , PinRowHeightPx(32)
+    , HeaderHeightPx(24)
     , HorizontalPaddingPx(24)
     , ColumnGapPx(80)
     , RowGapPx(48)

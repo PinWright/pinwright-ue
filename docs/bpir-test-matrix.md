@@ -173,14 +173,14 @@ The post-compile layout runs the layered formatter `PwGraphLayout` (see `bpir-co
 | `layout.core.Branch`, `layout.core.Sequence` | First output horizontal, later outputs stack below in pin order, crossings not worse than a tangled input |
 | `layout.core.DiamondReconvergence`, `layout.core.ExecLoop` | Merge lands right of its right-most predecessor; a cycle's back edge is the only backward wire |
 | `layout.core.ThreeEvents`, `layout.core.StackedTreesKeepSpinesStraight` | Every root laid out, trees stacked in root order; a short root stacked under another tree still keeps its taller exec chain horizontal |
-| `layout.core.SharedDataNode`, `layout.core.DataChainThreeDeep` | Data node placed once with its first consumer; one column per dependency level, aligned wires |
+| `layout.core.SharedDataNode`, `layout.core.DataChainThreeDeep` | Data node placed once with its first consumer; one column per dependency level, aligned wires inside the chain, every data node below the consumer's incoming exec wire |
 | `layout.core.MaterialMathChain`, `layout.core.AnimPoseChain` | Data DAGs grow leftwards from a fixed output, barycenter order, crossings not worse than the old grid placement |
 | `layout.core.FixedObstacleAvoided`, `layout.core.OriginOnlyRepassMovesNothing` | Fixed nodes are obstacles only in the columns they stand in and never move; a repass that moves only nodes still at the origin (the material / anim rule) moves nothing |
 | `layout.core.MetricsScoreBrokenLayoutsWorse` | An overlapping copy scores worse in `GraphLayoutMetrics`; a swapped copy has a backward wire |
 | `layout.blueprint.EventGraphFixture` | K2 adapter: overlaps, backward wires, pin alignment (exec and pure chain), undo, reordered `Graph->Nodes`, idempotence |
 | `layout.blueprint.CompilePassArrangesEveryEntry` | `RunLayoutPass` lays out every created entry in a graph; kill switch `bEnableBpirLayoutPass=false` |
 | `layout.material.GrowsLeftFromOutput` | Material adapter: left of the output node, no overlap, aligned output wire, undo, repeatable |
-| `layout.anim.PoseChainGrowsLeftFromResult` | AGIR compile with `bRunLayout`: pose chain left of the output pose, aligned, no overlap |
+| `layout.anim.PoseChainGrowsLeftFromResult` | AGIR compile with `bRunLayout`: pose chain left of the output pose, aligned, no overlap; undo restores every pose node |
 | `layout.controlrig.DataChainFlowsRight` | RigVM adapter: data flows left to right, aligned, no overlap, repeatable |
 
 ### 2.7 Authored-position coverage

@@ -10,7 +10,9 @@
   from their output node. The BPIR Layout settings `NodePadX` / `NodePadY` / `PinPadX` /
   `InternalGridPx` are now `ColumnGapPx` / `RowGapPx` / `DataColumnGapPx` / `GridSnapPx`
   (`IntraParameterPadY`, `CollisionIterationCap` and `TraversalIterationCap` are gone); re-apply
-  any customised values.
+  any customised values. Node sizes and pin rows now follow the editor's drawing (subtitle
+  headers, value boxes, compact nodes, material previews, RigVM value editors); the K2 defaults
+  are `HeaderHeightPx` 24 and `PinRowHeightPx` 32.
 - Changed: `drive.click`, `drive.hover`, `drive.scroll`, `drive.drag` and `drive.key` on
   `surface=web` deliver real input through Slate into CEF (trusted events, CSS `:hover`, key
   default actions) instead of dispatching synthetic DOM events, refuse a covered target with

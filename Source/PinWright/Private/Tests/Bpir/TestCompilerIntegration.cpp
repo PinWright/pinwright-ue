@@ -5,6 +5,8 @@
 
 #include "Compiler/BpirCompiler.h"
 #include "Compiler/CompilerTypes.h"
+#include "BpirLayoutSettings.h"
+#include "Layout/BlueprintNodeSizeAdapter.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "K2Node_Event.h"
 #include "K2Node_IfThenElse.h"
@@ -3765,7 +3767,13 @@ bool FCompilerIntegrationInsertAnchorFallbackTest::RunTest(const FString& Parame
 
     FBpirCompiler::RunLayoutPassForTest(BP, CreatedGuids, Graph, TArray<UEdGraph*>(), /*AnchorHint*/ nullptr);
 
-    TestEqual(TEXT("Event and Call share a row"), Call->NodePosY, Event->NodePosY);
+    // "Share a row" means the event's exec output and the call's exec input are level on screen.
+    // The custom event's "Custom Event" subtitle deepens its header by one title line, so equal
+    // NodePosY would put the call's exec pin above the event's (seen in the layout vision check).
+    const GraphLayout::FBlueprintNodeSizeAdapter Sizer(*GetDefault<UBpirLayoutSettings>());
+    TestEqual(TEXT("Event and Call share a row"),
+        Call->NodePosY + Sizer.PinOffsetY(Call->FindPin(UEdGraphSchema_K2::PN_Execute, EGPD_Input)),
+        Event->NodePosY + Sizer.PinOffsetY(Event->FindPin(UEdGraphSchema_K2::PN_Then, EGPD_Output)));
     return true;
 }
 

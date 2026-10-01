@@ -19,6 +19,7 @@
 #include "K2Node_IfThenElse.h"
 #include "Kismet/KismetMathLibrary.h"
 #include "Kismet/KismetStringLibrary.h"
+#include "Layout/BlueprintNodeSizeAdapter.h"
 #include "Layout/PwGraphLayoutEdGraph.h"
 #include "Layout/PwGraphLayoutMaterial.h"
 #include "Layout/PwGraphLayoutRigVM.h"
@@ -110,6 +111,17 @@ bool FPwGraphLayoutBlueprintAdapterTest::RunTest(const FString& Parameters)
     Link(Sum, TEXT("ReturnValue"), ToText, TEXT("InInt"));
     Link(ToText, TEXT("ReturnValue"), Print, TEXT("InString"));
 
+    // The spawn helpers run PostPlacedNewNode before the function is set, so a Print String misses
+    // the Development Only state the editor gives it on placement, and the undo below would add it
+    // (UK2Node_CallFunction::Serialize fixes the state up on load), changing the node's height mid
+    // test. Re-run placement now that the function is known, as the editor's spawn order does.
+    for (UK2Node_CallFunction* Call : { Print, PrintTrue, PrintFalse, ToText, Sum })
+    {
+        Call->PostPlacedNewNode();
+    }
+    TestEqual(TEXT("Print String is Development Only, as the editor places it"),
+        Print->GetDesiredEnabledState(), ENodeEnabledState::DevelopmentOnly);
+
     const TArray<UEdGraphNode*> Movable = { Event, Print, Branch, PrintTrue, PrintFalse, ToText, Sum };
     for (UEdGraphNode* Node : Movable)
     {
@@ -132,16 +144,24 @@ bool FPwGraphLayoutBlueprintAdapterTest::RunTest(const FString& Parameters)
     TestEqual(TEXT("no arranged node overlaps any node"), CountOverlaps(G), 0);
     TestEqual(TEXT("no wire runs backwards"), CountBackward(G), 0);
     const TPair<UEdGraphNode*, UEdGraphNode*> Straight[] = {
-        { Event, Print }, { Print, Branch }, { Branch, PrintTrue }, { ToText, Print }, { Sum, ToText } };
+        { Event, Print }, { Print, Branch }, { Branch, PrintTrue }, { ToText, Print } };
     for (const TPair<UEdGraphNode*, UEdGraphNode*>& Pair : Straight)
     {
         const int32 Wire = FindWire(G, At(Pair.Key), At(Pair.Value));
         TestTrue(*FString::Printf(TEXT("%s -> %s is horizontal"), *Pair.Key->GetName(), *Pair.Value->GetName()),
             Wire != INDEX_NONE && IsHorizontal(G, Wire));
     }
-    // The event's delegate pin is drawn in its title bar, so its exec output is on the first row,
-    // level with the call's exec input: the two nodes share a row.
-    TestEqual(TEXT("the event and its first call share a row"), Print->NodePosY, Event->NodePosY);
+    // The event's exec output and the call's exec input must be level on screen. The event's
+    // delegate pin sits in its title bar (no row), but its "Custom Event" subtitle deepens the
+    // header, so level pins mean the call's NodePosY is one title line below the event's.
+    const GraphLayout::FBlueprintNodeSizeAdapter Sizer(*Settings);
+    TestEqual(TEXT("the event's exec output and its first call's exec input are level"),
+        Event->NodePosY + Sizer.PinOffsetY(Event->FindPin(UEdGraphSchema_K2::PN_Then, EGPD_Output)),
+        Print->NodePosY + Sizer.PinOffsetY(Print->FindPin(UEdGraphSchema_K2::PN_Execute, EGPD_Input)));
+    // The event -> print exec wire crosses the pure chain's columns; the chain stays below it.
+    const double ExecWireY = Print->NodePosY + Sizer.PinOffsetY(Print->FindPin(UEdGraphSchema_K2::PN_Execute, EGPD_Input));
+    TestTrue(TEXT("the pure chain stays below the incoming exec wire"),
+        Top(G, At(Sum)) > ExecWireY && Top(G, At(ToText)) > ExecWireY);
     TestTrue(TEXT("the false branch stacks below the true branch"), PrintFalse->NodePosY > PrintTrue->NodePosY);
     TestTrue(TEXT("the pure chain sits between the event and its consumer"),
         Sum->NodePosX >= Right(G, At(Event)) && Right(G, At(ToText)) <= Print->NodePosX);
@@ -373,6 +393,29 @@ bool FPwGraphLayoutAnimAdapterTest::RunTest(const FString& Parameters)
         }
     }
     TestEqual(TEXT("a second pass moves nothing"), ArrangeAnimBlueprint(AnimBP).Moved, 0);
+
+    // Undo: back at the origin, arranged inside a transaction, then undone.
+    TArray<UEdGraphNode*> PoseNodes;
+    for (UEdGraphNode* Node : Graph->Nodes)
+    {
+        if (Node && !Node->IsA<UAnimGraphNode_Root>())
+        {
+            Node->SetFlags(RF_Transactional);
+            Node->NodePosX = 0;
+            Node->NodePosY = 0;
+            PoseNodes.Add(Node);
+        }
+    }
+    {
+        FScopedTransaction Transaction(NSLOCTEXT("PinWrightTests", "PwLayoutAnim", "Arrange test anim graph"));
+        TestTrue(TEXT("the pose nodes are arranged again"), ArrangeAnimBlueprint(AnimBP).Moved > 0);
+    }
+    TestTrue(TEXT("undo succeeds"), GEditor && GEditor->UndoTransaction(/*bCanRedo=*/false));
+    for (const UEdGraphNode* Node : PoseNodes)
+    {
+        TestTrue(*FString::Printf(TEXT("undo puts %s back at the origin"), *Node->GetName()),
+            Node->NodePosX == 0 && Node->NodePosY == 0);
+    }
     return true;
 }
 
@@ -432,6 +475,14 @@ bool FPwGraphLayoutRigAdapterTest::RunTest(const FString& Parameters)
 
     FRigVMModel Model = BuildRigVMModel(Graph, Movable);
     const FLayoutGraph& G = Model.Layout;
+    {
+        // The Control Rig editor draws output pins above input pins (execute, outputs, IO, inputs).
+        const FLayoutNode& AddNode = G.Nodes[Model.Nodes.IndexOfByKey(Adds[0])];
+        const FPinSlot* FirstOut = AddNode.Pins.FindByPredicate([](const FPinSlot& Pin) { return Pin.Side == EPinSide::Output; });
+        const FPinSlot* FirstIn = AddNode.Pins.FindByPredicate([](const FPinSlot& Pin) { return Pin.Side == EPinSide::Input; });
+        TestTrue(TEXT("the Result output row sits above the A / B input rows"),
+            FirstOut && FirstIn && FirstOut->OffsetY < FirstIn->OffsetY);
+    }
     TestEqual(TEXT("no arranged node overlaps any node"), CountOverlaps(G), 0);
     TestEqual(TEXT("no wire runs backwards"), CountBackward(G), 0);
     for (int32 Index = 0; Index + 1 < Adds.Num(); ++Index)

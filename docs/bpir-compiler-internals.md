@@ -795,7 +795,7 @@ When no created node roots a tree (a body compiled into an existing entry, with 
 The pass calls `PwGraphLayout::ArrangeEdGraph` (`Private/Layout/PwGraphLayoutEdGraph.*`), the K2 adapter of PinWright's engine-agnostic layered formatter (`Private/Layout/PwGraphLayout.*`). The same core lays out MGIR (`PwGraphLayoutMaterial`), AGIR (`ArrangeAnimBlueprint`) and CRIR (`PwGraphLayoutRigVM`) compiles. The core sees only nodes (key, position, size, movable flag, pin rows with side and kind) and wires (output pin to input pin); exec pins are *flow*, every other pin is *data*.
 
 1. **Trees.** Roots in order: the caller's explicit roots, then fixed nodes driving movable flow nodes, then movable flow sources, then flow nodes reached only through a cycle. Each tree grows depth-first along flow outputs in pin order; a wire into a node still on the DFS stack is a back edge and is ignored for layering.
-2. **Data blocks.** Each data-only node (no flow pins) is claimed by its first consumer in traversal order (tree, flow depth, DFS preorder). A consumer's block is laid out as columns to its left, one per dependency level (longest path), right-aligned, ordered by three barycenter sweeps. Leftover data nodes go to the fixed node they feed, else root their own tree (sinks first). This is what makes material and anim graphs grow leftwards from their output.
+2. **Data blocks.** Each data-only node (no flow pins) is claimed by its first consumer in traversal order (tree, flow depth, DFS preorder). A consumer's block is laid out as columns to its left, one per dependency level (longest path), right-aligned, ordered by three barycenter sweeps, and kept below the consumer's incoming exec wire (its flow-input row plus a quarter row gap) so that wire never runs through a data node; a data wire bends where that clearance overrides pin alignment. Leftover data nodes go to the fixed node they feed, else root their own tree (sinks first). This is what makes material and anim graphs grow leftwards from their output.
 3. **X.** Flow nodes take longest-path X with real widths: the maximum over flow predecessors of (right edge + `ColumnGapPx`), plus room for their own block. Re-converging paths land right of the right-most predecessor.
 4. **Y.** Each node is first put where its incoming wire is horizontal (pin aligned), then moved down to the first offset where it and its exec spine (the chain of first flow children, each pin-aligned) are free of everything already placed and every fixed node, so a short node never strands its taller first child against a neighbour. Every occupied rect sharing the node's X range blocks one interval of offsets; one sweep over the intervals sorted by their low end finds the free offset, so nothing overlaps and no push-down loop runs. A node's whole subtree is placed before its next sibling, so later siblings settle below. Blocks move as a unit. Roots keep X; the first root moves down only if it overlaps a fixed node itself, later roots also make room for their spine below earlier trees.
 5. **Grid.** X is snapped to `GridSnapPx`; Y is snapped wherever a node is not pin-aligned to its parent (an aligned node keeps the exact row).
@@ -806,8 +806,11 @@ Every tie breaks on pin index, then node key (GUID), so the result never depends
 
 `GraphLayout::FBlueprintNodeSizeAdapter` (`Private/Layout/BlueprintNodeSizeAdapter.*`, behind the `INodeSizeAdapter` seam) sizes a `UEdGraphNode` from its data alone (no widget):
 
-- **Width**: the wider of the title (`Graph.Node.NodeTitle`) and the widest input label plus the widest output label (`Graph.Node.PinName`) plus a 40 px gutter, plus `HorizontalPaddingPx` per side; at least 160.
-- **Height**: `HeaderHeightPx + (rows + 0.5) × PinRowHeightPx`, rows = shown pins on the busier side (hidden and folded advanced pins do not count, nor an event's delegate output, which is drawn in the title bar at half the header height); at least 64. Pin `r` on a side sits at `HeaderHeightPx + (r + 0.5) × PinRowHeightPx`.
+- **Width**: the wider of the title (`Graph.Node.NodeTitle`, widest line) and the widest input row plus the widest output row (`Graph.Node.PinName` label, plus the default-value box of an unlinked data input) plus a 40 px gutter, plus `HorizontalPaddingPx` per side; at least 160.
+- **Header**: `HeaderHeightPx` plus 16 px per extra title line, so a subtitle ("Custom Event", "Target is Actor", "Group 'DefaultGroup'") deepens it the way the editor draws it.
+- **Height**: header + `(rows + 0.5) × PinRowHeightPx`, rows = shown pins on the busier side (hidden and folded advanced pins do not count, nor an event's delegate output, which is drawn in the title bar), plus 20 px for an advanced-pin expander and 20 px for a "Development Only" bar; at least 64. Pin `r` on a side sits at `header + (r + 0.5) × PinRowHeightPx`.
+- **Compact nodes** (math operators, conversions): no header, `max(rows, 1) × PinRowHeightPx + 8` tall, each side's pins centred vertically, 110 px plus the widest value box wide.
+- The defaults (24 px header, 32 px rows, 16 px subtitle line) were measured on UE 5.8 editor screenshots in the layout vision check; the material adapter uses 24 / 28 px plus a 112 px preview for open previews, the RigVM adapter 16 / 24 px rows (expanded sub-pins included) and at least 260 px width for its value editors.
 - **Fallback**: without a Slate renderer (`-NullRHI`), 8 px per title character and 7 px per label character.
 
 ### Settings
@@ -817,8 +820,8 @@ Every tie breaks on pin index, then node key (GUID), so the result never depends
 | Setting | Default | Purpose |
 |---------|---------|---------|
 | `bEnableBpirLayoutPass` | true | Kill switch — false disables the pass entirely |
-| `PinRowHeightPx` | 22 | Height per pin row |
-| `HeaderHeightPx` | 44 | Node header height |
+| `PinRowHeightPx` | 32 | Height per pin row |
+| `HeaderHeightPx` | 24 | Node header height (one title line) |
 | `HorizontalPaddingPx` | 24 | Interior horizontal padding |
 | `ColumnGapPx` | 80 | Gap between a flow node and the next flow node or its data block |
 | `RowGapPx` | 48 | Vertical clearance between nodes sharing an X range |
