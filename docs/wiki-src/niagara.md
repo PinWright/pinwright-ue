@@ -624,6 +624,12 @@ unavailable) is reported with `notMeasuredReason`, not `emitted: false`: it neve
 reach the CPU through an asynchronous readback, so a GPU count can trail a death by a frame — an
 upper bound, which is enough for `emitted`.
 
+The compile gate does not wait for GPU shaders. If a GPU emitter's compute shader is still
+compiling when the run starts, that emitter gets `notMeasuredReason` instead of a count, because
+Niagara skips dispatching an emitter with an incomplete shader map while its count still reads an
+exact-looking 0. Wait until `niagara.compile_status` reports `outstandingCompilationRequests: false`,
+then run the simulation again.
+
 ### niagara.set_module_input
 
 `set_module_input` writes a **graph override pin** on the module's stack node, and — on the literal path — reconciles the rapid-iteration constant that shadows the same input when one already exists. Verify it as follows:

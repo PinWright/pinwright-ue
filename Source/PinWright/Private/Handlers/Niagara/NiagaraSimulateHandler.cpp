@@ -257,8 +257,14 @@ REGISTER_RPC_HANDLER("niagara.simulate", "niagara",
 
     // GPU counts are latent: without a flush GetNumParticles returns TotalSpawnedParticles, a
     // cumulative guess that ignores deaths. Same sequence as NiagaraSimCache's GPU capture.
+    const bool bHasGpuSimulation = PinWrightNiagara::HasGpuComputeSimulation(*System);
     FNiagaraGpuComputeDispatchInterface* GpuDispatch =
-        PinWrightNiagara::HasGpuComputeSimulation(*System) ? FNiagaraGpuComputeDispatchInterface::Get(World) : nullptr;
+        bHasGpuSimulation ? FNiagaraGpuComputeDispatchInterface::Get(World) : nullptr;
+    // The compile gate above excludes GPU shaders. A GPU emitter whose shader map is still
+    // compiling is skipped by the dispatcher (IsShaderMapComplete_RenderThread), yet its count
+    // fence still passes, so it would read an exact-looking 0. With the CPU queue drained,
+    // anything still outstanding here is GPU shader work.
+    const bool bGpuShadersPending = bHasGpuSimulation && System->HasOutstandingCompilationRequests(/*bIncludingGPUShaders=*/true);
 
     const TArray<FNiagaraEmitterHandle>& Handles = System->GetEmitterHandles();
     TArray<FEmitterTrack> Tracks;
@@ -383,6 +389,12 @@ REGISTER_RPC_HANDLER("niagara.simulate", "niagara",
         if (!bAdvanced)
         {
             NotMeasured = TEXT("the simulation did not advance; see system.stallReason");
+        }
+        else if (Track.bGpu && bGpuShadersPending)
+        {
+            NotMeasured = TEXT("GPU compute shaders were still compiling when the run started, and a GPU ")
+                TEXT("emitter without a complete shader map dispatches nothing while its count reads 0; ")
+                TEXT("retry once niagara.compile_status reports outstandingCompilationRequests false");
         }
         else if (Track.bGpu && !GpuDispatch)
         {
