@@ -1153,3 +1153,44 @@ for the same reason `niagara.reset_module_input` does. The response carries `rap
 single-input verbs return. It is empty on a module whose inputs are all pin-driven — that is the
 true answer, not a missing field. Static-switch caller pins are reset as before and contribute no
 entries.
+
+### niagara.list_stack_issues
+
+Lists what the Niagara editor's stack panel flags on a system — unmet module dependencies, deprecated
+module versions, validation-rule results and the like — with the engine's own one-click fixes. These
+are **not** `niagara.validate`'s issues: validate synthesizes its list from the compile log and has no
+fixes to offer. Emitter-level issues come through the owning system (pass a Niagara System; an emitter
+asset is refused `ASSET_WRONG_TYPE`).
+
+| field | meaning |
+|---|---|
+| `issues[]` | `issueId`, `severity` (`error` \| `warning` \| `info`), `shortDescription`, `longDescription`, `canBeDismissed`, `emitter` / `scriptUsage` / `module` (null when the issue is not inside one), `stackPath`, `fixes[]` |
+| `fixes[]` | `fixId`, `description`, `style` (`fix` \| `link`), `applicable` — a `link` fix only opens editor UI and cannot be applied |
+| `issueCount` / `errorCount` / `warningCount` / `infoCount` | counts over `issues` |
+| `idStability` | `stable` on UE 5.8 (ids hash localization keys and survive restarts); `session` on 5.3–5.7 (ids hash the displayed text, so re-list after a restart or culture change) |
+| `compilePending` | measured after the read. Building the editor view model requests a non-forced compile, which starts one only on a system edited since its last compile; `true` means the listed issues predate that compile and the next call is refused `COMPILE_IN_PROGRESS` until it lands. Compile after editing (`niagara.compile {wait:true}`), then list |
+
+A system with compile work in flight is refused `COMPILE_IN_PROGRESS`: its issues would mix pre- and
+post-compile state. Wait with `niagara.compile {wait:true}` or poll `niagara.compile_status`, then
+retry. The read leaves the package's dirty flag as it found it.
+
+### niagara.apply_issue_fix
+
+Applies one engine fix from `niagara.list_stack_issues` by `issueId` (+ `fixId`; omit it only when the
+issue has exactly one applicable fix), then recompiles with the same bounded wait as `niagara.compile`
+(`timeoutSeconds`, default and max 60) and re-lists through a fresh editor view model. It does not save:
+`packageDirty` reports the package state; persist with `asset.save`.
+
+| field | meaning |
+|---|---|
+| `fixId` / `fixDescription` | the fix that was executed |
+| `compile` | `requested`, `waited`, `waitedMs`, `timedOut`, `stillCompiling`, `status` — as on `niagara.compile` |
+| `issueIdsBefore` | every issue id listed before the fix |
+| `issueResolved` | measured from the post-fix list: the issue id is gone. **`null`** when the compile wait expired — the fix stays applied, but no verdict is published over a half-compiled system |
+| `resolvedIssueIds` / `introducedIssueIds` | the before/after difference (omitted with `issueResolved: null`) |
+| `after` | the post-fix list, same shape as `niagara.list_stack_issues` |
+
+Refusals execute nothing: `ISSUE_NOT_FOUND` (ids change when an issue's text or the stack changes —
+re-list), `ISSUE_AMBIGUOUS` (the id is reported by more than one stack entry), `FIX_NOT_FOUND`,
+`FIX_AMBIGUOUS` (`fixId` omitted, several applicable fixes), `FIX_IS_LINK`, `COMPILE_IN_PROGRESS`. The
+`FIX_*` refusals carry the issue's `fixes` in the error data. The fix runs in one undo transaction.

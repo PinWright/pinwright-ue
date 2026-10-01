@@ -24,6 +24,9 @@
 - Added: Blueprint timeline tracks round-trip through BPIR decompile/compile.
 - Added: `editor.undo_history`, and `steps` on `editor.undo` / `editor.redo`.
 - Added: `blueprint.graph.connect_pins_batch`.
+- Added: `niagara.list_stack_issues` and `niagara.apply_issue_fix` — list the Niagara editor stack's
+  issues with the engine's one-click fixes, and apply one by id with a bounded recompile and a
+  before/after issue set.
 - Added: `actors[]` batches on `actor.set_transform` / `actor.nudge`, and `lookAt` / `roll` on
   `actor.set_transform`.
 - Added: `gameplay_tags.find_referencers`.

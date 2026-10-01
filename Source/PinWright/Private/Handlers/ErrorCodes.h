@@ -328,6 +328,10 @@ namespace ErrorCodes
     inline constexpr TCHAR ERR_COMMAND_BLOCKED[]                            = TEXT("COMMAND_BLOCKED");
     inline constexpr TCHAR ERR_COMMAND_FAILED[]                             = TEXT("COMMAND_FAILED");
     inline constexpr TCHAR ERR_COMPILE_FAILED[]                             = TEXT("COMPILE_FAILED");
+    // niagara.list_stack_issues / niagara.apply_issue_fix: the system has compile work in flight,
+    // so its stack issues would mix pre- and post-compile state. Wait (niagara.compile wait:true
+    // or niagara.compile_status) and retry.
+    inline constexpr TCHAR ERR_COMPILE_IN_PROGRESS[]                        = TEXT("COMPILE_IN_PROGRESS");
     inline constexpr TCHAR ERR_COMPONENT_CREATE_FAILED[]                    = TEXT("COMPONENT_CREATE_FAILED");
     inline constexpr TCHAR ERR_COMPONENT_CREATION_FAILED[]                  = TEXT("COMPONENT_CREATION_FAILED");
     inline constexpr TCHAR ERR_COMPONENT_FAILED[]                           = TEXT("COMPONENT_FAILED");
@@ -529,6 +533,13 @@ namespace ErrorCodes
     inline constexpr TCHAR ERR_FIELD_NOT_FOUND[]                            = TEXT("FIELD_NOT_FOUND");
     inline constexpr TCHAR ERR_FILE_NOT_FOUND[]                             = TEXT("FILE_NOT_FOUND");
     inline constexpr TCHAR ERR_FIXED_SIZE_CAPTURE_UNAVAILABLE[]             = TEXT("FIXED_SIZE_CAPTURE_UNAVAILABLE");
+    // niagara.apply_issue_fix fix selection. AMBIGUOUS: fixId omitted and the issue offers more
+    // than one applicable fix. IS_LINK: the named fix is a Link-style navigation hint (opens an
+    // editor or page) that only a human at the stack panel can use. NOT_FOUND: no fix with that
+    // fixId, or fixId omitted and the issue offers no applicable fix. Error data lists the fixes.
+    inline constexpr TCHAR ERR_FIX_AMBIGUOUS[]                              = TEXT("FIX_AMBIGUOUS");
+    inline constexpr TCHAR ERR_FIX_IS_LINK[]                                = TEXT("FIX_IS_LINK");
+    inline constexpr TCHAR ERR_FIX_NOT_FOUND[]                              = TEXT("FIX_NOT_FOUND");
     inline constexpr TCHAR ERR_FOLIAGE_ACTOR_FAILED[]                       = TEXT("FOLIAGE_ACTOR_FAILED");
     inline constexpr TCHAR ERR_FOLIAGE_ACTOR_NOT_FOUND[]                    = TEXT("FOLIAGE_ACTOR_NOT_FOUND");
     inline constexpr TCHAR ERR_FUNCTION_NOT_FOUND[]                         = TEXT("FUNCTION_NOT_FOUND");
@@ -749,6 +760,10 @@ namespace ErrorCodes
     inline constexpr TCHAR ERR_INVALID_WATER_BODY_TYPE[]                    = TEXT("INVALID_WATER_BODY_TYPE");
     inline constexpr TCHAR ERR_INVALID_WHEEL_CLASS[]                        = TEXT("INVALID_WHEEL_CLASS");
     inline constexpr TCHAR ERR_INVALID_XML[]                                = TEXT("INVALID_XML");
+    // niagara.apply_issue_fix: the issueId matched more than one stack entry, or none at all.
+    // Both carry the recovery: re-run niagara.list_stack_issues for current ids.
+    inline constexpr TCHAR ERR_ISSUE_AMBIGUOUS[]                            = TEXT("ISSUE_AMBIGUOUS");
+    inline constexpr TCHAR ERR_ISSUE_NOT_FOUND[]                            = TEXT("ISSUE_NOT_FOUND");
     // system.job_cancel was asked to stop a job whose verb registered no cancel callback, so
     // NOTHING can stop the work. Deliberately an error and not a success-with-a-flag: cancelling
     // is what an agent does in response to a hang, and a success result there is read as "the
