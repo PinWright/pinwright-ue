@@ -10,6 +10,7 @@
 #include "Handlers/Drive/DriveLiveResolver.h"   // FDriveRootSelector
 #include "Handlers/Drive/DriveEditorChrome.h"   // FDriveWindowSelector
 #include "Handlers/Drive/DriveSettleDriver.h"   // FGetElements / FIsWaitForMet typedefs
+#include "Handlers/Drive/DriveInput.h"          // FDriveInjectFailure
 
 class FHandlerContext;
 class FJsonObject;
@@ -42,8 +43,9 @@ public:
     // and validated, before the settle driver starts. Receives the resolved
     // target element's absolute screen-space center (zero when the action has no
     // target, e.g. drive.key without a handle). Returns false on an injection
-    // failure (reported as a clean INPUT_FAILED error).
-    using FInject = TFunction<bool(const FVector2D& TargetCenter)>;
+    // failure, reported as OutFailure (pre-filled with a clean INPUT_FAILED error that a
+    // path with a more specific reason overwrites).
+    using FInject = TFunction<bool(const FVector2D& TargetCenter, FDriveInjectFailure& OutFailure)>;
 
     // Run one action end-to-end against the handle resolved from Ctx args. Reads
     // the common settle / observe / journal params from Ctx, sends the response

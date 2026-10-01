@@ -1202,6 +1202,10 @@ namespace ErrorCodes
     inline constexpr TCHAR ERR_OPERATION_FAILED[]                           = TEXT("OPERATION_FAILED");
     inline constexpr TCHAR ERR_OPERATION_NOT_SUPPORTED[]                    = TEXT("OPERATION_NOT_SUPPORTED");
     inline constexpr TCHAR ERR_OPERATION_SKIPPED[]                          = TEXT("OPERATION_SKIPPED");
+    // drive.click / drive.hover os_input: another os_input injection on the same X display held
+    // the per-display pointer lock past FDriveOsInput::LockTimeoutSeconds, so nothing was
+    // injected. Payload: holder_pid, lock_file. Retryable once that injection finishes.
+    inline constexpr TCHAR ERR_OS_INPUT_BUSY[]                              = TEXT("OS_INPUT_BUSY");
     inline constexpr TCHAR ERR_OUTPUT_FAILED[]                              = TEXT("OUTPUT_FAILED");
     inline constexpr TCHAR ERR_OUTPUT_NODE_NOT_FOUND[]                      = TEXT("OUTPUT_NODE_NOT_FOUND");
     inline constexpr TCHAR ERR_OUTPUT_NOT_FOUND[]                           = TEXT("OUTPUT_NOT_FOUND");
@@ -1263,6 +1267,10 @@ namespace ErrorCodes
     inline constexpr TCHAR ERR_PLAY_FAILED[]                                = TEXT("PLAY_FAILED");
     inline constexpr TCHAR ERR_PLUGIN_DISABLED[]                            = TEXT("PLUGIN_DISABLED");
     inline constexpr TCHAR ERR_PLUGIN_NOT_FOUND[]                           = TEXT("PLUGIN_NOT_FOUND");
+    // drive.click os_input: right before the press the real pointer was not on the target (a
+    // human, a raw xdotool script, or a pointer grab moved or clamped it), so the button was not
+    // pressed. Payload: x, y (target), pointer_x, pointer_y.
+    inline constexpr TCHAR ERR_POINTER_MOVED[]                              = TEXT("POINTER_MOVED");
     inline constexpr TCHAR ERR_POLYGON_LIMIT_EXCEEDED[]                     = TEXT("POLYGON_LIMIT_EXCEEDED");
     inline constexpr TCHAR ERR_POSSESS_FAILED[]                             = TEXT("POSSESS_FAILED");
     // audio.authoring.create_metasound_preset: the asset was created but its document does not

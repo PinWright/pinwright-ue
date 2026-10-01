@@ -68,6 +68,9 @@
         "Linux/X11 only — INVALID_ARGUMENT elsewhere or when no X display can be opened. " \
         "TARGET_OCCLUDED, with nothing injected, when the top X window at the target belongs " \
         "to another process (occluding_window / occluding_pid name it). " \
+        "Serialized per X display across editors: OS_INPUT_BUSY (holder_pid) when another " \
+        "injection holds the display for >5s; drive.click refuses with POINTER_MOVED, unpressed, " \
+        "when the real pointer is not on the target right before the press. " \
         "Mouse only; drive.key has no os_input. Blocks the editor for ~0.5s while the motion " \
         "path and button hold are paced. The response's input_path reports which path ran.", \
         "false")
@@ -155,12 +158,11 @@ REGISTER_RPC_HANDLER("drive.click", "drive",
 
     const EDriveMouseButton Button = FDriveInput::ParseMouseButton(Ctx.GetString(TEXT("button"), TEXT("left")));
     FDriveActionCommon::RunAction(Ctx, Handle,
-        [Button, bOsInput](const FVector2D& Center)
+        [Button, bOsInput](const FVector2D& Center, FDriveInjectFailure& Failure)
         {
             if (bOsInput)
             {
-                FString Error;
-                return FDriveOsInput::ClickAt(Center, Button, Error);
+                return FDriveOsInput::ClickAt(Center, Button, Failure);
             }
             return FDriveInput::ClickAt(Center, Button);
         },
@@ -192,12 +194,11 @@ REGISTER_RPC_HANDLER("drive.hover", "drive",
     if (!ResolveOsInput(Ctx, bOsInput)) return true;
 
     FDriveActionCommon::RunAction(Ctx, Handle,
-        [bOsInput](const FVector2D& Center)
+        [bOsInput](const FVector2D& Center, FDriveInjectFailure& Failure)
         {
             if (bOsInput)
             {
-                FString Error;
-                return FDriveOsInput::MoveTo(Center, Error);
+                return FDriveOsInput::MoveTo(Center, Failure);
             }
             return FDriveInput::HoverAt(Center);
         },
@@ -227,7 +228,7 @@ REGISTER_RPC_HANDLER("drive.scroll", "drive",
 
     const float Delta = static_cast<float>(Ctx.GetNumber(TEXT("delta"), 1.0));
     FDriveActionCommon::RunAction(Ctx, Handle,
-        [Delta](const FVector2D& Center) { return FDriveInput::ScrollAt(Center, Delta); });
+        [Delta](const FVector2D& Center, FDriveInjectFailure&) { return FDriveInput::ScrollAt(Center, Delta); });
     return true;
 }
 
@@ -254,7 +255,7 @@ REGISTER_RPC_HANDLER("drive.type", "drive",
     }
 
     FDriveActionCommon::RunAction(Ctx, Handle,
-        [Text](const FVector2D& Center)
+        [Text](const FVector2D& Center, FDriveInjectFailure&)
         {
             FDriveInput::ClickAt(Center);
             return FDriveInput::TypeString(Text);
@@ -303,7 +304,7 @@ REGISTER_RPC_HANDLER("drive.key", "drive",
     const bool bHasHandle = !Handle.IsEmpty();
 
     FDriveActionCommon::RunAction(Ctx, Handle,
-        [Key, Modifiers, Action, bHasHandle](const FVector2D& Center)
+        [Key, Modifiers, Action, bHasHandle](const FVector2D& Center, FDriveInjectFailure&)
         {
             if (bHasHandle)
             {
@@ -395,7 +396,7 @@ REGISTER_RPC_HANDLER("drive.drag", "drive",
 
     const int32 DurationMs = Ctx.GetInt(TEXT("duration_ms"), 200);
     FDriveActionCommon::RunAction(Ctx, FromHandle,
-        [ToPoint, DurationMs](const FVector2D& From) { return FDriveInput::DragFromTo(From, ToPoint, DurationMs); });
+        [ToPoint, DurationMs](const FVector2D& From, FDriveInjectFailure&) { return FDriveInput::DragFromTo(From, ToPoint, DurationMs); });
     return true;
 }
 

@@ -24,6 +24,7 @@ class FSlateApplication;
 class FGenericWindow;
 class FModifierKeysState;
 class SWindow;
+class FJsonObject;
 
 // Mouse button to inject.
 enum class EDriveMouseButton : uint8
@@ -51,6 +52,16 @@ enum class EDriveModifierKeys : uint8
     Cmd   = 1 << 3
 };
 ENUM_CLASS_FLAGS(EDriveModifierKeys);
+
+// Why an injection refused or failed, for an injection path that can say more than "false"
+// (os_input). The action flow sends it as the error; a path that leaves it untouched gets
+// the flow's generic INPUT_FAILED.
+struct FDriveInjectFailure
+{
+    FString Code;
+    FString Message;
+    TSharedPtr<FJsonObject> Details;
+};
 
 // Result of mapping a single character to the physical key that types it.
 struct FDriveCharKeyMapping

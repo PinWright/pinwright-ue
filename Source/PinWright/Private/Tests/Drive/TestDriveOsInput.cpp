@@ -10,6 +10,13 @@
 
 #include "Handlers/Drive/DriveOsInput.h"
 
+#include "Dom/JsonObject.h"
+#include "HAL/FileManager.h"
+#include "HAL/PlatformProcess.h"
+#include "HAL/PlatformTime.h"
+#include "Misc/Paths.h"
+#include "Tests/TestSkipReporting.h"
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveOsInputMotionPathTest,
     "PinWright.drive.os_input.MotionPath",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
@@ -96,3 +103,131 @@ bool FDriveOsInputPointOwnershipTest::RunTest(const FString& Parameters)
     TestEqual(TEXT("... with no deciding window"), Owner, static_cast<int32>(INDEX_NONE));
     return true;
 }
+
+// ---- Cross-process serialization on a shared X display (B-os-input-shared-pointer-race) ----
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveOsInputDisplayLockPathTest,
+    "PinWright.drive.os_input.DisplayLockPath",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FDriveOsInputDisplayLockPathTest::RunTest(const FString& Parameters)
+{
+    // ":0" and ":0.0" are one pointer; two editors that spell DISPLAY differently must still
+    // take the same lock, or they are not serialized at all.
+    TestEqual(TEXT("the screen suffix is dropped"),
+        FDriveOsInput::LockPathFor(TEXT(":0.0"), 1000),
+        FDriveOsInput::LockPathFor(TEXT(":0"), 1000));
+    TestEqual(TEXT("the file sits in /tmp with the uid in its name"),
+        FDriveOsInput::LockPathFor(TEXT(":0"), 1000),
+        FString(TEXT("/tmp/pinwright-os-input-1000-_0.lock")));
+    TestNotEqual(TEXT("different displays get different locks"),
+        FDriveOsInput::LockPathFor(TEXT(":1"), 1000),
+        FDriveOsInput::LockPathFor(TEXT(":0"), 1000));
+    TestEqual(TEXT("a remote display keeps its host, minus the screen"),
+        FDriveOsInput::LockPathFor(TEXT("localhost:10.0"), 1000),
+        FString(TEXT("/tmp/pinwright-os-input-1000-localhost_10.lock")));
+    return true;
+}
+
+#if PLATFORM_LINUX
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveOsInputDisplayLockExcludesTest,
+    "PinWright.drive.os_input.DisplayLockExcludes",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FDriveOsInputDisplayLockExcludesTest::RunTest(const FString& Parameters)
+{
+    // Two acquirers of one lock file. flock binds the open file, not the process, so a second
+    // instance in this process contends exactly as a peer editor's would.
+    const FString Path = FPaths::CreateTempFilename(FPlatformProcess::UserTempDir(), TEXT("pw-os-input-lock-"), TEXT(".lock"));
+    {
+        const FDriveOsInput::FDisplayLock First(Path, 1.0);
+        TestTrue(TEXT("the first acquirer holds the lock"), First.IsHeld());
+
+        const double Start = FPlatformTime::Seconds();
+        const FDriveOsInput::FDisplayLock Second(Path, 0.2);
+        const double Waited = FPlatformTime::Seconds() - Start;
+        TestFalse(TEXT("the second acquirer does not get it while the first holds it"), Second.IsHeld());
+        TestTrue(TEXT("... and reports a timeout, not an I/O failure"), Second.bTimedOut);
+        TestTrue(TEXT("... after waiting out its timeout"), Waited >= 0.19);
+        TestTrue(TEXT("... but not much longer"), Waited < 2.0);
+        TestEqual(TEXT("... naming the holder's pid from the lock file"),
+            Second.HolderPid, static_cast<uint32>(FPlatformProcess::GetCurrentProcessId()));
+        TestTrue(TEXT("... in its message"),
+            Second.Error.Contains(FString::Printf(TEXT("pid %u"), FPlatformProcess::GetCurrentProcessId())));
+    }
+    {
+        const FDriveOsInput::FDisplayLock Third(Path, 0.2);
+        TestTrue(TEXT("the lock is free again once the holder is gone"), Third.IsHeld());
+    }
+    IFileManager::Get().Delete(*Path);
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveOsInputClickWaitsForDisplayLockTest,
+    "PinWright.drive.os_input.ClickWaitsForDisplayLock",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FDriveOsInputClickWaitsForDisplayLockTest::RunTest(const FString& Parameters)
+{
+    // Hold this display's real lock, standing in for a peer editor mid-click, and ask for a
+    // click: it must refuse with OS_INPUT_BUSY after the bounded wait, having touched nothing.
+    // The target is far off-screen, so even an unserialized ClickAt cannot press anything
+    // (the foreign-window gate refuses an empty point); it would fail with INPUT_FAILED.
+    // Costs LockTimeoutSeconds. Needs no X display: the lock is taken before X is touched.
+    const FDriveOsInput::FDisplayLock Peer(FDriveOsInput::DisplayLockPath(), FDriveOsInput::LockTimeoutSeconds);
+    if (!TestTrue(TEXT("the stand-in peer holds the display lock"), Peer.IsHeld()))
+    {
+        AddError(Peer.Error);
+        return false;
+    }
+
+    FDriveInjectFailure Failure;
+    const bool bClicked = FDriveOsInput::ClickAt(FVector2D(-100000.0, -100000.0), EDriveMouseButton::Left, Failure);
+    TestFalse(TEXT("the click is refused"), bClicked);
+    TestEqual(TEXT("... with OS_INPUT_BUSY"), Failure.Code, FString(TEXT("OS_INPUT_BUSY")));
+    double HolderPid = 0.0;
+    TestTrue(TEXT("... with holder_pid in the payload"),
+        Failure.Details.IsValid() && Failure.Details->TryGetNumberField(TEXT("holder_pid"), HolderPid));
+    TestEqual(TEXT("... naming the holder"), static_cast<uint32>(HolderPid),
+        static_cast<uint32>(FPlatformProcess::GetCurrentProcessId()));
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveOsInputPrePressPointerCheckTest,
+    "PinWright.drive.os_input.PrePressPointerCheck",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FDriveOsInputPrePressPointerCheckTest::RunTest(const FString& Parameters)
+{
+    // The check ClickAt runs right before the press. It reads the real pointer, so it needs a
+    // live X display; it moves and presses nothing.
+    FString Unavailable;
+    if (FPlatformMisc::GetEnvironmentVariable(TEXT("DISPLAY")).IsEmpty() || !FDriveOsInput::IsAvailable(Unavailable))
+    {
+        PinWrightTestSkip::SkipAssertions(*this, TEXT("no-x-display"),
+            FString::Printf(TEXT("the pre-press pointer check reads the real X pointer and this editor has no X display (%s)."), *Unavailable));
+        return true;
+    }
+
+    // Keep peer PinWright injectors off the pointer between the two reads.
+    const FDriveOsInput::FDisplayLock Lock(FDriveOsInput::DisplayLockPath(), FDriveOsInput::LockTimeoutSeconds);
+    if (!Lock.IsHeld())
+    {
+        PinWrightTestSkip::SkipAssertions(*this, TEXT("os-input-busy"), Lock.Error);
+        return true;
+    }
+
+    // No pointer can be at a point this far off every screen: the refusal path, deterministic.
+    FIntPoint Pointer(-1, -1);
+    TestFalse(TEXT("a pointer that is not on the target refuses the press"),
+        FDriveOsInput::IsPointerAt(FIntPoint(-100000, -100000), Pointer));
+    TestTrue(TEXT("... and reports where the pointer really is"), Pointer.X >= 0 && Pointer.Y >= 0);
+
+    FIntPoint Again(-1, -1);
+    TestTrue(TEXT("a pointer on the target lets the press through"), FDriveOsInput::IsPointerAt(Pointer, Again));
+    TestEqual(TEXT("... at the same point"), Again, Pointer);
+    return true;
+}
+
+#endif // PLATFORM_LINUX

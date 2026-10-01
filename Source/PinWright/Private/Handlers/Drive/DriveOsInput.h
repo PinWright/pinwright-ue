@@ -41,12 +41,52 @@ public:
     static bool IsAvailable(FString& OutError);
 
     // Move the real pointer to ScreenPos (absolute desktop pixels, the space an element's
-    // geometry.absolute already reports) along ComputeMotionPath. Blocks ~250 ms.
-    static bool MoveTo(const FVector2D& ScreenPos, FString& OutError);
+    // geometry.absolute already reports) along ComputeMotionPath. Blocks ~250 ms, plus up to
+    // LockTimeoutSeconds waiting for another injector on this display (OS_INPUT_BUSY).
+    static bool MoveTo(const FVector2D& ScreenPos, FDriveInjectFailure& OutFailure);
 
-    // MoveTo, then a real button press held ~80 ms and released. Blocks ~450 ms. Refuses
-    // (no press) when a foreign window took the point during the motion.
-    static bool ClickAt(const FVector2D& ScreenPos, EDriveMouseButton Button, FString& OutError);
+    // MoveTo, then a real button press held ~80 ms and released, all under the display lock.
+    // Blocks ~450 ms. Refuses (no press) when a foreign window took the point during the
+    // motion (INPUT_FAILED), or when the pointer is not on the target right before the press
+    // (POINTER_MOVED: a human, a raw xdotool script, or a pointer grab moved or clamped it).
+    static bool ClickAt(const FVector2D& ScreenPos, EDriveMouseButton Button, FDriveInjectFailure& OutFailure);
+
+    // How long an injection waits for another process's injection on the same display.
+    static constexpr double LockTimeoutSeconds = 5.0;
+
+    // Cross-process exclusive lock serializing os_input on one X display. A display has ONE
+    // core pointer, so two editors injecting at once interleave motion and presses and a
+    // click lands wherever the other one left the pointer. flock on a per-display file; the
+    // lock belongs to the open file, so two instances in one process exclude each other too.
+    // The holder writes its pid into the file so a peer that times out can name it.
+    // Linux only; elsewhere it is never held.
+    class FDisplayLock
+    {
+    public:
+        // Blocks up to TimeoutSeconds for the lock.
+        FDisplayLock(const FString& Path, double TimeoutSeconds);
+        ~FDisplayLock();
+        FDisplayLock(const FDisplayLock&) = delete;
+        FDisplayLock& operator=(const FDisplayLock&) = delete;
+
+        bool IsHeld() const { return Fd >= 0; }
+
+        // When not held: whether another holder outlasted the timeout (vs. an I/O failure),
+        // the pid that holder recorded (0 = unknown), and the caller-facing reason.
+        bool bTimedOut = false;
+        uint32 HolderPid = 0;
+        FString Error;
+
+    private:
+        int32 Fd = -1;
+    };
+
+    // The lock file for this editor's display ($DISPLAY and uid).
+    static FString DisplayLockPath();
+
+    // Whether the real pointer is exactly on Target; OutPointer receives where it is.
+    // False when X is unavailable or the pointer cannot be read.
+    static bool IsPointerAt(const FIntPoint& Target, FIntPoint& OutPointer);
 
     // The X window that would receive real pointer input at a point when it does NOT belong
     // to this process: a peer editor, a game or a desktop panel stacked over the target.
@@ -68,6 +108,12 @@ public:
     // ends exactly on To, so the app sees a hand-like sequence of motion deltas instead of
     // one teleport that confinement / relative mode would digest differently.
     static TArray<FIntPoint> ComputeMotionPath(const FIntPoint& From, const FIntPoint& To);
+
+    // Lock file for a display: /tmp/pinwright-os-input-<uid>-<display>.lock. Fixed under /tmp
+    // rather than $XDG_RUNTIME_DIR so two editors launched with different environments still
+    // meet on one file. The screen suffix is dropped (":0" and ":0.0" share one pointer, so
+    // they must share one lock).
+    static FString LockPathFor(const FString& Display, uint32 Uid);
 
     // X button number for a drive button: left 1, middle 2, right 3.
     static int32 ButtonToXButton(EDriveMouseButton Button);

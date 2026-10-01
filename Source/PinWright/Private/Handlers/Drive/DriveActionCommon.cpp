@@ -427,10 +427,12 @@ void FDriveActionCommon::RunAction(FHandlerContext& Ctx, const FString& Handle, 
 
     if (!bGatePointer || FDriveInput::WindowUnderPoint(TargetCenter) == TargetWindow)
     {
-        // Inject the input. A failure here (Slate down mid-flight) is a clean error.
-        if (!Inject(TargetCenter))
+        // Inject the input. A failure here (Slate down mid-flight, an os_input refusal) is a
+        // clean error.
+        FDriveInjectFailure Failure{ ErrorCodes::ERR_INPUT_FAILED, InjectFailedMessage };
+        if (!Inject(TargetCenter, Failure))
         {
-            Ctx.SendError(ErrorCodes::ERR_INPUT_FAILED, InjectFailedMessage);
+            Ctx.SendError(Failure.Code, Failure.Message, Failure.Details);
             return;
         }
         // From here the request resolves asynchronously: open it now so the transport
@@ -457,13 +459,14 @@ void FDriveActionCommon::RunAction(FHandlerContext& Ctx, const FString& Handle, 
             const TSharedPtr<SWindow> Under = FDriveInput::WindowUnderPoint(TargetCenter);
             if (Under == Target)
             {
-                if (Inject(TargetCenter))
+                FDriveInjectFailure Failure{ ErrorCodes::ERR_INPUT_FAILED, InjectFailedMessage };
+                if (Inject(TargetCenter, Failure))
                 {
                     StartSettle(Token);
                 }
                 else
                 {
-                    Token->SendError(ErrorCodes::ERR_INPUT_FAILED, InjectFailedMessage);
+                    Token->SendError(Failure.Code, Failure.Message, Failure.Details);
                 }
                 return false;
             }

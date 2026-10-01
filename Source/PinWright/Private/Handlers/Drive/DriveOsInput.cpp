@@ -2,10 +2,21 @@
 
 #include "Handlers/Drive/DriveOsInput.h"
 
+#include "Handlers/ErrorCodes.h"
+
+#include "Dom/JsonObject.h"
+#include "HAL/PlatformMisc.h"
 #include "HAL/PlatformProcess.h"
+#include "HAL/PlatformTime.h"
 
 #if PLATFORM_LINUX
 #include <dlfcn.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/file.h>
+#include <unistd.h>
 #endif
 
 // File-local helpers live in a uniquely-named namespace (not an anonymous one): the
@@ -19,6 +30,14 @@ namespace DriveOsInputLocal
     // press, a real ~80 ms button hold, and a pause after the release so the app has
     // pumped the whole sequence before the settle loop samples it.
     constexpr int32 MotionSteps = 24;
+
+    void Fail(FDriveInjectFailure& Out, const TCHAR* Code, const FString& Message,
+        TSharedPtr<FJsonObject> Details = nullptr)
+    {
+        Out.Code = Code;
+        Out.Message = Message;
+        Out.Details = MoveTemp(Details);
+    }
 
 #if PLATFORM_LINUX
 
@@ -174,6 +193,50 @@ namespace DriveOsInputLocal
         return Pid;
     }
 
+    // OS_INPUT_BUSY when another injector outlasted the wait, INPUT_FAILED when the lock file
+    // itself could not be used. True when the lock is held.
+    bool LockHeldOrFail(const FDriveOsInput::FDisplayLock& Lock, const FString& LockPath, FDriveInjectFailure& Out)
+    {
+        if (Lock.IsHeld())
+        {
+            return true;
+        }
+        TSharedPtr<FJsonObject> Details = MakeShared<FJsonObject>();
+        Details->SetStringField(TEXT("lock_file"), LockPath);
+        Details->SetNumberField(TEXT("holder_pid"), Lock.HolderPid);
+        Fail(Out, Lock.bTimedOut ? ErrorCodes::ERR_OS_INPUT_BUSY : ErrorCodes::ERR_INPUT_FAILED, Lock.Error, Details);
+        return false;
+    }
+
+    // The motion half of MoveTo, for a caller that already holds the display lock.
+    bool MoveUnlocked(const FVector2D& ScreenPos, FDriveInjectFailure& OutFailure)
+    {
+        FX11Api& Api = GetApi();
+        if (!Api.IsValid())
+        {
+            Fail(OutFailure, ErrorCodes::ERR_INPUT_FAILED, Api.Error);
+            return false;
+        }
+
+        FIntPoint From;
+        if (!QueryPointerPos(Api, From))
+        {
+            Fail(OutFailure, ErrorCodes::ERR_INPUT_FAILED,
+                TEXT("XQueryPointer failed; the pointer position could not be read, so no motion path was sent."));
+            return false;
+        }
+
+        const FIntPoint To(FMath::RoundToInt(ScreenPos.X), FMath::RoundToInt(ScreenPos.Y));
+        for (const FIntPoint& Step : FDriveOsInput::ComputeMotionPath(From, To))
+        {
+            // Screen -1 = the screen the pointer is already on; 0 = CurrentTime.
+            Api.FakeMotionEvent(Api.Display, -1, Step.X, Step.Y, 0);
+            FlushAndWait(Api, MotionStepMs);
+        }
+        FlushAndWait(Api, MotionSettleMs);
+        return true;
+    }
+
     FString ReadTitle(FX11Api& Api, XWindow Window)
     {
         char* Name = nullptr;
@@ -214,6 +277,29 @@ bool FDriveOsInput::IsPointOwnedBy(const TArray<uint32>& PathPids, uint32 SelfPi
 {
     OutOwnerIndex = PathPids.FindLastByPredicate([](uint32 Pid) { return Pid != 0; });
     return OutOwnerIndex != INDEX_NONE && PathPids[OutOwnerIndex] == SelfPid;
+}
+
+FString FDriveOsInput::LockPathFor(const FString& Display, uint32 Uid)
+{
+    // "host:display.screen": everything after the last ':' up to the '.' names the display.
+    FString Key = Display;
+    int32 Colon = INDEX_NONE;
+    if (Key.FindLastChar(TEXT(':'), Colon))
+    {
+        const int32 Dot = Key.Find(TEXT("."), ESearchCase::CaseSensitive, ESearchDir::FromStart, Colon);
+        if (Dot != INDEX_NONE)
+        {
+            Key.LeftInline(Dot);
+        }
+    }
+    for (int32 Index = 0; Index < Key.Len(); ++Index)
+    {
+        if (!FChar::IsAlnum(Key[Index]))
+        {
+            Key[Index] = TEXT('_');
+        }
+    }
+    return FString::Printf(TEXT("/tmp/pinwright-os-input-%u-%s.lock"), Uid, *Key);
 }
 
 int32 FDriveOsInput::ButtonToXButton(EDriveMouseButton Button)
@@ -296,42 +382,115 @@ bool FDriveOsInput::FindForeignWindowAt(const FVector2D& ScreenPos, FForeignWind
 #endif
 }
 
-bool FDriveOsInput::MoveTo(const FVector2D& ScreenPos, FString& OutError)
+FString FDriveOsInput::DisplayLockPath()
 {
 #if PLATFORM_LINUX
-    FX11Api& Api = GetApi();
-    if (!Api.IsValid())
-    {
-        OutError = Api.Error;
-        return false;
-    }
-
-    FIntPoint From;
-    if (!QueryPointerPos(Api, From))
-    {
-        OutError = TEXT("XQueryPointer failed; the pointer position could not be read, so no motion path was sent.");
-        return false;
-    }
-
-    const FIntPoint To(FMath::RoundToInt(ScreenPos.X), FMath::RoundToInt(ScreenPos.Y));
-    for (const FIntPoint& Step : ComputeMotionPath(From, To))
-    {
-        // Screen -1 = the screen the pointer is already on; 0 = CurrentTime.
-        Api.FakeMotionEvent(Api.Display, -1, Step.X, Step.Y, 0);
-        FlushAndWait(Api, MotionStepMs);
-    }
-    FlushAndWait(Api, MotionSettleMs);
-    return true;
+    return LockPathFor(FPlatformMisc::GetEnvironmentVariable(TEXT("DISPLAY")), static_cast<uint32>(getuid()));
 #else
-    (void)ScreenPos;
-    return IsAvailable(OutError);
+    return FString();
 #endif
 }
 
-bool FDriveOsInput::ClickAt(const FVector2D& ScreenPos, EDriveMouseButton Button, FString& OutError)
+FDriveOsInput::FDisplayLock::FDisplayLock(const FString& Path, double TimeoutSeconds)
 {
 #if PLATFORM_LINUX
-    if (!MoveTo(ScreenPos, OutError))
+    // O_NOFOLLOW: /tmp is a shared directory.
+    Fd = open(TCHAR_TO_UTF8(*Path), O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
+    if (Fd < 0)
+    {
+        Error = FString::Printf(TEXT("The os_input lock file '%s' could not be opened (errno %d); nothing was injected."), *Path, errno);
+        return;
+    }
+
+    // Poll rather than block in flock: a blocking flock cannot time out.
+    const double Deadline = FPlatformTime::Seconds() + TimeoutSeconds;
+    while (flock(Fd, LOCK_EX | LOCK_NB) != 0)
+    {
+        if (errno != EWOULDBLOCK && errno != EINTR)
+        {
+            Error = FString::Printf(TEXT("flock on the os_input lock file '%s' failed (errno %d); nothing was injected."), *Path, errno);
+            close(Fd);
+            Fd = -1;
+            return;
+        }
+        if (FPlatformTime::Seconds() >= Deadline)
+        {
+            char Buf[16] = {};
+            if (pread(Fd, Buf, sizeof(Buf) - 1, 0) > 0)
+            {
+                HolderPid = static_cast<uint32>(strtoul(Buf, nullptr, 10));
+            }
+            close(Fd);
+            Fd = -1;
+            bTimedOut = true;
+            Error = FString::Printf(
+                TEXT("Another os_input injection on this X display (pid %u) held the pointer lock '%s' for more than %.1f s, so nothing was injected. Retry once it finishes; a stuck holder releases the lock when its process exits."),
+                HolderPid, *Path, TimeoutSeconds);
+            return;
+        }
+        FPlatformProcess::Sleep(0.01f);
+    }
+
+    char Buf[16];
+    const int Len = snprintf(Buf, sizeof(Buf), "%d\n", static_cast<int>(getpid()));
+    // Best effort: a missing pid only makes a peer's timeout message say "pid 0".
+    if (ftruncate(Fd, 0) == 0)
+    {
+        (void)!pwrite(Fd, Buf, Len, 0);
+    }
+#else
+    (void)Path;
+    (void)TimeoutSeconds;
+    Error = TEXT("The os_input display lock is Linux-only.");
+#endif
+}
+
+FDriveOsInput::FDisplayLock::~FDisplayLock()
+{
+#if PLATFORM_LINUX
+    if (Fd >= 0)
+    {
+        // Closing the last descriptor of the open file releases the flock.
+        close(Fd);
+    }
+#endif
+}
+
+bool FDriveOsInput::IsPointerAt(const FIntPoint& Target, FIntPoint& OutPointer)
+{
+#if PLATFORM_LINUX
+    FX11Api& Api = GetApi();
+    return Api.IsValid() && QueryPointerPos(Api, OutPointer) && OutPointer == Target;
+#else
+    (void)Target;
+    (void)OutPointer;
+    return false;
+#endif
+}
+
+bool FDriveOsInput::MoveTo(const FVector2D& ScreenPos, FDriveInjectFailure& OutFailure)
+{
+#if PLATFORM_LINUX
+    const FString LockPath = DisplayLockPath();
+    const FDisplayLock Lock(LockPath, LockTimeoutSeconds);
+    return LockHeldOrFail(Lock, LockPath, OutFailure) && MoveUnlocked(ScreenPos, OutFailure);
+#else
+    (void)ScreenPos;
+    FString Error;
+    IsAvailable(Error);
+    Fail(OutFailure, ErrorCodes::ERR_INPUT_FAILED, Error);
+    return false;
+#endif
+}
+
+bool FDriveOsInput::ClickAt(const FVector2D& ScreenPos, EDriveMouseButton Button, FDriveInjectFailure& OutFailure)
+{
+#if PLATFORM_LINUX
+    // One lock across motion, checks, press and release: no peer injector may move the
+    // shared pointer between our motion and our press, or during the hold.
+    const FString LockPath = DisplayLockPath();
+    const FDisplayLock Lock(LockPath, LockTimeoutSeconds);
+    if (!LockHeldOrFail(Lock, LockPath, OutFailure) || !MoveUnlocked(ScreenPos, OutFailure))
     {
         return false;
     }
@@ -340,8 +499,28 @@ bool FDriveOsInput::ClickAt(const FVector2D& ScreenPos, EDriveMouseButton Button
     FForeignWindow Foreign;
     if (FindForeignWindowAt(ScreenPos, Foreign))
     {
-        OutError = FString::Printf(TEXT("X window 0x%llx '%s' (pid %u) was raised over the target during the motion; the button was not pressed."),
-            Foreign.WindowId, *Foreign.Title, Foreign.Pid);
+        Fail(OutFailure, ErrorCodes::ERR_INPUT_FAILED,
+            FString::Printf(TEXT("X window 0x%llx '%s' (pid %u) was raised over the target during the motion; the button was not pressed."),
+                Foreign.WindowId, *Foreign.Title, Foreign.Pid));
+        return false;
+    }
+
+    // The lock only binds PinWright injectors; a human's mouse or a raw xdotool script can
+    // still move the pointer, and a pointer grab can clamp the motion short of the target.
+    // XTEST presses wherever the pointer IS, so check it is on the target right before.
+    const FIntPoint Target(FMath::RoundToInt(ScreenPos.X), FMath::RoundToInt(ScreenPos.Y));
+    FIntPoint Pointer(0, 0);
+    if (!IsPointerAt(Target, Pointer))
+    {
+        TSharedPtr<FJsonObject> Details = MakeShared<FJsonObject>();
+        Details->SetNumberField(TEXT("x"), Target.X);
+        Details->SetNumberField(TEXT("y"), Target.Y);
+        Details->SetNumberField(TEXT("pointer_x"), Pointer.X);
+        Details->SetNumberField(TEXT("pointer_y"), Pointer.Y);
+        Fail(OutFailure, ErrorCodes::ERR_POINTER_MOVED,
+            FString::Printf(TEXT("The pointer is at (%d, %d), not on the target (%d, %d), after the motion: another X client moved it, or a pointer grab confined it. The button was not pressed."),
+                Pointer.X, Pointer.Y, Target.X, Target.Y),
+            Details);
         return false;
     }
 
@@ -355,6 +534,9 @@ bool FDriveOsInput::ClickAt(const FVector2D& ScreenPos, EDriveMouseButton Button
 #else
     (void)ScreenPos;
     (void)Button;
-    return IsAvailable(OutError);
+    FString Error;
+    IsAvailable(Error);
+    Fail(OutFailure, ErrorCodes::ERR_INPUT_FAILED, Error);
+    return false;
 #endif
 }
