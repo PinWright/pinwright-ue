@@ -85,6 +85,7 @@ namespace
         { TEXT("READ_PIXELS_FAILED"),       TEXT("CAPTURE_FAILED"), TEXT("Failed to read pixels from preview render target: {0}"),               true  },
         { TEXT("ENCODE_FAILED"),            nullptr,                TEXT("Failed to encode Widget Blueprint Designer screenshot as PNG"),        false },
         { TEXT("EDITOR_NOT_READY"),         nullptr,                TEXT("Widget Blueprint Designer is still initializing or loading; retry after the startup map completes: {0}"), true },
+        { TEXT("TIMEOUT"),                  nullptr,                TEXT("Widget Blueprint Designer preview did not resolve within the capture's wall-clock budget; nothing was captured: {0}"), true },
     };
 }
 

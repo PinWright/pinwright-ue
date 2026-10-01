@@ -33,6 +33,33 @@ namespace WidgetDesignerCaptureInternal
 {
     inline constexpr int32 MaxSlateResolveAttempts = 12;
 
+    // WALL-CLOCK BUDGET FOR EACH RETRY LOOP BELOW (board B-screenshot-designer-hangs-game-thread).
+    // MaxSlateResolveAttempts bounds the attempt COUNT, not the time: every attempt pumps Slate,
+    // redraws the host window and flushes the renderer, none of which is bounded on its own, so
+    // twelve slow pumps could hold the game thread for minutes while the caller's stream read
+    // (120 s in mcp_proxy.py) gave up and saw only a timeout. Each loop checks this before every
+    // pump and answers ERR_TIMEOUT instead of pumping again. It cannot interrupt one engine call
+    // that never returns - nothing on the game thread can - so it bounds this plugin's loops only.
+    // Mutable for tests, which set it to 0 to drive the timeout branch deterministically.
+    inline double& RetryBudgetSeconds()
+    {
+        static double BudgetSeconds = 30.0;
+        return BudgetSeconds;
+    }
+
+    inline bool RetryBudgetExpired(double StartSeconds, FString* OutError)
+    {
+        if (FPlatformTime::Seconds() - StartSeconds < RetryBudgetSeconds())
+        {
+            return false;
+        }
+        if (OutError)
+        {
+            *OutError = ErrorCodes::ERR_TIMEOUT;
+        }
+        return true;
+    }
+
     // OPEN THE DESIGNER FOR A CAPTURE AND PUT THE EDITOR BACK THE WAY IT WAS FOUND.
     //
     // A Designer capture has to open the Widget Blueprint editor - the preview UUserWidget only
@@ -258,6 +285,7 @@ namespace WidgetDesignerCaptureInternal
             OutError->Reset();
         }
 
+        const double StartSeconds = FPlatformTime::Seconds();
         TSharedPtr<SWindow> HostWindow;
         for (int32 Attempt = 0; Attempt < MaxSlateResolveAttempts; ++Attempt)
         {
@@ -269,6 +297,10 @@ namespace WidgetDesignerCaptureInternal
             if (Attempt + 1 >= MaxSlateResolveAttempts)
             {
                 break;
+            }
+            if (RetryBudgetExpired(StartSeconds, OutError))
+            {
+                return nullptr;
             }
             if (!PumpDesignerSlate(nullptr, OutError))
             {
@@ -306,6 +338,7 @@ namespace WidgetDesignerCaptureInternal
             FSlateThrottleManager::Get().DisableThrottle(false);
         };
 
+        const double StartSeconds = FPlatformTime::Seconds();
         for (int32 Attempt = 0; Attempt < MaxSlateResolveAttempts; ++Attempt)
         {
             if (!QueryDesignerCaptureReadiness(OutError))
@@ -321,6 +354,10 @@ namespace WidgetDesignerCaptureInternal
             if (Attempt + 1 >= MaxSlateResolveAttempts)
             {
                 break;
+            }
+            if (RetryBudgetExpired(StartSeconds, &OutError))
+            {
+                return false;
             }
             // Pump only — never RefreshPreview here. Rebuilding mid-retry re-nulls
             // SDesignerView::PreviewWidget before Slate has a chance to call TakeWidget.

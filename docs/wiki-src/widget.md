@@ -648,6 +648,11 @@ the preview Slate widget is missing, and pumps Slate with bounded retries before
 If preview Slate or bounds remain unavailable, it returns `PREVIEW_SLATE_NOT_FOUND` or
 `PREVIEW_BOUNDS_NOT_FOUND`; it never falls back to the window or whole `SDesignerView`.
 
+Each retry loop (host-window lookup, preview resolve) is also bounded by wall clock: once 30 s have
+passed it stops pumping and returns `TIMEOUT`, well inside the proxy's 120 s stream read, instead of
+letting twelve slow Slate pumps hold the game thread for minutes. The budget is per loop and is
+checked between pumps, so it cannot cut short a single engine call that never returns.
+
 #### closeAfterCapture — the Designer is put back the way it was found
 
 **The verb closes the Widget Blueprint editor it opened, on every exit path including its error
