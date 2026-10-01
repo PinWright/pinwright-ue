@@ -543,6 +543,13 @@ function Assert-ProductFactsConsistent {
     $factNamespacesRounded = [int](($facts.namespacesRounded -replace '[^0-9]', ''))
     $factTestsRounded = [int](($facts.testsRounded -replace '[^0-9]', ''))
     $factUeRange = [string]$facts.ueRange
+    # The README namespace list states the public-tier subset ("All 67 public namespaces (1269
+    # operations)"), not the totals: gen-product-facts.ps1 omits internal-tier namespaces and
+    # names them beside the list. Its figures come from the same tiered namespaces array.
+    $factPublic = @($facts.namespaces | Where-Object { $_.tier -ne 'internal' })
+    $factPublicOperations = 0
+    foreach ($namespace in $factPublic) { $factPublicOperations += [int]$namespace.methods }
+    $publicSummaryPattern = [regex]::new('All (?<ns>\d+) public namespaces \((?<ops>[\d,]+) operations\)')
 
     # A staged descriptor version that differs from the facts is fatal on its own: it means
     # the release is being cut at a version the published copy was never regenerated for
@@ -591,6 +598,15 @@ function Assert-ProductFactsConsistent {
         $exempt = if ($fileExemptions.ContainsKey($relative)) { $fileExemptions[$relative] } else { @() }
         # Explicit UTF-8 so en-dashed ranges decode as en-dashes instead of ANSI mojibake.
         $text = [System.IO.File]::ReadAllText($_.FullName, [System.Text.Encoding]::UTF8)
+
+        # Check the public-subset summary against the subset, then drop it so the total-count
+        # patterns below do not read it as a product-total claim.
+        foreach ($match in $publicSummaryPattern.Matches($text)) {
+            if ([int]$match.Groups['ns'].Value -ne $factPublic.Count -or [int]($match.Groups['ops'].Value -replace ',', '') -ne $factPublicOperations) {
+                throw "Staged text states '$($match.Value)' in $relative, but product-facts.json lists $($factPublic.Count) public namespaces with $factPublicOperations operations. Re-run scripts\gen-product-facts.ps1."
+            }
+        }
+        $text = $publicSummaryPattern.Replace($text, '')
 
         foreach ($match in $rangePattern.Matches($text)) {
             $range = $match.Groups['lo'].Value + '-' + $match.Groups['hi'].Value
