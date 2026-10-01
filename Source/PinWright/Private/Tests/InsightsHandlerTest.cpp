@@ -44,8 +44,14 @@ namespace PwInsightsTestTrace
     // "[GpuProfiler] Number of interleaved ..."); 5.7 logs those summaries at Warning
     // (GpuProfilerTraceAnalysis.cpp). How many appear depends on GPU timing, including none, so
     // the declaration accepts any count. Exact lines only - any other Error still fails the test.
+    // Through 5.4 the region analyzer (TraceServices Regions.cpp) also summarizes unmatched region
+    // begin/end events at Error ("[Regions] N warnings; 0 errors"); the analysed 32 MB tail cuts
+    // regions open at its start, so whether it fires depends on what the editor traced before.
     void ExpectGpuAnalyzerTimestampNoise(FAutomationTestBase& Test)
     {
+#if UE_VERSION_OLDER_THAN(5, 5, 0)
+        AddOptionalExpectedMessage(Test, TEXT("[Regions] "));
+#endif
 #if ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION == 6
         Test.AddExpectedErrorPlain(TEXT("[GPU] WORK "), EAutomationExpectedErrorFlags::Contains, -1);
         Test.AddExpectedErrorPlain(TEXT("[GpuProfiler] Number of interleaved"),
