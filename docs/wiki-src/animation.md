@@ -4,7 +4,7 @@ Skeletal animation convenience helpers for Animation Blueprints, AnimSequences, 
 
 ## Choose the layer
 
-- **`animation.*`** provides one-shot creation and runtime helpers (`create_animation_bp`, `create_blend_space`, `create_state_machine`, `create_animation_asset`, `setup_retargeting`, `play_montage`, `add_notify`, `cleanup`). Use `animation.describe_sequence` for clip length and frame count.
+- **`animation.*`** provides one-shot creation and runtime helpers (`create_animation_bp`, `create_blend_space`, `create_state_machine`, `create_animation_asset`, `setup_retargeting`, `retarget_animations`, `play_montage`, `add_notify`, `cleanup`). Use `animation.describe_sequence` for clip length and frame count.
 - **`call("animation.authoring")`** provides fine-grained asset and graph work: tracks, montage sections/notifies/timing, Control Rig, IK and retargeting, blend-space samples, anim-graph values, transition rules, sync markers, root motion, and dump-parity sequence readers.
 
 Workflow gotcha: anim authoring almost always needs the target Skeleton already to exist. Create the skeleton (or import an SK that creates one) before reaching into either layer.
@@ -42,13 +42,21 @@ If `footBones` is omitted, no `locomotion` check is emitted even when `expectedG
 
 `animation.setup_retargeting` duplicates `UAnimSequence` assets and assigns the requested target `USkeleton` to each duplicate. It does not run IK Retargeter evaluation or remap bone tracks. Every successful response reports `retargeted: false`; when at least one output is produced, `duplicatedWithSkeletonSwap` is true and the paths are under `duplicatedAssets`. The verb never returns `retargetedAssets`.
 
-Use this verb only when the source tracks are already compatible with the target Skeleton. Real IK export requires the engine's batch operation with a source SkeletalMesh, target SkeletalMesh, and configured `UIKRetargeter`; this verb accepts none of those three inputs. The `animation.authoring` IK verbs can create and configure the IK Rig and IK Retargeter assets, but do not turn this compatibility copier into an IK export.
+Use this verb only when the source tracks are already compatible with the target Skeleton. For a real IK export between different skeletons use `animation.retarget_animations` (below); this verb accepts none of its source-mesh, target-mesh or retargeter inputs.
 
 When `savePath` is supplied it must normalize to a writable long package directory or the call fails with `INVALID_PATH` before loading either Skeleton or creating any asset. Omit it to place each duplicate beside its source. Every produced copy is saved before success is reported (`saved: true`, `diskPersistenceGuaranteed: true`). With `overwrite: true`, the replacement is first validated and saved in a unique staging package, then published while the old destination remains available for rollback; the old object is deleted only after the new destination is durable. A staging or final-save failure returns `SAVE_FAILED`, and a transactional rename failure returns `RENAME_FAILED`; both failure shapes report whether the original object and file were restored.
 
+## Retarget clips with an IK Retargeter
+
+`animation.retarget_animations` runs the engine's IK Retargeter batch export (`UIKRetargetBatchOperation::RunRetarget`) over `AnimSequence` assets: `retargeter`, `sourceMesh`, `targetMesh`, `assets[]` and `outputPath` are required, and each output is named `prefix + sourceName + suffix` in `outputPath`. Build the inputs with `animation.authoring.create_ik_rig` (one rig per mesh, each with matching retarget chains via `add_ik_chain`) and `create_ik_retargeter` (`sourceIKRigPath` / `targetIKRigPath`).
+
+It refuses before writing anything: `RETARGETER_NO_OPS` when the retargeter's op stack is empty on UE 5.6+ (a retargeter from `create_ik_retargeter` starts empty; pass `seedDefaultOps: true` to add the engine's default stack, which also auto-maps same-named chains and mutates the retargeter), `RETARGET_CHAINS_UNMAPPED` listing target chains no op maps to a source chain (`requireCompleteMapping: false` accepts them), `SKELETON_MISMATCH` for clips whose Skeleton is not compatible with `sourceMesh`'s, `INVALID_ASSET_TYPE` for anything that is not an `AnimSequence`, and `ASSET_EXISTS` when an output name is taken (there is no overwrite).
+
+Every output is read back: its Skeleton must be `targetMesh`'s, its frame count must equal the source's, and it must have bone tracks. The response lists them in `created[]` (`path`, `source`, `skeleton`, `frames`, `boneTracks`), everything that appeared in `outputPath` in `allCreatedAssets`, plus `mappingComplete`, `unmappedTargetChains` and `seededDefaultOps`; outputs are saved and reported through `saved` / `pendingFlush`. If any output fails that read-back, the verb deletes every asset it created and returns `RETARGET_INCOMPLETE` with `failures`, `removedOutputs` and `outputsRemaining`. The read-back cannot tell a well-retargeted clip from a badly configured one (wrong retarget pose, poor chain choice): look at the result with `render.capture_animation_preview`.
+
 ## PIE safety for asset mutations
 
-`animation.cleanup`, `animation.create_animation_asset`, and `animation.setup_retargeting` refuse with `PIE_ACTIVE` before any asset deletion, folder creation, duplication, or replacement work when Play In Editor is active. Stop PIE and retry; read-only asset resolution remains available through the shared registry/object resolver.
+`animation.cleanup`, `animation.create_animation_asset`, `animation.setup_retargeting`, and `animation.retarget_animations` refuse with `PIE_ACTIVE` before any asset deletion, folder creation, duplication, or replacement work when Play In Editor is active. Stop PIE and retry; read-only asset resolution remains available through the shared registry/object resolver.
 
 ## Cross-cluster overlap
 

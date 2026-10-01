@@ -1324,6 +1324,15 @@ namespace ErrorCodes
     inline constexpr TCHAR ERR_REPLACE_FAILED[]                             = TEXT("REPLACE_FAILED");
     inline constexpr TCHAR ERR_REPLACE_REFUSED[]                            = TEXT("REPLACE_REFUSED");
     inline constexpr TCHAR ERR_RESOLUTION_FAILED[]                          = TEXT("RESOLUTION_FAILED");
+    // animation.retarget_animations: target IK Rig chains no retarget op maps to a source chain
+    // (payload lists them in unmappedTargetChains); requireCompleteMapping:false accepts that.
+    inline constexpr TCHAR ERR_RETARGET_CHAINS_UNMAPPED[]                   = TEXT("RETARGET_CHAINS_UNMAPPED");
+    // animation.retarget_animations: the batch export produced outputs that failed read-back
+    // verification (or none at all); every output the call created was deleted.
+    inline constexpr TCHAR ERR_RETARGET_INCOMPLETE[]                        = TEXT("RETARGET_INCOMPLETE");
+    // animation.retarget_animations (UE 5.6+): the IK Retargeter has an empty op stack, so a
+    // retarget would copy nothing. Remedy: seedDefaultOps:true (UIKRetargeterController::AddDefaultOps).
+    inline constexpr TCHAR ERR_RETARGETER_NO_OPS[]                          = TEXT("RETARGETER_NO_OPS");
     inline constexpr TCHAR ERR_REVERB_NOT_AVAILABLE[]                       = TEXT("REVERB_NOT_AVAILABLE");
     inline constexpr TCHAR ERR_REVERT_REQUIRES_UNLOADED_PACKAGE[]           = TEXT("REVERT_REQUIRES_UNLOADED_PACKAGE");
     inline constexpr TCHAR ERR_RIG_CLASS_NOT_FOUND[]                        = TEXT("RIG_CLASS_NOT_FOUND");

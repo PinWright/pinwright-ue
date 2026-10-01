@@ -38,5 +38,34 @@ namespace AnimationHandlerTestHooks
     private:
         int32 PreviousFailureIndex;
     };
+
+    // animation.retarget_animations: fail the read-back verification of the output at this
+    // index (input order), so a test can drive the delete-everything-on-partial-result path.
+    inline int32& RetargetVerifyFailureIndex()
+    {
+        static int32 FailureIndex = INDEX_NONE;
+        return FailureIndex;
+    }
+
+    class FScopedRetargetVerifyFailure final
+    {
+    public:
+        explicit FScopedRetargetVerifyFailure(const int32 FailureIndex)
+            : PreviousFailureIndex(RetargetVerifyFailureIndex())
+        {
+            RetargetVerifyFailureIndex() = FailureIndex;
+        }
+
+        ~FScopedRetargetVerifyFailure()
+        {
+            RetargetVerifyFailureIndex() = PreviousFailureIndex;
+        }
+
+        FScopedRetargetVerifyFailure(const FScopedRetargetVerifyFailure&) = delete;
+        FScopedRetargetVerifyFailure& operator=(const FScopedRetargetVerifyFailure&) = delete;
+
+    private:
+        int32 PreviousFailureIndex;
+    };
 #endif
 }

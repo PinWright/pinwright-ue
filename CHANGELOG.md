@@ -27,6 +27,8 @@
 - Added: `actors[]` batches on `actor.set_transform` / `actor.nudge`, and `lookAt` / `roll` on
   `actor.set_transform`.
 - Added: `gameplay_tags.find_referencers`.
+- Added: `animation.retarget_animations`, an IK Retargeter batch export of AnimSequences that
+  verifies every output and deletes them all on a partial result.
 - Added: `animation.authoring.get_curve_keys`, `set_curve_keys`, `remove_curve_key`,
   `remove_curve` and `rename_curve`.
 - Added: `log_file` in `system.identity`.

@@ -74,6 +74,9 @@ namespace
         // Overwrite publication replaces references and uses ObjectTools deletion,
         // whose engine path can synchronously collect garbage.
         TEXT("animation.setup_retargeting"),
+        // UIKRetargetBatchOperation::RunRetarget opens an FScopedSlowTask dialog (Slate pump)
+        // and a partial result is rolled back with ObjectTools::ForceDeleteObjects (GC).
+        TEXT("animation.retarget_animations"),
 
         // --- B: re-entrant Slate tick / viewport draw / render flush ----------
         // McpSafeLevelSave flushes rendering and calls FEditorFileUtils::SaveLevel
