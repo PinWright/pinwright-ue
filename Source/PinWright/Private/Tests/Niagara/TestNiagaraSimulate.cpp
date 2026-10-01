@@ -71,6 +71,15 @@ namespace PinWrightNiagaraSimulateTest
         return Capture.Result.IsValid() && Capture.Result->TryGetArrayField(TEXT("emitters"), Out) ? Out : nullptr;
     }
 
+    // On 5.8 a freshly duplicated fixture that has not compiled in this session fails Niagara's
+    // data-interface init on its first instance ("Error initializing data interfaces. Completing
+    // system."), so nothing simulates. Compile it first, as an opened-in-editor asset would be.
+    bool CompileDuplicatedFixture(UNiagaraSystem& System)
+    {
+        System.RequestCompile(/*bForce=*/true);
+        return !PinWrightNiagara::WaitForSystemCompile(System, /*bMayFlushRequestCompile=*/true).bTimedOut;
+    }
+
     // Zero every "SpawnBurst_Instantaneous.Spawn Count" rapid-iteration constant the system owns,
     // in the system scripts and the emitter scripts alike, so no compile can restore one from the
     // other. Returns how many were zeroed.
@@ -475,6 +484,10 @@ bool FNiagaraSimulateDirtyPackageStaysDirtyTest::RunTest(const FString& Paramete
             FString::Printf(TEXT("could not duplicate '%s'"), NiagaraEditTestUtils::FixtureSystemAssetPath));
         return true;
     }
+    if (!TestTrue(TEXT("premise: the fixture compiled within the wait budget"), CompileDuplicatedFixture(*Owner)))
+    {
+        return true;
+    }
     UPackage* Package = Owner->GetOutermost();
     Package->SetDirtyFlag(true);
     ON_SCOPE_EXIT { Package->SetDirtyFlag(false); };
@@ -653,7 +666,10 @@ bool FNiagaraSimulateGpuMatchesCpuTwinTest::RunTest(const FString& Parameters)
         FNiagaraTypeDefinition::GetFloatDef(), &SpawnProbability, sizeof(SpawnProbability));
     const bool bPeakIsExact = SpawnProbability >= 1.0f;
 
-    WaitForSystemCompile(*System, /*bMayFlushRequestCompile=*/true);
+    if (!TestTrue(TEXT("premise: the CPU fixture compiled within the wait budget"), CompileDuplicatedFixture(*System)))
+    {
+        return true;
+    }
     FTestResponseCapture Cpu;
     InvokeHandlerWithCapture(TEXT("niagara.simulate"), MakePayload(SystemPath, 0.5), Cpu);
     const TSharedPtr<FJsonObject> CpuEmitter = FindEmitter(Cpu, EmitterName);
