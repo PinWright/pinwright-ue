@@ -4,7 +4,7 @@
 //
 // Builds a material in a sandbox package with two UMaterialExpressionConstant
 // nodes at (0,0), invokes the handler via the dispatcher, and asserts both
-// nodes were moved (FMGIRLayoutEngine only repositions expressions whose
+// nodes were moved (the material layout only repositions expressions whose
 // (x,y) are still (0,0), so seeding both at the origin guarantees both are
 // eligible).
 //
@@ -47,7 +47,7 @@ bool FMaterialAuthoringAutoLayoutTest::RunTest(const FString& Parameters)
         return true;
     }
 
-    // Two constants seeded at (0,0) so FMGIRLayoutEngine considers both
+    // Two constants seeded at (0,0) so the material layout considers both
     // unpositioned and reflows both into a non-zero layout.
     UMaterialExpressionConstant* ConstA = NewObject<UMaterialExpressionConstant>(Material);
     UMaterialExpressionConstant* ConstB = NewObject<UMaterialExpressionConstant>(Material);

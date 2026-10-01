@@ -2,6 +2,15 @@
 
 ## 1.0.0
 
+- Changed: graph auto-layout is PinWright's own layered formatter (`PwGraphLayout`) for BPIR
+  compile/insert, `material.compile_mgir` / `material.authoring.auto_layout`, AGIR and CRIR
+  compiles. It sizes every node (estimated from its title and pins), so laid-out nodes never
+  overlap; every created entry in a graph is laid out, not only the first; data nodes sit in
+  columns left of their consumer with pin-aligned wires; material and anim graphs grow leftwards
+  from their output node. The BPIR Layout settings `NodePadX` / `NodePadY` / `PinPadX` /
+  `InternalGridPx` are now `ColumnGapPx` / `RowGapPx` / `DataColumnGapPx` / `GridSnapPx`
+  (`IntraParameterPadY`, `CollisionIterationCap` and `TraversalIterationCap` are gone); re-apply
+  any customised values.
 - Removed `system.run_ubt`. Build the editor target from a shell with the editor closed
   (`Build.bat`/`Build.sh ... -TargetType=Editor`), or use `system.live_coding_compile` to
   hot-patch a running editor.

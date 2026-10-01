@@ -44,7 +44,7 @@ table does not list (see Undocumented Directories below).
 | `Blueprint` | (top-level) | 164 | RPC handlers for Blueprint graph editing, compilation, decompilation, and inspection |
 | `Networking` | (top-level) | 26 | RPC handlers for networking, replication, and multiplayer setup |
 | `Utility` | (top-level) | 225 | RPC handlers in the `utility` domain (misc helpers not belonging to a themed group) |
-| `Bpir` | Tokenizer, Parser, Expression, Compiler (incl. Compiler.Resolvers), Decompiler, RoundTrip, NodeLayout, GraphOrphan | 579 | BPIR compiler pipeline: lexing, parsing, compilation, decompilation, round-trip fidelity, node layout, orphan detection |
+| `Bpir` | Tokenizer, Parser, Expression, Compiler (incl. Compiler.Resolvers), Decompiler, RoundTrip, GraphOrphan | 579 | BPIR compiler pipeline: lexing, parsing, compilation, decompilation, round-trip fidelity, orphan detection (the 579 predates the node-layout tests moving to `layout.*`) |
 | `Infra` | Transport, Dispatcher, HttpApi, ToolCatalog, State, HandlerContext, AutoRegistration, Contract | 238 | Plugin infrastructure: HTTP transport, JSON-RPC dispatcher, tool catalog, plugin state, handler context, auto-registration, contract consistency |
 | `Core` | Path, Json, Class, MakePinType, LevelSaveLoad, CodeFunctionResolver, error_codes, pwmodel_diagnostics, docs_schema | 114 | Internal utility libraries: path sanitization, JSON helpers, class resolution, pin type conversion, level save/load |
 | `WidgetXml` | Export, Import, RoundTrip | 50 | Widget XML serialization format: export, import, and round-trip identity |
@@ -124,7 +124,7 @@ Tests that exercise the BPIR compiler, parser, decompiler, or round-trip belong 
 | Compiler resolver chain | `Bpir.Compiler.Resolvers` |
 | Decompiler (graph → text) | `Bpir.Decompiler` |
 | Compile → decompile → recompile | `Bpir.RoundTrip` |
-| Post-compile node layout engine | `Bpir.NodeLayout` |
+| Post-compile node layout (`PwGraphLayout` core and adapters) | `layout.core`, `layout.<graph type>` (`Tests/Layout/`) |
 | Orphaned-node detection | `Bpir.GraphOrphan` |
 
 ### Infrastructure tests

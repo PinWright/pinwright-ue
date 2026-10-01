@@ -339,13 +339,13 @@ bool FBpirInterfaceNamedOutputsOverrideTest::RunTest(const FString& Parameters)
         return true;
     }
     const bool bOriginalLayoutEnabled = LayoutSettings->bEnableBpirLayoutPass;
-    const int32 OriginalGridSize = LayoutSettings->InternalGridPx;
+    const int32 OriginalGridSize = LayoutSettings->GridSnapPx;
     LayoutSettings->bEnableBpirLayoutPass = true;
-    LayoutSettings->InternalGridPx = 8;
+    LayoutSettings->GridSnapPx = 8;
     ON_SCOPE_EXIT
     {
         LayoutSettings->bEnableBpirLayoutPass = bOriginalLayoutEnabled;
-        LayoutSettings->InternalGridPx = OriginalGridSize;
+        LayoutSettings->GridSnapPx = OriginalGridSize;
     };
 
     if (!CreateInterfaceAsset(*this, InterfacePath)
@@ -508,10 +508,10 @@ bool FBpirInterfaceNamedOutputsOverrideTest::RunTest(const FString& Parameters)
     if (TestNotNull(TEXT("first of two interface graphs has its authored body call"), FirstAutoBodyCall))
     {
         TestEqual(TEXT("first interface graph body call is laid out on the X grid"),
-            FirstAutoBodyCall->NodePosX % LayoutSettings->InternalGridPx,
+            FirstAutoBodyCall->NodePosX % LayoutSettings->GridSnapPx,
             0);
         TestEqual(TEXT("first interface graph body call is laid out on the Y grid"),
-            FirstAutoBodyCall->NodePosY % LayoutSettings->InternalGridPx,
+            FirstAutoBodyCall->NodePosY % LayoutSettings->GridSnapPx,
             0);
     }
 

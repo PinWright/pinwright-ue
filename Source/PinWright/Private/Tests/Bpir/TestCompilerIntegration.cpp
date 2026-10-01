@@ -3775,7 +3775,7 @@ bool FCompilerIntegrationInsertAnchorFallbackTest::RunTest(const FString& Parame
 // SwitchToGraph zeroes CurrentBaseY/CurrentNodeX, and Phase 2 used to call
 // PreEmitVariableRefs / EmitInstruction without re-running ResetPlacementForChain.
 // Body nodes were placed at Y=0 even when the new event landed at Y=MaxY+450.
-// FormatY's same-row inheritance heals the FIRST exec child, but second-and-later
+// The layout's pin alignment heals the FIRST exec child, but second-and-later
 // stacked siblings inherited from the (now-bogus) lowest-placed-sibling rather
 // than from the parent, leaving them stranded near Y=0.
 //
@@ -3816,7 +3816,7 @@ bool FCompilerIntegrationNewEventBodyInheritsAnchorYTest::RunTest(const FString&
     }
 
     // Compile a new CustomEvent with a sequence body that produces multiple
-    // non-same-row siblings — the case where FormatY's same-row heal does NOT
+    // non-same-row siblings — the case where the layout's pin alignment does NOT
     // apply to every body node, so a buggy cursor leaks through to the layout.
     FBpirCompiler Compiler(BP);
     FCompileResult Result = Compiler.Compile(
@@ -3871,7 +3871,7 @@ bool FCompilerIntegrationNewEventBodyInheritsAnchorYTest::RunTest(const FString&
         if (Node == NewEvent) continue;
 
         // Only assert on impure nodes — pure helpers (VariableGet, Self, MakeStruct)
-        // get repositioned by FormatParameterNodes relative to their consumer, so
+        // are laid out in their consumer's data block, so
         // their Y trails the consumer's Y by a cluster-relative offset that can
         // legitimately exceed the screen-height tolerance.
         bool bHasExecPin = false;

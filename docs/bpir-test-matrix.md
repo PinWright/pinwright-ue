@@ -34,7 +34,7 @@ Total: **329 tests** across 13 files.
 | TestBpirForwardReference.cpp | 2+ | E2E | Forward reference across entry blocks: function calling a later-declared function, custom_event calling a later-declared custom_event — verifies Phase 1 entry-creation + Phase 1.5 skeleton recompile enables cross-entry forward calls |
 | TestBpirInputKeyModifiers.cpp | 7 | Syntax + Fidelity | InputKey modifiers `entry key_pressed J(ctrl)`: parse (Ctrl+J, Shift+Alt+F, plain key, unknown modifier rejected), decompile of flags set directly on the node, compile -> decompile -> replace-compile byte-identical round trip, and upsert identity keeping `J()` and `J(ctrl)` distinct (`B-bpir-inputkey-modifiers-dropped`) |
 | TestBpirMultiBranchReturn.cpp | 2 | E2E + Fidelity | One `UK2Node_FunctionResult` per `return`: a two-branch multi-output function keeps each branch's own data, wires the branch arms to different nodes, orphans nothing, and decompiles to two named `return (...)` lines that recompile to the same shape (`B-bpir-second-return-branch-data-dropped`) |
-| TestNodeLayout.cpp | 25 | Unit | Node layout engine: EstimateNodeSize, GetNodeBounds, BuildFormatXInfoMap (linear/branch/diamond), FormatX (spacing/cluster/grid), FNodeLayoutParameterFormatter (basic/consumer-only), FormatParameterNodes (empty/single/shared-pure), GetPinsOfSameHeight (linear/branch/empty), FormatY (same-row/stacking/collision/obstacles), ResetRelativeToAnchor, SnapToGrid (directional), end-to-end pipeline, kill-switch |
+| Tests/Layout/TestPwGraphLayoutCore.cpp, TestPwGraphLayoutAdapters.cpp | 19 | Unit + E2E | Layered graph formatter (`PwGraphLayout`) on synthetic fixtures and its Blueprint / material / anim / Control Rig adapters; see §2.6 |
 
 ---
 
@@ -165,22 +165,23 @@ Total: **329 tests** across 13 files.
 
 ### 2.6 Node Layout Engine
 
-25 unit tests in `TestNodeLayout.cpp` covering the post-compile headless auto-formatting pipeline. All under `PinWright.Bpir.NodeLayout.*` test ID prefix.
+The post-compile layout runs the layered formatter `PwGraphLayout` (see `bpir-compiler-internals.md`). Core tests (`Tests/Layout/TestPwGraphLayoutCore.cpp`, `PinWright.layout.core.*`) use synthetic fixtures; every fixture is checked for zero overlaps, zero backward wires (cycle back edges excused), identical positions from a shuffled node order, and a second pass that moves nothing. Adapter tests (`Tests/Layout/TestPwGraphLayoutAdapters.cpp`) run on real graphs.
 
-| Component | Tests | Coverage |
-|-----------|-------|----------|
-| EstimateNodeSize | `EstimateSize` | Width/height finite, respects minimums |
-| GetNodeBounds | `Bounds` | Bounding rect from node position + estimated size |
-| BuildFormatXInfoMap | `FormatX.LinearChain`, `FormatX.Branch`, `FormatX.Diamond` | Linear chain, branch topology, diamond reconvergence |
-| FormatX | `FormatX.LinearSpacing`, `FormatX.ClusterBounds`, `FormatX.GridAlignment` | Inter-column spacing, cluster-extended bounds, grid snap |
-| FNodeLayoutParameterFormatter | `ParameterFormatter.Basic`, `ParameterFormatter.ConsumerOnly` | Pure-node column layout, consumer-only (no pures) case |
-| FormatParameterNodes | `FormatParameterNodes.Empty`, `FormatParameterNodes.SingleConsumer`, `FormatParameterNodes.SharedPure` | Empty pool, single consumer with pures, first-consumer-wins shared-pure rule |
-| GetPinsOfSameHeight | `SameRow.Linear`, `SameRow.Branch`, `SameRow.EmptyMap` | Linear chain same-row marking, branch first-child marking, empty-map edge case |
-| FormatY | `FormatY.LinearSameRow`, `FormatY.BranchStacking`, `FormatY.CollisionNudge`, `FormatY.ExternalObstacle` | Same-row Y inheritance, sibling stacking, collision avoidance, external obstacle avoidance |
-| ResetRelativeToAnchor | `AnchorReset` | Anchor node returns to pre-format position |
-| SnapToGrid | `GridSnap`, `DirectionalSnap` | Basic grid alignment, directional rounding (Floor/Ceil/Round) |
-| End-to-end | `Engine.EndToEnd` | Full pipeline on a multi-node graph |
-| Kill switch | `Engine.KillSwitch` | `bEnableBpirLayoutPass=false` bypasses layout entirely |
+| Test | Coverage |
+|------|----------|
+| `layout.core.LinearChain` | Exec spine left to right, horizontal exec wires, column gap, root stays put |
+| `layout.core.Branch`, `layout.core.Sequence` | First output horizontal, later outputs stack below in pin order, crossings not worse than a tangled input |
+| `layout.core.DiamondReconvergence`, `layout.core.ExecLoop` | Merge lands right of its right-most predecessor; a cycle's back edge is the only backward wire |
+| `layout.core.ThreeEvents`, `layout.core.StackedTreesKeepSpinesStraight` | Every root laid out, trees stacked in root order; a short root stacked under another tree still keeps its taller exec chain horizontal |
+| `layout.core.SharedDataNode`, `layout.core.DataChainThreeDeep` | Data node placed once with its first consumer; one column per dependency level, aligned wires |
+| `layout.core.MaterialMathChain`, `layout.core.AnimPoseChain` | Data DAGs grow leftwards from a fixed output, barycenter order, crossings not worse than the old grid placement |
+| `layout.core.FixedObstacleAvoided`, `layout.core.OriginOnlyRepassMovesNothing` | Fixed nodes are obstacles only in the columns they stand in and never move; a repass that moves only nodes still at the origin (the material / anim rule) moves nothing |
+| `layout.core.MetricsScoreBrokenLayoutsWorse` | An overlapping copy scores worse in `GraphLayoutMetrics`; a swapped copy has a backward wire |
+| `layout.blueprint.EventGraphFixture` | K2 adapter: overlaps, backward wires, pin alignment (exec and pure chain), undo, reordered `Graph->Nodes`, idempotence |
+| `layout.blueprint.CompilePassArrangesEveryEntry` | `RunLayoutPass` lays out every created entry in a graph; kill switch `bEnableBpirLayoutPass=false` |
+| `layout.material.GrowsLeftFromOutput` | Material adapter: left of the output node, no overlap, aligned output wire, undo, repeatable |
+| `layout.anim.PoseChainGrowsLeftFromResult` | AGIR compile with `bRunLayout`: pose chain left of the output pose, aligned, no overlap |
+| `layout.controlrig.DataChainFlowsRight` | RigVM adapter: data flows left to right, aligned, no overlap, repeatable |
 
 ### 2.7 Authored-position coverage
 

@@ -141,7 +141,7 @@
 // MD_LightFunction material and the read-back set_light_function_atlas_compatible returns.
 #include "Handlers/Material/MaterialLightFunctionAtlas.h"
 #include "MGIR/MGIRExpressionUtils.h"
-#include "MGIR/MGIRLayoutEngine.h"
+#include "Layout/PwGraphLayoutMaterial.h"
 // FMaterialUpdateContext — compile_material scopes the master's PostEditChange inside one
 // so dependent material instances recache. MaterialCompileErrorCollector.h already pulls
 // MaterialShared.h in, but the -StrictIncludes -DisableUnity packaging build does not
@@ -4437,7 +4437,7 @@ REGISTER_RPC_HANDLER("material.authoring.set_material_layer_stack", "material.au
 // --------------------------------------------------------------------------
 // auto_layout
 // --------------------------------------------------------------------------
-// Standalone wrapper around FMGIRLayoutEngine::Layout. Exposes the same
+// Standalone wrapper around the material graph layout (PwGraphLayout). Exposes the same
 // auto-layout pass that material.compile_mgir runs under bRunLayout, without
 // the surrounding ForceRecompileForRendering / UpdateFromFunctionResource /
 // FMaterialUpdateContext machinery — layout-only edits do not invalidate
@@ -4447,7 +4447,7 @@ REGISTER_RPC_HANDLER("material.authoring.set_material_layer_stack", "material.au
 // returns METHOD_NOT_FOUND for material.authoring.auto_layout and the
 // regression test's InvokeHandler call returns false.
 REGISTER_RPC_HANDLER("material.authoring.auto_layout", "material.authoring",
-    "Re-flow expression positions on a UMaterial or UMaterialFunction by running FMGIRLayoutEngine::Layout. Only repositions expressions whose (x,y) are still (0,0); already-positioned nodes are untouched. Layout-only — does not recompile shaders.",
+    "Re-flow expression positions on a UMaterial or UMaterialFunction with the layered graph layout (grows leftwards from the material output). Only repositions expressions whose (x,y) are still (0,0); already-positioned nodes are untouched. Layout-only — does not recompile shaders.",
     RPC_PARAMS(
         MaterialHandlerUtils::MaterialAssetPathParamReq(TEXT("assetPath"), TEXT("path"), TEXT("Material or material-function asset path"))
     ))
@@ -4476,9 +4476,9 @@ REGISTER_RPC_HANDLER("material.authoring.auto_layout", "material.authoring",
 
     const double StartSeconds = FPlatformTime::Seconds();
     if (Material)
-        FMGIRLayoutEngine::Layout(Material);
+        PwGraphLayout::ArrangeMaterial(Material);
     else
-        FMGIRLayoutEngine::Layout(Function);
+        PwGraphLayout::ArrangeMaterialFunction(Function);
     const double DurationMs = (FPlatformTime::Seconds() - StartSeconds) * 1000.0;
 
     UObject* Asset = Target.AssetObject();

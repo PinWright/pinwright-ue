@@ -3,7 +3,7 @@
 #include "CRIR/CRIRCompiler.h"
 
 #include "CRIR/CRIRControlValueParser.h"
-#include "CRIR/CRIRLayoutEngine.h"
+#include "Layout/PwGraphLayoutRigVM.h"
 #include "CRIR/CRIROpcodes.h"
 #include "CRIR/CRIRParser.h"
 #include "CRIR/CRIRPinResolver.h"
@@ -1985,7 +1985,7 @@ FCRIRCompileResult FCRIRCompiler::Compile(FStringView Text, const FCRIRCompileOp
     {
         for (const FLayoutWork& Work : LayoutWork)
         {
-            FCRIRLayoutEngine::RunLayout(Work.Graph, Work.Nodes, Work.Controller);
+            PwGraphLayout::ArrangeRigVMGraph(Work.Graph, Work.Nodes, Work.Controller);
         }
     }
 

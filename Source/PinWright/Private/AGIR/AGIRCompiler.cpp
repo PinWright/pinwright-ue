@@ -4,12 +4,12 @@
 
 #include "AGIR/AGIRCliffHandlers.h"
 #include "AGIR/AGIRCompilerHelpers.h"
-#include "AGIR/AGIRLayoutEngine.h"
 #include "AGIR/AGIROpcodes.h"
 #include "AGIR/AGIRParser.h"
 #include "AGIR/AGIRPinResolver.h"
 #include "AGIR/AGIRTextEmitter.h"
 #include "IrCore/IrTextUtils.h"
+#include "Layout/PwGraphLayoutEdGraph.h"
 #include "AnimGraphNode_Base.h"
 #include "AnimGraphNode_CustomTransitionResult.h"
 #include "AnimGraphNode_Root.h"
@@ -1746,7 +1746,7 @@ FAGIRCompileResult FAGIRCompiler::Compile(FStringView Code, const FAGIRCompileOp
 
         if (Options.bRunLayout)
         {
-            FAGIRLayoutEngine::Layout(AnimBP);
+            PwGraphLayout::ArrangeAnimBlueprint(AnimBP);
         }
     }
 

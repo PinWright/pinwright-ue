@@ -489,7 +489,7 @@ BPIR round-trips function-level metadata and Blueprint function flags — it is 
 
 - **StandardMacros library loading** — For ForEachLoop / WhileLoop / Sequence-style macros, load `/Engine/EditorBlueprintResources/StandardMacros.StandardMacros` as a `UBlueprint` (NOT as a `UEdGraph`), then iterate `MacroLib->MacroGraphs` and match `GetFName() == TEXT("ForEachLoop")` (or other macro name) to get the underlying `UEdGraph*`. `FCodeNodeEmitter::GetStandardMacrosLibrary` + `FindMacroGraph` already encapsulate this — reuse those helpers rather than reloading the library.
 
-- **`UK2Node_ExecutionSequence`** uses lowercase-underscored internal pin names: `then_0`, `then_1`, `then_2`, … The display name in the Blueprint editor is `Then 0` / `Then 1` / `Then 2`, but all code (e.g. `WireNamedOutputToExec`, `FindPin`) must use the internal FName. The name is built by `UK2Node_ExecutionSequence::GetPinNameGivenIndex` at `C:/UE_5.6/Engine/Source/Editor/BlueprintGraph/Private/K2Node_ExecutionSequence.cpp:274-277` as `*FString::Printf(TEXT("%s_%d"), *UEdGraphSchema_K2::PN_Then.ToString(), Index)`. `then_0` is the primary same-row child per the FormatY same-row-marking rule; subsequent `then_N` stack below the primary with shared X.
+- **`UK2Node_ExecutionSequence`** uses lowercase-underscored internal pin names: `then_0`, `then_1`, `then_2`, … The display name in the Blueprint editor is `Then 0` / `Then 1` / `Then 2`, but all code (e.g. `WireNamedOutputToExec`, `FindPin`) must use the internal FName. The name is built by `UK2Node_ExecutionSequence::GetPinNameGivenIndex` at `C:/UE_5.6/Engine/Source/Editor/BlueprintGraph/Private/K2Node_ExecutionSequence.cpp:274-277` as `*FString::Printf(TEXT("%s_%d"), *UEdGraphSchema_K2::PN_Then.ToString(), Index)`. `then_0` is the pin-aligned (horizontal) child in the post-compile layout; subsequent `then_N` stack below it.
 
 ---
 
@@ -764,7 +764,7 @@ BPIR can carry `@(x, y)` metadata on node-backed instructions. The compiler choo
 
 | Body mode | Selection rule | Layout behavior |
 |-----------|----------------|-----------------|
-| Auto-layout | No primary emitted instruction in the body has an authored position | The existing layout pass formats the full created-node pool. Implicit helper/generated nodes are allowed and layout-managed. |
+| Auto-layout | No primary emitted instruction in the body has an authored position | The layout pass formats the full created-node pool. Implicit helper/generated nodes are allowed and layout-managed. |
 | Authored-position | Every primary emitted instruction in the body has an authored position | Primary nodes receive the authored `NodePosX` / `NodePosY` and are excluded from post-compile movement. Implicit visible helper/generated nodes are rejected. |
 | Invalid mixed mode | Only some primary emitted instructions in the body have authored positions | Compilation fails with a manual-placement diagnostic for that entry body. |
 
@@ -776,52 +776,39 @@ Decompilation appends ` @(x, y)` centrally for node-backed BPIR lines using the 
 
 ### When it runs
 
-`RunLayoutPass()` is called at three points, always on the success path only (after the error-check / rollback block, before `NodeCreationStack().Add()`):
+`RunLayoutPass()` is called at three points, always on the success path only (after the error-check / rollback block, before `NodeCreationStack().Add()`). Created nodes move; every other node in the graph is a fixed obstacle.
 
-| Method | Anchor | Scope |
-|--------|--------|-------|
-| `Compile()` | First event/entry/tunnel in created set | Main graph + `CreatedFunctionGraphs` + `CreatedMacroGraphs` |
-| `InsertCodeAfterNode()` | The insertion-point node (frozen) | Insertion-point's graph; existing nodes = frozen obstacles |
-| `CompileBodyIntoGraph()` | Owner of `EntryExecPin` | Target graph |
+| Method | Roots (in order) | Scope |
+|--------|------------------|-------|
+| `Compile()` | Every created event, function entry and entry tunnel, by position | Main graph + `CreatedFunctionGraphs` + `CreatedMacroGraphs` + interface graphs |
+| `InsertCodeAfterNode()` | The insertion-point node (fixed), then created entries | Insertion-point's graph |
+| `CompileBodyIntoGraph()` | Owner of `EntryExecPin`, then created entries | Target graph |
 
-`InsertCodeBeforeNode()` delegates to `InsertCodeAfterNode` and inherits its layout call.
+`InsertCodeBeforeNode()` delegates to `InsertCodeAfterNode` and inherits its layout call. Every root gets its own tree, so several entries compiled into one event graph are all laid out.
 
-#### Anchor fallback — upstream walk for insert mode
+#### Root fallback — upstream walk
 
-`RunLayoutPass` picks the layout anchor from the created-node set. In insert mode (`compile_bpir` wires a new Call into a pre-existing Event that is **not** in `CreatedGUIDs`), none of the created nodes is an event/entry/tunnel. When that happens, the pass walks upstream along input exec pins starting from `Pool[0]` to find the true exec root — even if that root is in the `Obstacles` set. On match, the upstream root is promoted from `Obstacles` into `Pool` and used as the Anchor. This preserves the same-row invariant for inserted chains (the chain lands on the same Y as the existing event, rather than the first created node anchoring itself and dragging downstream siblings off-row).
+When no created node roots a tree (a body compiled into an existing entry, with no hint), the pass walks upstream along exec inputs from the first created exec node to the chain's head and makes that head a movable root: the chain lands on the head's row, and the head itself is only snapped to the grid. With no created exec node at all (the generated helpers of an authored-position body), the first created node is the root and keeps its place. Undo stays safe: positions are written after `Modify()`.
 
-Undo remains safe across this promotion: UE transactions record `NodePosX`/`NodePosY` changes on any `Modify()`-ed node regardless of which transaction created that node, so repositioning an obstacle still round-trips through undo. See the [Blueprint wiki insertion sections](wiki-src/blueprint.md#blueprintinsert_bpir_at_node) for the insert-mode surface.
+### The formatter: `PwGraphLayout`
 
-### Pipeline phases (in order)
+The pass calls `PwGraphLayout::ArrangeEdGraph` (`Private/Layout/PwGraphLayoutEdGraph.*`), the K2 adapter of PinWright's engine-agnostic layered formatter (`Private/Layout/PwGraphLayout.*`). The same core lays out MGIR (`PwGraphLayoutMaterial`), AGIR (`ArrangeAnimBlueprint`) and CRIR (`PwGraphLayoutRigVM`) compiles. The core sees only nodes (key, position, size, movable flag, pin rows with side and kind) and wires (output pin to input pin); exec pins are *flow*, every other pin is *data*.
 
-1. **Save anchor position** — `FIntPoint(Anchor->NodePosX, Anchor->NodePosY)` captured before any repositioning.
-2. **BuildFormatXInfoMap** — dual-stack output/input alternating BFS over exec pins. Builds a parent/child tree (`FFormatXInfo`) with parent-priority resolution (prefer larger NodePosX for output direction, smaller for input). Cycle-safe. Capped at `TraversalIterationCap` (default 10,000).
-3. **FormatX pass 1** (`bUseClusterBounds=false`) — BFS through the info tree, assigning each node's X via `GetChildX(parent, child, direction)`. Root X untouched.
-4. **FormatParameterNodes** — for each impure node with pure data-pin ancestors, instantiate `FNodeLayoutParameterFormatter`. It arranges pure nodes in a left-side column (right edge aligned to consumer's left minus `PinPadX`, stacked vertically with `IntraParameterPadY`). Registers the union rect (consumer + pures) as that consumer's "cluster bounds". First-consumer-wins rule for shared pures (BFS order determines priority).
-5. **FormatX pass 2** (`bUseClusterBounds=true`) — rerun with cluster-extended parent bounds so parameter subtrees don't collide with the next impure column.
-6. **GetPinsOfSameHeight** — marks the first exec-output child of each parent as `bSameRowAsParent=true`. FormatY will keep these at parent Y.
-7. **FormatY** — DFS pre-order placement (`FormatY_Recursive`). Same-row child inherits parent Y; non-same-row siblings stack below with `NodePadY` gap. After each placement, a collision loop jumps the node below any overlapping already-placed node (cluster bounds used). Capped at `CollisionIterationCap` (default 30). **Critical invariant:** the collision loop MUST skip the child's direct parent — the same-row child necessarily overlaps its parent's cluster rect (the parent's pure-input column extends downward into the child's row), and treating the parent as a blocker pushes the same-row child down, producing a diagonal stair-step across what should be a linear exec chain. The guard is a single early-exit in the overlap test:
+1. **Trees.** Roots in order: the caller's explicit roots, then fixed nodes driving movable flow nodes, then movable flow sources, then flow nodes reached only through a cycle. Each tree grows depth-first along flow outputs in pin order; a wire into a node still on the DFS stack is a back edge and is ignored for layering.
+2. **Data blocks.** Each data-only node (no flow pins) is claimed by its first consumer in traversal order (tree, flow depth, DFS preorder). A consumer's block is laid out as columns to its left, one per dependency level (longest path), right-aligned, ordered by three barycenter sweeps. Leftover data nodes go to the fixed node they feed, else root their own tree (sinks first). This is what makes material and anim graphs grow leftwards from their output.
+3. **X.** Flow nodes take longest-path X with real widths: the maximum over flow predecessors of (right edge + `ColumnGapPx`), plus room for their own block. Re-converging paths land right of the right-most predecessor.
+4. **Y.** Each node is first put where its incoming wire is horizontal (pin aligned), then moved down to the first offset where it and its exec spine (the chain of first flow children, each pin-aligned) are free of everything already placed and every fixed node, so a short node never strands its taller first child against a neighbour. Every occupied rect sharing the node's X range blocks one interval of offsets; one sweep over the intervals sorted by their low end finds the free offset, so nothing overlaps and no push-down loop runs. A node's whole subtree is placed before its next sibling, so later siblings settle below. Blocks move as a unit. Roots keep X; the first root moves down only if it overlaps a fixed node itself, later roots also make room for their spine below earlier trees.
+5. **Grid.** X is snapped to `GridSnapPx`; Y is snapped wherever a node is not pin-aligned to its parent (an aligned node keeps the exact row).
 
-    ```cpp
-    // Inside FormatY_Recursive's TryBlock / overlap predicate:
-    if (Other == Info->LinkFromParent.GetFromNode()) return false;
-    ```
-
-    FormatX pass 2 places siblings far enough apart in X that no non-parent ancestor's cluster can reach a same-row grandchild's X range, so direct-parent-skip alone is sufficient; there is **no** slide-right mechanism.
-
-8. **ResetRelativeToAnchor** — translate entire pool by `SavedPos - CurrentAnchorPos` so the anchor lands back at its pre-format coordinates.
-9. **SnapToGrid** — directional rounding: Floor for input-direction children, Ceil for output-direction, Round for root. Y always Round. Grid = `InternalGridPx` (default 8).
-
-**Pipeline order in `FNodeLayoutEngine::Format` (current):** FormatX pass 1 → FormatParameterNodes → FormatX pass 2 → GetPinsOfSameHeight → FormatY → `ResolveConsumerClusterOverlaps` → ResetRelativeToAnchor → SnapToGrid. `ResolveConsumerClusterOverlaps` is a BFS-order secondary pass that translates each consumer cluster down past any already-placed sibling clusters it overlaps. Because placed consumers are never moved by later ones, the pass caches `GetCurrentClusterBounds` results in a parallel `TArray<FSlateRect>` alongside `PlacedConsumers`; without that cache the pass is O(N²) in Slate text measurements (see `lessons.md`).
+Every tie breaks on pin index, then node key (GUID), so the result never depends on `Graph->Nodes` order, and a second pass moves nothing. The core reports how many sizes were measured and how many estimated (all are estimated today).
 
 ### Size estimation
 
-Node sizes are estimated from `UEdGraphNode` data alone (no Slate widget required):
+`GraphLayout::FBlueprintNodeSizeAdapter` (`Private/Layout/BlueprintNodeSizeAdapter.*`, behind the `INodeSizeAdapter` seam) sizes a `UEdGraphNode` from its data alone (no widget):
 
-- **Title width**: measured via `FSlateFontMeasure` using `FAppStyle::Get().GetFontStyle("Graph.Node.NodeTitle")`.
-- **Pin label widths**: measured with `"Graph.Node.PinName"` font. Input and output columns paired row-by-row.
-- **Height**: `HeaderHeightPx + max(inputPins, outputPins) × PinRowHeightPx + footer`.
-- **Fallback**: when `FSlateApplication` is uninitialized (e.g. `-NullRHI` commandlet), falls back to char-count heuristic (8 px/char title, 7 px/char pin labels). Logs once at verbose level.
+- **Width**: the wider of the title (`Graph.Node.NodeTitle`) and the widest input label plus the widest output label (`Graph.Node.PinName`) plus a 40 px gutter, plus `HorizontalPaddingPx` per side; at least 160.
+- **Height**: `HeaderHeightPx + (rows + 0.5) × PinRowHeightPx`, rows = shown pins on the busier side (hidden and folded advanced pins do not count, nor an event's delegate output, which is drawn in the title bar at half the header height); at least 64. Pin `r` on a side sits at `HeaderHeightPx + (r + 0.5) × PinRowHeightPx`.
+- **Fallback**: without a Slate renderer (`-NullRHI`), 8 px per title character and 7 px per label character.
 
 ### Settings
 
@@ -833,31 +820,31 @@ Node sizes are estimated from `UEdGraphNode` data alone (no Slate widget require
 | `PinRowHeightPx` | 22 | Height per pin row |
 | `HeaderHeightPx` | 44 | Node header height |
 | `HorizontalPaddingPx` | 24 | Interior horizontal padding |
-| `NodePadX` | 80 | Gap between adjacent columns |
-| `NodePadY` | 48 | Gap between sibling nodes |
-| `PinPadX` | 32 | Gap between pure-node column and consumer |
-| `IntraParameterPadY` | 16 | Gap between stacked pure nodes |
-| `InternalGridPx` | 8 | Directional grid alignment |
-| `CollisionIterationCap` | 30 | Max nudge iterations per node |
-| `TraversalIterationCap` | 10000 | Max BFS iterations |
+| `ColumnGapPx` | 80 | Gap between a flow node and the next flow node or its data block |
+| `RowGapPx` | 48 | Vertical clearance between nodes sharing an X range |
+| `DataColumnGapPx` | 32 | Gap between data columns, and between a data column and its consumer |
+| `GridSnapPx` | 8 | Grid positions snap to |
 
 ### Key files
 
 | File | Role |
 |------|------|
-| `Private/Compiler/NodeLayoutEngine.h` | All types and function declarations |
-| `Private/Compiler/NodeLayoutEngine.cpp` | Engine, FormatX, FormatY, size estimation, grid snap |
-| `Private/Compiler/NodeLayoutParameterFormatter.h/.cpp` | Pure-node column formatter |
+| `Private/Layout/PwGraphLayout.h/.cpp` | Engine-agnostic core |
+| `Private/Layout/PwGraphLayoutEdGraph.h/.cpp` | K2 / anim / state-machine adapter, `ArrangeAnimBlueprint` |
+| `Private/Layout/PwGraphLayoutMaterial.h/.cpp` | Material and material-function adapter |
+| `Private/Layout/PwGraphLayoutRigVM.h/.cpp` | RigVM adapter |
+| `Private/Layout/BlueprintNodeSizeAdapter.h/.cpp` | `UEdGraphNode` size estimator |
 | `Public/BpirLayoutSettings.h` | UDeveloperSettings subclass |
 | `Private/Compiler/BpirCompiler.cpp` | `RunLayoutPass()` static helper + 3 call sites |
 
 ### Limitations
 
-- No knot node insertion (long wires accepted as-is).
-- No comment-box auto-padding (comments still use `FinalizeCommentBoxes` bounding-box math).
-- No helixing parameter style (only left-side column).
+- No reroute (knot) insertion; long wires are accepted as-is.
+- No comment-box re-fit (comments still use `FinalizeCommentBoxes` bounding-box math).
+- Sizes are estimated; measured widget sizes are not wired in yet.
+- A data node shared by consumers in different branches sits with the first by flow depth, so a wire to a shallower consumer in another branch can run backwards.
+- Placement is O(n²) in the nodes of a graph.
 - Only operates on nodes in `CreatedNodeGUIDs` — user-authored nodes are never repositioned.
-- No `SimpleRelativeFormatting` fast path — always runs full pipeline.
 
 ---
 

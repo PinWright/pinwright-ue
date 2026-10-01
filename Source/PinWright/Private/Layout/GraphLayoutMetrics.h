@@ -78,7 +78,7 @@ namespace GraphLayout
 
     // Compute layout-quality metrics for a flat node/edge set. Pure — no side effects, no engine
     // state. GridSizePx is the grid the layout snaps to (used for the Grid sub-score); pass the
-    // engine's grid (e.g. UBpirLayoutSettings::InternalGridPx) or a sensible default.
+    // engine's grid (e.g. UBpirLayoutSettings::GridSnapPx) or a sensible default.
     PINWRIGHT_API FGraphLayoutMetricsResult ComputeGraphLayoutMetrics(
         const TArray<FNodeRect>& Nodes,
         const TArray<FGraphEdge>& Edges,

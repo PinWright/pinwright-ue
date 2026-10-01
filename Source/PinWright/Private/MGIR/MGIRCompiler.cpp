@@ -12,7 +12,7 @@
 #include "MGIR/MGIRDynamicInputs.h"
 #include "MGIR/MGIRExpressionEmitter.h"
 #include "MGIR/MGIRHelpers.h"
-#include "MGIR/MGIRLayoutEngine.h"
+#include "Layout/PwGraphLayoutMaterial.h"
 #include "MGIR/MGIRMaterialAttributeUtils.h"
 #include "MGIR/MGIRMaterialProperties.h"
 #include "MGIR/MGIRParser.h"
@@ -514,7 +514,7 @@ FMGIRCompileResult FinalizeMaterial(UMaterial* Material, const FMGIRCompileOptio
 
     if (Options.bRunLayout)
     {
-        FMGIRLayoutEngine::Layout(Material);
+        PwGraphLayout::ArrangeMaterial(Material);
     }
 
     FMGIRCompileResult Finalized;
@@ -575,7 +575,7 @@ FMGIRCompileResult FinalizeMaterialFunction(UMaterialFunction* Function, const F
 
     if (Options.bRunLayout)
     {
-        FMGIRLayoutEngine::Layout(Function);
+        PwGraphLayout::ArrangeMaterialFunction(Function);
     }
 
     Function->PreEditChange(nullptr);

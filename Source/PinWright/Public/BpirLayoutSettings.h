@@ -32,33 +32,21 @@ public:
     UPROPERTY(EditAnywhere, config, Category = "BPIR Layout|Size Estimation", meta = (ClampMin = "0", UIMin = "0"))
     int32 HorizontalPaddingPx;
 
-    /** Horizontal gap (in pixels) between adjacent column bounds. */
+    /** Horizontal gap (in pixels) between a flow (exec) node and the next flow node or its data block. */
     UPROPERTY(EditAnywhere, config, Category = "BPIR Layout|Spacing", meta = (ClampMin = "0", UIMin = "0"))
-    int32 NodePadX;
+    int32 ColumnGapPx;
 
-    /** Vertical gap (in pixels) between sibling bounds within a column. */
+    /** Vertical clearance (in pixels) between any two nodes that share an X range. */
     UPROPERTY(EditAnywhere, config, Category = "BPIR Layout|Spacing", meta = (ClampMin = "0", UIMin = "0"))
-    int32 NodePadY;
+    int32 RowGapPx;
 
-    /** Gap (in pixels) between a pure node's right edge and its consumer's left edge. */
+    /** Gap (in pixels) between data (pure) node columns, and between a data column and its consumer. */
     UPROPERTY(EditAnywhere, config, Category = "BPIR Layout|Spacing", meta = (ClampMin = "0", UIMin = "0"))
-    int32 PinPadX;
+    int32 DataColumnGapPx;
 
-    /** Vertical gap (in pixels) between stacked pure nodes within a single parameter column. */
-    UPROPERTY(EditAnywhere, config, Category = "BPIR Layout|Spacing", meta = (ClampMin = "0", UIMin = "0"))
-    int32 IntraParameterPadY;
-
-    /** Internal grid (in pixels) used for directional rounding when aligning nodes. */
+    /** Grid (in pixels) node positions snap to. */
     UPROPERTY(EditAnywhere, config, Category = "BPIR Layout|Spacing", meta = (ClampMin = "1", UIMin = "1"))
-    int32 InternalGridPx;
-
-    /** Maximum iterations allowed in the FormatY pass when resolving collisions. */
-    UPROPERTY(EditAnywhere, config, Category = "BPIR Layout|Limits", meta = (ClampMin = "1", UIMin = "1"))
-    int32 CollisionIterationCap;
-
-    /** Maximum iterations allowed in the FormatX traversal before bailing out. */
-    UPROPERTY(EditAnywhere, config, Category = "BPIR Layout|Limits", meta = (ClampMin = "1", UIMin = "1"))
-    int32 TraversalIterationCap;
+    int32 GridSnapPx;
 
     virtual FName GetCategoryName() const override { return TEXT("Plugins"); }
     virtual FName GetSectionName() const override { return TEXT("BPIR Layout"); }

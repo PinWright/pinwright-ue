@@ -4,15 +4,15 @@
 // Blueprint node-size adapter (F-graph-layout-metrics-core).
 //
 // These exercise production code directly: GraphLayout::ComputeGraphLayoutMetrics and
-// GraphLayout::FBlueprintNodeSizeAdapter (which wraps BpirLayout::EstimateNodeSize). They fail if
-// the metrics util's overlap/crossing/score behaviour is reverted or the adapter seam is removed.
+// GraphLayout::FBlueprintNodeSizeAdapter (the UEdGraphNode size estimator). They fail if the
+// metrics util's overlap/crossing/score behaviour is reverted or the adapter seam is removed.
 
 #include "Misc/AutomationTest.h"
 
 #include "CompilerTestUtils.h"
 #include "Layout/GraphLayoutMetrics.h"
 #include "Layout/BlueprintNodeSizeAdapter.h"
-#include "Compiler/NodeLayoutEngine.h"
+#include "EdGraph/EdGraphPin.h"
 #include "BpirLayoutSettings.h"
 #include "K2Node_CustomEvent.h"
 #include "EdGraph/EdGraph.h"
@@ -113,8 +113,8 @@ bool FGraphLayoutMetricsEdgeCrossingsTest::RunTest(const FString& Parameters)
 }
 
 // ============================================================================
-// BlueprintNodeSizeAdapter — the adapter seam routes a UEdGraphNode through to the real
-// BpirLayout::EstimateNodeSize and returns the identical size.
+// BlueprintNodeSizeAdapter — the adapter seam sizes a UEdGraphNode from its shown pin rows and
+// places pin row centres inside that height.
 // ============================================================================
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGraphLayoutBlueprintAdapterTest,
@@ -143,11 +143,27 @@ bool FGraphLayoutBlueprintAdapterTest::RunTest(const FString& Parameters)
 
     const FBlueprintNodeSizeAdapter Adapter(*Settings);
     const FVector2D ViaAdapter = Adapter.EstimateNodeSize(Node);
-    const FVector2D Direct = BpirLayout::EstimateNodeSize(Node, *Settings);
 
-    TestEqual(TEXT("Adapter size matches the direct estimator (width)"), ViaAdapter.X, Direct.X);
-    TestEqual(TEXT("Adapter size matches the direct estimator (height)"), ViaAdapter.Y, Direct.Y);
+    int32 Inputs = 0;
+    int32 Outputs = 0;
+    for (const UEdGraphPin* Pin : Node->Pins)
+    {
+        if (FBlueprintNodeSizeAdapter::IsPinShown(Pin) && !FBlueprintNodeSizeAdapter::IsPinInTitle(Pin))
+        {
+            ++(Pin->Direction == EGPD_Input ? Inputs : Outputs);
+        }
+    }
+    const int32 Rows = FMath::Max(Inputs, Outputs);
+    TestTrue(TEXT("Custom event shows at least one pin row"), Rows >= 1);
+    TestEqual(TEXT("Height is header plus the shown pin rows"),
+        ViaAdapter.Y, FMath::Max(64.0, Settings->HeaderHeightPx + (Rows + 0.5) * Settings->PinRowHeightPx));
+    TestTrue(TEXT("Last pin row centre lies inside the node"), Adapter.PinOffsetY(Rows - 1) < ViaAdapter.Y);
+    TestEqual(TEXT("First pin row centre sits half a row under the header"),
+        Adapter.PinOffsetY(0), Settings->HeaderHeightPx + 0.5 * Settings->PinRowHeightPx);
     TestTrue(TEXT("Adapter width respects 160px minimum"), ViaAdapter.X >= 160.0);
+    const UEdGraphPin* Delegate = Node->FindPin(UK2Node_Event::DelegateOutputName, EGPD_Output);
+    TestTrue(TEXT("The event's delegate output sits in the title bar"),
+        Delegate && FBlueprintNodeSizeAdapter::IsPinInTitle(Delegate));
 
     // The seam must not crash on a null node; it returns the estimator's minimum bounds.
     const FVector2D NullSize = Adapter.EstimateNodeSize(nullptr);

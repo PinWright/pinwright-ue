@@ -11,7 +11,7 @@ MGIR is the bulk text path for material graph authoring, backed by `material.com
 - `text` - MGIR document text.
 - `mode` - `Append` clears the target graph before applying the document; `Extend` adds to existing graph state. `Extend` **only adds** - see [Extend cannot update an existing expression](#extend-cannot-update-an-existing-expression).
 - `context` - fallback target asset path for an unnamed entry block.
-- `runLayout` - assigns positions to expressions that do not specify `@(x, y)`.
+- `runLayout` - assigns positions to expressions that do not specify `@(x, y)`: the graph grows leftwards from the material output node (or from each function output), one column per dependency level, sized per node so nothing overlaps; positioned expressions stay put and are avoided.
 - `save` - writes modified assets to disk when true (default). When false, the graph remains an in-memory edit.
 - `waitForShaderCompile` - block until the shaders of every material this document wrote finish compiling, and report the real verdict rather than the non-blocking probe.
 

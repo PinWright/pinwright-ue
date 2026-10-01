@@ -15,7 +15,8 @@
 #include "Compiler/CodeFunctionResolver.h"
 #include "Compiler/BpirSharedConstants.h"
 #include "Compiler/BpirShapeMetadata.h"
-#include "Compiler/NodeLayoutEngine.h"
+#include "BpirLayoutSettings.h"
+#include "Layout/PwGraphLayoutEdGraph.h"
 #include "Decompiler/BpirInputKeyHelpers.h"
 #include "IrCore/IrTextUtils.h"
 #include "Decompiler/AnimGraphFamilyCheck.h"
@@ -1888,7 +1889,8 @@ static void ApplyEntryMetadataToMacroTunnel(
 // ----------------------------------------------------------------------------
 
 // Run the layout pass over nodes created during compilation. Handles multi-graph
-// compilations (main event graph + function/macro graphs).
+// compilations (main event graph + function/macro graphs). Created nodes move; every other
+// node is a fixed obstacle. Each created event, function entry and entry tunnel roots its own tree.
 static void RunLayoutPass(
     UBlueprint* Blueprint,
     const TArray<FGuid>& CreatedGUIDs,
@@ -1896,18 +1898,13 @@ static void RunLayoutPass(
     const TArray<UEdGraph*>& ExtraGraphs,
     UEdGraphNode* AnchorHint = nullptr)
 {
-    if (!Blueprint || CreatedGUIDs.Num() == 0)
+    const UBpirLayoutSettings* Settings = GetDefault<UBpirLayoutSettings>();
+    if (!Blueprint || CreatedGUIDs.Num() == 0 || !Settings || !Settings->bEnableBpirLayoutPass)
     {
         return;
     }
 
-    // Build a set of all GUIDs for quick lookup.
-    TSet<FGuid> GUIDSet;
-    GUIDSet.Reserve(CreatedGUIDs.Num());
-    for (const FGuid& G : CreatedGUIDs)
-    {
-        GUIDSet.Add(G);
-    }
+    const TSet<FGuid> GUIDSet(CreatedGUIDs);
 
     // Gather all unique graphs to process.
     TArray<UEdGraph*> Graphs;
@@ -1925,90 +1922,77 @@ static void RunLayoutPass(
 
     for (UEdGraph* Graph : Graphs)
     {
-        if (!Graph)
-        {
-            continue;
-        }
-
-        TArray<UEdGraphNode*> Pool;
-        TArray<UEdGraphNode*> Obstacles;
-        UEdGraphNode* Anchor = nullptr;
-
+        TArray<UEdGraphNode*> Created;
+        TArray<UEdGraphNode*> Roots;
         for (UEdGraphNode* Node : Graph->Nodes)
         {
-            if (!Node)
+            if (!Node || !GUIDSet.Contains(Node->NodeGuid))
             {
                 continue;
             }
-            if (GUIDSet.Contains(Node->NodeGuid))
+            Created.Add(Node);
+            // Entry tunnels only: macro instances and composites are tunnels too, but sit mid-chain.
+            const UK2Node_Tunnel* Tunnel = Cast<UK2Node_Tunnel>(Node);
+            if (Node->IsA<UK2Node_Event>() || Node->IsA<UK2Node_FunctionEntry>() || (Tunnel && !Tunnel->bCanHaveInputs))
             {
-                Pool.Add(Node);
-                // Use the first event/entry/tunnel node in the pool as anchor.
-                if (!Anchor)
-                {
-                    if (Node->IsA<UK2Node_Event>() || Node->IsA<UK2Node_CustomEvent>()
-                        || Node->IsA<UK2Node_FunctionEntry>() || Node->IsA<UK2Node_Tunnel>())
-                    {
-                        Anchor = Node;
-                    }
-                }
-            }
-            else
-            {
-                Obstacles.Add(Node);
+                Roots.Add(Node);
             }
         }
-
-        // Prefer the provided anchor hint when it's in this graph.
-        if (AnchorHint && Graph->Nodes.Contains(AnchorHint))
-        {
-            Anchor = AnchorHint;
-        }
-
-        if (Pool.Num() == 0)
+        if (Created.Num() == 0)
         {
             continue;
         }
-
-        // For pool nodes with no entry-type anchor, walk upstream along input exec
-        // pins to find the true exec root — even if that root is an existing obstacle.
-        if (!Anchor)
+        Roots.Sort([](const UEdGraphNode& A, const UEdGraphNode& B)
         {
-            Anchor = Pool[0];
-            TSet<UEdGraphNode*> WalkVisited;
-            UEdGraphNode* Cursor = Anchor;
-            while (Cursor && !WalkVisited.Contains(Cursor))
+            if (A.NodePosY != B.NodePosY) { return A.NodePosY < B.NodePosY; }
+            if (A.NodePosX != B.NodePosX) { return A.NodePosX < B.NodePosX; }
+            return A.NodeGuid.ToString() < B.NodeGuid.ToString();
+        });
+
+        // An insertion point leads; its chain grows from where it stands.
+        if (AnchorHint && Graph->Nodes.Contains(AnchorHint))
+        {
+            Roots.Remove(AnchorHint);
+            Roots.Insert(AnchorHint, 0);
+        }
+
+        // Nothing created roots a tree (a body compiled into an existing entry): walk upstream
+        // from the first created exec node to the chain's head and let it lead, snapped to the grid.
+        // With no exec node at all (helpers of an authored-position body), the first created node
+        // leads and keeps its place.
+        if (Roots.Num() == 0)
+        {
+            UEdGraphNode* const* Start = Created.FindByPredicate([](const UEdGraphNode* Node)
             {
-                WalkVisited.Add(Cursor);
-                UEdGraphNode* Upstream = nullptr;
-                for (UEdGraphPin* Pin : Cursor->Pins)
+                return GetDefault<UEdGraphSchema_K2>()->FindExecutionPin(*Node, EGPD_Input) != nullptr;
+            });
+            UEdGraphNode* Head = Start ? *Start : nullptr;
+            TSet<UEdGraphNode*> Seen;
+            while (Head && !Seen.Contains(Head))
+            {
+                Seen.Add(Head);
+                const UEdGraphPin* ExecIn = GetDefault<UEdGraphSchema_K2>()->FindExecutionPin(*Head, EGPD_Input);
+                UEdGraphNode* Upstream = (ExecIn && ExecIn->LinkedTo.Num() > 0 && ExecIn->LinkedTo[0])
+                    ? ExecIn->LinkedTo[0]->GetOwningNodeUnchecked()
+                    : nullptr;
+                if (!Upstream)
                 {
-                    if (!Pin || Pin->bHidden) continue;
-                    if (Pin->Direction != EGPD_Input) continue;
-                    if (Pin->PinType.PinCategory != UEdGraphSchema_K2::PC_Exec) continue;
-                    for (UEdGraphPin* Linked : Pin->LinkedTo)
-                    {
-                        if (Linked && Linked->GetOwningNodeUnchecked())
-                        {
-                            Upstream = Linked->GetOwningNodeUnchecked();
-                            break;
-                        }
-                    }
-                    if (Upstream) break;
+                    break;
                 }
-                if (!Upstream) break;
-                Cursor = Upstream;
+                Head = Upstream;
             }
-            if (Cursor && Cursor != Anchor)
+            if (!Start)
             {
-                Anchor = Cursor;
-                Pool.AddUnique(Cursor);
-                Obstacles.RemoveAll([Cursor](UEdGraphNode* N) { return N == Cursor; });
+                Roots.Add(Created[0]);
+            }
+            else if (Head != *Start)
+            {
+                Created.AddUnique(Head);
+                Roots.Add(Head);
             }
         }
 
-        BpirLayout::FNodeLayoutEngine LayoutEngine(Graph, Pool, Anchor, Obstacles);
-        LayoutEngine.Format();
+        PwGraphLayout::ArrangeEdGraph(Graph, Created, Roots, *Settings);
     }
 }
 

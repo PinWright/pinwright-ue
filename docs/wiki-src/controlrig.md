@@ -25,7 +25,7 @@ Out of scope: `curve`, `reference`, `connector`, and physics element kinds insid
 - `text` — CRIR document text.
 - `context` — target Control Rig Blueprint asset path. Must resolve to a `UControlRigBlueprint`.
 - `mode` — `replace` (default) clears every existing node in each named model before adding the CRIR's nodes. `extend` appends without clearing.
-- `runLayout` — auto-position nodes that lack `@(x, y)` (default true).
+- `runLayout` — auto-position nodes that lack `@(x, y)` (default true): execution flows left to right, data inputs sit in columns left of their consumer, and positioned nodes stay put and are avoided.
 - `save` — mark the asset dirty and save once compile finishes (default false).
 
 Returns `{ mode, assetPath, blocksCompiled, nodesCreated, warnings[] }`; `blocksCompiled` counts consumed top-level blocks (`rig_graph` + `rig_function` + `rig_hierarchy`), and `nodesCreated` counts graph instructions plus hierarchy element creations.

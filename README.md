@@ -1130,7 +1130,7 @@ Not listed: internal plumbing namespaces, not intended for direct use - `pipelin
 | `material.authoring.add_vertex_normal` | Add a VertexNormalWS node to a material |
 | `material.authoring.add_voronoi` | Add a Voronoi noise node to a material (Noise with VoronoiALU function) |
 | `material.authoring.add_world_position` | Add a WorldPosition node to a material |
-| `material.authoring.auto_layout` | Re-flow expression positions on a UMaterial or UMaterialFunction by running FMGIRLayoutEngine::Layout. |
+| `material.authoring.auto_layout` | Re-flow expression positions on a UMaterial or UMaterialFunction with the layered graph layout (grows leftwards from the material output). |
 | `material.authoring.clear_parameter_override` | Clear a single parameter override on a UMaterialInstanceConstant, returning it to the parent value. |
 | `material.authoring.compile_material` | Force a material to recompile its shaders synchronously. |
 | `material.authoring.configure_layer_blend` | Declare a landscape material's paintable TARGET LAYERS by writing them into a LandscapeLayerBlend node. |
