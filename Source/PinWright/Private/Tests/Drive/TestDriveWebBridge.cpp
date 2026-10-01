@@ -95,30 +95,6 @@ bool FDriveWebQueryJsInteractableSelectorTest::RunTest(const FString& Parameters
     return true;
 }
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveWebClickJsSnippetTest,
-    "PinWright.drive.web.ClickJsSnippet",
-    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
-bool FDriveWebClickJsSnippetTest::RunTest(const FString& Parameters)
-{
-    const FString Marker = TEXT("__MARK__");
-    const FString Js = FDriveWebBridge::BuildClickElementJs(Marker, TEXT("pw-7"));
-
-    TestTrue(TEXT("click snippet embeds the marker"), Js.Contains(Marker));
-    TestTrue(TEXT("click snippet targets the handle"), Js.Contains(TEXT("pw-7")));
-    TestTrue(TEXT("click snippet resolves by data-pw-id"), Js.Contains(TEXT("data-pw-id")));
-    TestTrue(TEXT("click snippet clicks the element"), Js.Contains(TEXT(".click(")));
-    TestTrue(TEXT("click snippet reports TARGET_NOT_FOUND"), Js.Contains(TEXT("TARGET_NOT_FOUND")));
-    TestTrue(TEXT("click snippet reports TARGET_CHANGED"), Js.Contains(TEXT("TARGET_CHANGED")));
-    TestTrue(TEXT("click snippet writes result via the hidden node"), Js.Contains(TEXT("__pwdrive_result")));
-    TestTrue(TEXT("click snippet base64-encodes the payload"), Js.Contains(TEXT("btoa")));
-
-    // A handle with a single quote must be escaped so the JS string literal stays well-formed.
-    const FString Escaped = FDriveWebBridge::BuildClickElementJs(Marker, TEXT("a'b"));
-    TestTrue(TEXT("click snippet escapes a quote in the handle"), Escaped.Contains(TEXT("a\\'b")));
-
-    return true;
-}
-
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveWebTypeJsSnippetTest,
     "PinWright.drive.web.TypeJsSnippet",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
@@ -141,124 +117,104 @@ bool FDriveWebTypeJsSnippetTest::RunTest(const FString& Parameters)
     return true;
 }
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveWebScrollJsSnippetTest,
-    "PinWright.drive.web.ScrollJsSnippet",
+// The web action verbs deliver real input at the point this snippet resolves, so the snippet is
+// where occlusion is refused: it must hit-test the center with elementFromPoint and report
+// TARGET_OCCLUDED when another element is on top, and it must dispatch no events of its own.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveWebLocateJsSnippetTest,
+    "PinWright.drive.web.LocateJsSnippet",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
-bool FDriveWebScrollJsSnippetTest::RunTest(const FString& Parameters)
+bool FDriveWebLocateJsSnippetTest::RunTest(const FString& Parameters)
 {
     const FString Marker = TEXT("__MARK__");
-    const FString Js = FDriveWebBridge::BuildScrollElementJs(Marker, TEXT("pw-5"), 120.0);
+    const FString Js = FDriveWebBridge::BuildLocateElementJs(Marker, TEXT("pw-7"), /*bFocus=*/false);
 
-    TestTrue(TEXT("scroll snippet embeds the marker"), Js.Contains(Marker));
-    TestTrue(TEXT("scroll snippet targets the handle"), Js.Contains(TEXT("pw-5")));
-    TestTrue(TEXT("scroll snippet resolves by data-pw-id"), Js.Contains(TEXT("data-pw-id")));
-    TestTrue(TEXT("scroll snippet dispatches a WheelEvent"), Js.Contains(TEXT("WheelEvent")));
-    TestTrue(TEXT("scroll snippet uses the 'wheel' event type"), Js.Contains(TEXT("'wheel'")));
-    TestTrue(TEXT("scroll snippet sets deltaY"), Js.Contains(TEXT("deltaY")));
-    TestTrue(TEXT("scroll snippet applies scrollBy as a fallback"), Js.Contains(TEXT("scrollBy")));
-    TestTrue(TEXT("scroll snippet reports TARGET_NOT_FOUND"), Js.Contains(TEXT("TARGET_NOT_FOUND")));
-    TestTrue(TEXT("scroll snippet writes result via the hidden node"), Js.Contains(TEXT("__pwdrive_result")));
-    TestTrue(TEXT("scroll snippet base64-encodes the payload"), Js.Contains(TEXT("btoa")));
+    TestTrue(TEXT("locate snippet embeds the marker"), Js.Contains(Marker));
+    TestTrue(TEXT("locate snippet resolves the handle by data-pw-id"),
+        Js.Contains(TEXT("pw-7")) && Js.Contains(TEXT("data-pw-id")));
+    TestTrue(TEXT("locate snippet hit-tests the center"), Js.Contains(TEXT("elementFromPoint")));
+    TestTrue(TEXT("locate snippet refuses a covered target"), Js.Contains(TEXT("TARGET_OCCLUDED")));
+    TestTrue(TEXT("locate snippet accepts a hit on a descendant"), Js.Contains(TEXT("el.contains(hit)")));
+    TestTrue(TEXT("locate snippet reports TARGET_NOT_FOUND"), Js.Contains(TEXT("TARGET_NOT_FOUND")));
+    TestTrue(TEXT("locate snippet reports TARGET_CHANGED"), Js.Contains(TEXT("TARGET_CHANGED")));
+    TestTrue(TEXT("locate snippet reports the viewport size for the screen mapping"),
+        Js.Contains(TEXT("innerWidth")) && Js.Contains(TEXT("innerHeight")));
+    TestFalse(TEXT("locate snippet dispatches no synthetic event"), Js.Contains(TEXT("dispatchEvent")));
+    TestFalse(TEXT("locate snippet does not click"), Js.Contains(TEXT(".click(")));
+    TestTrue(TEXT("unfocused locate does not focus"), Js.Contains(TEXT("var fo=false;")));
+    TestTrue(TEXT("focused locate focuses"),
+        FDriveWebBridge::BuildLocateElementJs(Marker, TEXT("pw-7"), /*bFocus=*/true).Contains(TEXT("var fo=true;")));
 
-    // A handle with a single quote must be escaped so the JS string literal stays well-formed.
-    const FString Escaped = FDriveWebBridge::BuildScrollElementJs(Marker, TEXT("a'b"), -1.0);
-    TestTrue(TEXT("scroll snippet escapes a quote in the handle"), Escaped.Contains(TEXT("a\\'b")));
-
+    const FString Escaped = FDriveWebBridge::BuildLocateElementJs(Marker, TEXT("a'b"), false);
+    TestTrue(TEXT("locate snippet escapes a quote in the handle"), Escaped.Contains(TEXT("a\\'b")));
     return true;
 }
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveWebHoverJsSnippetTest,
-    "PinWright.drive.web.HoverJsSnippet",
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveWebParseLocateResultTest,
+    "PinWright.drive.web.ParseLocateResult",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
-bool FDriveWebHoverJsSnippetTest::RunTest(const FString& Parameters)
+bool FDriveWebParseLocateResultTest::RunTest(const FString& Parameters)
 {
-    const FString Marker = TEXT("__MARK__");
-    const FString Js = FDriveWebBridge::BuildHoverElementJs(Marker, TEXT("pw-8"));
+    FDriveWebLocateResult Result;
+    TestTrue(TEXT("ok payload parses"), FDriveWebBridge::ParseLocateResult(
+        TEXT("{\"ok\":true,\"code\":\"OK\",\"x\":60,\"y\":30,\"vw\":640,\"vh\":400}"), Result));
+    TestTrue(TEXT("ok payload is ok"), Result.bOk);
+    TestTrue(TEXT("css point read"), NearlyEqual(Result.CssPoint.X, 60.0) && NearlyEqual(Result.CssPoint.Y, 30.0));
+    TestTrue(TEXT("css viewport read"), NearlyEqual(Result.CssViewport.X, 640.0) && NearlyEqual(Result.CssViewport.Y, 400.0));
 
-    TestTrue(TEXT("hover snippet embeds the marker"), Js.Contains(Marker));
-    TestTrue(TEXT("hover snippet targets the handle"), Js.Contains(TEXT("pw-8")));
-    TestTrue(TEXT("hover snippet resolves by data-pw-id"), Js.Contains(TEXT("data-pw-id")));
-    TestTrue(TEXT("hover snippet dispatches pointerover"), Js.Contains(TEXT("'pointerover'")));
-    TestTrue(TEXT("hover snippet dispatches mouseover"), Js.Contains(TEXT("'mouseover'")));
-    TestTrue(TEXT("hover snippet dispatches mouseenter"), Js.Contains(TEXT("'mouseenter'")));
-    TestTrue(TEXT("hover snippet dispatches mousemove"), Js.Contains(TEXT("'mousemove'")));
-    TestTrue(TEXT("hover snippet positions events at the center"), Js.Contains(TEXT("clientX")));
-    TestTrue(TEXT("hover snippet reports TARGET_NOT_FOUND"), Js.Contains(TEXT("TARGET_NOT_FOUND")));
-    TestTrue(TEXT("hover snippet writes result via the hidden node"), Js.Contains(TEXT("__pwdrive_result")));
-    TestTrue(TEXT("hover snippet base64-encodes the payload"), Js.Contains(TEXT("btoa")));
+    TestTrue(TEXT("occluded payload parses"), FDriveWebBridge::ParseLocateResult(
+        TEXT("{\"ok\":false,\"code\":\"TARGET_OCCLUDED\",\"x\":1,\"y\":2,\"occluder\":\"div#cover\"}"), Result));
+    TestFalse(TEXT("occluded payload is not ok"), Result.bOk);
+    TestEqual(TEXT("occluded code"), Result.Code, FString(TEXT("TARGET_OCCLUDED")));
+    TestEqual(TEXT("occluder named"), Result.Occluder, FString(TEXT("div#cover")));
 
-    // A handle with a single quote must be escaped so the JS string literal stays well-formed.
-    const FString Escaped = FDriveWebBridge::BuildHoverElementJs(Marker, TEXT("a'b"));
-    TestTrue(TEXT("hover snippet escapes a quote in the handle"), Escaped.Contains(TEXT("a\\'b")));
-
+    TestFalse(TEXT("malformed payload fails"), FDriveWebBridge::ParseLocateResult(TEXT("}{"), Result));
+    TestFalse(TEXT("malformed payload is not ok"), Result.bOk);
+    TestEqual(TEXT("malformed code"), Result.Code, FString(TEXT("MALFORMED_JSON")));
     return true;
 }
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveWebKeyJsSnippetTest,
-    "PinWright.drive.web.KeyJsSnippet",
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveWebCssToLocalTest,
+    "PinWright.drive.web.CssToLocal",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
-bool FDriveWebKeyJsSnippetTest::RunTest(const FString& Parameters)
+bool FDriveWebCssToLocalTest::RunTest(const FString& Parameters)
 {
-    const FString Marker = TEXT("__MARK__");
-    const FString Js = FDriveWebBridge::BuildKeyElementJs(
-        Marker, TEXT("pw-9"), TEXT("Enter"), TEXT("ctrl+shift"), TEXT("press"));
-
-    TestTrue(TEXT("key snippet embeds the marker"), Js.Contains(Marker));
-    TestTrue(TEXT("key snippet targets the handle"), Js.Contains(TEXT("pw-9")));
-    TestTrue(TEXT("key snippet resolves by data-pw-id"), Js.Contains(TEXT("data-pw-id")));
-    TestTrue(TEXT("key snippet focuses the resolved element"), Js.Contains(TEXT("focus(")));
-    TestTrue(TEXT("key snippet dispatches a KeyboardEvent"), Js.Contains(TEXT("KeyboardEvent")));
-    TestTrue(TEXT("key snippet carries the key"), Js.Contains(TEXT("Enter")));
-    TestTrue(TEXT("key snippet carries the raw modifier string"), Js.Contains(TEXT("ctrl+shift")));
-    TestTrue(TEXT("key snippet sets the ctrlKey flag"), Js.Contains(TEXT("ctrlKey")));
-    TestTrue(TEXT("key snippet sets the shiftKey flag"), Js.Contains(TEXT("shiftKey")));
-    // press => keydown + keypress + keyup.
-    TestTrue(TEXT("key snippet dispatches keydown"), Js.Contains(TEXT("'keydown'")));
-    TestTrue(TEXT("key snippet dispatches keypress"), Js.Contains(TEXT("'keypress'")));
-    TestTrue(TEXT("key snippet dispatches keyup"), Js.Contains(TEXT("'keyup'")));
-    TestTrue(TEXT("key snippet falls back to the active element when no handle"),
-        Js.Contains(TEXT("document.activeElement")));
-    TestTrue(TEXT("key snippet writes result via the hidden node"), Js.Contains(TEXT("__pwdrive_result")));
-    TestTrue(TEXT("key snippet base64-encodes the payload"), Js.Contains(TEXT("btoa")));
-
-    // The key and modifier inputs must be escaped for a JS string literal.
-    const FString Escaped = FDriveWebBridge::BuildKeyElementJs(
-        Marker, TEXT("a'b"), TEXT("x'y"), TEXT("ctrl'z"), TEXT("down"));
-    TestTrue(TEXT("key snippet escapes a quote in the handle"), Escaped.Contains(TEXT("a\\'b")));
-    TestTrue(TEXT("key snippet escapes a quote in the key"), Escaped.Contains(TEXT("x\\'y")));
-    TestTrue(TEXT("key snippet escapes a quote in the modifiers"), Escaped.Contains(TEXT("ctrl\\'z")));
-
+    // A 640x400 CSS page rendered into a 1280x800 widget (2x): every CSS pixel spans two local units.
+    const FVector2D Local = FDriveWebBridge::CssToLocal(FVector2D(60.0, 30.0), FVector2D(640.0, 400.0), FVector2D(1280.0, 800.0));
+    TestTrue(TEXT("css point scales by widget/viewport ratio"), NearlyEqual(Local.X, 120.0) && NearlyEqual(Local.Y, 60.0));
+    const FVector2D Same = FDriveWebBridge::CssToLocal(FVector2D(60.0, 30.0), FVector2D(0.0, 0.0), FVector2D(1280.0, 800.0));
+    TestTrue(TEXT("degenerate viewport leaves the point unscaled"), NearlyEqual(Same.X, 60.0) && NearlyEqual(Same.Y, 30.0));
     return true;
 }
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveWebDragJsSnippetTest,
-    "PinWright.drive.web.DragJsSnippet",
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveWebMapDomKeyTest,
+    "PinWright.drive.web.MapDomKey",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
-bool FDriveWebDragJsSnippetTest::RunTest(const FString& Parameters)
+bool FDriveWebMapDomKeyTest::RunTest(const FString& Parameters)
 {
-    const FString Marker = TEXT("__MARK__");
-    const FString Js = FDriveWebBridge::BuildDragElementJs(Marker, TEXT("pw-1"), TEXT("pw-2"));
+    FKey Key;
+    TCHAR Char = 0;
+    bool bShift = false;
 
-    TestTrue(TEXT("drag snippet embeds the marker"), Js.Contains(Marker));
-    TestTrue(TEXT("drag snippet targets the from handle"), Js.Contains(TEXT("pw-1")));
-    TestTrue(TEXT("drag snippet targets the to handle"), Js.Contains(TEXT("pw-2")));
-    TestTrue(TEXT("drag snippet resolves by data-pw-id"), Js.Contains(TEXT("data-pw-id")));
-    TestTrue(TEXT("drag snippet presses the mouse down"), Js.Contains(TEXT("'mousedown'")));
-    TestTrue(TEXT("drag snippet moves the mouse"), Js.Contains(TEXT("'mousemove'")));
-    TestTrue(TEXT("drag snippet releases the mouse"), Js.Contains(TEXT("'mouseup'")));
-    // Pointer-based handlers get the matching pointer sequence too.
-    TestTrue(TEXT("drag snippet dispatches pointerdown"), Js.Contains(TEXT("'pointerdown'")));
-    TestTrue(TEXT("drag snippet dispatches pointerup"), Js.Contains(TEXT("'pointerup'")));
-    TestTrue(TEXT("drag snippet reports TARGET_NOT_FOUND when a handle is missing"),
-        Js.Contains(TEXT("TARGET_NOT_FOUND")));
-    TestTrue(TEXT("drag snippet writes result via the hidden node"), Js.Contains(TEXT("__pwdrive_result")));
-    TestTrue(TEXT("drag snippet base64-encodes the payload"), Js.Contains(TEXT("btoa")));
+    TestTrue(TEXT("printable key maps"), FDriveWebBridge::MapDomKey(TEXT("x"), Key, Char, bShift));
+    TestTrue(TEXT("printable key is its physical key"), Key == EKeys::X);
+    TestTrue(TEXT("printable key carries its character"), Char == TEXT('x'));
+    TestFalse(TEXT("lowercase needs no shift"), bShift);
 
-    // Both handles must be escaped for a JS string literal.
-    const FString Escaped = FDriveWebBridge::BuildDragElementJs(Marker, TEXT("a'b"), TEXT("c'd"));
-    TestTrue(TEXT("drag snippet escapes a quote in the from handle"), Escaped.Contains(TEXT("a\\'b")));
-    TestTrue(TEXT("drag snippet escapes a quote in the to handle"), Escaped.Contains(TEXT("c\\'d")));
+    TestTrue(TEXT("uppercase maps"), FDriveWebBridge::MapDomKey(TEXT("X"), Key, Char, bShift));
+    TestTrue(TEXT("uppercase needs shift"), bShift);
 
+    TestTrue(TEXT("DOM arrow name maps"), FDriveWebBridge::MapDomKey(TEXT("ArrowDown"), Key, Char, bShift));
+    TestTrue(TEXT("ArrowDown is the Down key"), Key == EKeys::Down);
+    TestTrue(TEXT("an arrow carries no character"), Char == TCHAR(0));
+
+    TestTrue(TEXT("Enter maps"), FDriveWebBridge::MapDomKey(TEXT("Enter"), Key, Char, bShift));
+    TestTrue(TEXT("Enter carries a carriage return"), Char == TEXT('\r'));
+    TestTrue(TEXT("DOM Backspace maps to the BackSpace key"), FDriveWebBridge::MapDomKey(TEXT("Backspace"), Key, Char, bShift));
+    TestTrue(TEXT("Backspace key"), Key == EKeys::BackSpace);
+    TestTrue(TEXT("FKey name maps"), FDriveWebBridge::MapDomKey(TEXT("F5"), Key, Char, bShift));
+    TestTrue(TEXT("F5 key"), Key == EKeys::F5);
+
+    TestFalse(TEXT("unknown name is refused"), FDriveWebBridge::MapDomKey(TEXT("NotAKey"), Key, Char, bShift));
     return true;
 }
 

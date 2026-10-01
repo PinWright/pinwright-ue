@@ -11,6 +11,13 @@
   `InternalGridPx` are now `ColumnGapPx` / `RowGapPx` / `DataColumnGapPx` / `GridSnapPx`
   (`IntraParameterPadY`, `CollisionIterationCap` and `TraversalIterationCap` are gone); re-apply
   any customised values.
+- Changed: `drive.click`, `drive.hover`, `drive.scroll`, `drive.drag` and `drive.key` on
+  `surface=web` deliver real input through Slate into CEF (trusted events, CSS `:hover`, key
+  default actions) instead of dispatching synthetic DOM events, refuse a covered target with
+  `TARGET_OCCLUDED` (`occluding_element`), and settle and respond like the game surface
+  (`{ outcome, changed, settled, condition_met, elapsed_ms, ticks, input_path, diff }`, no more
+  `ok`/`code`). Web `drive.scroll` `delta` now means wheel notches with positive scrolling up, web
+  `drive.key` refuses unknown key names with `INVALID_KEY`, and `os_input` is refused on web.
 - Removed `system.run_ubt`. Build the editor target from a shell with the editor closed
   (`Build.bat`/`Build.sh ... -TargetType=Editor`), or use `system.live_coding_compile` to
   hot-patch a running editor.

@@ -2,6 +2,9 @@
 
 #include "Handlers/Drive/DriveWebBridge.h"
 
+#include "Handlers/Drive/DriveInput.h"
+#include "Handlers/ErrorCodes.h"
+
 #include "SWebBrowser.h"
 #include "WebBrowser.h"
 
@@ -418,56 +421,6 @@ void FDriveWebBridge::QueryElements(
         TimeoutSeconds);
 }
 
-void FDriveWebBridge::ClickElement(
-    UWebBrowser* Browser,
-    const FString& Handle,
-    TFunction<void(bool, FString)> OnDone,
-    double TimeoutSeconds)
-{
-    if (!Browser)
-    {
-        if (OnDone)
-        {
-            OnDone(false, TEXT("NO_BROWSER"));
-        }
-        return;
-    }
-
-    const FString Marker = MakeMarker();
-    const FString FullJs = BuildClickElementJs(Marker, Handle);
-
-    StartAwait(Browser, FullJs, Marker,
-        [OnDone = MoveTemp(OnDone)](bool bOk, const FString& Payload)
-        {
-            if (!bOk)
-            {
-                if (OnDone)
-                {
-                    OnDone(false, TEXT("TIMEOUT"));
-                }
-                return;
-            }
-
-            bool bActionOk = false;
-            FString Code;
-            FString Detail;
-            if (!FDriveWebBridge::ParseActionResult(Payload, bActionOk, Code, Detail))
-            {
-                if (OnDone)
-                {
-                    OnDone(false, TEXT("MALFORMED_JSON"));
-                }
-                return;
-            }
-
-            if (OnDone)
-            {
-                OnDone(bActionOk, Code.IsEmpty() ? Detail : Code);
-            }
-        },
-        TimeoutSeconds);
-}
-
 void FDriveWebBridge::TypeIntoElement(
     UWebBrowser* Browser,
     const FString& Handle,
@@ -479,7 +432,7 @@ void FDriveWebBridge::TypeIntoElement(
     {
         if (OnDone)
         {
-            OnDone(false, TEXT("NO_BROWSER"));
+            OnDone(false, ErrorCodes::ERR_WEB_BROWSER_NOT_FOUND);
         }
         return;
     }
@@ -494,7 +447,7 @@ void FDriveWebBridge::TypeIntoElement(
             {
                 if (OnDone)
                 {
-                    OnDone(false, TEXT("TIMEOUT"));
+                    OnDone(false, ErrorCodes::ERR_TIMEOUT);
                 }
                 return;
             }
@@ -506,7 +459,7 @@ void FDriveWebBridge::TypeIntoElement(
             {
                 if (OnDone)
                 {
-                    OnDone(false, TEXT("MALFORMED_JSON"));
+                    OnDone(false, ErrorCodes::ERR_MALFORMED_JSON);
                 }
                 return;
             }
@@ -519,207 +472,35 @@ void FDriveWebBridge::TypeIntoElement(
         TimeoutSeconds);
 }
 
-void FDriveWebBridge::ScrollElement(
+void FDriveWebBridge::LocateElement(
     UWebBrowser* Browser,
     const FString& Handle,
-    double Delta,
-    TFunction<void(bool, const FString&)> OnDone,
+    bool bFocus,
+    TFunction<void(const FDriveWebLocateResult&)> OnDone,
     double TimeoutSeconds)
 {
     if (!Browser)
     {
-        if (OnDone)
-        {
-            OnDone(false, TEXT("NO_BROWSER"));
-        }
+        FDriveWebLocateResult NoBrowser;
+        NoBrowser.Code = ErrorCodes::ERR_WEB_BROWSER_NOT_FOUND;
+        OnDone(NoBrowser);
         return;
     }
 
     const FString Marker = MakeMarker();
-    const FString FullJs = BuildScrollElementJs(Marker, Handle, Delta);
-
-    StartAwait(Browser, FullJs, Marker,
+    StartAwait(Browser, BuildLocateElementJs(Marker, Handle, bFocus), Marker,
         [OnDone = MoveTemp(OnDone)](bool bOk, const FString& Payload)
         {
+            FDriveWebLocateResult Result;
             if (!bOk)
             {
-                if (OnDone)
-                {
-                    OnDone(false, TEXT("TIMEOUT"));
-                }
-                return;
+                Result.Code = ErrorCodes::ERR_TIMEOUT;
             }
-
-            bool bActionOk = false;
-            FString Code;
-            FString Detail;
-            if (!FDriveWebBridge::ParseActionResult(Payload, bActionOk, Code, Detail))
+            else
             {
-                if (OnDone)
-                {
-                    OnDone(false, TEXT("MALFORMED_JSON"));
-                }
-                return;
+                FDriveWebBridge::ParseLocateResult(Payload, Result);
             }
-
-            if (OnDone)
-            {
-                OnDone(bActionOk, Code.IsEmpty() ? Detail : Code);
-            }
-        },
-        TimeoutSeconds);
-}
-
-void FDriveWebBridge::HoverElement(
-    UWebBrowser* Browser,
-    const FString& Handle,
-    TFunction<void(bool, const FString&)> OnDone,
-    double TimeoutSeconds)
-{
-    if (!Browser)
-    {
-        if (OnDone)
-        {
-            OnDone(false, TEXT("NO_BROWSER"));
-        }
-        return;
-    }
-
-    const FString Marker = MakeMarker();
-    const FString FullJs = BuildHoverElementJs(Marker, Handle);
-
-    StartAwait(Browser, FullJs, Marker,
-        [OnDone = MoveTemp(OnDone)](bool bOk, const FString& Payload)
-        {
-            if (!bOk)
-            {
-                if (OnDone)
-                {
-                    OnDone(false, TEXT("TIMEOUT"));
-                }
-                return;
-            }
-
-            bool bActionOk = false;
-            FString Code;
-            FString Detail;
-            if (!FDriveWebBridge::ParseActionResult(Payload, bActionOk, Code, Detail))
-            {
-                if (OnDone)
-                {
-                    OnDone(false, TEXT("MALFORMED_JSON"));
-                }
-                return;
-            }
-
-            if (OnDone)
-            {
-                OnDone(bActionOk, Code.IsEmpty() ? Detail : Code);
-            }
-        },
-        TimeoutSeconds);
-}
-
-void FDriveWebBridge::KeyElement(
-    UWebBrowser* Browser,
-    const FString& Handle,
-    const FString& Key,
-    const FString& Modifiers,
-    const FString& Action,
-    TFunction<void(bool, const FString&)> OnDone,
-    double TimeoutSeconds)
-{
-    if (!Browser)
-    {
-        if (OnDone)
-        {
-            OnDone(false, TEXT("NO_BROWSER"));
-        }
-        return;
-    }
-
-    const FString Marker = MakeMarker();
-    const FString FullJs = BuildKeyElementJs(Marker, Handle, Key, Modifiers, Action);
-
-    StartAwait(Browser, FullJs, Marker,
-        [OnDone = MoveTemp(OnDone)](bool bOk, const FString& Payload)
-        {
-            if (!bOk)
-            {
-                if (OnDone)
-                {
-                    OnDone(false, TEXT("TIMEOUT"));
-                }
-                return;
-            }
-
-            bool bActionOk = false;
-            FString Code;
-            FString Detail;
-            if (!FDriveWebBridge::ParseActionResult(Payload, bActionOk, Code, Detail))
-            {
-                if (OnDone)
-                {
-                    OnDone(false, TEXT("MALFORMED_JSON"));
-                }
-                return;
-            }
-
-            if (OnDone)
-            {
-                OnDone(bActionOk, Code.IsEmpty() ? Detail : Code);
-            }
-        },
-        TimeoutSeconds);
-}
-
-void FDriveWebBridge::DragElement(
-    UWebBrowser* Browser,
-    const FString& FromHandle,
-    const FString& ToHandle,
-    TFunction<void(bool, const FString&)> OnDone,
-    double TimeoutSeconds)
-{
-    if (!Browser)
-    {
-        if (OnDone)
-        {
-            OnDone(false, TEXT("NO_BROWSER"));
-        }
-        return;
-    }
-
-    const FString Marker = MakeMarker();
-    const FString FullJs = BuildDragElementJs(Marker, FromHandle, ToHandle);
-
-    StartAwait(Browser, FullJs, Marker,
-        [OnDone = MoveTemp(OnDone)](bool bOk, const FString& Payload)
-        {
-            if (!bOk)
-            {
-                if (OnDone)
-                {
-                    OnDone(false, TEXT("TIMEOUT"));
-                }
-                return;
-            }
-
-            bool bActionOk = false;
-            FString Code;
-            FString Detail;
-            if (!FDriveWebBridge::ParseActionResult(Payload, bActionOk, Code, Detail))
-            {
-                if (OnDone)
-                {
-                    OnDone(false, TEXT("MALFORMED_JSON"));
-                }
-                return;
-            }
-
-            if (OnDone)
-            {
-                OnDone(bActionOk, Code.IsEmpty() ? Detail : Code);
-            }
+            OnDone(Result);
         },
         TimeoutSeconds);
 }
@@ -795,24 +576,6 @@ FString FDriveWebBridge::BuildQueryElementsJs(const FString& Marker)
         *BuildResultWriterJs(M));
 }
 
-FString FDriveWebBridge::BuildClickElementJs(const FString& Marker, const FString& Handle)
-{
-    const FString M = EscapeJsString(Marker);
-    const FString H = EscapeJsString(Handle);
-    return FString::Printf(
-        TEXT("(function(){%s try{")
-        TEXT("var h='%s';")
-        TEXT("var el=document.querySelector('[data-pw-id=\"'+h+'\"]');")
-        TEXT("if(!el){__pwwrite({ok:false,code:'TARGET_NOT_FOUND'});return;}")
-        TEXT("var s=window.getComputedStyle(el);var r=el.getBoundingClientRect();")
-        TEXT("var visible=s.visibility!=='hidden'&&s.display!=='none'&&(r.width>0||r.height>0);")
-        TEXT("if(!visible){__pwwrite({ok:false,code:'TARGET_CHANGED',detail:'element not visible'});return;}")
-        TEXT("el.click();")
-        TEXT("__pwwrite({ok:true,code:'OK'});")
-        TEXT("}catch(e){__pwwrite({ok:false,code:'ACTION_FAILED',detail:String((e&&e.message)||e)});}})();"),
-        *BuildResultWriterJs(M), *H);
-}
-
 FString FDriveWebBridge::BuildTypeIntoElementJs(const FString& Marker, const FString& Handle, const FString& Text)
 {
     const FString M = EscapeJsString(Marker);
@@ -832,109 +595,32 @@ FString FDriveWebBridge::BuildTypeIntoElementJs(const FString& Marker, const FSt
         *BuildResultWriterJs(M), *H, *T);
 }
 
-FString FDriveWebBridge::BuildScrollElementJs(const FString& Marker, const FString& Handle, double Delta)
+FString FDriveWebBridge::BuildLocateElementJs(const FString& Marker, const FString& Handle, bool bFocus)
 {
     const FString M = EscapeJsString(Marker);
     const FString H = EscapeJsString(Handle);
-    // SanitizeFloat is locale-independent (always a '.') and yields a valid JS numeric literal.
-    const FString D = FString::SanitizeFloat(Delta);
     return FString::Printf(
         TEXT("(function(){%s try{")
-        TEXT("var h='%s';var d=%s;")
+        TEXT("var h='%s';var fo=%s;")
         TEXT("var el=document.querySelector('[data-pw-id=\"'+h+'\"]');")
         TEXT("if(!el){__pwwrite({ok:false,code:'TARGET_NOT_FOUND'});return;}")
         TEXT("var s=window.getComputedStyle(el);var r=el.getBoundingClientRect();")
-        TEXT("var visible=s.visibility!=='hidden'&&s.display!=='none'&&(r.width>0||r.height>0);")
-        TEXT("if(!visible){__pwwrite({ok:false,code:'TARGET_CHANGED',detail:'element not visible'});return;}")
-        TEXT("var cx=r.left+r.width/2;var cy=r.top+r.height/2;")
-        TEXT("el.dispatchEvent(new WheelEvent('wheel',{deltaY:d,clientX:cx,clientY:cy,bubbles:true,cancelable:true}));")
-        // Fallback so the scroll lands even with no wheel handler: scroll the element, then walk up
-        // to the nearest scrollable ancestor and scroll that too.
-        TEXT("if(el.scrollBy){el.scrollBy({top:d});}")
-        TEXT("var sc=el.parentElement;while(sc&&sc.scrollHeight<=sc.clientHeight){sc=sc.parentElement;}")
-        TEXT("if(sc&&sc.scrollBy){sc.scrollBy({top:d});}")
-        TEXT("__pwwrite({ok:true,code:'OK'});")
+        TEXT("if(s.visibility==='hidden'||s.display==='none'||(r.width<=0&&r.height<=0)){__pwwrite({ok:false,code:'TARGET_CHANGED',detail:'element not visible'});return;}")
+        TEXT("if(el.disabled){__pwwrite({ok:false,code:'TARGET_CHANGED',detail:'element disabled'});return;}")
+        TEXT("var vw=window.innerWidth,vh=window.innerHeight;")
+        TEXT("var cx=r.left+r.width/2,cy=r.top+r.height/2;")
+        // Real input lands at a viewport point, so bring an off-viewport center into view first.
+        TEXT("if(cx<0||cy<0||cx>=vw||cy>=vh){el.scrollIntoView({block:'center',inline:'center'});r=el.getBoundingClientRect();cx=r.left+r.width/2;cy=r.top+r.height/2;}")
+        // The page's own hit-test at the injection point: anything but the target (or one of its
+        // descendants) on top would receive the input instead.
+        TEXT("var hit=document.elementFromPoint(cx,cy);")
+        TEXT("if(!hit||(hit!==el&&!el.contains(hit))){")
+        TEXT("var d=hit?hit.tagName.toLowerCase()+(hit.id?'#'+hit.id:''):'';")
+        TEXT("__pwwrite({ok:false,code:'TARGET_OCCLUDED',x:cx,y:cy,vw:vw,vh:vh,occluder:d});return;}")
+        TEXT("if(fo){el.focus();}")
+        TEXT("__pwwrite({ok:true,code:'OK',x:cx,y:cy,vw:vw,vh:vh});")
         TEXT("}catch(e){__pwwrite({ok:false,code:'ACTION_FAILED',detail:String((e&&e.message)||e)});}})();"),
-        *BuildResultWriterJs(M), *H, *D);
-}
-
-FString FDriveWebBridge::BuildHoverElementJs(const FString& Marker, const FString& Handle)
-{
-    const FString M = EscapeJsString(Marker);
-    const FString H = EscapeJsString(Handle);
-    return FString::Printf(
-        TEXT("(function(){%s try{")
-        TEXT("var h='%s';")
-        TEXT("var el=document.querySelector('[data-pw-id=\"'+h+'\"]');")
-        TEXT("if(!el){__pwwrite({ok:false,code:'TARGET_NOT_FOUND'});return;}")
-        TEXT("var s=window.getComputedStyle(el);var r=el.getBoundingClientRect();")
-        TEXT("var visible=s.visibility!=='hidden'&&s.display!=='none'&&(r.width>0||r.height>0);")
-        TEXT("if(!visible){__pwwrite({ok:false,code:'TARGET_CHANGED',detail:'element not visible'});return;}")
-        TEXT("var cx=r.left+r.width/2;var cy=r.top+r.height/2;")
-        TEXT("var o={clientX:cx,clientY:cy,bubbles:true,cancelable:true};")
-        TEXT("el.dispatchEvent(new PointerEvent('pointerover',o));")
-        TEXT("el.dispatchEvent(new MouseEvent('mouseover',o));")
-        TEXT("el.dispatchEvent(new MouseEvent('mouseenter',o));")
-        TEXT("el.dispatchEvent(new MouseEvent('mousemove',o));")
-        TEXT("__pwwrite({ok:true,code:'OK'});")
-        TEXT("}catch(e){__pwwrite({ok:false,code:'ACTION_FAILED',detail:String((e&&e.message)||e)});}})();"),
-        *BuildResultWriterJs(M), *H);
-}
-
-FString FDriveWebBridge::BuildKeyElementJs(
-    const FString& Marker, const FString& Handle, const FString& Key,
-    const FString& Modifiers, const FString& Action)
-{
-    const FString M = EscapeJsString(Marker);
-    const FString H = EscapeJsString(Handle);
-    const FString K = EscapeJsString(Key);
-    const FString Mods = EscapeJsString(Modifiers);
-    const FString A = EscapeJsString(Action);
-    return FString::Printf(
-        TEXT("(function(){%s try{")
-        TEXT("var h='%s';var k='%s';var mods='%s';var act='%s';")
-        TEXT("var el;")
-        // Handle given: resolve + focus (missing handle is TARGET_NOT_FOUND). Else target the page's
-        // current focus / body so a bare key still lands somewhere sensible.
-        TEXT("if(h){el=document.querySelector('[data-pw-id=\"'+h+'\"]');")
-        TEXT("if(!el){__pwwrite({ok:false,code:'TARGET_NOT_FOUND'});return;}el.focus();}")
-        TEXT("else{el=document.activeElement||document.body;}")
-        TEXT("var ml=mods.toLowerCase().split('+');")
-        TEXT("var mo={ctrlKey:ml.indexOf('ctrl')>=0,shiftKey:ml.indexOf('shift')>=0,")
-        TEXT("altKey:ml.indexOf('alt')>=0,metaKey:ml.indexOf('meta')>=0};")
-        TEXT("function ev(t){return new KeyboardEvent(t,{key:k,bubbles:true,cancelable:true,")
-        TEXT("ctrlKey:mo.ctrlKey,shiftKey:mo.shiftKey,altKey:mo.altKey,metaKey:mo.metaKey});}")
-        TEXT("if(act==='down'){el.dispatchEvent(ev('keydown'));}")
-        TEXT("else if(act==='up'){el.dispatchEvent(ev('keyup'));}")
-        TEXT("else{el.dispatchEvent(ev('keydown'));el.dispatchEvent(ev('keypress'));el.dispatchEvent(ev('keyup'));}")
-        TEXT("__pwwrite({ok:true,code:'OK'});")
-        TEXT("}catch(e){__pwwrite({ok:false,code:'ACTION_FAILED',detail:String((e&&e.message)||e)});}})();"),
-        *BuildResultWriterJs(M), *H, *K, *Mods, *A);
-}
-
-FString FDriveWebBridge::BuildDragElementJs(const FString& Marker, const FString& FromHandle, const FString& ToHandle)
-{
-    const FString M = EscapeJsString(Marker);
-    const FString F = EscapeJsString(FromHandle);
-    const FString T = EscapeJsString(ToHandle);
-    return FString::Printf(
-        TEXT("(function(){%s try{")
-        TEXT("var fh='%s';var th='%s';")
-        TEXT("var fe=document.querySelector('[data-pw-id=\"'+fh+'\"]');")
-        TEXT("var te=document.querySelector('[data-pw-id=\"'+th+'\"]');")
-        TEXT("if(!fe||!te){__pwwrite({ok:false,code:'TARGET_NOT_FOUND'});return;}")
-        TEXT("var fr=fe.getBoundingClientRect();var tr=te.getBoundingClientRect();")
-        TEXT("var fx=fr.left+fr.width/2;var fy=fr.top+fr.height/2;")
-        TEXT("var tx=tr.left+tr.width/2;var ty=tr.top+tr.height/2;")
-        TEXT("function mev(el,t,x,y){el.dispatchEvent(new MouseEvent(t,{clientX:x,clientY:y,bubbles:true,cancelable:true}));}")
-        TEXT("function pev(el,t,x,y){el.dispatchEvent(new PointerEvent(t,{clientX:x,clientY:y,bubbles:true,cancelable:true}));}")
-        TEXT("pev(fe,'pointerdown',fx,fy);mev(fe,'mousedown',fx,fy);")
-        TEXT("pev(fe,'pointermove',fx,fy);mev(fe,'mousemove',fx,fy);")
-        TEXT("pev(te,'pointermove',tx,ty);mev(te,'mousemove',tx,ty);")
-        TEXT("pev(te,'pointerup',tx,ty);mev(te,'mouseup',tx,ty);")
-        TEXT("__pwwrite({ok:true,code:'OK'});")
-        TEXT("}catch(e){__pwwrite({ok:false,code:'ACTION_FAILED',detail:String((e&&e.message)||e)});}})();"),
-        *BuildResultWriterJs(M), *F, *T);
+        *BuildResultWriterJs(M), *H, bFocus ? TEXT("true") : TEXT("false"));
 }
 
 FString FDriveWebBridge::BuildCleanupJs()
@@ -986,7 +672,7 @@ bool FDriveWebBridge::ParseQueryResult(
     const TSharedPtr<FJsonObject> Root = DeserializeObject(Json);
     if (!Root.IsValid())
     {
-        OutError = TEXT("MALFORMED_JSON");
+        OutError = ErrorCodes::ERR_MALFORMED_JSON;
         return false;
     }
 
@@ -1055,12 +741,80 @@ bool FDriveWebBridge::ParseActionResult(const FString& Json, bool& bOutOk, FStri
     const TSharedPtr<FJsonObject> Root = DeserializeObject(Json);
     if (!Root.IsValid())
     {
-        OutCode = TEXT("MALFORMED_JSON");
+        OutCode = ErrorCodes::ERR_MALFORMED_JSON;
         return false;
     }
 
     bOutOk = ReadBool(Root, TEXT("ok"), false);
     OutCode = ReadStr(Root, TEXT("code"));
     OutDetail = ReadStr(Root, TEXT("detail"));
+    return true;
+}
+
+bool FDriveWebBridge::ParseLocateResult(const FString& Json, FDriveWebLocateResult& OutResult)
+{
+    OutResult = FDriveWebLocateResult();
+    const TSharedPtr<FJsonObject> Root = DeserializeObject(Json);
+    if (!Root.IsValid())
+    {
+        OutResult.Code = ErrorCodes::ERR_MALFORMED_JSON;
+        return false;
+    }
+
+    OutResult.bOk = ReadBool(Root, TEXT("ok"), false);
+    OutResult.Code = ReadStr(Root, TEXT("code"));
+    OutResult.Detail = ReadStr(Root, TEXT("detail"));
+    OutResult.Occluder = ReadStr(Root, TEXT("occluder"));
+    OutResult.CssPoint = FVector2D(ReadNum(Root, TEXT("x")), ReadNum(Root, TEXT("y")));
+    OutResult.CssViewport = FVector2D(ReadNum(Root, TEXT("vw")), ReadNum(Root, TEXT("vh")));
+    return true;
+}
+
+FVector2D FDriveWebBridge::CssToLocal(const FVector2D& CssPoint, const FVector2D& CssViewport, const FVector2D& LocalSize)
+{
+    if (CssViewport.X <= 0.0 || CssViewport.Y <= 0.0)
+    {
+        return CssPoint;
+    }
+    return FVector2D(CssPoint.X * LocalSize.X / CssViewport.X, CssPoint.Y * LocalSize.Y / CssViewport.Y);
+}
+
+bool FDriveWebBridge::MapDomKey(const FString& DomKey, FKey& OutKey, TCHAR& OutChar, bool& bOutShift)
+{
+    OutKey = FKey();
+    OutChar = 0;
+    bOutShift = false;
+
+    // A printable key: its physical key (when a US-layout key types it) plus the character itself.
+    if (DomKey.Len() == 1)
+    {
+        const FDriveCharKeyMapping Mapping = FDriveInput::MapCharToKey(DomKey[0]);
+        OutKey = Mapping.Key;
+        bOutShift = Mapping.bShift;
+        OutChar = DomKey[0];
+        return true;
+    }
+
+    // DOM names that differ from the FKey name; everything else (Enter, Tab, Escape, Backspace,
+    // Delete, Home, End, PageUp, PageDown, Insert, F1..F12, SpaceBar) is the FKey name already,
+    // and FName matching is case-insensitive.
+    FString Name = DomKey;
+    if (DomKey == TEXT("ArrowUp")) { Name = TEXT("Up"); }
+    else if (DomKey == TEXT("ArrowDown")) { Name = TEXT("Down"); }
+    else if (DomKey == TEXT("ArrowLeft")) { Name = TEXT("Left"); }
+    else if (DomKey == TEXT("ArrowRight")) { Name = TEXT("Right"); }
+
+    const FKey Key(*Name);
+    if (!EKeys::GetKeyDetails(Key).IsValid())
+    {
+        return false;
+    }
+    OutKey = Key;
+    // The characters the platform layer delivers alongside these keys (Linux and Windows both
+    // send '\r' for Enter and '\b' for Backspace); page default actions such as activating a
+    // focused button on Enter depend on them.
+    if (Key == EKeys::Enter) { OutChar = TEXT('\r'); }
+    else if (Key == EKeys::BackSpace) { OutChar = TEXT('\b'); }
+    else if (Key == EKeys::SpaceBar) { OutChar = TEXT(' '); }
     return true;
 }

@@ -6,8 +6,10 @@
 #include "Handlers/Drive/DriveConditionEval.h"
 #include "Handlers/Drive/DriveFingerprint.h"        // FDriveDiff, FDriveChangeDetector
 #include "Handlers/Drive/DriveHandlerCommon.h"      // GetJournalDelta
+#include "Handlers/Drive/DriveInput.h"
 #include "Handlers/Drive/DriveJson.h"
 #include "Handlers/Drive/DriveSetOfMarkRenderer.h"
+#include "Handlers/Drive/DriveSettleDriver.h"
 #include "Handlers/Drive/DriveTypes.h"
 #include "Handlers/Drive/DriveWebBridge.h"
 #include "Handlers/HandlerContext.h"
@@ -15,10 +17,14 @@
 
 #include "Containers/Ticker.h"
 #include "Dom/JsonObject.h"
+#include "Framework/Application/SlateApplication.h"
+#include "GenericPlatform/ICursor.h"
+#include "Input/HittestGrid.h"
 #include "HAL/PlatformTime.h"
+#include "Layout/WidgetPath.h"
 #include "Misc/DateTime.h"
-
-class UWebBrowser;
+#include "WebBrowser.h"
+#include "Widgets/SWindow.h"
 
 // File-local helpers in a uniquely-named namespace (not anonymous): the plugin's Unity
 // build merges translation units, and a distinct namespace keeps these from colliding with
@@ -93,89 +99,455 @@ namespace DriveWebHandlersLocal
                 BrowserIndex));
     }
 
-    // Finish a web action (click/type): resolve { ok, code, diff, observation? }. The diff and
-    // observation are attached only when the post-action re-observe succeeded. The diff defaults
-    // to the compact summary (counts + 15-handle samples); bFullDiff swaps in the full lists.
-    // The observation is opt-in (ObserveMode defaults to none).
-    void FinishWebAction(
-        const TSharedRef<FAsyncResponseToken>& Token,
-        const FString& Code,
-        bool bReObserveOk,
-        const TArray<FDriveElement>& Baseline,
-        const TArray<FDriveElement>& Final,
-        EDriveObserveMode ObserveMode,
-        int32 MarkCap,
-        bool bFullDiff)
+    // What every web action verb reads from Ctx besides its own input params.
+    struct FWebActionParams
     {
-        TSharedPtr<FJsonObject> Resp = MakeShared<FJsonObject>();
-        Resp->SetBoolField(TEXT("ok"), true);
-        Resp->SetStringField(TEXT("code"), Code.IsEmpty() ? FString(TEXT("OK")) : Code);
+        FDriveSettleConfig Config;
+        EDriveObserveMode ObserveMode = EDriveObserveMode::None;
+        int32 MarkCap = 50;
+        bool bFullDiff = false;
+        bool bIncludeJournal = false;
+        uint64 JournalSince = 0;
+        // Echoed as `input_path`: "slate" for real input routed through Slate into CEF, "dom" for
+        // drive.type's DOM value write.
+        FString InputPath;
+    };
 
-        if (bReObserveOk)
+    // A refused or failed injection, sent as the action's error. An empty Code means the input
+    // was delivered.
+    struct FWebInjectOutcome
+    {
+        FString Code;
+        FString Message;
+        TSharedPtr<FJsonObject> Details;
+    };
+    using FWebInjectDone = TFunction<void(const FWebInjectOutcome&)>;
+    using FWebInject = TFunction<void(UWebBrowser* Browser, FWebInjectDone Done)>;
+
+    // Select the browser and read the shared action params. Returns null AFTER sending the error
+    // (no live browser, malformed wait_for).
+    UWebBrowser* ReadWebAction(FHandlerContext& Ctx, const TCHAR* InputPath, FWebActionParams& Out)
+    {
+        const int32 BrowserIndex = Ctx.GetInt(TEXT("browser_index"), 0);
+        UWebBrowser* Browser = FDriveWebBridge::SelectBrowser(BrowserIndex);
+        if (!Browser)
         {
-            const FDriveDiff Diff = FDriveChangeDetector::Diff(Baseline, Final);
-            Resp->SetObjectField(TEXT("diff"),
-                bFullDiff ? FDriveJson::WriteDiffFull(Diff) : FDriveJson::WriteDiffSummary(Diff));
-
-            if (TSharedPtr<FJsonObject> Observation = BuildWebObservationJson(Final, ObserveMode, MarkCap))
-            {
-                Resp->SetObjectField(TEXT("observation"), Observation);
-            }
+            SendNoBrowser(Ctx, BrowserIndex);
+            return nullptr;
         }
-
-        Token->SendSuccess(Resp);
+        if (!FDriveJson::ParseSettleConfig(Ctx.GetRawPayload(), Out.Config))
+        {
+            Ctx.SendError(ErrorCodes::ERR_CONDITION_INVALID,
+                TEXT("The 'wait_for' object has an unrecognized 'type', or has no 'target' (every type but journal_severity needs one)."));
+            return nullptr;
+        }
+        const TOptional<int32> TimeoutMs = Ctx.GetIntFirstOf({ TEXT("timeout_ms") });
+        if (TimeoutMs.IsSet())
+        {
+            Out.Config.WaitForTimeoutMs = TimeoutMs.GetValue();
+        }
+        Out.ObserveMode = FDriveActionCommon::ParseObserveMode(Ctx);
+        Out.MarkCap = Ctx.GetInt(TEXT("mark_cap"), 50);
+        Out.bFullDiff = Ctx.GetBool(TEXT("full_diff"), false);
+        Out.bIncludeJournal = Ctx.GetBool(TEXT("include_journal"), false);
+        const int32 SinceRaw = Ctx.GetInt(TEXT("journal_since"), 0);
+        Out.JournalSince = SinceRaw > 0 ? static_cast<uint64>(SinceRaw) : 0;
+        Out.InputPath = InputPath;
+        return Browser;
     }
 
-    // The injection step of a web action: a click or a type, both expressed as one async
-    // bridge call resolving (bOk, code). Click and type differ only in this lambda.
-    using FWebInject = TFunction<void(UWebBrowser* Browser, TFunction<void(bool /*bOk*/, FString /*Code*/)> OnInjected)>;
-
-    // Shared web action driver implementing the WEB SETTLE MODEL: query a pre-action baseline,
-    // inject (click/type), then re-query the DOM exactly once and resolve { ok, code, diff,
-    // observation }. A bridge injection failure resolves the token with the bridge's own code
-    // (TARGET_NOT_FOUND / TARGET_CHANGED / ACTION_FAILED / TIMEOUT / MALFORMED_JSON). Browser is
-    // captured for the bounded multi-hop round-trip.
-    void RunWebActionWithSettle(
-        const TSharedRef<FAsyncResponseToken>& Token,
-        UWebBrowser* Browser,
-        EDriveObserveMode ObserveMode,
-        int32 MarkCap,
-        bool bFullDiff,
-        FWebInject Inject)
+    // os_input drives the X server, not a page; refuse it rather than accept and ignore it.
+    bool RefuseOsInput(FHandlerContext& Ctx)
     {
-        FDriveWebBridge::QueryElements(Browser,
-            [Token, Browser, ObserveMode, MarkCap, bFullDiff, Inject = MoveTemp(Inject)]
-            (bool bBaselineOk, TArray<FDriveElement> Baseline)
+        if (!Ctx.GetBool(TEXT("os_input"), false))
+        {
+            return false;
+        }
+        Ctx.SendError(ErrorCodes::ERR_INVALID_ARGUMENT,
+            TEXT("os_input is not supported on surface=web; web input is routed through Slate into the browser."));
+        return true;
+    }
+
+    // The error for a locate that did not resolve to a deliverable point.
+    FWebInjectOutcome LocateFailure(const FString& Handle, const FDriveWebLocateResult& Located)
+    {
+        FWebInjectOutcome Out;
+        Out.Code = Located.Code.IsEmpty() ? FString(ErrorCodes::ERR_ACTION_FAILED) : Located.Code;
+        if (Out.Code == ErrorCodes::ERR_TARGET_OCCLUDED)
+        {
+            Out.Details = MakeShared<FJsonObject>();
+            Out.Details->SetStringField(TEXT("handle"), Handle);
+            Out.Details->SetNumberField(TEXT("x"), Located.CssPoint.X);
+            Out.Details->SetNumberField(TEXT("y"), Located.CssPoint.Y);
+            Out.Details->SetStringField(TEXT("occluding_element"), Located.Occluder);
+            Out.Message = Located.Occluder.IsEmpty()
+                ? FString::Printf(TEXT("No page element is under element '%s''s center (%.0f, %.0f CSS px), so the input would land nowhere. Nothing was injected."),
+                    *Handle, Located.CssPoint.X, Located.CssPoint.Y)
+                : FString::Printf(TEXT("Element '%s' is covered at its center (%.0f, %.0f CSS px) by '%s', which would receive the input instead. Nothing was injected."),
+                    *Handle, Located.CssPoint.X, Located.CssPoint.Y, *Located.Occluder);
+            return Out;
+        }
+        Out.Message = FString::Printf(TEXT("Web action on '%s' did not apply (%s)%s%s"), *Handle, *Out.Code,
+            Located.Detail.IsEmpty() ? TEXT(".") : TEXT(": "), *Located.Detail);
+        return Out;
+    }
+
+    // The desktop point Slate input must hit to reach a located page point.
+    FVector2D LocatedToScreen(UWebBrowser* Browser, const FDriveWebLocateResult& Located)
+    {
+        const FGeometry Geometry = Browser->GetCachedGeometry();
+        const FVector2D Local = FDriveWebBridge::CssToLocal(
+            Located.CssPoint, Located.CssViewport, FVector2D(Geometry.GetLocalSize()));
+        return FVector2D(Geometry.LocalToAbsolute(Local));
+    }
+
+    // The Slate widget path a pointer event at ScreenPos is meant for, by Slate's own window order
+    // and the window's hit-test grid. The platform's window-under-cursor is deliberately not
+    // consulted: it follows a pointer warp only once the platform reports the enter (a frame or two
+    // later on Linux), and under -RenderOffScreen's dummy SDL driver it never does, staying on
+    // whichever window first took mouse focus.
+    FWidgetPath SlatePathAt(const FVector2D& ScreenPos)
+    {
+        const TSharedPtr<SWindow> Window = FDriveInput::TopWindowAtPoint(ScreenPos);
+        if (!Window.IsValid())
+        {
+            return FWidgetPath();
+        }
+        FSlateApplication& SlateApp = FSlateApplication::Get();
+        TArray<FWidgetAndPointer> Bubble = Window->GetHittestGrid().GetBubblePath(
+            ScreenPos, SlateApp.GetCursorRadius(), /*bIgnoreEnabledStatus=*/false, SlateApp.GetUserIndexForMouse());
+        return FWidgetPath(Bubble);
+    }
+
+    bool PathReaches(const FWidgetPath& Path, const SWidget* Widget)
+    {
+        for (int32 Index = 0; Index < Path.Widgets.Num(); ++Index)
+        {
+            if (&Path.Widgets[Index].Widget.Get() == Widget)
             {
-                TArray<FDriveElement> BaselineElements = bBaselineOk ? MoveTemp(Baseline) : TArray<FDriveElement>();
+                return true;
+            }
+        }
+        return false;
+    }
 
-                Inject(Browser,
-                    [Token, Browser, ObserveMode, MarkCap, bFullDiff, BaselineElements](bool bInjectOk, FString Code)
-                    {
-                        if (!bInjectOk)
-                        {
-                            // Forward the bridge's specific code unchanged; ACTION_FAILED is a
-                            // defensive fallback if the bridge somehow returned an empty code.
-                            Token->SendError(
-                                Code.IsEmpty() ? FString(ErrorCodes::ERR_ACTION_FAILED) : Code,
-                                FString::Printf(TEXT("Web action did not apply (%s)."),
-                                    Code.IsEmpty() ? TEXT("ACTION_FAILED") : *Code));
-                            return;
-                        }
+    // Slate-level occlusion: the point belongs to another window, or to a widget drawn over the
+    // browser inside its own window.
+    FWebInjectOutcome SlateOccluded(const FString& Handle, const FVector2D& ScreenPos, const FWidgetPath& Path,
+        const TSharedPtr<SWindow>& BrowserWindow)
+    {
+        FWebInjectOutcome Out;
+        Out.Code = ErrorCodes::ERR_TARGET_OCCLUDED;
+        Out.Details = MakeShared<FJsonObject>();
+        Out.Details->SetStringField(TEXT("handle"), Handle);
+        Out.Details->SetNumberField(TEXT("x"), ScreenPos.X);
+        Out.Details->SetNumberField(TEXT("y"), ScreenPos.Y);
+        const TSharedPtr<SWindow> Under = Path.IsValid() ? TSharedPtr<SWindow>(Path.GetWindow()) : nullptr;
+        if (!Under.IsValid())
+        {
+            Out.Message = FString::Printf(TEXT("No window accepts pointer input at element '%s''s center (%.0f, %.0f), so the input would land nowhere."),
+                *Handle, ScreenPos.X, ScreenPos.Y);
+        }
+        else if (Under != BrowserWindow)
+        {
+            const FString Title = Under->GetTitle().ToString();
+            Out.Details->SetStringField(TEXT("occluding_window"), Title);
+            Out.Message = FString::Printf(TEXT("Element '%s' is covered at (%.0f, %.0f) by window '%s', which would receive the input instead. Close or move that window (drive.list_windows lists it), then retry."),
+                *Handle, ScreenPos.X, ScreenPos.Y, *Title);
+        }
+        else
+        {
+            const FString Widget = Path.Widgets.Last().Widget->GetTypeAsString();
+            Out.Details->SetStringField(TEXT("occluding_widget"), Widget);
+            Out.Message = FString::Printf(TEXT("Element '%s' is covered at (%.0f, %.0f) by a %s drawn over the web browser, which would receive the input instead."),
+                *Handle, ScreenPos.X, ScreenPos.Y, *Widget);
+        }
+        return Out;
+    }
 
-                        // Single post-action re-observe (the web settle: inject then async
-                        // re-query, NOT a per-tick fingerprint loop).
-                        FDriveWebBridge::QueryElements(Browser,
-                            [Token, Code, BaselineElements, ObserveMode, MarkCap, bFullDiff]
-                            (bool bReObserveOk, TArray<FDriveElement> Final)
-                            {
-                                FinishWebAction(Token, Code, bReObserveOk, BaselineElements,
-                                    Final, ObserveMode, MarkCap, bFullDiff);
-                            },
-                            GQueryTimeoutSeconds);
-                    });
+    // Real pointer input routed along one Slate path: FSlateApplication's Route* entry points, the
+    // same routing ProcessMouse* performs once it has located the window, so the browser widget
+    // forwards it to CEF exactly as it does a physical mouse. The platform cursor is moved along so
+    // Slate's later synthesized moves agree with where the input went.
+    class FWebPointer
+    {
+    public:
+        explicit FWebPointer(const FWidgetPath& InPath)
+            : SlateApp(FSlateApplication::Get())
+            , Path(InPath)
+            , bPrevHandleInactive(SlateApp.GetHandleDeviceInputWhenApplicationNotActive())
+        {
+            // Without this ProcessReply skips the mouse capture the browser takes on press.
+            SlateApp.SetHandleDeviceInputWhenApplicationNotActive(true);
+        }
+        ~FWebPointer()
+        {
+            SlateApp.SetHandleDeviceInputWhenApplicationNotActive(bPrevHandleInactive);
+        }
+
+        void Move(const FVector2D& To, const TSet<FKey>& Pressed = TSet<FKey>())
+        {
+            if (TSharedPtr<ICursor> Cursor = SlateApp.GetPlatformCursor())
+            {
+                Cursor->SetPosition(FMath::RoundToInt(To.X), FMath::RoundToInt(To.Y));
+            }
+            SlateApp.RoutePointerMoveEvent(Path, Event(To, Pressed, EKeys::Invalid), /*bIsSynthetic=*/false);
+            Last = To;
+            bMoved = true;
+        }
+        void Press(const FKey& Button)
+        {
+            SlateApp.RoutePointerDownEvent(Path, Event(Last, TSet<FKey>({ Button }), Button));
+        }
+        void Release(const FKey& Button)
+        {
+            SlateApp.RoutePointerUpEvent(Path, Event(Last, TSet<FKey>(), Button));
+        }
+        void Wheel(float Delta)
+        {
+            SlateApp.RouteMouseWheelOrGestureEvent(Path, Event(Last, TSet<FKey>(), EKeys::Invalid, Delta), nullptr);
+        }
+
+    private:
+        FPointerEvent Event(const FVector2D& Pos, const TSet<FKey>& Pressed, const FKey& Effecting, float WheelDelta = 0.0f) const
+        {
+            return FPointerEvent(static_cast<uint32>(SlateApp.GetUserIndexForMouse()), FSlateApplication::CursorPointerIndex,
+                Pos, bMoved ? Last : Pos, Pressed, Effecting, WheelDelta, SlateApp.GetModifierKeys());
+        }
+
+        FSlateApplication& SlateApp;
+        const FWidgetPath& Path;
+        const bool bPrevHandleInactive;
+        // Every caller moves before it presses, releases or wheels, so Last is the pointer position.
+        FVector2D Last = FVector2D::ZeroVector;
+        bool bMoved = false;
+    };
+
+    // Deliver pointer input at a located element: map its CSS center to the desktop, require that
+    // Slate's hit-test there reaches the browser widget (else TARGET_OCCLUDED, nothing pressed), then
+    // Fire the input along that path.
+    void RouteToBrowser(UWebBrowser* Browser, const FString& Handle, const FDriveWebLocateResult& Located,
+        TFunction<void(FWebPointer&, const FVector2D&)> Fire, FWebInjectDone Done)
+    {
+        const TSharedPtr<SWidget> BrowserWidget = Browser->GetCachedWidget();
+        if (!BrowserWidget.IsValid() || !FSlateApplication::IsInitialized())
+        {
+            Done({ ErrorCodes::ERR_INPUT_FAILED, TEXT("The web browser has no live Slate widget to route input to."), nullptr });
+            return;
+        }
+        const FVector2D ScreenPos = LocatedToScreen(Browser, Located);
+        const FWidgetPath Path = SlatePathAt(ScreenPos);
+        if (!PathReaches(Path, BrowserWidget.Get()))
+        {
+            Done(SlateOccluded(Handle, ScreenPos, Path,
+                FSlateApplication::Get().FindWidgetWindow(BrowserWidget.ToSharedRef())));
+            return;
+        }
+        {
+            FWebPointer Pointer(Path);
+            Fire(Pointer, ScreenPos);
+        }
+        Done(FWebInjectOutcome());
+    }
+
+    // Locate Handle in the page, then route pointer input to it (see RouteToBrowser).
+    void LocateAndRoute(UWebBrowser* Browser, const FString& Handle,
+        TFunction<void(FWebPointer&, const FVector2D&)> Fire, FWebInjectDone Done)
+    {
+        const TWeakObjectPtr<UWebBrowser> WeakBrowser(Browser);
+        FDriveWebBridge::LocateElement(Browser, Handle, /*bFocus=*/false,
+            [WeakBrowser, Handle, Fire = MoveTemp(Fire), Done = MoveTemp(Done)](const FDriveWebLocateResult& Located)
+            {
+                UWebBrowser* Live = WeakBrowser.Get();
+                if (!Located.bOk || !Live)
+                {
+                    Done(Live ? LocateFailure(Handle, Located)
+                        : FWebInjectOutcome{ ErrorCodes::ERR_WEB_BROWSER_NOT_FOUND, TEXT("The web browser went away mid-action."), nullptr });
+                    return;
+                }
+                RouteToBrowser(Live, Handle, Located, Fire, Done);
             },
             GQueryTimeoutSeconds);
+    }
+
+    // Per-action settle state: the latest DOM sample and the shared settle driver, which is stepped
+    // once per completed DOM query instead of once per frame (a DOM sample is a CEF round-trip).
+    struct FWebSettle
+    {
+        TSharedPtr<FDriveSettleDriver> Driver;
+        TArray<FDriveElement> Latest;
+        bool bQueryInFlight = false;
+    };
+
+    // The game/editor settle model on the DOM: FDriveSettleDriver's change-then-stable decision with
+    // stable_ticks / quiet_budget_ms / settle_budget_ms, or wait_for until timeout_ms, against the
+    // pre-action Baseline. Resolves Token with the same { outcome, changed, settled, condition_met,
+    // elapsed_ms, ticks, input_path, diff, observation?, journal? } shape.
+    void StartWebSettle(const TSharedRef<FAsyncResponseToken>& Token, const TWeakObjectPtr<UWebBrowser>& WeakBrowser,
+        const FWebActionParams& Params, const TArray<FDriveElement>& Baseline)
+    {
+        TSharedRef<FWebSettle> Settle = MakeShared<FWebSettle>();
+        Settle->Latest = Baseline;
+        // The driver is owned by Settle, so its callbacks read Settle through a raw pointer
+        // (a shared capture would be a reference cycle).
+        FWebSettle* Raw = &Settle.Get();
+
+        FDriveSettleDriver::FIsWaitForMet IsWaitForMet = nullptr;
+        if (Params.Config.WaitFor.IsSet())
+        {
+            const FDriveCondition Condition = Params.Config.WaitFor.GetValue();
+            IsWaitForMet = [Raw, Condition]() { return EvaluateOverElements(Condition, Raw->Latest); };
+        }
+
+        Settle->Driver = FDriveSettleDriver::CreateForStep(Params.Config,
+            [Raw]() { return Raw->Latest; },
+            MoveTemp(IsWaitForMet),
+            [Token, Params, Baseline](const FDriveSettleResult& Result, const TArray<FDriveElement>& Final)
+            {
+                TSharedPtr<FJsonObject> Resp = MakeShared<FJsonObject>();
+                Resp->SetStringField(TEXT("outcome"), FDriveActionCommon::SettleOutcomeToString(Result.Outcome));
+                Resp->SetStringField(TEXT("input_path"), Params.InputPath);
+                Resp->SetBoolField(TEXT("changed"), Result.bChanged);
+                Resp->SetBoolField(TEXT("settled"), Result.bSettled);
+                Resp->SetBoolField(TEXT("condition_met"), Result.bConditionMet);
+                Resp->SetNumberField(TEXT("elapsed_ms"), Result.ElapsedMs);
+                Resp->SetNumberField(TEXT("ticks"), Result.Ticks);
+                const FDriveDiff Diff = FDriveChangeDetector::Diff(Baseline, Final);
+                Resp->SetObjectField(TEXT("diff"),
+                    Params.bFullDiff ? FDriveJson::WriteDiffFull(Diff) : FDriveJson::WriteDiffSummary(Diff));
+                if (TSharedPtr<FJsonObject> Observation = BuildWebObservationJson(Final, Params.ObserveMode, Params.MarkCap))
+                {
+                    Resp->SetObjectField(TEXT("observation"), Observation);
+                }
+                FDriveActionCommon::MaybeAttachJournal(Resp, Params.bIncludeJournal, Params.JournalSince);
+                Token->SendSuccess(Resp);
+            },
+            FPlatformTime::Seconds());
+
+        FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([Settle, WeakBrowser](float) -> bool
+        {
+            if (Settle->Driver->IsComplete())
+            {
+                return false;
+            }
+            if (Settle->bQueryInFlight)
+            {
+                return true;
+            }
+            UWebBrowser* Browser = WeakBrowser.Get();
+            if (!Browser)
+            {
+                // Nothing left to sample; step on the last DOM so the budgets still end the settle.
+                Settle->Driver->Tick(FPlatformTime::Seconds());
+                return !Settle->Driver->IsComplete();
+            }
+            Settle->bQueryInFlight = true;
+            FDriveWebBridge::QueryElements(Browser,
+                [Settle](bool bOk, TArray<FDriveElement> Elements)
+                {
+                    Settle->bQueryInFlight = false;
+                    if (bOk)
+                    {
+                        Settle->Latest = MoveTemp(Elements);
+                    }
+                    // A failed sample still steps the driver (on the last DOM) so a browser that
+                    // stops answering cannot hold the request open past its budgets.
+                    Settle->Driver->Tick(FPlatformTime::Seconds());
+                },
+                GQueryTimeoutSeconds);
+            return true;
+        }), 0.0f);
+    }
+
+    // Shared web action flow: pre-action DOM baseline, the widget_absent guard, Inject, then the
+    // settle. An injection refusal/failure resolves Token with its own code and nothing settles.
+    void RunWebAction(FHandlerContext& Ctx, UWebBrowser* Browser, const FWebActionParams& Params, FWebInject Inject)
+    {
+        TSharedRef<FAsyncResponseToken> Token = Ctx.MakeAsyncToken();
+        const TWeakObjectPtr<UWebBrowser> WeakBrowser(Browser);
+        FDriveWebBridge::QueryElements(Browser,
+            [Token, WeakBrowser, Params, Inject = MoveTemp(Inject)](bool bBaselineOk, TArray<FDriveElement> Baseline)
+            {
+                if (!bBaselineOk)
+                {
+                    Baseline.Reset();
+                }
+                if (FDriveActionCommon::IsAbsenceUnverifiable(Params.Config.WaitFor, Baseline))
+                {
+                    Token->SendError(ErrorCodes::ERR_CONDITION_INVALID,
+                        FString::Printf(
+                            TEXT("wait_for widget_absent target '%s' matches no element before the action (%d observed), so its absence would prove nothing."),
+                            *Params.Config.WaitFor->Target, Baseline.Num()));
+                    return;
+                }
+                UWebBrowser* Live = WeakBrowser.Get();
+                if (!Live)
+                {
+                    Token->SendError(ErrorCodes::ERR_WEB_BROWSER_NOT_FOUND, TEXT("The web browser went away mid-action."));
+                    return;
+                }
+                Inject(Live, [Token, WeakBrowser, Params, Baseline](const FWebInjectOutcome& Outcome)
+                {
+                    if (!Outcome.Code.IsEmpty())
+                    {
+                        Token->SendError(Outcome.Code, Outcome.Message, Outcome.Details);
+                        return;
+                    }
+                    StartWebSettle(Token, WeakBrowser, Params, Baseline);
+                });
+            },
+            GQueryTimeoutSeconds);
+    }
+
+    // Parse a "+"-separated modifier list (shift/ctrl/alt/cmd, with control/meta/win aliases).
+    EDriveModifierKeys ParseWebModifiers(const FString& Spec)
+    {
+        EDriveModifierKeys Result = EDriveModifierKeys::None;
+        TArray<FString> Tokens;
+        Spec.ParseIntoArray(Tokens, TEXT("+"), /*CullEmpty=*/true);
+        for (FString Token : Tokens)
+        {
+            Token.TrimStartAndEndInline();
+            if (Token.Equals(TEXT("shift"), ESearchCase::IgnoreCase)) { Result |= EDriveModifierKeys::Shift; }
+            else if (Token.Equals(TEXT("ctrl"), ESearchCase::IgnoreCase) || Token.Equals(TEXT("control"), ESearchCase::IgnoreCase)) { Result |= EDriveModifierKeys::Ctrl; }
+            else if (Token.Equals(TEXT("alt"), ESearchCase::IgnoreCase)) { Result |= EDriveModifierKeys::Alt; }
+            else if (Token.Equals(TEXT("cmd"), ESearchCase::IgnoreCase) || Token.Equals(TEXT("meta"), ESearchCase::IgnoreCase) || Token.Equals(TEXT("win"), ESearchCase::IgnoreCase)) { Result |= EDriveModifierKeys::Cmd; }
+        }
+        return Result;
+    }
+
+    // Give the browser Slate keyboard focus (which also focuses its CEF host), then send the key
+    // the way a keyboard does: key down, the character the platform delivers with it, key up.
+    bool SendWebKey(UWebBrowser* Browser, const FKey& Key, TCHAR Char, EDriveModifierKeys Modifiers, EDriveKeyAction Action)
+    {
+        if (!FSlateApplication::IsInitialized() || !Browser->GetCachedWidget().IsValid())
+        {
+            return false;
+        }
+        FSlateApplication& SlateApp = FSlateApplication::Get();
+        SlateApp.SetKeyboardFocus(Browser->GetCachedWidget(), EFocusCause::SetDirectly);
+
+        if (Action != EDriveKeyAction::Up && Key.IsValid())
+        {
+            FDriveInput::PressKey(Key, Modifiers, EDriveKeyAction::Down);
+        }
+        // A chord with Ctrl/Alt/Cmd carries no text, exactly as on a real keyboard.
+        if (Action != EDriveKeyAction::Up && Char != 0
+            && !EnumHasAnyFlags(Modifiers, EDriveModifierKeys::Ctrl | EDriveModifierKeys::Alt | EDriveModifierKeys::Cmd))
+        {
+            const bool bPrevHandleInactive = SlateApp.GetHandleDeviceInputWhenApplicationNotActive();
+            SlateApp.SetHandleDeviceInputWhenApplicationNotActive(true);
+            const bool bShift = EnumHasAnyFlags(Modifiers, EDriveModifierKeys::Shift);
+            FCharacterEvent CharEvent(Char, FModifierKeysState(bShift, false, false, false, false, false, false, false, false),
+                static_cast<uint32>(SlateApp.GetUserIndexForKeyboard()), /*bIsRepeat=*/false);
+            SlateApp.ProcessKeyCharEvent(CharEvent);
+            SlateApp.SetHandleDeviceInputWhenApplicationNotActive(bPrevHandleInactive);
+        }
+        if (Action != EDriveKeyAction::Down && Key.IsValid())
+        {
+            FDriveInput::PressKey(Key, Modifiers, EDriveKeyAction::Up);
+        }
+        return true;
     }
 
     // Shared per-wait state for WaitForWeb, owned via TSharedPtr by the ticker delegate and the
@@ -456,26 +828,31 @@ void FDriveWebHandlers::ClickWeb(FHandlerContext& Ctx)
             TEXT("drive.click on surface=web requires a 'handle' from a drive.observe element."));
         return;
     }
-
-    const int32 BrowserIndex = Ctx.GetInt(TEXT("browser_index"), 0);
-    UWebBrowser* Browser = FDriveWebBridge::SelectBrowser(BrowserIndex);
+    if (RefuseOsInput(Ctx))
+    {
+        return;
+    }
+    FWebActionParams Params;
+    UWebBrowser* Browser = ReadWebAction(Ctx, TEXT("slate"), Params);
     if (!Browser)
     {
-        SendNoBrowser(Ctx, BrowserIndex);
         return;
     }
 
-    const EDriveObserveMode ObserveMode = FDriveActionCommon::ParseObserveMode(Ctx);
-    const int32 MarkCap = Ctx.GetInt(TEXT("mark_cap"), 50);
-    const bool bFullDiff = Ctx.GetBool(TEXT("full_diff"), false);
-
-    TSharedRef<FAsyncResponseToken> Token = Ctx.MakeAsyncToken();
-
-    RunWebActionWithSettle(Token, Browser, ObserveMode, MarkCap, bFullDiff,
-        [Handle](UWebBrowser* InBrowser, TFunction<void(bool, FString)> OnInjected)
-        {
-            FDriveWebBridge::ClickElement(InBrowser, Handle, MoveTemp(OnInjected), GQueryTimeoutSeconds);
-        });
+    const EDriveMouseButton Button = FDriveInput::ParseMouseButton(Ctx.GetString(TEXT("button"), TEXT("left")));
+    const FKey ButtonKey = Button == EDriveMouseButton::Right ? EKeys::RightMouseButton
+        : Button == EDriveMouseButton::Middle ? EKeys::MiddleMouseButton : EKeys::LeftMouseButton;
+    RunWebAction(Ctx, Browser, Params, [Handle, ButtonKey](UWebBrowser* InBrowser, FWebInjectDone Done)
+    {
+        LocateAndRoute(InBrowser, Handle,
+            [Key = ButtonKey](FWebPointer& Pointer, const FVector2D& ScreenPos)
+            {
+                Pointer.Move(ScreenPos);
+                Pointer.Press(Key);
+                Pointer.Release(Key);
+            },
+            MoveTemp(Done));
+    });
 }
 
 void FDriveWebHandlers::TypeWeb(FHandlerContext& Ctx)
@@ -488,26 +865,28 @@ void FDriveWebHandlers::TypeWeb(FHandlerContext& Ctx)
         return;
     }
     const FString Text = Ctx.GetString(TEXT("text"));
-
-    const int32 BrowserIndex = Ctx.GetInt(TEXT("browser_index"), 0);
-    UWebBrowser* Browser = FDriveWebBridge::SelectBrowser(BrowserIndex);
+    FWebActionParams Params;
+    UWebBrowser* Browser = ReadWebAction(Ctx, TEXT("dom"), Params);
     if (!Browser)
     {
-        SendNoBrowser(Ctx, BrowserIndex);
         return;
     }
 
-    const EDriveObserveMode ObserveMode = FDriveActionCommon::ParseObserveMode(Ctx);
-    const int32 MarkCap = Ctx.GetInt(TEXT("mark_cap"), 50);
-    const bool bFullDiff = Ctx.GetBool(TEXT("full_diff"), false);
-
-    TSharedRef<FAsyncResponseToken> Token = Ctx.MakeAsyncToken();
-
-    RunWebActionWithSettle(Token, Browser, ObserveMode, MarkCap, bFullDiff,
-        [Handle, Text](UWebBrowser* InBrowser, TFunction<void(bool, FString)> OnInjected)
-        {
-            FDriveWebBridge::TypeIntoElement(InBrowser, Handle, Text, MoveTemp(OnInjected), GQueryTimeoutSeconds);
-        });
+    RunWebAction(Ctx, Browser, Params, [Handle, Text](UWebBrowser* InBrowser, FWebInjectDone Done)
+    {
+        FDriveWebBridge::TypeIntoElement(InBrowser, Handle, Text,
+            [Handle, Done = MoveTemp(Done)](bool bOk, FString Code)
+            {
+                if (bOk)
+                {
+                    Done(FWebInjectOutcome());
+                    return;
+                }
+                const FString Failed = Code.IsEmpty() ? FString(ErrorCodes::ERR_ACTION_FAILED) : Code;
+                Done({ Failed, FString::Printf(TEXT("Web action on '%s' did not apply (%s)."), *Handle, *Failed), nullptr });
+            },
+            GQueryTimeoutSeconds);
+    });
 }
 
 void FDriveWebHandlers::ScrollWeb(FHandlerContext& Ctx)
@@ -519,32 +898,24 @@ void FDriveWebHandlers::ScrollWeb(FHandlerContext& Ctx)
             TEXT("drive.scroll on surface=web requires a 'handle' from a drive.observe element."));
         return;
     }
-
-    const int32 BrowserIndex = Ctx.GetInt(TEXT("browser_index"), 0);
-    UWebBrowser* Browser = FDriveWebBridge::SelectBrowser(BrowserIndex);
+    FWebActionParams Params;
+    UWebBrowser* Browser = ReadWebAction(Ctx, TEXT("slate"), Params);
     if (!Browser)
     {
-        SendNoBrowser(Ctx, BrowserIndex);
         return;
     }
 
-    const double Delta = Ctx.GetNumber(TEXT("delta"), 1.0);
-    const EDriveObserveMode ObserveMode = FDriveActionCommon::ParseObserveMode(Ctx);
-    const int32 MarkCap = Ctx.GetInt(TEXT("mark_cap"), 50);
-    const bool bFullDiff = Ctx.GetBool(TEXT("full_diff"), false);
-
-    TSharedRef<FAsyncResponseToken> Token = Ctx.MakeAsyncToken();
-
-    RunWebActionWithSettle(Token, Browser, ObserveMode, MarkCap, bFullDiff,
-        [Handle, Delta](UWebBrowser* InBrowser, TFunction<void(bool, FString)> OnInjected)
-        {
-            // The new bridge action methods take a void(bool, const FString&) callback. A
-            // void(bool, FString) TFunction can't construct that directly (TFunction's templated
-            // ctor is SFINAE-disabled for other TFunctions), so forward through a thin lambda.
-            FDriveWebBridge::ScrollElement(InBrowser, Handle, Delta,
-                [OnInjected = MoveTemp(OnInjected)](bool bOk, const FString& Code) { OnInjected(bOk, Code); },
-                GQueryTimeoutSeconds);
-        });
+    const float Delta = static_cast<float>(Ctx.GetNumber(TEXT("delta"), 1.0));
+    RunWebAction(Ctx, Browser, Params, [Handle, Delta](UWebBrowser* InBrowser, FWebInjectDone Done)
+    {
+        LocateAndRoute(InBrowser, Handle,
+            [Delta](FWebPointer& Pointer, const FVector2D& ScreenPos)
+            {
+                Pointer.Move(ScreenPos);
+                Pointer.Wheel(Delta);
+            },
+            MoveTemp(Done));
+    });
 }
 
 void FDriveWebHandlers::HoverWeb(FHandlerContext& Ctx)
@@ -556,73 +927,97 @@ void FDriveWebHandlers::HoverWeb(FHandlerContext& Ctx)
             TEXT("drive.hover on surface=web requires a 'handle' from a drive.observe element."));
         return;
     }
-
-    const int32 BrowserIndex = Ctx.GetInt(TEXT("browser_index"), 0);
-    UWebBrowser* Browser = FDriveWebBridge::SelectBrowser(BrowserIndex);
+    if (RefuseOsInput(Ctx))
+    {
+        return;
+    }
+    FWebActionParams Params;
+    UWebBrowser* Browser = ReadWebAction(Ctx, TEXT("slate"), Params);
     if (!Browser)
     {
-        SendNoBrowser(Ctx, BrowserIndex);
         return;
     }
 
-    const EDriveObserveMode ObserveMode = FDriveActionCommon::ParseObserveMode(Ctx);
-    const int32 MarkCap = Ctx.GetInt(TEXT("mark_cap"), 50);
-    const bool bFullDiff = Ctx.GetBool(TEXT("full_diff"), false);
-
-    TSharedRef<FAsyncResponseToken> Token = Ctx.MakeAsyncToken();
-
-    RunWebActionWithSettle(Token, Browser, ObserveMode, MarkCap, bFullDiff,
-        [Handle](UWebBrowser* InBrowser, TFunction<void(bool, FString)> OnInjected)
-        {
-            // Forward the void(bool, FString) settle callback into the bridge's
-            // void(bool, const FString&) callback through a thin lambda (see ScrollWeb).
-            FDriveWebBridge::HoverElement(InBrowser, Handle,
-                [OnInjected = MoveTemp(OnInjected)](bool bOk, const FString& Code) { OnInjected(bOk, Code); },
-                GQueryTimeoutSeconds);
-        });
+    RunWebAction(Ctx, Browser, Params, [Handle](UWebBrowser* InBrowser, FWebInjectDone Done)
+    {
+        LocateAndRoute(InBrowser, Handle,
+            [](FWebPointer& Pointer, const FVector2D& ScreenPos) { Pointer.Move(ScreenPos); },
+            MoveTemp(Done));
+    });
 }
 
 void FDriveWebHandlers::KeyWeb(FHandlerContext& Ctx)
 {
-    const FString Key = Ctx.GetString(TEXT("key"));
-    if (Key.IsEmpty())
+    const FString KeyName = Ctx.GetString(TEXT("key"));
+    if (KeyName.IsEmpty())
     {
         Ctx.SendError(ErrorCodes::ERR_MISSING_PARAM,
             TEXT("drive.key on surface=web requires a 'key' (a DOM key name, e.g. Enter, "
                  "Escape, ArrowDown, a)."));
         return;
     }
-
-    const int32 BrowserIndex = Ctx.GetInt(TEXT("browser_index"), 0);
-    UWebBrowser* Browser = FDriveWebBridge::SelectBrowser(BrowserIndex);
+    FKey Key;
+    TCHAR Char = 0;
+    bool bShift = false;
+    if (!FDriveWebBridge::MapDomKey(KeyName, Key, Char, bShift))
+    {
+        Ctx.SendError(ErrorCodes::ERR_INVALID_KEY,
+            FString::Printf(TEXT("Unknown key name '%s' (expected a DOM key value such as Enter, ArrowDown or a, or an FKey name)."), *KeyName));
+        return;
+    }
+    FWebActionParams Params;
+    UWebBrowser* Browser = ReadWebAction(Ctx, TEXT("slate"), Params);
     if (!Browser)
     {
-        SendNoBrowser(Ctx, BrowserIndex);
         return;
     }
 
-    // Handle is optional on the web key verb: with it the bridge focuses that element by its
-    // data-pw-id before the key, without it the key goes to the page's active element.
-    // Modifiers/action ride as raw strings; the bridge maps them DOM-side (no native FKey).
+    // Handle is optional: with it the element is hit-tested and DOM-focused (no click) before the
+    // key; without it the key goes to the page's focused element.
     const FString Handle = Ctx.GetString(TEXT("handle"));
-    const FString Modifiers = Ctx.GetString(TEXT("modifiers"));
-    const FString Action = Ctx.GetString(TEXT("action"), TEXT("press"));
+    EDriveModifierKeys Modifiers = ParseWebModifiers(Ctx.GetString(TEXT("modifiers")));
+    if (bShift)
+    {
+        Modifiers |= EDriveModifierKeys::Shift;
+    }
+    const FString ActionToken = Ctx.GetString(TEXT("action"), TEXT("press"));
+    const EDriveKeyAction Action = ActionToken.Equals(TEXT("down"), ESearchCase::IgnoreCase) ? EDriveKeyAction::Down
+        : ActionToken.Equals(TEXT("up"), ESearchCase::IgnoreCase) ? EDriveKeyAction::Up
+        : EDriveKeyAction::Press;
 
-    const EDriveObserveMode ObserveMode = FDriveActionCommon::ParseObserveMode(Ctx);
-    const int32 MarkCap = Ctx.GetInt(TEXT("mark_cap"), 50);
-    const bool bFullDiff = Ctx.GetBool(TEXT("full_diff"), false);
-
-    TSharedRef<FAsyncResponseToken> Token = Ctx.MakeAsyncToken();
-
-    RunWebActionWithSettle(Token, Browser, ObserveMode, MarkCap, bFullDiff,
-        [Handle, Key, Modifiers, Action](UWebBrowser* InBrowser, TFunction<void(bool, FString)> OnInjected)
+    RunWebAction(Ctx, Browser, Params, [Handle, Key, Char, Modifiers, Action](UWebBrowser* InBrowser, FWebInjectDone Done)
+    {
+        auto Send = [Key, Char, Modifiers, Action](UWebBrowser* Live, const FWebInjectDone& InDone)
         {
-            // Forward the void(bool, FString) settle callback into the bridge's
-            // void(bool, const FString&) callback through a thin lambda (see ScrollWeb).
-            FDriveWebBridge::KeyElement(InBrowser, Handle, Key, Modifiers, Action,
-                [OnInjected = MoveTemp(OnInjected)](bool bOk, const FString& Code) { OnInjected(bOk, Code); },
-                GQueryTimeoutSeconds);
-        });
+            if (SendWebKey(Live, Key, Char, Modifiers, Action))
+            {
+                InDone(FWebInjectOutcome());
+            }
+            else
+            {
+                InDone({ ErrorCodes::ERR_INPUT_FAILED, TEXT("Slate key injection failed (no live browser widget)."), nullptr });
+            }
+        };
+        if (Handle.IsEmpty())
+        {
+            Send(InBrowser, Done);
+            return;
+        }
+        const TWeakObjectPtr<UWebBrowser> WeakBrowser(InBrowser);
+        FDriveWebBridge::LocateElement(InBrowser, Handle, /*bFocus=*/true,
+            [WeakBrowser, Handle, Send, Done = MoveTemp(Done)](const FDriveWebLocateResult& Located)
+            {
+                UWebBrowser* Live = WeakBrowser.Get();
+                if (!Located.bOk || !Live)
+                {
+                    Done(Live ? LocateFailure(Handle, Located)
+                        : FWebInjectOutcome{ ErrorCodes::ERR_WEB_BROWSER_NOT_FOUND, TEXT("The web browser went away mid-action."), nullptr });
+                    return;
+                }
+                Send(Live, Done);
+            },
+            GQueryTimeoutSeconds);
+    });
 }
 
 void FDriveWebHandlers::DragWeb(FHandlerContext& Ctx)
@@ -635,9 +1030,8 @@ void FDriveWebHandlers::DragWeb(FHandlerContext& Ctx)
         return;
     }
 
-    // Web drag is DOM-element-to-element (the bridge dispatches the HTML5 drag sequence between
-    // two data-pw-id handles), so a drop target handle is required and the coordinate to_x/to_y
-    // release point used on the game/editor surfaces has no web meaning.
+    // Web drag is DOM-element-to-element, so a drop target handle is required and the coordinate
+    // to_x/to_y release point used on the game/editor surfaces has no web meaning.
     const FString ToHandle = Ctx.GetString(TEXT("to_handle"));
     if (ToHandle.IsEmpty())
     {
@@ -646,30 +1040,46 @@ void FDriveWebHandlers::DragWeb(FHandlerContext& Ctx)
                  "web drag is DOM-element-to-element, not coordinate-based, so to_x/to_y are not used."));
         return;
     }
-
-    const int32 BrowserIndex = Ctx.GetInt(TEXT("browser_index"), 0);
-    UWebBrowser* Browser = FDriveWebBridge::SelectBrowser(BrowserIndex);
+    FWebActionParams Params;
+    UWebBrowser* Browser = ReadWebAction(Ctx, TEXT("slate"), Params);
     if (!Browser)
     {
-        SendNoBrowser(Ctx, BrowserIndex);
         return;
     }
 
-    const EDriveObserveMode ObserveMode = FDriveActionCommon::ParseObserveMode(Ctx);
-    const int32 MarkCap = Ctx.GetInt(TEXT("mark_cap"), 50);
-    const bool bFullDiff = Ctx.GetBool(TEXT("full_diff"), false);
-
-    TSharedRef<FAsyncResponseToken> Token = Ctx.MakeAsyncToken();
-
-    RunWebActionWithSettle(Token, Browser, ObserveMode, MarkCap, bFullDiff,
-        [FromHandle, ToHandle](UWebBrowser* InBrowser, TFunction<void(bool, FString)> OnInjected)
-        {
-            // Forward the void(bool, FString) settle callback into the bridge's
-            // void(bool, const FString&) callback through a thin lambda (see ScrollWeb).
-            FDriveWebBridge::DragElement(InBrowser, FromHandle, ToHandle,
-                [OnInjected = MoveTemp(OnInjected)](bool bOk, const FString& Code) { OnInjected(bOk, Code); },
-                GQueryTimeoutSeconds);
-        });
+    const int32 DurationMs = Ctx.GetInt(TEXT("duration_ms"), 200);
+    RunWebAction(Ctx, Browser, Params, [FromHandle, ToHandle, DurationMs](UWebBrowser* InBrowser, FWebInjectDone Done)
+    {
+        // The release target is hit-tested too, then the press point is located and routed.
+        const TWeakObjectPtr<UWebBrowser> WeakBrowser(InBrowser);
+        FDriveWebBridge::LocateElement(InBrowser, ToHandle, /*bFocus=*/false,
+            [WeakBrowser, FromHandle, ToHandle, DurationMs, Done = MoveTemp(Done)](const FDriveWebLocateResult& To)
+            {
+                UWebBrowser* Live = WeakBrowser.Get();
+                if (!To.bOk || !Live)
+                {
+                    Done(Live ? LocateFailure(ToHandle, To)
+                        : FWebInjectOutcome{ ErrorCodes::ERR_WEB_BROWSER_NOT_FOUND, TEXT("The web browser went away mid-action."), nullptr });
+                    return;
+                }
+                const FVector2D ToScreen = LocatedToScreen(Live, To);
+                LocateAndRoute(Live, FromHandle,
+                    [ToScreen, DurationMs](FWebPointer& Pointer, const FVector2D& FromScreen)
+                    {
+                        // Press, the same interpolated moves the game surface's drag sends, release.
+                        // The browser captures the mouse on press, so every later event reaches it.
+                        Pointer.Move(FromScreen);
+                        Pointer.Press(EKeys::LeftMouseButton);
+                        for (const FVector2D& Step : FDriveInput::ComputeDragStepPoints(FromScreen, ToScreen, DurationMs))
+                        {
+                            Pointer.Move(Step, TSet<FKey>({ EKeys::LeftMouseButton }));
+                        }
+                        Pointer.Release(EKeys::LeftMouseButton);
+                    },
+                    Done);
+            },
+            GQueryTimeoutSeconds);
+    });
 }
 
 void FDriveWebHandlers::WaitForWeb(FHandlerContext& Ctx)

@@ -8,6 +8,7 @@
 #include "UObject/Object.h"
 #include "UObject/WeakObjectPtr.h"
 #include "Handlers/Drive/DriveTypes.h"
+#include "InputCoreTypes.h"
 
 #include "DriveWebBridge.generated.h"
 
@@ -36,6 +37,20 @@ struct FDriveWebViewport
     // (the owning window's DPI scale). When the payload carries devicePixelRatio it wins,
     // because that is exactly the CSS-px -> device-px ratio CEF rendered the page at.
     double FallbackScale = 1.0;
+};
+
+// Where real input for one data-pw-id handle lands, as resolved inside the page.
+struct FDriveWebLocateResult
+{
+    bool bOk = false;
+    // "OK" on success, else the refusal / failure code (see FDriveWebBridge::LocateElement).
+    FString Code;
+    FString Detail;
+    // The element's center in CSS pixels of the page viewport, and that viewport's CSS size.
+    FVector2D CssPoint = FVector2D::ZeroVector;
+    FVector2D CssViewport = FVector2D::ZeroVector;
+    // TARGET_OCCLUDED only: the element on top at CssPoint (tag#id), empty when no element is there.
+    FString Occluder;
 };
 
 // Internal one-shot awaiter that PULLS a marked result out of the live page. It binds no
@@ -112,17 +127,9 @@ public:
         TFunction<void(bool bOk, TArray<FDriveElement> Elements)> OnDone,
         double TimeoutSeconds = 5.0);
 
-    // Find the element by its data-pw-id handle and .click() it. OnDone receives
-    // (true, "OK") on success or (false, "<code>") where code is TARGET_NOT_FOUND /
-    // TARGET_CHANGED / ACTION_FAILED / TIMEOUT / MALFORMED_JSON.
-    static void ClickElement(
-        UWebBrowser* Browser,
-        const FString& Handle,
-        TFunction<void(bool bOk, FString Code)> OnDone,
-        double TimeoutSeconds = 5.0);
-
-    // Find the element by handle, focus it, set its value/text, and dispatch input+change
-    // events. OnDone codes match ClickElement.
+    // Find the element by its data-pw-id handle, focus it, set its value/text, and dispatch
+    // input+change events. OnDone receives (true, "OK") on success or (false, "<code>") where
+    // code is TARGET_NOT_FOUND / ACTION_FAILED / TIMEOUT / MALFORMED_JSON.
     static void TypeIntoElement(
         UWebBrowser* Browser,
         const FString& Handle,
@@ -130,44 +137,18 @@ public:
         TFunction<void(bool bOk, FString Code)> OnDone,
         double TimeoutSeconds = 5.0);
 
-    // Find the element by handle and scroll it by Delta CSS pixels: dispatch a WheelEvent at the
-    // element center AND apply scrollBy on the element / nearest scrollable ancestor as a fallback
-    // (so it works whether or not the page wires a wheel handler). OnDone codes match ClickElement.
-    static void ScrollElement(
+    // Resolve Handle to the point real input is delivered at: the element's center in CSS
+    // pixels, after scrolling it into view when the center is outside the page viewport. The
+    // page hit-tests that point (document.elementFromPoint), so an element covered by another
+    // resolves as TARGET_OCCLUDED naming the element on top; nothing is dispatched to the page
+    // either way. bFocus also focuses the element (DOM focus, no click). Codes: OK /
+    // TARGET_NOT_FOUND / TARGET_CHANGED (hidden or disabled) / TARGET_OCCLUDED / ACTION_FAILED /
+    // TIMEOUT / MALFORMED_JSON.
+    static void LocateElement(
         UWebBrowser* Browser,
         const FString& Handle,
-        double Delta,
-        TFunction<void(bool bOk, const FString& Code)> OnDone,
-        double TimeoutSeconds = 5.0);
-
-    // Find the element by handle and hover it: dispatch pointerover/mouseover/mouseenter/mousemove
-    // at the element center. OnDone codes match ClickElement.
-    static void HoverElement(
-        UWebBrowser* Browser,
-        const FString& Handle,
-        TFunction<void(bool bOk, const FString& Code)> OnDone,
-        double TimeoutSeconds = 5.0);
-
-    // Dispatch a KeyboardEvent. If Handle is non-empty, resolve it and focus first (else target the
-    // page's active element / body). Modifiers is a "+"-joined set (e.g. "ctrl+shift"); Action is
-    // press (keydown+keypress+keyup) / down (keydown) / up (keyup). OnDone codes match ClickElement.
-    static void KeyElement(
-        UWebBrowser* Browser,
-        const FString& Handle,
-        const FString& Key,
-        const FString& Modifiers,
-        const FString& Action,
-        TFunction<void(bool bOk, const FString& Code)> OnDone,
-        double TimeoutSeconds = 5.0);
-
-    // Resolve FromHandle and ToHandle and dispatch a mouse+pointer drag sequence at their centers
-    // (down on from -> move over from -> move over to -> up on to). Either handle missing reports
-    // TARGET_NOT_FOUND. OnDone codes match ClickElement.
-    static void DragElement(
-        UWebBrowser* Browser,
-        const FString& FromHandle,
-        const FString& ToHandle,
-        TFunction<void(bool bOk, const FString& Code)> OnDone,
+        bool bFocus,
+        TFunction<void(const FDriveWebLocateResult& Result)> OnDone,
         double TimeoutSeconds = 5.0);
 
     // ── Pure helpers (unit-testable without a live browser) ──────────────────────────
@@ -184,24 +165,12 @@ public:
     // Full snippet: collect interactable + text elements, stamp data-pw-id handles, write a
     // marker+base64({devicePixelRatio,innerWidth,innerHeight,elements:[...]}) into the result node.
     static FString BuildQueryElementsJs(const FString& Marker);
-    // Full snippet: querySelector by handle, visibility-check, .click(), write {ok,code,...}.
-    static FString BuildClickElementJs(const FString& Marker, const FString& Handle);
     // Full snippet: querySelector by handle, focus, set value, dispatch input+change.
     static FString BuildTypeIntoElementJs(const FString& Marker, const FString& Handle, const FString& Text);
-    // Full snippet: querySelector by handle, visibility-check, dispatch WheelEvent at center +
-    // scrollBy(el / nearest scrollable ancestor) by Delta, write {ok,code,...}.
-    static FString BuildScrollElementJs(const FString& Marker, const FString& Handle, double Delta);
-    // Full snippet: querySelector by handle, visibility-check, dispatch
-    // pointerover/mouseover/mouseenter/mousemove at center, write {ok,code,...}.
-    static FString BuildHoverElementJs(const FString& Marker, const FString& Handle);
-    // Full snippet: optional querySelector+focus by handle (else activeElement/body), parse
-    // Modifiers into key flags, dispatch KeyboardEvent(s) per Action, write {ok,code,...}.
-    static FString BuildKeyElementJs(
-        const FString& Marker, const FString& Handle, const FString& Key,
-        const FString& Modifiers, const FString& Action);
-    // Full snippet: querySelector both handles, dispatch mouse+pointer down/move/move/up across
-    // their centers, write {ok,code,...} (TARGET_NOT_FOUND if either handle is missing).
-    static FString BuildDragElementJs(const FString& Marker, const FString& FromHandle, const FString& ToHandle);
+    // Full snippet: querySelector by handle, visibility/disabled check, scroll into view when the
+    // center is off-viewport, elementFromPoint hit-test at the center, optional focus, write
+    // {ok,code,detail?,x,y,vw,vh,occluder?}.
+    static FString BuildLocateElementJs(const FString& Marker, const FString& Handle, bool bFocus);
     // `(function(){...removeChild...})();` — removes the hidden `__pwdrive_result` result node
     // so PinWright leaves no persistent base64 result blob in the host page after a round-trip.
     // Removing it is safe: BuildResultWriterJs is create-if-missing, so the next query re-creates
@@ -224,4 +193,17 @@ public:
     // Parse an action payload ({ok,code,detail}). Returns false only on malformed JSON
     // (OutCode = "MALFORMED_JSON"); otherwise fills bOutOk/OutCode/OutDetail and returns true.
     static bool ParseActionResult(const FString& Json, bool& bOutOk, FString& OutCode, FString& OutDetail);
+    // Parse a BuildLocateElementJs payload. Returns false only on malformed JSON (OutResult.Code =
+    // "MALFORMED_JSON"); otherwise fills OutResult and returns true.
+    static bool ParseLocateResult(const FString& Json, FDriveWebLocateResult& OutResult);
+    // Map a point in the page's CSS viewport (CssViewport = innerWidth x innerHeight) into the
+    // browser widget's local space (LocalSize): the page fills the widget, so the mapping is the
+    // per-axis ratio. Returns CssPoint unchanged when CssViewport is degenerate.
+    static FVector2D CssToLocal(const FVector2D& CssPoint, const FVector2D& CssViewport, const FVector2D& LocalSize);
+    // Map a DOM KeyboardEvent.key value to the input a keyboard sends for it: the physical FKey
+    // (invalid for a character no US-layout key types), the character the platform delivers with
+    // it (0 for none; Enter -> '\r', Backspace -> '\b', a printable key -> itself), and whether
+    // Shift produces it. DOM names (ArrowDown, Backspace, " ") and FKey names (SpaceBar, F5) are
+    // both accepted. Returns false for a name that is neither.
+    static bool MapDomKey(const FString& DomKey, FKey& OutKey, TCHAR& OutChar, bool& bOutShift);
 };

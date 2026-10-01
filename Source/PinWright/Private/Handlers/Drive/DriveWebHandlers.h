@@ -17,14 +17,21 @@ class FHandlerContext;
 // "No live browser" is always a SYNCHRONOUS WEB_BROWSER_NOT_FOUND error (sent before any
 // token/round-trip), never a hang.
 //
-// WEB SETTLE MODEL: the game/editor action verbs run a per-tick Slate fingerprint settle
-// loop (FDriveSettleDriver) because they can sample the live UI every frame. The web DOM
-// cannot be sampled synchronously, so the web verbs use a different model:
-//   - an action (click/type) INJECTS, then asynchronously RE-QUERIES the DOM exactly once
-//     (the post-action re-observe) and diffs that against an optional pre-action baseline;
-//   - wait_for POLLS the DOM on a fixed interval (FTSTicker) and evaluates the condition
-//     each poll until it is met or the timeout elapses.
-// There is no per-frame fingerprint loop on the web surface.
+// WEB ACTION MODEL (parity with the game/editor surfaces):
+//   - input is REAL: the target handle is located in the page and hit-tested there
+//     (document.elementFromPoint at its center; anything else on top is TARGET_OCCLUDED with
+//     nothing injected), and its center is mapped to the desktop. Pointer input is routed through
+//     FSlateApplication's Route* entry points along the Slate hit-test path at that point (by
+//     Slate's own window order, not the platform's window-under-cursor), keys through Slate
+//     keyboard focus; the browser widget forwards both to CEF, so the page sees trusted events,
+//     :hover and default actions. A point whose Slate path does not reach the browser (another
+//     window, or a widget drawn over it) is TARGET_OCCLUDED too.
+//     drive.type is the exception: it still writes the value through the DOM.
+//   - settle: the same FDriveSettleDriver decision (stable_ticks / quiet_budget_ms /
+//     settle_budget_ms, or wait_for until timeout_ms) against the pre-action DOM, stepped once
+//     per completed DOM query instead of once per frame, resolving the game surface's
+//     { outcome, changed, settled, condition_met, elapsed_ms, ticks, input_path, diff } shape.
+//   - wait_for POLLS the DOM on a fixed interval (FTSTicker) until met or timeout.
 class FDriveWebHandlers
 {
 public:
@@ -38,33 +45,27 @@ public:
     // { met, actual, expected, detail }.
     static void ExpectWeb(FHandlerContext& Ctx);
 
-    // surface=web drive.click: optional baseline query, click by handle, single post-action
-    // re-observe, resolve with { ok, code, diff }. The diff defaults to the compact summary
-    // (full_diff=true for full lists); the observation is opt-in (observe defaults to none).
+    // surface=web drive.click: locate + hit-test `handle`, real click (`button`) at its center.
     static void ClickWeb(FHandlerContext& Ctx);
 
-    // surface=web drive.type: optional baseline query, set value by handle, single
-    // post-action re-observe, resolve with { ok, code, diff } (compact diff summary by
-    // default; observation opt-in via observe).
+    // surface=web drive.type: set the value of `handle` through the DOM (input + change events).
     static void TypeWeb(FHandlerContext& Ctx);
 
-    // surface=web drive.scroll: scroll an element by handle by `delta` wheel notches
-    // (default 1), single post-action re-observe, resolve with { ok, code, diff }.
+    // surface=web drive.scroll: locate + hit-test `handle`, real wheel of `delta` notches
+    // (default 1, positive scrolls up) at its center.
     static void ScrollWeb(FHandlerContext& Ctx);
 
-    // surface=web drive.hover: hover an element by handle (DOM pointerover/mouseenter),
-    // single post-action re-observe, resolve with { ok, code, diff }.
+    // surface=web drive.hover: locate + hit-test `handle`, real mouse-move to its center.
     static void HoverWeb(FHandlerContext& Ctx);
 
-    // surface=web drive.key: dispatch a key event named `key` (a DOM key name, not an FKey),
-    // optionally focusing `handle` first, with optional `modifiers` and `action` (default
-    // press); single post-action re-observe, resolve with { ok, code, diff }.
+    // surface=web drive.key: real key `key` (a DOM key value or an FKey name; INVALID_KEY
+    // otherwise) to the browser, after locating, hit-testing and DOM-focusing the optional
+    // `handle`, with optional `modifiers` and `action` (default press).
     static void KeyWeb(FHandlerContext& Ctx);
 
-    // surface=web drive.drag: drag the `handle` element onto the `to_handle` element. Web drag
-    // is DOM-element-to-element (to_handle is required; coordinate to_x/to_y are not used), so
-    // a missing to_handle is a synchronous INVALID_ARGUMENT. Single post-action re-observe,
-    // resolve with { ok, code, diff }.
+    // surface=web drive.drag: real press on `handle`, interpolated moves over `duration_ms`,
+    // release on `to_handle` (both located and hit-tested). to_handle is required (coordinate
+    // to_x/to_y have no web meaning): a missing one is a synchronous INVALID_ARGUMENT.
     static void DragWeb(FHandlerContext& Ctx);
 
     // surface=web drive.wait_for: poll the DOM on an interval, evaluating the condition each
