@@ -3620,20 +3620,13 @@ REGISTER_RPC_HANDLER("animation.authoring.create_ik_retargeter", "animation.auth
         return true;
     }
 
-    UIKRetargetFactory* Factory = NewObject<UIKRetargetFactory>();
-
-    // Factory->SourceIKRig is private and is only consulted by the interactive create dialog,
-    // not by FactoryCreateNew (it creates an empty retargeter). Drive the source/target rigs
-    // through the public controller API instead (below), which also lets us set the target rig
-    // the factory field cannot.
-    UIKRetargeter* Retargeter = Cast<UIKRetargeter>(Factory->FactoryCreateNew(
-        UIKRetargeter::StaticClass(),
-        Package,
-        FName(*Name),
-        RF_Public | RF_Standalone,
-        nullptr,
-        GWarn
-    ));
+    // NewObject, not UIKRetargetFactory::FactoryCreateNew: the 5.7 factory alone calls
+    // AddDefaultOps before any IK Rig is assigned, and SetIKRig does not push the target rig into
+    // existing ops, so that stack maps no target chain. Every other version's factory is this same
+    // NewObject, so the retargeter starts empty everywhere (animation.retarget_animations
+    // seedDefaultOps seeds the stack after both rigs are set). Rigs are assigned below through the
+    // controller, which also sets the target rig the factory's private SourceIKRig field cannot.
+    UIKRetargeter* Retargeter = NewObject<UIKRetargeter>(Package, FName(*Name), RF_Public | RF_Standalone);
 
     if (!Retargeter)
     {

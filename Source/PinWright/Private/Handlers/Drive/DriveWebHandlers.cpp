@@ -516,8 +516,28 @@ namespace DriveWebHandlersLocal
         return Result;
     }
 
-    // Give the browser Slate keyboard focus (which also focuses its CEF host), then send the key
-    // the way a keyboard does: key down, the character the platform delivers with it, key up.
+    // The SWebBrowserView under a UWebBrowser's widget: the widget that forwards keys to CEF.
+    // SWebBrowser itself takes keyboard focus and only hands it on to its view from UE 5.8
+    // (SWebBrowser::OnFocusReceived); before that, keys focused on SWebBrowser never reach the page.
+    TSharedPtr<SWidget> FindBrowserView(const TSharedPtr<SWidget>& Widget)
+    {
+        if (!Widget.IsValid() || Widget->GetType() == FName(TEXT("SWebBrowserView")))
+        {
+            return Widget;
+        }
+        FChildren* Children = Widget->GetChildren();
+        for (int32 Index = 0; Children && Index < Children->Num(); ++Index)
+        {
+            if (const TSharedPtr<SWidget> Found = FindBrowserView(Children->GetChildAt(Index)))
+            {
+                return Found;
+            }
+        }
+        return nullptr;
+    }
+
+    // Give the browser view Slate keyboard focus (which also focuses its CEF host), then send the
+    // key the way a keyboard does: key down, the character the platform delivers with it, key up.
     bool SendWebKey(UWebBrowser* Browser, const FKey& Key, TCHAR Char, EDriveModifierKeys Modifiers, EDriveKeyAction Action)
     {
         if (!FSlateApplication::IsInitialized() || !Browser->GetCachedWidget().IsValid())
@@ -525,7 +545,8 @@ namespace DriveWebHandlersLocal
             return false;
         }
         FSlateApplication& SlateApp = FSlateApplication::Get();
-        SlateApp.SetKeyboardFocus(Browser->GetCachedWidget(), EFocusCause::SetDirectly);
+        const TSharedPtr<SWidget> View = FindBrowserView(Browser->GetCachedWidget());
+        SlateApp.SetKeyboardFocus(View.IsValid() ? View : Browser->GetCachedWidget(), EFocusCause::SetDirectly);
 
         if (Action != EDriveKeyAction::Up && Key.IsValid())
         {

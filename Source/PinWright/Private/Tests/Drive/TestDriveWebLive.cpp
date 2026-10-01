@@ -374,13 +374,22 @@ namespace DriveWebLiveTest
     }
 
     // Queue the occluded-target half: Method on the covered #cov is refused with TARGET_OCCLUDED
-    // naming #cover, and neither element received any event.
+    // naming #cover, and neither element received any event from it. The counts are taken against
+    // a sample read just before the action: on Windows the OS cursor (wherever earlier tests left
+    // it) can deliver a real pointer event when the fixture window appears under it, and that event
+    // is not the verb's (seen once on UE 5.7 in a full suite, coverHits=1 on the first fixture).
     void QueueOccludedRefusal(FAutomationTestBase& Test, const TSharedPtr<FFixture>& F, const FString& Method,
         const TSharedPtr<FJsonObject>& Args)
     {
+        const TSharedRef<TPair<double, double>> Before = MakeShared<TPair<double, double>>(0.0, 0.0);
+        QueueState(F, [](const FFixture&) { return true; });
+        QueueCheck(F, [Before](const FFixture& Fx)
+        {
+            *Before = TPair<double, double>(Fx.StateNumber(TEXT("coveredHits")), Fx.StateNumber(TEXT("coverHits")));
+        });
         QueueAction(Test, F, Method, Args);
         QueueState(F, [](const FFixture&) { return true; });
-        QueueCheck(F, [&Test, Method](const FFixture& Fx)
+        QueueCheck(F, [&Test, Method, Before](const FFixture& Fx)
         {
             const FTestResponseCapture& Capture = *Fx.Capture;
             Test.TestFalse(FString::Printf(TEXT("%s on a covered element is not a success"), *Method), Capture.bSuccess);
@@ -390,8 +399,8 @@ namespace DriveWebLiveTest
             Test.TestTrue(TEXT("the refusal names the covering element"),
                 Capture.Result.IsValid() && Capture.Result->TryGetStringField(TEXT("occluding_element"), Occluder)
                 && Occluder == TEXT("div#cover"));
-            Test.TestEqual(TEXT("the covered element received no event"), Fx.StateNumber(TEXT("coveredHits")), 0.0);
-            Test.TestEqual(TEXT("the cover received no event"), Fx.StateNumber(TEXT("coverHits")), 0.0);
+            Test.TestEqual(TEXT("the covered element received no event"), Fx.StateNumber(TEXT("coveredHits")), Before->Key);
+            Test.TestEqual(TEXT("the cover received no event"), Fx.StateNumber(TEXT("coverHits")), Before->Value);
         });
     }
 
