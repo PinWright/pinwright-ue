@@ -27,6 +27,10 @@
 #include "Materials/Material.h"
 #include "Materials/MaterialInstanceConstant.h"
 #include "Factories/MaterialFactoryNew.h"
+#include "MaterialEditingLibrary.h"
+#include "Utils/RenderingAvailability.h"
+#include "Tests/Material/MaterialShaderStateTestFixtures.h"
+#include "Serialization/JsonSerializer.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetRegistry/IAssetRegistry.h"
 #include "HAL/FileManager.h"
@@ -379,36 +383,41 @@ bool FAssetSearchMutuallyExclusiveFiltersTest::RunTest(const FString& Parameters
 // AssetMaterialHandler — asset.get_material_stats
 // ============================================================================
 
-// Regression test for B-material-stats-instruction-count-hardcoded.
+// Regression tests for B-material-stats-instruction-count-hardcoded.
 //
-// The handler used to write a fixed `int32 InstructionCount = -1;` straight into
-// the stats object via SetNumberField, so every material — no matter how trivial
-// or heavy — reported instructionCount:-1 dressed up as a real measured statistic
-// next to the genuine shadingModel/samplerCount fields. The fix stops fabricating a
-// number and emits an honest JSON null when the value is not computed.
+// The handler first shipped a fixed instructionCount:-1, then a fixed null; neither was ever
+// computed. It now compiles the material under ProbeAndWait's bound and reads
+// UMaterialEditingLibrary::GetStatistics, publishing stats:null with a reason whenever no complete
+// shader map can be measured - never zeros.
 //
-// Counterfactual: if the fix is reverted to SetNumberField(-1), instructionCount is
-// a JSON Number (-1) instead of Null, and the EJson::Null assertion below fails.
+// Counterfactual: with the old handler there is no stats.vertexInstructions/pixelInstructions, so
+// the > 0 assertions below fail; a handler that wrote GetStatistics through unguarded would put a
+// zero struct under the NullRHI seam where the second test requires stats:null.
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetGetMaterialStatsInstructionCountNotHardcodedTest,
     "PinWright.asset.get_material_stats.InstructionCountNotHardcoded",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 
 bool FAssetGetMaterialStatsInstructionCountNotHardcodedTest::RunTest(const FString& Parameters)
 {
-    // Build a real on-disk-registered scratch material so the handler runs its full
-    // stats-building path (LoadAsset → EnsureIsComplete → emit stats), not an early-out.
-    IrTest::FScratchAsset Scratch(TEXT("M_MatStatsInstrCount"));
-    UMaterial* Material =
-        IrTest::CreateFactoryScratchAsset<UMaterial, UMaterialFactoryNew>(Scratch);
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
+
+    // An authored material (BaseColor wired, PostEditChange run), the state every production
+    // create/load path leaves a material in. A bare UMaterialFactoryNew result is not: without an
+    // InitialTexture the factory never calls PostEditChange (EditorFactories.cpp,
+    // UMaterialFactoryNew::FactoryCreateNew), and that never-finalised, empty material read
+    // shaderCompile.status 'notCompiled' after ProbeAndWait on the Linux Vulkan suite run, while
+    // this same fixture reaches 'completed' (material.shader_state.ValidMaterialReportsCompleted).
+    FString AssetPath;
+    UMaterial* Material = PinWrightMaterialShaderStateTestFixtures::MakeCleanMaterial(
+        TEXT("M_MatStatsInstrCount"), AssetPath);
+    ON_SCOPE_EXIT { CleanupTestAsset(AssetPath); };
     if (!TestNotNull(TEXT("scratch material created"), Material))
     {
         return false;
     }
 
-    // ObjectPath form (Package.Asset) so DoesAssetExist / LoadAsset resolve the
-    // freshly-created in-memory asset (matches the asset.save integrity-gate test).
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
-    Payload->SetStringField(TEXT("assetPath"), ToObjectPath(Scratch.PackagePath));
+    Payload->SetStringField(TEXT("assetPath"), Material->GetPathName());
 
     FTestResponseCapture Capture;
     TestTrue(TEXT("asset.get_material_stats handler found"),
@@ -420,30 +429,151 @@ bool FAssetGetMaterialStatsInstructionCountNotHardcodedTest::RunTest(const FStri
     }
 
     const TSharedPtr<FJsonObject>* StatsObj = nullptr;
-    TestTrue(TEXT("response carries a stats object"),
-        Capture.Result->TryGetObjectField(TEXT("stats"), StatsObj));
-    if (!StatsObj || !(*StatsObj).IsValid())
+    if (!TestTrue(TEXT("stats is an object for a compiled material"),
+            Capture.Result->TryGetObjectField(TEXT("stats"), StatsObj) && StatsObj->IsValid()))
+    {
+        // Name the reason and the whole shaderCompile block, so a host that cannot compile the
+        // material says why rather than only that stats was null.
+        FString Reason;
+        Capture.Result->TryGetStringField(TEXT("statsUnavailableReason"), Reason);
+        FString ShaderCompile;
+        const TSharedPtr<FJsonObject>* ShaderCompileObj = nullptr;
+        if (Capture.Result->TryGetObjectField(TEXT("shaderCompile"), ShaderCompileObj))
+        {
+            const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&ShaderCompile);
+            FJsonSerializer::Serialize((*ShaderCompileObj).ToSharedRef(), Writer);
+        }
+        AddError(FString::Printf(TEXT("statsUnavailableReason='%s' shaderCompile=%s"),
+            *Reason, *ShaderCompile));
+        return false;
+    }
+
+    const int32 Vertex = (*StatsObj)->GetIntegerField(TEXT("vertexInstructions"));
+    const int32 Pixel = (*StatsObj)->GetIntegerField(TEXT("pixelInstructions"));
+    TestTrue(TEXT("vertexInstructions is a real non-zero count"), Vertex > 0);
+    TestTrue(TEXT("pixelInstructions is a real non-zero count"), Pixel > 0);
+
+    // Same state, same engine function: the verb must report what GetStatistics measures.
+    const FMaterialStatistics Engine = UMaterialEditingLibrary::GetStatistics(Material);
+    TestEqual(TEXT("vertexInstructions matches GetStatistics"), Vertex, Engine.NumVertexShaderInstructions);
+    TestEqual(TEXT("pixelInstructions matches GetStatistics"), Pixel, Engine.NumPixelShaderInstructions);
+    TestEqual(TEXT("samplers matches GetStatistics"),
+        (int32)(*StatsObj)->GetIntegerField(TEXT("samplers")), Engine.NumSamplers);
+
+    FString Platform;
+    TestTrue(TEXT("statsPlatform names the measured shader platform"),
+        Capture.Result->TryGetStringField(TEXT("statsPlatform"), Platform) && !Platform.IsEmpty());
+    FString Subject;
+    Capture.Result->TryGetStringField(TEXT("measuredSubject"), Subject);
+    TestEqual(TEXT("measuredSubject is the base material"), Subject, FString(TEXT("baseMaterial")));
+    TestFalse(TEXT("no statsUnavailableReason on a measured response"),
+        Capture.Result->HasField(TEXT("statsUnavailableReason")));
+
+    // A second read of the now-complete map (the compile_material-then-stats workflow) must
+    // measure the same numbers rather than lose the map.
+    FTestResponseCapture Again;
+    InvokeHandlerWithCapture(TEXT("asset.get_material_stats"), Payload, Again);
+    const TSharedPtr<FJsonObject>* AgainStats = nullptr;
+    if (TestTrue(TEXT("a repeat read of a compiled material is measured"),
+            Again.bSuccess && Again.Result.IsValid() &&
+            Again.Result->TryGetObjectField(TEXT("stats"), AgainStats) && AgainStats->IsValid()))
+    {
+        TestEqual(TEXT("repeat read keeps pixelInstructions"),
+            (int32)(*AgainStats)->GetIntegerField(TEXT("pixelInstructions")), Pixel);
+    }
+    return true;
+}
+
+// A material that was never cached at all (a bare UMaterialFactoryNew result: no PostEditChange,
+// so no shader map and no resource). The verb must compile it itself rather than answer
+// notCompiled; round 1 of the suite read 'notCompiled' with nothing waited on for exactly this.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetGetMaterialStatsNeverCachedTest,
+    "PinWright.asset.get_material_stats.NeverCachedMaterialIsCompiledAndMeasured",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetGetMaterialStatsNeverCachedTest::RunTest(const FString& Parameters)
+{
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
+
+    IrTest::FScratchAsset Scratch(TEXT("M_MatStatsNeverCached"));
+    UMaterial* Material =
+        IrTest::CreateFactoryScratchAsset<UMaterial, UMaterialFactoryNew>(Scratch);
+    if (!TestNotNull(TEXT("scratch material created"), Material))
     {
         return false;
     }
 
-    // The real sibling field must still be present — proves we reached the stats block
-    // and are asserting on the live handler output, not a degenerate response.
-    FString ShadingModel;
-    TestTrue(TEXT("stats still carries a real shadingModel"),
-        (*StatsObj)->TryGetStringField(TEXT("shadingModel"), ShadingModel));
+    TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+    Payload->SetStringField(TEXT("assetPath"), ToObjectPath(Scratch.PackagePath));
 
-    // The defect: instructionCount must NOT be a fabricated number (the old -1). It is
-    // present but emitted as JSON null ("not computed"), never read as a real count.
-    const TSharedPtr<FJsonValue>* InstrField = (*StatsObj)->Values.Find(TEXT("instructionCount"));
-    TestTrue(TEXT("stats carries an instructionCount field"),
-        InstrField != nullptr && InstrField->IsValid());
-    if (InstrField && InstrField->IsValid())
+    FTestResponseCapture Capture;
+    InvokeHandlerWithCapture(TEXT("asset.get_material_stats"), Payload, Capture);
+    TestTrue(TEXT("asset.get_material_stats succeeded"), Capture.bSuccess);
+    const TSharedPtr<FJsonObject>* StatsObj = nullptr;
+    if (!TestTrue(TEXT("a never-cached material is compiled and measured"),
+            Capture.Result.IsValid() &&
+            Capture.Result->TryGetObjectField(TEXT("stats"), StatsObj) && StatsObj->IsValid()))
     {
-        TestEqual(TEXT("instructionCount is JSON null, not a hardcoded -1 number"),
-            (*InstrField)->Type, EJson::Null);
+        FString Reason;
+        if (Capture.Result.IsValid())
+        {
+            Capture.Result->TryGetStringField(TEXT("statsUnavailableReason"), Reason);
+        }
+        AddError(FString::Printf(TEXT("statsUnavailableReason='%s'"), *Reason));
+        return false;
+    }
+    TestTrue(TEXT("vertexInstructions is non-zero"),
+        (*StatsObj)->GetIntegerField(TEXT("vertexInstructions")) > 0);
+    TestTrue(TEXT("pixelInstructions is non-zero"),
+        (*StatsObj)->GetIntegerField(TEXT("pixelInstructions")) > 0);
+    return true;
+}
+
+// The null-with-reason path, driven through the renderer-availability test seam so it runs on
+// every host: without a renderer the verb must answer stats:null + a reason, keep the graph facts,
+// and never publish a zero struct.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetGetMaterialStatsNullWithReasonTest,
+    "PinWright.asset.get_material_stats.NoRendererStatsNullWithReason",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetGetMaterialStatsNullWithReasonTest::RunTest(const FString& Parameters)
+{
+    IrTest::FScratchAsset Scratch(TEXT("M_MatStatsNullReason"));
+    UMaterial* Material =
+        IrTest::CreateFactoryScratchAsset<UMaterial, UMaterialFactoryNew>(Scratch);
+    if (!TestNotNull(TEXT("scratch material created"), Material))
+    {
+        return false;
     }
 
+    TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+    Payload->SetStringField(TEXT("assetPath"), ToObjectPath(Scratch.PackagePath));
+
+    FTestResponseCapture Capture;
+    {
+        PinWrightRendering::FScopedForceUnavailableForTesting NoRenderer;
+        TestTrue(TEXT("asset.get_material_stats handler found"),
+            InvokeHandlerWithCapture(TEXT("asset.get_material_stats"), Payload, Capture));
+    }
+    TestTrue(TEXT("asset.get_material_stats succeeds without a renderer"), Capture.bSuccess);
+    if (!Capture.bSuccess || !Capture.Result.IsValid())
+    {
+        return false;
+    }
+
+    const TSharedPtr<FJsonValue>* StatsField = Capture.Result->Values.Find(TEXT("stats"));
+    TestTrue(TEXT("stats is present and JSON null, not a zero struct"),
+        StatsField != nullptr && StatsField->IsValid() && (*StatsField)->Type == EJson::Null);
+
+    FString Reason;
+    Capture.Result->TryGetStringField(TEXT("statsUnavailableReason"), Reason);
+    TestEqual(TEXT("statsUnavailableReason names the missing renderer"), Reason, FString(TEXT("nullRhi")));
+
+    FString ShadingModel;
+    TestTrue(TEXT("shadingModel stays readable when stats is null"),
+        Capture.Result->TryGetStringField(TEXT("shadingModel"), ShadingModel) && !ShadingModel.IsEmpty());
+    TestTrue(TEXT("textureSampleNodeCount stays readable when stats is null"),
+        Capture.Result->HasField(TEXT("textureSampleNodeCount")));
     return true;
 }
 

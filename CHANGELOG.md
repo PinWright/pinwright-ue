@@ -31,6 +31,11 @@
 - Changed: `niagara.add_module` refuses a module whose usage bitmask does not allow the target
   stack with `INCOMPATIBLE_STACK_GROUP` (it used to add it anywhere); with `scriptUsage` omitted it
   picks the only allowed stack when there is exactly one.
+- Changed: `asset.get_material_stats` compiles the material (bounded) and returns the measured
+  `stats.vertexInstructions` / `pixelInstructions` / `samplers` and the other engine shader
+  statistics, plus `statsPlatform`, `measuredSubject` and `textureSampleNodeCount`; `stats` is
+  `null` with `statsUnavailableReason` under PIE, without a renderer, or when the compile did not
+  complete. The never-populated `stats.instructionCount` is removed.
 - Changed: `editor.undo` / `editor.redo` with nothing to do return `NOTHING_TO_UNDO` /
   `NOTHING_TO_REDO` errors instead of success with `success: false`.
 - Changed: `gameplay_tags.remove` returns `TAG_IN_USE` for a referenced tag and `REMOVE_FAILED`

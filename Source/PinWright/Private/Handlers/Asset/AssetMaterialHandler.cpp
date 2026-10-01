@@ -44,6 +44,11 @@
 #include "Materials/MaterialInstanceConstant.h"
 #include "MaterialShared.h"
 #include "Handlers/Material/MainInputBindings.h"
+#include "Handlers/Material/MaterialShaderState.h"
+#include "DataDrivenShaderPlatformInfo.h"
+#include "Utils/PackageDirtyUtils.h"
+#include "Utils/PieState.h"
+#include "Utils/RenderingAvailability.h"
 
 // ============================================================================
 // asset.list_material_instances
@@ -215,11 +220,18 @@ REGISTER_RPC_HANDLER("asset.reset_instance_parameters", "asset", "Reset all para
 // ============================================================================
 // asset.get_material_stats
 // ============================================================================
-REGISTER_RPC_HANDLER("asset.get_material_stats", "asset", "Get material statistics (shading model, samplers, etc.)",
+REGISTER_RPC_HANDLER("asset.get_material_stats", "asset",
+    "Get a material's compiled shader statistics (vertex/pixel instruction counts, samplers, texture "
+    "samples, interpolators) for the editor's shader platform. Compiles the material first under the "
+    "same bounded wait as material.authoring.compile_material. stats is null with "
+    "statsUnavailableReason when no complete shader map can be measured (PIE active, no renderer, "
+    "compile failed or timed out); it is never a row of zeros.",
     RPC_PARAMS(
-        RPC_PARAM_REQ("assetPath", "path", "Path to the material")
+        RPC_PARAM_REQ("assetPath", "path", "Path to the material or material instance")
     ))
 {
+    namespace MSS = PinWright::MaterialShaderState;
+
     FString AssetPath = Ctx.GetString(TEXT("assetPath"));
     if (AssetPath.IsEmpty())
     {
@@ -247,47 +259,129 @@ REGISTER_RPC_HANDLER("asset.get_material_stats", "asset", "Get material statisti
         return true;
     }
 
-    Material->EnsureIsComplete();
-
-    TSharedPtr<FJsonObject> Stats = MakeShared<FJsonObject>();
-
     // Route through the single shading-model->bare-name mapper so this readback can't drift from
     // material.authoring's get_material_node_details('Main') payload.
     FString ShadingModelStr = TEXT("Unknown");
+    int32 TextureSampleNodeCount = 0;
     if (UMaterial* BaseMat = Material->GetMaterial())
     {
         ShadingModelStr = PinWright::Material::GetShadingModelString(BaseMat);
-    }
-    Stats->SetStringField(TEXT("shadingModel"), ShadingModelStr);
-
-    // instructionCount: emit an honest JSON null rather than a fabricated number.
-    // The real representative instruction count lives on the compiled shader map and is
-    // produced by FMaterialStatsUtils::GetRepresentativeInstructionCounts, but that utility
-    // is not DLL-exported from the MaterialEditor module (it carries no MATERIALEDITOR_API),
-    // and the one exported entry point that wraps it (ExtractMatertialStatsInfo) takes the
-    // module-private FShaderStatsInfo type — so neither is callable from this module. The
-    // count is also only populated once the offline platform shader compiler has run, which
-    // does not happen on the headless automation path. A fixed -1 here read as a measured
-    // statistic next to the real shadingModel/samplerCount fields
-    // (B-material-stats-instruction-count-hardcoded); a null signals "not computed" honestly.
-    Stats->SetField(TEXT("instructionCount"), MakeShared<FJsonValueNull>());
-
-    int32 SamplerCount = 0;
-    if (UMaterial* BaseMat = Material->GetMaterial())
-    {
         for (UMaterialExpression* Expr : BaseMat->GetEditorOnlyData()->ExpressionCollection.Expressions)
         {
             if (Expr && Expr->IsA<UMaterialExpressionTextureSample>())
             {
-                SamplerCount++;
+                TextureSampleNodeCount++;
             }
         }
     }
-    Stats->SetNumberField(TEXT("samplerCount"), SamplerCount);
 
     TSharedPtr<FJsonObject> Resp = MakeShared<FJsonObject>();
     Resp->SetBoolField(TEXT("success"), true);
-    Resp->SetObjectField(TEXT("stats"), Stats);
+    // Graph facts, available without a shader map, so they stay readable when stats is null.
+    Resp->SetStringField(TEXT("shadingModel"), ShadingModelStr);
+    Resp->SetNumberField(TEXT("textureSampleNodeCount"), TextureSampleNodeCount);
+    Resp->SetStringField(TEXT("measuredSubject"), MSS::ToWire(MSS::ResolveMeasuredSubject(Material)));
+
+    // UMaterialEditingLibrary::GetStatistics reads the representative shaders off the
+    // GMaxRHIShaderPlatform resource. It calls FMaterial::FinishCompilation() (no ceiling) on an
+    // incomplete map, and it returns an all-zero struct when there is nothing to read (PIE, no
+    // renderer, a skipped compile) - zeros indistinguishable from a measurement. So it is called
+    // only once the bounded ProbeAndWait has reported a complete map, and every other path
+    // publishes stats:null with the reason.
+    FString UnavailableReason;
+    FString UnavailableDetail;
+    FMaterialStatistics Statistics;
+    if (!PinWrightRendering::IsAvailable())
+    {
+        UnavailableReason = TEXT("nullRhi");
+        UnavailableDetail = TEXT("This editor has no GPU renderer (-NullRHI or a commandlet), so no ")
+            TEXT("shader is compiled for a real platform. Relaunch in mode 'offscreen' or 'visible'.");
+    }
+    else
+    {
+        Resp->SetStringField(TEXT("statsPlatform"),
+            FDataDrivenShaderPlatformInfo::GetName(GMaxRHIShaderPlatform).ToString());
+
+        if (PinWrightPieState::IsPlayInEditorActive())
+        {
+            // Non-blocking: report what is on the material, measure nothing while PIE runs.
+            MSS::AddReport(Resp, MSS::Probe(Material));
+            UnavailableReason = TEXT("pieActive");
+            UnavailableDetail = TEXT("Play-In-Editor is running; the engine's shader statistics read ")
+                TEXT("as zeros under PIE. Stop PIE and call again.");
+        }
+        else
+        {
+            // Read verb: the compile below must not leave a package dirty that was clean.
+            PinWright::PackageDirty::FScopedPackageDirtyRestore DirtyRestore;
+            DirtyRestore.Capture(Material);
+            DirtyRestore.Capture(Material->GetMaterial());
+
+            // Start ProbeAndWait from the state it is proven on: the incomplete on-demand map that
+            // PostLoad / PostEditChange install with EMaterialShaderPrecompileMode::None, which
+            // keeps its compiling id, so CacheShaders(Synchronous) re-finds it, submits every job
+            // and drains it under the 90 s bound (material.shader_state.ValidMaterialReportsCompleted).
+            // A never-cached material is seeded into that state first; a complete map is read
+            // as-is. UMaterialInterface::EnsureIsComplete() is deliberately not called: its
+            // FinishCompilation() has no ceiling, and the suite run that called it first read
+            // 'notCompiled' with nothing waited on, on the very fixture that passes without it.
+            MSS::FState State = MSS::Probe(Material);
+            if (State.Status != MSS::EStatus::Completed)
+            {
+                if (State.Status == MSS::EStatus::NotCompiled)
+                {
+                    if (UMaterialInterface* Subject =
+                            MaterialCompileErrorCollector::ResolveCompileSubject(Material))
+                    {
+                        Subject->CacheShaders(EMaterialShaderPrecompileMode::None);
+                    }
+                }
+                State = MSS::ProbeAndWait(Material);
+            }
+            MSS::AddReport(Resp, State);
+            if (!State.Succeeded())
+            {
+                UnavailableReason = MSS::ToWire(State.Status);
+                UnavailableDetail = TEXT("No complete shader map to measure; see shaderCompile.status ")
+                    TEXT("and shaderCompile.errors.");
+            }
+            else
+            {
+                Statistics = UMaterialEditingLibrary::GetStatistics(Material);
+                if (Statistics.NumVertexShaderInstructions == 0 && Statistics.NumPixelShaderInstructions == 0)
+                {
+                    UnavailableReason = TEXT("noRepresentativeShaders");
+                    UnavailableDetail = TEXT("The shader map compiled but holds none of the representative ")
+                        TEXT("shaders the engine's material stats read, so no instruction count exists.");
+                }
+            }
+        }
+    }
+
+    if (UnavailableReason.IsEmpty())
+    {
+        TSharedPtr<FJsonObject> Stats = MakeShared<FJsonObject>();
+        Stats->SetNumberField(TEXT("vertexInstructions"), Statistics.NumVertexShaderInstructions);
+        Stats->SetNumberField(TEXT("pixelInstructions"), Statistics.NumPixelShaderInstructions);
+        Stats->SetNumberField(TEXT("samplers"), Statistics.NumSamplers);
+        Stats->SetNumberField(TEXT("vsTextureSamples"), Statistics.NumVertexTextureSamples);
+        Stats->SetNumberField(TEXT("psTextureSamples"), Statistics.NumPixelTextureSamples);
+        Stats->SetNumberField(TEXT("virtualTextureSamples"), Statistics.NumVirtualTextureSamples);
+        Stats->SetNumberField(TEXT("uvScalars"), Statistics.NumUVScalars);
+        Stats->SetNumberField(TEXT("interpolatorScalars"), Statistics.NumInterpolatorScalars);
+        // Legacy keys, unchanged in meaning: samplerCount was always the graph TextureSample node
+        // count (== textureSampleNodeCount), not the compiler's sampler slots (== samplers).
+        Stats->SetStringField(TEXT("shadingModel"), ShadingModelStr);
+        Stats->SetNumberField(TEXT("samplerCount"), TextureSampleNodeCount);
+        Resp->SetObjectField(TEXT("stats"), Stats);
+    }
+    else
+    {
+        Resp->SetField(TEXT("stats"), MakeShared<FJsonValueNull>());
+        Resp->SetStringField(TEXT("statsUnavailableReason"), UnavailableReason);
+        Resp->SetStringField(TEXT("statsUnavailableDetail"), UnavailableDetail);
+    }
+
     Ctx.SendSuccess(Resp);
     return true;
 }

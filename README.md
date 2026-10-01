@@ -92,7 +92,7 @@ Not listed: internal plumbing namespaces, not intended for direct use - `pipelin
 | `asset.get_asset_graph` | Get asset dependency graph via BFS traversal |
 | `asset.get_dependencies` | Return assets that the given asset directly hard-references (Hard package dependencies). |
 | `asset.get_dependencies_classified` | Get classified asset dependencies with mode and role filtering |
-| `asset.get_material_stats` | Get material statistics (shading model, samplers, etc.) |
+| `asset.get_material_stats` | Get a material's compiled shader statistics (vertex/pixel instruction counts, samplers, texture samples, interpolators) for the editor's shader platform. |
 | `asset.get_metadata` | Read all UMetaData key/value entries plus class-derived tags for one asset. |
 | `asset.import` | Import a file from the local filesystem into the content browser using the matching UFactory. |
 | `asset.is_dirty` | Read whether ONE loaded package currently needs saving. |

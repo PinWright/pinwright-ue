@@ -93,7 +93,7 @@ Force-compile the material's shader. Accepts a `UMaterial` **or** a `UMaterialIn
 
 - A definitive pass/fail signal on graph correctness (compile errors surface here, not on `connect_nodes`).
 - Up-to-date packaged shader bytes before save / export.
-- Material-derived stats (use `call("asset.get_material_stats", ...)` after compile).
+- Material-derived stats: [`asset.get_material_stats`](asset.get_material_stats.md) returns the compiled vertex/pixel instruction counts and sampler usage. It runs the same bounded compile itself, so calling this verb first is not required; it returns `stats: null` with `statsUnavailableReason` while PIE is active, without a renderer, or when the compile did not complete.
 
 The handler submits the material's permutations synchronously, then drains what is left of **this material's** compile against a 90 s ceiling, pumping `FAssetCompilingManager::ProcessAsyncTasks` while it waits, and reads the failed-permutation HLSL errors back off the `FMaterialResource`. It no longer calls `GShaderCompilingManager->FinishAllCompilation()`, which had no ceiling and blocked on every pending shader map in the editor plus the whole texture-compile queue — other callers' work, which contributed nothing to this verb's answer. `compiled` is always `true` and is **not** a measurement — read `compileStatus` and `compileSucceeded` instead:
 

@@ -50,6 +50,28 @@ Writes package metadata and saves the asset by default. Pass `save:false` only w
 
 Clears the material instance constant's non-static parameter overrides and saves it by default; static parameter overrides, including static-switch overrides, are left untouched. Pass `save:false` to leave the reset only in the dirty resident package. The response returns the canonical `assetPath`, `package`, the standard persistence report, and `remainingOverrideCounts` with per-kind counts plus `total`; these values include any untouched static parameter overrides and are read from the instance after the clear. Because the default path writes a package synchronously, dispatch routes this verb to a between-frame safe point even when `save:false` is supplied.
 
+### asset.get_material_stats
+
+Compiled shader statistics for a `UMaterial` or material instance, read through the engine's `UMaterialEditingLibrary::GetStatistics` (the Material Editor's Stats panel numbers). The verb first compiles the material under the same bounded wait as [`material.authoring.compile_material`](material.authoring.compile_material.md) (90 s ceiling, reported in the `shaderCompile` block), and reads statistics only once that compile is `completed`. It never blocks past that bound, and it does not dirty the package.
+
+`stats` (when measured):
+
+- `vertexInstructions` / `pixelInstructions`: instruction count of the most expensive representative vertex / pixel shader. Two numbers because a change can move one stage and not the other (a World Position Offset edit moves only `vertexInstructions`).
+- `samplers`: sampler slots the compiled shader uses. It can exceed `textureSampleNodeCount` by a graph-dependent amount; do not reconcile the two by a fixed offset.
+- `vsTextureSamples`, `psTextureSamples`, `virtualTextureSamples`, `uvScalars`, `interpolatorScalars`.
+- Legacy: `shadingModel`, and `samplerCount`, which is the graph `TextureSample` node count (same as `textureSampleNodeCount`), not the compiler's `samplers`. The old `instructionCount` key, which never carried a measured value, is gone; read the two instruction fields.
+
+Always on the response: `shadingModel` and `textureSampleNodeCount` (graph facts, no compile needed), `measuredSubject` (`baseMaterial`, `instanceStaticPermutation`, or `parentInherited` — an instance with no static permutation has no shader of its own, so the numbers are the **parent's**), and, when a renderer exists, `statsPlatform` (the shader platform measured, e.g. `VULKAN_SM6` or `PCD3D_SM6`; counts differ between platforms).
+
+**`stats` is `null`, never a row of zeros, when nothing can be measured.** `statsUnavailableReason` says why and `statsUnavailableDetail` gives the remedy:
+
+- `pieActive`: Play-In-Editor is running; the engine's statistics read as zeros under PIE. Stop PIE and call again.
+- `nullRhi`: no GPU renderer (mode `headless`, `-NullRHI`, commandlet). Relaunch in mode `offscreen` or `visible`.
+- `failed`, `timedOut`, `outstanding`, `notCompiled`, `notMeasured`: the compile did not end in a complete shader map; the value is `shaderCompile.status`, and `shaderCompile.errors` carries any HLSL errors.
+- `noRepresentativeShaders`: the map compiled but holds none of the shaders the statistics read.
+
+Compare counts only between responses with the same `statsPlatform` and `measuredSubject`.
+
 ### asset.exists
 
 Checks an asset path without loading it. The lookup uses the asset registry, already-loaded objects and the mounted package file rather than `UEditorAssetLibrary`, so an active PIE session cannot turn a real asset into `exists:false`. Both package form (`/Game/Foo/Bar`) and object form (`/Game/Foo/Bar.Bar`) are accepted.
