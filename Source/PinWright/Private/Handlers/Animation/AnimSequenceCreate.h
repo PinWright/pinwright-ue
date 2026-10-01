@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Misc/EngineVersionComparison.h"
 #include "Misc/FrameRate.h"
 #include "PwSource/PwDiagnostic.h"
 #include "Utils/AssetSaveState.h"
@@ -141,6 +142,13 @@ struct FAnimSequenceSyncMarkerWriteResult
 // Creates or rebuilds an AnimSequence, applies all tracks in the required controller order,
 // and measures the resulting data model before returning.
 PINWRIGHT_API FAnimSequenceCreateResult CreateAnimSequence(const FAnimSequenceCreateSpec& Spec);
+
+#if UE_VERSION_OLDER_THAN(5, 8, 0)
+// Blocks, holding no sequence lock, until no UAnimSequence compression task is in flight (60 s cap).
+// Before UE 5.8, SetSkeleton or any compression wait deadlocks the game thread against an
+// in-flight task; the definition records the engine mechanism.
+void AnimSequenceCreate_DrainCompilation();
+#endif
 
 // Replaces all authored markers atomically after validating every name and time. The helper
 // rebuilds UE's derived marker state and notify-track links before returning.

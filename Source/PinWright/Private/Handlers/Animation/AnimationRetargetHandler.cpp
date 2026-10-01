@@ -14,6 +14,7 @@
 #include "Handlers/HandlerContext.h"
 #include "Handlers/ErrorCodes.h"
 #include "Handlers/Animation/AnimationHandlerTestHooks.h"
+#include "Handlers/Animation/AnimSequenceCreate.h"
 #include "Utils/AssetUtils.h"
 #include "Utils/GuardedLoad.h"
 #include "Utils/PieState.h"
@@ -313,10 +314,30 @@ REGISTER_RPC_HANDLER("animation.retarget_animations", "animation",
     Context.NameRule.Suffix = Suffix;
     Context.NameRule.FolderPath = OutputPath;
 
+#if UE_VERSION_OLDER_THAN(5, 8, 0)
+    // RunRetarget duplicates every clip (the duplicate starts compressing at once) and then calls
+    // SetSkeleton on it, which before 5.8 deadlocks the game thread while that compression is in
+    // flight (measured on 5.6: UAnimSequence::TryCancelAsyncTasks never returned). Drain it as
+    // each duplicate registers, which happens between the two steps.
+    IAssetRegistry& CreatedRegistry =
+        FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get();
+    const FDelegateHandle DrainOnCreate = CreatedRegistry.OnInMemoryAssetCreated().AddLambda([](UObject* Asset)
+    {
+        if (Cast<UAnimSequence>(Asset))
+        {
+            AnimSequenceCreate_DrainCompilation();
+        }
+    });
+#endif
     UIKRetargetBatchOperation* BatchOperation = NewObject<UIKRetargetBatchOperation>();
     BatchOperation->AddToRoot();
     BatchOperation->RunRetarget(Context);
     BatchOperation->RemoveFromRoot();
+#if UE_VERSION_OLDER_THAN(5, 8, 0)
+    CreatedRegistry.OnInMemoryAssetCreated().Remove(DrainOnCreate);
+    // The outputs recompress after conversion; the delete or save below would wait on that.
+    AnimSequenceCreate_DrainCompilation();
+#endif
 
     // What the export created, measured. Includes any referenced asset the engine duplicated too.
     TArray<FString> Created = AssetsInFolder(OutputPath).Difference(Before).Array();

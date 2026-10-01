@@ -30,8 +30,6 @@
 #include "ScopedTransaction.h"
 #include "UObject/Package.h"
 
-namespace
-{
 #if UE_VERSION_OLDER_THAN(5, 8, 0)
     // UE 5.7 and older poll a UAnimSequence's async compression task while holding that
     // sequence's compressed-data READ lock (UAnimSequence::WaitForAsyncTasks), and the task's
@@ -72,6 +70,8 @@ namespace
     }
 #endif
 
+namespace
+{
     class FAnimSequenceCreateRollback
     {
     public:

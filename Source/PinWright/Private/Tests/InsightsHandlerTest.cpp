@@ -491,6 +491,7 @@ bool FInsightsExportTimeoutIsTypedAndCleansArtifactsTest::RunTest(const FString&
     Kinds.Add(MakeShared<FJsonValueString>(TEXT("frame_series")));
     Payload->SetArrayField(TEXT("kind"), Kinds);
 
+    PwInsightsTestTrace::ExpectGpuAnalyzerTimestampNoise(*this);
     PinWrightRpc::TraceExport::SetForceSlowAnalysisForTests(true);
     FTestResponseCapture Capture;
     TestTrue(TEXT("timeout test invokes the export handler"),
