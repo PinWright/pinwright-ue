@@ -67,6 +67,9 @@
 - Removed: proxy tool `editor_prepare_tests` (use `editor_run_tests`), and
   `scripts/Run-Capped.ps1`, `scripts/Run-SuiteCapped.ps1`, `scripts/CappedJob.ps1` (use
   `editor_build`, `editor_run_tests` and `editor_start`).
+- Fixed: `skeleton.remove_bone` and `skeleton.set_bone_parent` keep each bone's translation
+  retargeting mode on that bone (they used to leave the modes on the old indices) and refresh the
+  engine's dependent caches; both report `boundMeshes` with whether each bound mesh still matches.
 - Fixed: `check_suite_log` (and `editor_test_status`) no longer classifies a run `CRASHED` on
   another editor's crash report: a report counts only between the log's open time and its last
   write, only when the `-Abslog` its command line records (if any) is this log, and only when its

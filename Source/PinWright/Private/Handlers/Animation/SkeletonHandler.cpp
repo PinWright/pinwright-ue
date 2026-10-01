@@ -15,6 +15,7 @@
 
 
 #include "Animation/Skeleton.h"
+#include "AssetRegistry/AssetRegistryModule.h"
 #include "Engine/SkeletalMesh.h"
 #include "Engine/SkeletalMeshSocket.h"
 #include "ReferenceSkeleton.h"
@@ -161,6 +162,89 @@ static USkeleton* LoadSkeletonOrFromMesh(const FString& AssetPath, FString& OutE
 static void SendTypedPathError(FHandlerContext& Ctx, const TCHAR* MissingCode, const FString& Error, bool bWrongType)
 {
     Ctx.SendError(bWrongType ? TEXT("INVALID_ASSET_TYPE") : MissingCode, Error);
+}
+
+// Every skeleton.* verb that adds, removes or reparents a bone goes through here.
+// FReferenceSkeletonModifier reindexes the raw bones (Remove shifts later bones down, SetParent
+// re-sorts parents before children) but leaves USkeleton::BoneTree - the per-bone translation
+// retargeting modes, read by raw index - on the old layout, and leaves the engine's index-keyed
+// caches (mesh linkup tables, blend-profile bone indices, loaded animations' track mapping)
+// stale. This re-keys BoneTree by bone name, the way USkeleton::MergeBonesToBoneTree does, and
+// then announces the hierarchy change. Edit returns false when it changed nothing (nothing is
+// announced then). Returns false only when BoneTree is unreachable, before anything is edited.
+static bool EditSkeletonHierarchy(USkeleton* Skeleton, TFunctionRef<bool(FReferenceSkeletonModifier&)> Edit)
+{
+    // BoneTree is private; reach it the way the .pwskel compile path does.
+    FArrayProperty* BoneTreeProperty = FindFProperty<FArrayProperty>(USkeleton::StaticClass(), TEXT("BoneTree"));
+    const FStructProperty* BoneNodeProperty = BoneTreeProperty ? CastField<FStructProperty>(BoneTreeProperty->Inner) : nullptr;
+    if (!BoneNodeProperty || BoneNodeProperty->Struct != FBoneNode::StaticStruct())
+    {
+        return false;
+    }
+    TArray<FBoneNode>& BoneTree = *BoneTreeProperty->ContainerPtrToValuePtr<TArray<FBoneNode>>(Skeleton);
+
+    const FReferenceSkeleton& RefSkeleton = Skeleton->GetReferenceSkeleton();
+    TMap<FName, FBoneNode> NodeByName;
+    for (int32 Index = 0; Index < BoneTree.Num() && Index < RefSkeleton.GetRawBoneNum(); ++Index)
+    {
+        NodeByName.Add(RefSkeleton.GetBoneName(Index), BoneTree[Index]);
+    }
+
+    // The engine's full hierarchy-change handler (HandleSkeletonHierarchyChange) is protected;
+    // its public route is RemoveBonesFromSkeleton. A sentinel leaf appended inside the same
+    // edit and removed below drives that route: new skeleton GUID, cleared mesh linkup caches,
+    // pruned virtual bones whose ends were removed, blend profiles re-resolved by name, loaded
+    // animations validated.
+    FName Sentinel(TEXT("__PinWrightHierarchyRefresh"));
+    for (int32 Suffix = 1; RefSkeleton.FindRawBoneIndex(Sentinel) != INDEX_NONE; ++Suffix)
+    {
+        Sentinel = FName(*FString::Printf(TEXT("__PinWrightHierarchyRefresh_%d"), Suffix));
+    }
+
+    {
+        FReferenceSkeletonModifier Modifier(Skeleton);
+        if (!Edit(Modifier))
+        {
+            return true;
+        }
+        Modifier.Add(FMeshBoneInfo(Sentinel, Sentinel.ToString(), 0), FTransform::Identity, false);
+    }
+
+    BoneTree.Reset(RefSkeleton.GetRawBoneNum());
+    for (int32 Index = 0; Index < RefSkeleton.GetRawBoneNum(); ++Index)
+    {
+        BoneTree.Add(NodeByName.FindRef(RefSkeleton.GetBoneName(Index)));
+    }
+
+    Skeleton->RemoveBonesFromSkeleton({ Sentinel }, /*bRemoveChildBones=*/true);
+    return true;
+}
+
+// A Skeleton edit never touches the SkeletalMeshes bound to it. Report each one and whether it
+// still matches the edited hierarchy (USkeleton::IsCompatibleMesh: bone names and parent chains),
+// so a mesh the edit broke is not hidden behind a success response.
+static void AddBoundMeshReport(const TSharedPtr<FJsonObject>& Result, const USkeleton* Skeleton)
+{
+    FARFilter Filter;
+    Filter.ClassPaths.Add(USkeletalMesh::StaticClass()->GetClassPathName());
+    Filter.TagsAndValues.Add(USkeletalMesh::GetSkeletonMemberName(), FAssetData(Skeleton).GetExportTextName());
+    TArray<FAssetData> MeshAssets;
+    IAssetRegistry::GetChecked().GetAssets(Filter, MeshAssets);
+
+    TArray<TSharedPtr<FJsonValue>> Meshes;
+    for (const FAssetData& MeshAsset : MeshAssets)
+    {
+        const USkeletalMesh* Mesh = Cast<USkeletalMesh>(MeshAsset.GetAsset());
+        if (!Mesh)
+        {
+            continue;
+        }
+        TSharedPtr<FJsonObject> Entry = MakeShared<FJsonObject>();
+        Entry->SetStringField(TEXT("skeletalMeshPath"), Mesh->GetPathName());
+        Entry->SetBoolField(TEXT("compatible"), Skeleton->IsCompatibleMesh(Mesh));
+        Meshes.Add(MakeShared<FJsonValueObject>(Entry));
+    }
+    Result->SetArrayField(TEXT("boundMeshes"), Meshes);
 }
 
 } // anonymous namespace
@@ -777,14 +861,21 @@ REGISTER_RPC_HANDLER("skeleton.add_bone", "skeleton",
     FVector Scale = ParseVectorFromJson(Payload, TEXT("scale"), FVector::OneVector);
     FTransform BoneTransform(Rotation, Location, Scale);
 
-    FReferenceSkeletonModifier Modifier(Skeleton);
     FMeshBoneInfo NewBone;
     NewBone.Name = FName(*BoneName);
     NewBone.ParentIndex = ParentIndex;
     NewBone.ExportName = BoneName;
 
     bool bAllowMultipleRoots = ParentIndex == INDEX_NONE && RefSkeleton.GetRawBoneNum() == 0;
-    Modifier.Add(NewBone, BoneTransform, bAllowMultipleRoots);
+    if (!EditSkeletonHierarchy(Skeleton, [&](FReferenceSkeletonModifier& Modifier)
+        {
+            Modifier.Add(NewBone, BoneTransform, bAllowMultipleRoots);
+            return true;
+        }))
+    {
+        Ctx.SendError(TEXT("INTERNAL_ERROR"), TEXT("Could not reach the Skeleton's per-bone retargeting table (USkeleton::BoneTree); the Skeleton was not edited"));
+        return true;
+    }
 
     McpSafeAssetSave(Skeleton);
 
@@ -849,14 +940,22 @@ REGISTER_RPC_HANDLER("skeleton.remove_bone", "skeleton",
         return true;
     }
 
-    FReferenceSkeletonModifier Modifier(Skeleton);
-    Modifier.Remove(FName(*BoneName), bRemoveChildren);
+    if (!EditSkeletonHierarchy(Skeleton, [&](FReferenceSkeletonModifier& Modifier)
+        {
+            Modifier.Remove(FName(*BoneName), bRemoveChildren);
+            return true;
+        }))
+    {
+        Ctx.SendError(TEXT("INTERNAL_ERROR"), TEXT("Could not reach the Skeleton's per-bone retargeting table (USkeleton::BoneTree); the Skeleton was not edited"));
+        return true;
+    }
     McpSafeAssetSave(Skeleton);
 
     TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject());
     Result->SetStringField(TEXT("removedBone"), BoneName);
     Result->SetBoolField(TEXT("childrenRemoved"), bRemoveChildren);
     Result->SetNumberField(TEXT("boneCount"), Skeleton->GetReferenceSkeleton().GetRawBoneNum());
+    AddBoundMeshReport(Result, Skeleton);
 
     // McpSafeAssetSave only marks the package dirty; it never writes. Report that
     // measured rather than leaving the caller to assume a bare success reached disk.
@@ -909,9 +1008,17 @@ REGISTER_RPC_HANDLER("skeleton.set_bone_parent", "skeleton",
         return true;
     }
 
-    FReferenceSkeletonModifier Modifier(Skeleton);
     FName ParentFName = NewParentName.IsEmpty() ? NAME_None : FName(*NewParentName);
-    int32 NewBoneIndex = Modifier.SetParent(FName(*BoneName), ParentFName, true);
+    int32 NewBoneIndex = INDEX_NONE;
+    if (!EditSkeletonHierarchy(Skeleton, [&](FReferenceSkeletonModifier& Modifier)
+        {
+            NewBoneIndex = Modifier.SetParent(FName(*BoneName), ParentFName, true);
+            return NewBoneIndex != INDEX_NONE;
+        }))
+    {
+        Ctx.SendError(TEXT("INTERNAL_ERROR"), TEXT("Could not reach the Skeleton's per-bone retargeting table (USkeleton::BoneTree); the Skeleton was not edited"));
+        return true;
+    }
 
     if (NewBoneIndex == INDEX_NONE)
     {
@@ -926,6 +1033,7 @@ REGISTER_RPC_HANDLER("skeleton.set_bone_parent", "skeleton",
     Result->SetStringField(TEXT("boneName"), BoneName);
     Result->SetStringField(TEXT("newParent"), NewParentName.IsEmpty() ? TEXT("(none - root)") : NewParentName);
     Result->SetNumberField(TEXT("newBoneIndex"), NewBoneIndex);
+    AddBoundMeshReport(Result, Skeleton);
 
     // McpSafeAssetSave only marks the package dirty; it never writes. Report that
     // measured rather than leaving the caller to assume a bare success reached disk.

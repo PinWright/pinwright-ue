@@ -333,6 +333,20 @@ Errors:
 
 The asset is marked dirty, not written: the response's save report says so. Add bones with `skeleton.add_bone`, sockets with `skeleton.create_socket`.
 
+### skeleton.add_bone
+
+The new bone gets its own per-bone retargeting entry (translation retargeting `Animation`), and the hierarchy change is announced the same way as for `skeleton.remove_bone`.
+
+### skeleton.remove_bone
+
+Removing a bone shifts every later bone's index. The Skeleton's per-bone translation retargeting modes (`USkeleton::BoneTree`, read by index) are re-keyed by bone name, so each surviving bone keeps its own mode. The verb then runs the engine's hierarchy-change refresh: new Skeleton GUID, cleared mesh linkup caches, virtual bones whose source or target was removed are dropped, blend profiles are re-resolved by name, and loaded animations are validated.
+
+The edit never touches the SkeletalMeshes bound to the Skeleton. `boundMeshes` lists each one (`skeletalMeshPath`, `compatible`); `compatible` is `USkeleton::IsCompatibleMesh` after the edit, which checks bone names and parent chains. Removing a middle bone makes a mesh that still has it `compatible: false`; re-import that mesh or edit its bones to match.
+
+### skeleton.set_bone_parent
+
+Reparenting re-sorts the bones so parents come before children, which can change many indices; `newBoneIndex` is the bone's index after the edit. Retargeting modes follow bone names and the hierarchy change is announced as for `skeleton.remove_bone`, and `boundMeshes` is reported the same way.
+
 ### skeleton.create_physics_asset
 
 `skeletalMeshPath` (alias `skeletonPath`) accepts either a `USkeletalMesh` or a bare authored `USkeleton`; the mesh generates capsule bodies from the mesh, the skeleton one body per reference-pose bone span longer than `minBoneLength` (default 5 cm).
