@@ -61,8 +61,9 @@ bool FChooserAuthoringBoolClassRoundTripTest::RunTest(const FString& Parameters)
     // once for chooser.compile (same gating as AddColumnUnboundEmitsHint).
 #if UE_VERSION_NEWER_THAN_OR_EQUAL(5, 6, 0)
     AddExpectedErrorPlain(TEXT("Missing property binding."), EAutomationExpectedErrorFlags::Contains, 2);
-#else
-    // Pre-5.6 add_column builds no binding hint, so only chooser.compile logs it.
+#elif UE_VERSION_NEWER_THAN_OR_EQUAL(5, 5, 0)
+    // Pre-5.6 add_column builds no binding hint, so only chooser.compile logs it. The engine log
+    // itself first appears in 5.5 (ChooserPropertyAccess.cpp); 5.3/5.4 compile it silently.
     AddExpectedErrorPlain(TEXT("Missing property binding."), EAutomationExpectedErrorFlags::Contains, 1);
 #endif
 

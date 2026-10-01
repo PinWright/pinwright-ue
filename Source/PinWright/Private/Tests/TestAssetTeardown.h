@@ -24,8 +24,10 @@
 #include "UObject/UObjectGlobals.h"
 
 #if WITH_EDITOR
+#include "Misc/RedirectCollector.h"
 #include "Selection.h"
 #include "SoundWaveCompiler.h"
+#include "UObject/ObjectRedirector.h"
 #endif
 
 namespace PwTestAssetTeardown
@@ -74,6 +76,21 @@ namespace PwTestAssetTeardown
         // enumerate the asset) register via FAssetRegistryModule::AssetCreated; mirror that with
         // AssetDeleted so the registry does not keep a stale path entry for the object about to
         // be reclaimed.
+#if WITH_EDITOR && !UE_VERSION_NEWER_THAN_OR_EQUAL(5, 5, 0)
+        // Pre-5.5 AssetDeleted removes a redirector's GRedirectCollector entry and ensures
+        // ("Cannot remove redirection ... it was not registered") when it is absent, but
+        // AssetCreated never registered one for an in-memory redirector (5.5+ AddAssetData does).
+        // Register the pairing the engine's own scan would have, so the removal matches.
+        if (const UObjectRedirector* Redirector = Cast<UObjectRedirector>(Asset))
+        {
+            const FSoftObjectPath RedirectorPath(Redirector);
+            if (GRedirectCollector.GetAssetPathRedirection(RedirectorPath).IsNull())
+            {
+                GRedirectCollector.AddAssetPathRedirection(
+                    RedirectorPath, FSoftObjectPath(Redirector->DestinationObject));
+            }
+        }
+#endif
         FAssetRegistryModule::AssetDeleted(Asset);
 
 #if WITH_EDITOR
