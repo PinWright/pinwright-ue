@@ -369,6 +369,10 @@ On a Niagara System, inspect also carries `componentActivation` (plus `component
 
 ### niagara.validate
 
+**`valid: true` does not mean the system emits.** Every check here is static: a system with a
+SpawnRate of 0, a burst count of 0 or a spawn module in the wrong stage validates clean. To find out
+whether it actually spawns particles, run `niagara.simulate`, which reads live particle counts.
+
 `level` (default `basic`) controls issue **severity**, not which checks run. Under `level: strict`, three normally-`warning` structural codes are promoted to hard `error` (so the top-level `valid` flips to `false`): `NO_EMITTERS`, `DISABLED_EMITTER`, and `NO_RENDERERS`. At `basic` those same three stay `warning` and `valid` stays `true`. One further code, `NIAGARA_NO_ACTIVE_COMPONENT`, is layered the same way — see *Is anything in the level running it?* below. No other codes change between levels.
 
 Those three fire **by design** on freshly-authored assets, so `strict` on an in-progress system hard-errors on structure rather than on the edit you meant to check:
@@ -577,6 +581,48 @@ renderer binding on the same name or a material-instance override is resolved be
 Textures with no editable source data, or a compressed / float source layout, are `unverified` —
 the measurement reads `FTextureSource`, the same access `texture.get_pixel_stats` uses. The field
 is absent on Niagara Emitter and Niagara Script assets: the walk is over a system's emitter handles.
+
+### niagara.simulate
+
+Answers "does this system emit?" by running it, not by reading its graph. The system is instanced on a
+transient component in a private preview world (nothing is placed in the open level), advanced by
+`floor(seconds / deltaTime)` fixed steps (float error snapped, so 1 s at 1/30 is 30) with `AdvanceSimulation`, and every emitter's live particle
+count is read **after every step**. The component and the world are destroyed before the call
+returns, and every package dirty flag is left as it was.
+
+`seconds` is required (no safe default: a burst that ends early and an effect that starts late need
+different windows), greater than 0 and at most 60. `deltaTime` defaults to 1/30 and must be at least
+0.0001. A run longer than 3600 steps is refused with `INVALID_ARGUMENT`; raise `deltaTime` instead.
+`sampleEvery` only thins the published `samples`; `maxCount` is taken over every step, so a burst
+that lives and dies between two published samples is still counted.
+
+Refusals, all before anything ticks:
+
+- `RENDERING_UNAVAILABLE` under `-NullRHI` (mode `headless`). Niagara does not instance a system
+  without a renderer, so every count would be a structural zero.
+- `SYSTEM_NOT_COMPILED` — the same compile-readiness gate as `effect.spawn_niagara` (a queued compile
+  request is drained first). See `niagara.compile_status`.
+- `NIAGARA_DATA_INTERFACE_MISMATCH` — the first tick would assert inside the VectorVM.
+
+Response:
+
+| field | meaning |
+|---|---|
+| `emitted` | top level. `true` when any emitter measurably emitted; `false` only when the run advanced and **every** emitter was measured at zero. Absent otherwise — never a guess |
+| `emitters[].maxCount` / `emitted` | the largest exact count seen over all steps, and `maxCount > 0`. Absent when the emitter was not measured; `notMeasuredReason` says why |
+| `emitters[].samples[]` | `{t, count, state}` per published step. `t` is the age read off the instance; `state` is the emitter's execution state (`active`, `inactive`, `inactiveClear`, `complete`, `disabled`), so a 0 after `complete` is not read as "never emitted" |
+| `emitters[].simTarget` / `countExact` | `cpu` or `gpu`; `countExact` is false when any GPU reading was taken before the engine's particle-count fence passed (that reading is `TotalSpawnedParticles`, which ignores deaths, and is excluded from `maxCount`; such a sample carries `countExact: false`) |
+| `system.startAgeSeconds` / `achievedAgeSeconds` | the simulation age before and after the run, measured |
+| `system.stallReason` | present when the age did not move; the run then carries **no** `emitted` verdict anywhere |
+| `system.executionState`, `stepsRequested`, `stepsRun`, `deltaTime`, `sampleEvery` | what was actually run |
+| `system.gpuCountsFlushed` | GPU work was flushed (end-of-frame updates, pending GPU ticks, render commands) before every reading |
+| `system.deterministic` | the system's and every emitter's authored determinism flags are on and no emitter is GPU. A report of authored flags, not a promise the run reproduces |
+| `dataInterfaceCheck` | `consistent` or `unverified`; `mismatched` is refused above |
+
+An emitter that was `disabled` at every step (disabled handle, failed init, GPU simulation
+unavailable) is reported with `notMeasuredReason`, not `emitted: false`: it never ran. GPU deaths
+reach the CPU through an asynchronous readback, so a GPU count can trail a death by a frame — an
+upper bound, which is enough for `emitted`.
 
 ### niagara.set_module_input
 

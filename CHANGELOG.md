@@ -40,6 +40,10 @@
 - Changed: `niagara.add_module` refuses a module whose usage bitmask does not allow the target
   stack with `INCOMPATIBLE_STACK_GROUP` (it used to add it anywhere); with `scriptUsage` omitted it
   picks the only allowed stack when there is exactly one.
+- Added: `niagara.simulate` runs a Niagara system in a private preview world for a bounded number
+  of fixed steps and reports each emitter's live particle count, so `emitted` is measured rather
+  than inferred from the graph (CPU and GPU emitters; an unreadable GPU count is explained, never
+  reported as 0).
 - Changed: `asset.get_material_stats` compiles the material (bounded) and returns the measured
   `stats.vertexInstructions` / `pixelInstructions` / `samplers` and the other engine shader
   statistics, plus `statsPlatform`, `measuredSubject` and `textureSampleNodeCount`; `stats` is

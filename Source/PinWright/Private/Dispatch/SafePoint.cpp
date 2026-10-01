@@ -85,6 +85,9 @@ namespace
         TEXT("level.save_as"),
         TEXT("effect.advance_simulation"),
         TEXT("effect.step_and_capture"),
+        // Builds and destroys a private FPreviewScene world and flushes rendering per GPU step
+        // (NiagaraSimulateHandler.cpp).
+        TEXT("niagara.simulate"),
         TEXT("render.capture_open_level"),
         // Ownerless USceneCaptureComponent2D capture plus synchronous render-thread flush and
         // readback in a private preview world (MeshPreviewCaptureUtils.cpp).

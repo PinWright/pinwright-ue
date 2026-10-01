@@ -36,6 +36,7 @@ namespace
         TEXT("widget.screenshot_designer"),
         TEXT("asset.generate_thumbnail"),
         TEXT("effect.step_and_capture"),
+        TEXT("niagara.simulate"),
         TEXT("performance.run_benchmark"),
         TEXT("mrq.run_jobs"),
         TEXT("landscape.sculpt"),
