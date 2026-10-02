@@ -749,6 +749,15 @@ namespace
                         WBP, /*MaxSize=*/1024, PngBytes, CaptureError, &PreviewInfo))
                 {
                     OutBinaryFiles->Add(DumpFileNames::WidgetPreviewPng, MoveTemp(PngBytes));
+                    // Written, but drawn before these finished compiling: listed so the dump is
+                    // not cached as a fresh baseline and the caller is not handed a silently
+                    // incomplete preview (B-screenshot-designer-cold-capture-missing-images-and-text).
+                    if (!PreviewInfo.bPreviewComplete && OutFileErrors)
+                    {
+                        OutFileErrors->Add(TPair<FString, FString>(DumpFileNames::WidgetPreviewPng,
+                            FString::Printf(TEXT("written, but drawn while these were still compiling, so it may be missing their images or text: %s"),
+                                *FString::Join(PreviewInfo.NotReadyAssets, TEXT(", ")))));
+                    }
                     if (OutWidgetPreviewAlpha)
                     {
                         // Copied, never asserted: bOpaqueStamped is whatever the util reports,

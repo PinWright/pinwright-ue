@@ -14,8 +14,164 @@
 #include "WidgetBlueprintEditor.h"
 #include "Utils/RenderingAvailability.h"
 
+#include "Compat/EngineVersionCompat.h"
+#include "Engine/Texture.h"
+#include "MaterialShared.h"
+#include "Materials/MaterialInterface.h"
+#include "RHI.h"
+#include "ShaderCore.h"
+#include "Slate/SlateTextureAtlasInterface.h"
+#include "Types/InvisibleToWidgetReflectorMetaData.h"
+#include "UObject/UObjectHash.h"
+#include "Utils/AssetCompilePump.h"
+#include "Widgets/SWidget.h"
+
 namespace WidgetDesignerCaptureUtil
 {
+
+namespace
+{
+    FMaterialResource* PWDesignerCaptureMaterialResource(UMaterialInterface* Material)
+    {
+#if UE_VERSION_NEWER_THAN_OR_EQUAL(5, 7, 0)
+        return Material ? Material->GetMaterialResource(GMaxRHIShaderPlatform) : nullptr;
+#else
+        return Material ? Material->GetMaterialResource(GMaxRHIFeatureLevel) : nullptr;
+#endif
+    }
+
+    // Bounded wait: pump the game-thread half of asset/shader compilation (which nothing else
+    // drives while this call holds the game thread) until every collected texture has finished
+    // compiling and every material has a complete game-thread shader map, or the budget runs
+    // out. Whatever is still pending is named in OutInfo rather than waited on further.
+    void PWDesignerCaptureWaitForRenderAssets(UUserWidget* Preview, FCaptureInfo& OutInfo)
+    {
+        TArray<UTexture*> Textures;
+        TArray<UMaterialInterface*> Materials;
+        CollectRenderAssets(Preview, Textures, Materials);
+        OutInfo.ReadinessTextures = Textures.Num();
+        OutInfo.ReadinessMaterials = Materials.Num();
+
+        for (UMaterialInterface* Material : Materials)
+        {
+            FMaterialResource* Resource = PWDesignerCaptureMaterialResource(Material);
+            if (Resource && !Resource->IsGameThreadShaderMapComplete())
+            {
+                Resource->SubmitCompileJobs_GameThread(EShaderCompileJobPriority::High);
+            }
+        }
+
+        TArray<UObject*> Pending;
+        auto RefreshPending = [&]()
+        {
+            Pending.Reset();
+            for (UTexture* Texture : Textures)
+            {
+                if (Texture->IsCompiling())
+                {
+                    Pending.Add(Texture);
+                }
+            }
+            for (UMaterialInterface* Material : Materials)
+            {
+                FMaterialResource* Resource = PWDesignerCaptureMaterialResource(Material);
+                if (Resource && !Resource->IsGameThreadShaderMapComplete())
+                {
+                    Pending.Add(Material);
+                }
+            }
+        };
+
+        const double StartSeconds = FPlatformTime::Seconds();
+        RefreshPending();
+        while (Pending.Num() > 0
+            && FPlatformTime::Seconds() - StartSeconds < WidgetDesignerCaptureInternal::ReadinessBudgetSeconds())
+        {
+            PinWright::AssetCompile::AdvanceOnGameThread();
+            FPlatformProcess::Sleep(0.005f);
+            RefreshPending();
+        }
+        OutInfo.ReadinessWaitSeconds = FPlatformTime::Seconds() - StartSeconds;
+
+        // Mip residency is a separate question from compilation; it decides sharp vs blurry
+        // rather than drawn vs missing, so it is waited on but not reported.
+        for (UTexture* Texture : Textures)
+        {
+            if (!Pending.Contains(Texture))
+            {
+                Texture->WaitForStreaming();
+            }
+        }
+
+        for (UObject* Object : Pending)
+        {
+            OutInfo.NotReadyAssets.Add(Object->GetPathName());
+        }
+        OutInfo.bPreviewComplete = Pending.Num() == 0;
+    }
+
+    // UWidget::CreateDesignerOutline wraps every panel built at design time in
+    //   SOverlay(+FInvisibleToWidgetReflectorMetaData) { content, SBorder(+same metadata, MarchingAnts) }
+    // with the border's visibility fixed when the Slate widget is built, so no designer flag
+    // can remove it from an existing preview. Collapse those borders for the render and put
+    // the exact prior visibility back afterwards; the preview UUserWidget (and any transient
+    // overrides applied to it) is left untouched.
+    class FPWScopedHideDesignerOutlines
+    {
+    public:
+        explicit FPWScopedHideDesignerOutlines(const TSharedRef<SWidget>& Root)
+        {
+            Visit(Root);
+        }
+
+        ~FPWScopedHideDesignerOutlines()
+        {
+            for (const TPair<TWeakPtr<SWidget>, EVisibility>& Entry : Hidden)
+            {
+                if (TSharedPtr<SWidget> Widget = Entry.Key.Pin())
+                {
+                    Widget->SetVisibility(Entry.Value);
+                }
+            }
+        }
+
+        FPWScopedHideDesignerOutlines(const FPWScopedHideDesignerOutlines&) = delete;
+        FPWScopedHideDesignerOutlines& operator=(const FPWScopedHideDesignerOutlines&) = delete;
+
+        int32 Num() const { return Hidden.Num(); }
+
+    private:
+        void Visit(const TSharedRef<SWidget>& Widget)
+        {
+            static const FName OverlayType(TEXT("SOverlay"));
+            static const FName BorderType(TEXT("SBorder"));
+            FChildren* Children = Widget->GetChildren();
+            if (!Children)
+            {
+                return;
+            }
+            if (Widget->GetType() == OverlayType
+                && Widget->GetMetaData<FInvisibleToWidgetReflectorMetaData>().IsValid()
+                && Children->Num() == 2)
+            {
+                TSharedRef<SWidget> Ants = Children->GetChildAt(1);
+                if (Ants->GetType() == BorderType
+                    && Ants->GetMetaData<FInvisibleToWidgetReflectorMetaData>().IsValid()
+                    && Ants->GetVisibility() != EVisibility::Collapsed)
+                {
+                    Hidden.Emplace(Ants, Ants->GetVisibility());
+                    Ants->SetVisibility(EVisibility::Collapsed);
+                }
+            }
+            for (int32 Index = 0; Index < Children->Num(); ++Index)
+            {
+                Visit(Children->GetChildAt(Index));
+            }
+        }
+
+        TArray<TPair<TWeakPtr<SWidget>, EVisibility>> Hidden;
+    };
+}
 
 // Counterfactual for Tests/Widget/TestWidgetDesignerCaptureAlpha.cpp: delete the
 // PinWrightScreenshotUtils::ForceOpaqueAlpha call below and the uncovered region of a
@@ -111,6 +267,60 @@ bool RenderSlateWidgetToSrgbColors(
     // which is a different wrong answer, and never by applying an inverse curve.
     return PinWrightScreenshotUtils::RenderSlateWidgetToSrgbColors(
         Widget, DrawSize, /*DrawScale=*/1.0f, OutColorData, OutError);
+}
+
+void CollectRenderAssets(UObject* Root,
+    TArray<UTexture*>& OutTextures, TArray<UMaterialInterface*>& OutMaterials)
+{
+    TArray<UObject*> Owners;
+    // Default argument = include nested objects on every engine (the bool overload is
+    // deprecated on 5.8, the EGetObjectsFlags one does not exist before it).
+    GetObjectsWithOuter(Root, Owners);
+    Owners.Add(Root);
+
+    TArray<UObject*> Referenced;
+    FReferenceFinder Finder(Referenced);
+    for (UObject* Owner : Owners)
+    {
+        Finder.FindReferences(Owner);
+    }
+
+    for (UObject* Object : Referenced)
+    {
+        if (UTexture* Texture = Cast<UTexture>(Object))
+        {
+            OutTextures.AddUnique(Texture);
+        }
+        else if (UMaterialInterface* Material = Cast<UMaterialInterface>(Object))
+        {
+            OutMaterials.AddUnique(Material);
+        }
+        else if (ISlateTextureAtlasInterface* Atlas = Cast<ISlateTextureAtlasInterface>(Object))
+        {
+            if (UTexture* AtlasTexture = Atlas->GetSlateAtlasData().AtlasTexture)
+            {
+                OutTextures.AddUnique(AtlasTexture);
+            }
+        }
+    }
+
+    for (UMaterialInterface* Material : OutMaterials)
+    {
+        TArray<UTexture*> Used;
+#if UE_VERSION_NEWER_THAN_OR_EQUAL(5, 7, 0)
+        Material->GetUsedTextures(Used);
+#else
+        Material->GetUsedTextures(Used, EMaterialQualityLevel::Num,
+            /*bAllQualityLevels*/ true, GMaxRHIFeatureLevel, /*bAllFeatureLevels*/ true);
+#endif
+        for (UTexture* Texture : Used)
+        {
+            if (Texture)
+            {
+                OutTextures.AddUnique(Texture);
+            }
+        }
+    }
 }
 
 bool CapturePreviewToPng(
@@ -212,6 +422,18 @@ bool CapturePreviewToPng(
         return false;
     }
 
+    // Before the single draw, not after: the frame is only as complete as what it samples.
+    FCaptureInfo Readiness;
+    PWDesignerCaptureWaitForRenderAssets(PreviewWidget, Readiness);
+    // The wait pumps compilation, which runs post-compile callbacks; re-read the preview
+    // rather than trusting the pointer across them.
+    PreviewWidget = WidgetEditor->GetPreview();
+    if (!PreviewWidget)
+    {
+        OutError = TEXT("PREVIEW_NOT_FOUND");
+        return false;
+    }
+
     const FVector2D Natural = DesignerTarget.PreviewGeometry.GetAbsoluteSize();
     const double LongAxis = FMath::Max(Natural.X, Natural.Y);
     if (LongAxis <= 0.0)
@@ -239,10 +461,17 @@ bool CapturePreviewToPng(
     TSharedRef<SWidget> PreviewSlate = PreviewWidget->TakeWidget();
     TArray<FColor> ColorData;
     FString RenderError;
-    if (!RenderSlateWidgetToSrgbColors(PreviewSlate, PreviewDrawSize, ColorData, RenderError))
+    int32 DesignerOutlinesHidden = 0;
     {
-        OutError = MoveTemp(RenderError);
-        return false;
+        // Preview captures promise no Designer chrome; the dashed per-panel outlines are part
+        // of the preview's own Slate tree, so they are collapsed for exactly this draw.
+        FPWScopedHideDesignerOutlines HideOutlines(PreviewSlate);
+        DesignerOutlinesHidden = HideOutlines.Num();
+        if (!RenderSlateWidgetToSrgbColors(PreviewSlate, PreviewDrawSize, ColorData, RenderError))
+        {
+            OutError = MoveTemp(RenderError);
+            return false;
+        }
     }
 
     // The stamp and the encode are one call so this function cannot reach PNG bytes without
@@ -264,6 +493,12 @@ bool CapturePreviewToPng(
         OutInfo->DpiScale = DesignerTarget.DpiScale;
         OutInfo->bOpaqueStamped = true;
         OutInfo->AlphaZeroFraction = AlphaZeroFraction;
+        OutInfo->ReadinessTextures = Readiness.ReadinessTextures;
+        OutInfo->ReadinessMaterials = Readiness.ReadinessMaterials;
+        OutInfo->ReadinessWaitSeconds = Readiness.ReadinessWaitSeconds;
+        OutInfo->NotReadyAssets = MoveTemp(Readiness.NotReadyAssets);
+        OutInfo->bPreviewComplete = Readiness.bPreviewComplete;
+        OutInfo->DesignerOutlinesHidden = DesignerOutlinesHidden;
         if (DesignerTarget.Preview)
         {
             OutInfo->PreviewName = DesignerTarget.Preview->GetName();

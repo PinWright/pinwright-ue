@@ -47,6 +47,17 @@ namespace WidgetDesignerCaptureInternal
         return BudgetSeconds;
     }
 
+    // Wall-clock cap on the preview capture's wait for the textures and materials its preview
+    // tree references (B-screenshot-designer-cold-capture-missing-images-and-text). Whatever is
+    // still compiling when it runs out is drawn as-is and NAMED in the response
+    // (previewComplete:false, readiness.notReady) rather than waited on further. Mutable for
+    // tests, which set it to 0 to drive the incomplete branch deterministically.
+    inline double& ReadinessBudgetSeconds()
+    {
+        static double BudgetSeconds = 20.0;
+        return BudgetSeconds;
+    }
+
     inline bool RetryBudgetExpired(double StartSeconds, FString* OutError)
     {
         if (FPlatformTime::Seconds() - StartSeconds < RetryBudgetSeconds())

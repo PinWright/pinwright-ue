@@ -34,6 +34,11 @@
   session-wide named-mutex lock, `WindowFromPoint` ownership gate, a foreground step before the
   press (`FOREGROUND_LOCKED` when Windows refuses), and a typed refusal in offscreen / nullrhi /
   commandlet editors. Written on Linux; not yet compiled or run on Windows.
+- Fixed: `widget.screenshot_designer` `target:"preview"` (and `asset.dump`'s `preview.png`) waits,
+  up to 20 s, for the textures and materials the preview references before drawing, so a cold
+  widget no longer comes back missing images or font-material text; the response adds
+  `previewComplete` and `readiness` (`notReady` names anything still compiling). The Designer's
+  dashed outlines are no longer drawn into the preview (`designerOutlinesHidden`).
 - Changed: game-surface `drive.*` with no `instance_name` / `root_index` walks every live UMG root
   on the viewport (z-order, bottom-most first) instead of failing `AMBIGUOUS_LIVE_ROOT`; each
   element carries `root`, handles are unique across roots, and `root_name` lists the walked roots.

@@ -641,7 +641,22 @@ The response echoes applied `max_size` and `renderer` (`"widgetRenderer"` for pr
 
 Preview captures use `FWidgetRenderer::DrawWidget`, not the live back buffer, so they omit Designer
 chrome (rulers, anchor handles, selection outlines) and resemble runtime widget content. This is
-intentional for visual diffs, design review, and documentation.
+intentional for visual diffs, design review, and documentation. The Designer's dashed per-panel
+outlines ("Show Outlines") are part of the preview widget's own Slate tree, so the capture collapses
+them for the draw and restores them afterwards; `designerOutlinesHidden` reports how many it hid
+(until 2026-10-01 they were drawn into every preview PNG).
+
+**Cold frames: `previewComplete` and `readiness`.** A widget whose textures are still compiling, or
+whose materials (brush materials, font materials such as gradient text) have no shader map yet,
+draws those as the engine's grey checker placeholder or as nothing. Before drawing, the preview
+capture collects every texture and material the preview tree references and waits for them, up to
+20 s. The response reports `previewComplete` (`true` when everything was ready at the draw) and
+`readiness: {textures, materials, waitedSeconds, notReady}`; `notReady` names the object paths still
+compiling when the wait ran out. Treat a `previewComplete:false` frame as possibly missing those
+images or text and capture again. The collection is one reflection level deep from every object in
+the preview tree: a resource reached only through a style class's defaults, or through a soft
+pointer the widget loads asynchronously, is not waited for. `asset.dump`'s `preview.png` uses the
+same wait and lists an incomplete preview under `skipped` (the file is still written).
 
 Cold Designer state opens the asset, switches to Designer, invokes `SlatePreview`, refreshes only if
 the preview Slate widget is missing, and pumps Slate with bounded retries before resolving bounds.

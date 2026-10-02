@@ -300,6 +300,8 @@ REGISTER_RPC_HANDLER("widget.screenshot_designer", "widget",
     int32 OutHeight = 0;
     float OutDpiScale = 1.0f;
     FString OutPreviewName;
+    // Preview branch only: what the readiness wait and the outline hide measured.
+    TOptional<WidgetDesignerCaptureUtil::FCaptureInfo> PreviewInfo;
 
     if (Target == TEXT("window"))
     {
@@ -405,6 +407,7 @@ REGISTER_RPC_HANDLER("widget.screenshot_designer", "widget",
         bAlphaFactsMeasured = true;
         bOpaqueStamped = Info.bOpaqueStamped;
         AlphaZeroFraction = Info.AlphaZeroFraction;
+        PreviewInfo = MoveTemp(Info);
     }
 
     // Measured, not echoed: an override counts only if the captured Slate widget showed it when
@@ -494,6 +497,25 @@ REGISTER_RPC_HANDLER("widget.screenshot_designer", "widget",
             // adaptedMeasured/adapted pair.
             Result->SetNumberField(TEXT("alphaZeroFraction"), AlphaZeroFraction);
         }
+    }
+    if (PreviewInfo.IsSet())
+    {
+        // previewComplete:false means the frame was drawn with the named textures still
+        // compiling / materials without a shader map, i.e. it may be missing images or text that
+        // a later capture draws (B-screenshot-designer-cold-capture-missing-images-and-text).
+        Result->SetBoolField(TEXT("previewComplete"), PreviewInfo->bPreviewComplete);
+        TSharedPtr<FJsonObject> Readiness = MakeShared<FJsonObject>();
+        Readiness->SetNumberField(TEXT("textures"), PreviewInfo->ReadinessTextures);
+        Readiness->SetNumberField(TEXT("materials"), PreviewInfo->ReadinessMaterials);
+        Readiness->SetNumberField(TEXT("waitedSeconds"), PreviewInfo->ReadinessWaitSeconds);
+        TArray<TSharedPtr<FJsonValue>> NotReady;
+        for (const FString& AssetPathName : PreviewInfo->NotReadyAssets)
+        {
+            NotReady.Add(MakeShared<FJsonValueString>(AssetPathName));
+        }
+        Readiness->SetArrayField(TEXT("notReady"), NotReady);
+        Result->SetObjectField(TEXT("readiness"), Readiness);
+        Result->SetNumberField(TEXT("designerOutlinesHidden"), PreviewInfo->DesignerOutlinesHidden);
     }
     if (bAnyOverrides)
     {

@@ -6,6 +6,8 @@
 #include "Math/Color.h"
 
 class SWidget;
+class UMaterialInterface;
+class UTexture;
 class UWidgetBlueprint;
 
 // Safe Designer-tier preview capture, extracted from WidgetDesignerScreenshotHandler so
@@ -42,6 +44,24 @@ namespace WidgetDesignerCaptureUtil
         // Meaningless after the stamp — measured pre-stamp is the only way it is ever
         // non-zero.
         double AlphaZeroFraction = 0.0;
+
+        // READINESS (B-screenshot-designer-cold-capture-missing-images-and-text). A cold preview
+        // draws textures that are still compiling as the engine's placeholder (or nothing) and
+        // text whose font material has no game-thread shader map as nothing at all, while
+        // reporting the same success shape as a finished frame. Before drawing, the capture
+        // collects every UTexture and UMaterialInterface the preview tree references and waits
+        // for them, bounded by WidgetDesignerCaptureInternal::ReadinessBudgetSeconds().
+        // These are measured off those objects as the frame is drawn, never assumed.
+        int32 ReadinessTextures = 0;
+        int32 ReadinessMaterials = 0;
+        double ReadinessWaitSeconds = 0.0;
+        // Object paths still compiling when the budget ran out. Empty <=> bPreviewComplete.
+        TArray<FString> NotReadyAssets;
+        bool bPreviewComplete = false;
+
+        // Designer dashed-outline wrappers (UWidget::CreateDesignerOutline) collapsed for the
+        // render and restored afterwards (B-screenshot-designer-preview-draws-dashed-outlines).
+        int32 DesignerOutlinesHidden = 0;
     };
 
     // Measures the pre-stamp alpha-zero fraction, stamps every pixel opaque, and encodes the
@@ -82,6 +102,17 @@ namespace WidgetDesignerCaptureUtil
         FIntPoint DrawSize,
         TArray<FColor>& OutColorData,
         FString& OutError);
+
+    // Every UTexture and UMaterialInterface a draw of Root's object tree samples: brushes
+    // (UImage, UBorder, button/slider styles), font materials (FSlateFontInfo::FontMaterial),
+    // atlas sprites, and the textures those materials sample. Reflection-only, one reference
+    // level from Root and every object nested under it, so child user widgets of a preview are
+    // covered. A resource reached only through a style CLASS's CDO, or through a soft pointer
+    // loaded later, is not collected. CapturePreviewToPng waits on this set before drawing.
+    PINWRIGHT_API void CollectRenderAssets(
+        UObject* Root,
+        TArray<UTexture*>& OutTextures,
+        TArray<UMaterialInterface*>& OutMaterials);
 
     // Renders the Widget Blueprint's Designer preview into a PNG byte buffer. Caller
     // chooses the destination path; util never writes to disk.
