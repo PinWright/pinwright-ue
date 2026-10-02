@@ -447,7 +447,7 @@ bool FSystemRunTestsIsolatedChildStateBoundaryTest::RunTest(const FString& Param
             TEXT("if (!bIsolatedTestChild)\n    {\n        WikiDiskGenerator::Generate();")));
     TestTrue(TEXT("isolated child skips the shared job-monitor wipe"),
         SubsystemSource.Contains(
-            TEXT("if (!bIsolatedTestChild)\n    {\n        const FString JobsPath")));
+            TEXT("if (!bIsolatedTestChild && TransportSuppressedBy.IsEmpty())\n    {\n        const FString JobsPath")));
     TestTrue(TEXT("isolated child disables PinWright HTTP startup"),
         SubsystemSource.Contains(
             TEXT("if (bIsolatedTestChild)\n    {\n        UE_LOG")));

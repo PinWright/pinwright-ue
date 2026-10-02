@@ -296,7 +296,10 @@ def suite_argv(uproject, test_filter, log_path, mode, report_dir=None, extra_arg
         argv.append("-NullRHI")
     if mode != "visible":
         argv.append("-RenderOffscreen")
-    argv += ["-nocefaccelpaint", "-RunningUnattendedScript", "-ddc=InstalledNoZenLocalFallback"]
+    # -PinWrightTransport: an -ExecCmds automation run leaves the MCP port free unless it opts in,
+    # and PinWright's own suite exercises the transport (TransportLaunchPolicy.h).
+    argv += ["-nocefaccelpaint", "-RunningUnattendedScript", "-ddc=InstalledNoZenLocalFallback",
+             "-PinWrightTransport"]
     if report_dir:
         argv.append("-ReportExportPath=%s" % report_dir)
     argv.append("-Abslog=%s" % log_path)

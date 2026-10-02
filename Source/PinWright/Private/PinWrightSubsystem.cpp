@@ -10,6 +10,7 @@
 #include "Transport/PortAdvertisement.h"
 #include "Transport/ModalStateProbe.h"
 #include "Transport/SocketHttpServer.h"
+#include "Transport/TransportLaunchPolicy.h"
 #include "Dispatch/RpcDispatcher.h"
 #include "Dispatch/WorldPrecondition.h"
 #include "Catalog/ToolCatalog.h"
@@ -122,6 +123,8 @@ void UPinWrightSubsystem::Initialize(
     const bool bIsolatedTestChild = FParse::Value(
         FCommandLine::Get(), TEXT("PinWrightIsolatedTestChild="), IsolatedTestChildMonitorPath)
         && !IsolatedTestChildMonitorPath.IsEmpty();
+    const FString TransportSuppressedBy =
+        PinWrightTransportLaunchPolicy::SuppressionReason(FCommandLine::Get());
 
     // Create decomposed components. The socket-based SSE-capable server is the
     // single transport.
@@ -174,8 +177,9 @@ void UPinWrightSubsystem::Initialize(
             }
         });
 
-    // Wipe jobs.jsonl and all rotation segments from the previous session.
-    if (!bIsolatedTestChild)
+    // Wipe jobs.jsonl and all rotation segments from the previous session. A launch that does
+    // not bind the transport does not own them: the checkout's MCP editor may be writing them.
+    if (!bIsolatedTestChild && TransportSuppressedBy.IsEmpty())
     {
         const FString JobsPath = FPaths::ProjectDir() / JobMonitorLog::JobsJsonlRelativePath;
         IFileManager& FM = IFileManager::Get();
@@ -194,6 +198,13 @@ void UPinWrightSubsystem::Initialize(
     {
         UE_LOG(LogPinWrightSubsystem, Log,
                TEXT("PinWright HTTP transport disabled for isolated automation child."));
+    }
+    else if (!TransportSuppressedBy.IsEmpty())
+    {
+        UE_LOG(LogPinWrightSubsystem, Log,
+               TEXT("PinWright HTTP transport not started (%s); the checkout's MCP port stays "
+                    "free. Pass -PinWrightTransport to bind it."),
+               *TransportSuppressedBy);
     }
     else if (Settings && Settings->bEnableHttpTransport)
     {

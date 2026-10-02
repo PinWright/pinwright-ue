@@ -249,7 +249,9 @@ EDITOR_START_TOOL = {
                 "items": {"type": "string"},
                 "description": (
                     "Extra command-line arguments appended to the launch verbatim "
-                    "(e.g. -ExecCmds=\"Automation RunTests X;Quit\", -Abslog=<path>)."
+                    "(e.g. -ExecCmds=\"Automation RunTests X;Quit\", -Abslog=<path>). An -ExecCmds "
+                    "automation run does not bind the MCP port unless -PinWrightTransport is also "
+                    "passed, so pair it with wait: exit."
                 ),
             },
             "unattended_script": {

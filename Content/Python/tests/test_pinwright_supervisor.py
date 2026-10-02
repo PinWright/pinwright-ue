@@ -129,8 +129,8 @@ class ArgvTest(unittest.TestCase):
             "/p/H.uproject", "-ExecCmds=Automation RunTests PinWright.Model,Quit",
             "-TestExit=Automation Test Queue Empty", "-unattended", "-nopause", "-nosplash",
             "-nosound", "-RenderOffscreen", "-nocefaccelpaint", "-RunningUnattendedScript",
-            "-ddc=InstalledNoZenLocalFallback", "-ReportExportPath=/l/report", "-Abslog=/l/a.log",
-            "-x=1"])
+            "-ddc=InstalledNoZenLocalFallback", "-PinWrightTransport", "-ReportExportPath=/l/report",
+            "-Abslog=/l/a.log", "-x=1"])
         visible = pl.suite_argv("/p/H.uproject", "PinWright", "/l/a.log", "visible")
         self.assertNotIn("-RenderOffscreen", visible)
         self.assertFalse(any(a.startswith("-ReportExportPath") for a in visible))
