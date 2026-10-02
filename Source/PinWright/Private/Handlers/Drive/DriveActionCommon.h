@@ -59,8 +59,12 @@ public:
     // caller can see WHICH injection layer ran ("slate" vs "os_x11") instead of
     // inferring it from the request. Null (the default) omits the field for the verbs
     // that only ever take one path.
+    //
+    // InjectFields, when set, is an object the Inject callback fills with what only the
+    // injection can know (drive.key: whether the platform held the modifiers); its fields are
+    // copied into the success response.
     static void RunAction(FHandlerContext& Ctx, const FString& Handle, const FInject& Inject,
-        const TCHAR* InputPath = nullptr);
+        const TCHAR* InputPath = nullptr, const TSharedPtr<FJsonObject>& InjectFields = nullptr);
 
     // Whether a freshly re-resolved element may still be acted on: it must be drawn, enabled,
     // and carry a rect Slate measured this frame. The geometry term matters on its own - a

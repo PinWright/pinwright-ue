@@ -248,7 +248,7 @@ void FDriveActionCommon::MaybeAttachJournal(
 }
 
 void FDriveActionCommon::RunAction(FHandlerContext& Ctx, const FString& Handle, const FInject& Inject,
-    const TCHAR* InputPath)
+    const TCHAR* InputPath, const TSharedPtr<FJsonObject>& InjectFields)
 {
     const FString InputPathLabel = InputPath ? FString(InputPath) : FString();
 
@@ -381,7 +381,7 @@ void FDriveActionCommon::RunAction(FHandlerContext& Ctx, const FString& Handle, 
     // Everything after a successful injection: run the settle loop and resolve the request
     // through Token once it reaches a terminal outcome.
     const auto StartSettle =
-        [Config, Surface, Selector, WindowSelector, PreElements, ObserveMode, MarkCap, bIncludeJournal, JournalSince, bFullDiff, InputPathLabel]
+        [Config, Surface, Selector, WindowSelector, PreElements, ObserveMode, MarkCap, bIncludeJournal, JournalSince, bFullDiff, InputPathLabel, InjectFields]
         (const TSharedRef<FAsyncResponseToken>& Token)
     {
         FDriveSettleDriver::FIsWaitForMet IsWaitForMet = nullptr;
@@ -391,7 +391,7 @@ void FDriveActionCommon::RunAction(FHandlerContext& Ctx, const FString& Handle, 
         }
 
         FDriveSettleDriver::FOnComplete OnComplete =
-            [Token, Surface, Selector, WindowSelector, PreElements, ObserveMode, MarkCap, bIncludeJournal, JournalSince, bFullDiff, InputPathLabel]
+            [Token, Surface, Selector, WindowSelector, PreElements, ObserveMode, MarkCap, bIncludeJournal, JournalSince, bFullDiff, InputPathLabel, InjectFields]
             (const FDriveSettleResult& Result, const TArray<FDriveElement>& FinalElements)
             {
                 TSharedPtr<FJsonObject> Resp = WriteSettleResult(
@@ -399,6 +399,13 @@ void FDriveActionCommon::RunAction(FHandlerContext& Ctx, const FString& Handle, 
                 if (!InputPathLabel.IsEmpty())
                 {
                     Resp->SetStringField(TEXT("input_path"), InputPathLabel);
+                }
+                if (InjectFields.IsValid())
+                {
+                    for (const auto& Field : InjectFields->Values)
+                    {
+                        Resp->SetField(Field.Key, Field.Value);
+                    }
                 }
 
                 if (TSharedPtr<FJsonObject> Observation =

@@ -12,6 +12,64 @@
 #include "Misc/ScopeExit.h"
 #include "Widgets/SWindow.h"
 
+#if PLATFORM_LINUX
+#include <dlfcn.h>
+#endif
+
+namespace DriveInputModifiers
+{
+    // A modifier a chord holds, in press order: its drive flag, the physical key a keyboard
+    // sends for it, and its SDL_Keymod bit (SDL_KMOD_LCTRL/LALT/LSHIFT/LGUI).
+    struct FChordModifier
+    {
+        EDriveModifierKeys Flag;
+        FKey Key;
+        uint16 SdlMask;
+    };
+
+    const TArray<FChordModifier>& ChordModifiers()
+    {
+        static const TArray<FChordModifier> Modifiers = {
+            { EDriveModifierKeys::Ctrl,  EKeys::LeftControl, 0x0040 },
+            { EDriveModifierKeys::Alt,   EKeys::LeftAlt,     0x0100 },
+            { EDriveModifierKeys::Shift, EKeys::LeftShift,   0x0001 },
+            { EDriveModifierKeys::Cmd,   EKeys::LeftCommand, 0x0400 },
+        };
+        return Modifiers;
+    }
+
+    // FSlateApplication::GetModifierKeys() reads the platform keyboard state, never the injected
+    // event, and handlers that query it see a bare key: the PIE game viewport hands that state to
+    // the editor's play-world chords (Shift+F1 mouse release). On Linux it is SDL's modifier
+    // state, which ApplicationCore exports, so hold the same bits a pressed key would. Under
+    // -RenderOffScreen the platform application is FNullApplication, which reports no modifiers
+    // whatever SDL holds, and Windows keeps its state private; there only the event flags and
+    // key events carry it, and the caller's read-back reports that.
+    void SetPlatformModifiersHeld(EDriveModifierKeys Modifiers, bool bHeld)
+    {
+#if PLATFORM_LINUX
+        using FGetModState = uint16 (*)();
+        using FSetModState = void (*)(uint16);
+        static const FGetModState GetModState = reinterpret_cast<FGetModState>(dlsym(RTLD_DEFAULT, "SDL_GetModState"));
+        static const FSetModState SetModState = reinterpret_cast<FSetModState>(dlsym(RTLD_DEFAULT, "SDL_SetModState"));
+        if (!GetModState || !SetModState)
+        {
+            return;
+        }
+        uint16 Mask = 0;
+        for (const FChordModifier& Modifier : ChordModifiers())
+        {
+            if (EnumHasAnyFlags(Modifiers, Modifier.Flag))
+            {
+                Mask |= Modifier.SdlMask;
+            }
+        }
+        const uint16 State = GetModState();
+        SetModState(bHeld ? (State | Mask) : (State & ~Mask));
+#endif
+    }
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // Pure helpers (no Slate dependency)
 // ────────────────────────────────────────────────────────────────────────────
@@ -361,18 +419,23 @@ bool FDriveInput::ScrollAt(const FVector2D& ScreenPos, float Delta)
 // Keyboard injection
 // ────────────────────────────────────────────────────────────────────────────
 
-bool FDriveInput::PressKey(const FKey& Key, EDriveModifierKeys Modifiers, EDriveKeyAction Action)
+bool FDriveInput::PressKey(const FKey& Key, EDriveModifierKeys Modifiers, EDriveKeyAction Action,
+    bool* bOutPlatformModifiersHeld)
 {
     // Delegate to the handled-reporting variant; existing callers only care that the
     // event was injected, not whether a widget consumed it.
     bool bDiscardHandled = false;
-    return PressKeyReportingHandled(Key, Modifiers, Action, bDiscardHandled);
+    return PressKeyReportingHandled(Key, Modifiers, Action, bDiscardHandled, bOutPlatformModifiersHeld);
 }
 
 bool FDriveInput::PressKeyReportingHandled(const FKey& Key, EDriveModifierKeys Modifiers,
-    EDriveKeyAction Action, bool& bOutHandled)
+    EDriveKeyAction Action, bool& bOutHandled, bool* bOutPlatformModifiersHeld)
 {
     bOutHandled = false;
+    if (bOutPlatformModifiersHeld)
+    {
+        *bOutPlatformModifiersHeld = false;
+    }
 
     if (!FSlateApplication::IsInitialized() || !Key.IsValid())
     {
@@ -382,14 +445,19 @@ bool FDriveInput::PressKeyReportingHandled(const FKey& Key, EDriveModifierKeys M
     FSlateApplication& SlateApp = FSlateApplication::Get();
     return PressKeyReportingHandled(SlateApp, Key, Modifiers, Action,
         SlateApp.GetInputDeviceIdForKeyboard(),
-        static_cast<uint32>(SlateApp.GetUserIndexForKeyboard()), bOutHandled);
+        static_cast<uint32>(SlateApp.GetUserIndexForKeyboard()), bOutHandled, bOutPlatformModifiersHeld);
 }
 
 bool FDriveInput::PressKeyReportingHandled(FSlateApplication& SlateApp, const FKey& Key,
     EDriveModifierKeys Modifiers, EDriveKeyAction Action,
-    FInputDeviceId InputDevice, uint32 SlateUserIndex, bool& bOutHandled)
+    FInputDeviceId InputDevice, uint32 SlateUserIndex, bool& bOutHandled,
+    bool* bOutPlatformModifiersHeld)
 {
     bOutHandled = false;
+    if (bOutPlatformModifiersHeld)
+    {
+        *bOutPlatformModifiersHeld = false;
+    }
     if (!Key.IsValid())
     {
         return false;
@@ -408,8 +476,50 @@ bool FDriveInput::PressKeyReportingHandled(FSlateApplication& SlateApp, const FK
     const uint32 KeyCode = KeyCodePtr ? *KeyCodePtr : 0;
     const uint32 CharCode = CharCodePtr ? *CharCodePtr : 0;
 
+    // A modifier is a real chord, as a keyboard sends it: each modifier's own key-down before
+    // the key and key-up after it, so handlers that read held-key state (a viewport's key map,
+    // UPlayerInput, the platform modifier query) see it, not only the event's flags.
+    using namespace DriveInputModifiers;
+    auto SendModifierEdge = [&](const FKey& ModifierKey, EDriveModifierKeys HeldNow, bool bDown)
+    {
+        const uint32* ModKeyCodePtr = nullptr;
+        const uint32* ModCharCodePtr = nullptr;
+        FInputKeyManager::Get().GetCodesFromKey(ModifierKey, ModKeyCodePtr, ModCharCodePtr);
+        FKeyEvent Event(ModifierKey, MakeModifierState(HeldNow), InputDevice, /*bIsRepeat*/ false,
+            ModCharCodePtr ? *ModCharCodePtr : 0, ModKeyCodePtr ? *ModKeyCodePtr : 0,
+            TOptional<int32>(static_cast<int32>(SlateUserIndex)));
+        if (bDown)
+        {
+            SlateApp.ProcessKeyDownEvent(Event);
+        }
+        else
+        {
+            SlateApp.ProcessKeyUpEvent(Event);
+        }
+    };
+
     if (Action == EDriveKeyAction::Press || Action == EDriveKeyAction::Down)
     {
+        SetPlatformModifiersHeld(Modifiers, true);
+        EDriveModifierKeys Held = EDriveModifierKeys::None;
+        for (const FChordModifier& Modifier : ChordModifiers())
+        {
+            if (EnumHasAnyFlags(Modifiers, Modifier.Flag) && Modifier.Key != Key)
+            {
+                Held |= Modifier.Flag;
+                SendModifierEdge(Modifier.Key, Held, /*bDown*/ true);
+            }
+        }
+        if (bOutPlatformModifiersHeld)
+        {
+            // Read back, never assumed: the platform application, not SDL, answers this query.
+            const FModifierKeysState Platform = SlateApp.GetModifierKeys();
+            *bOutPlatformModifiersHeld =
+                (!EnumHasAnyFlags(Modifiers, EDriveModifierKeys::Shift) || Platform.IsShiftDown())
+                && (!EnumHasAnyFlags(Modifiers, EDriveModifierKeys::Ctrl) || Platform.IsControlDown())
+                && (!EnumHasAnyFlags(Modifiers, EDriveModifierKeys::Alt) || Platform.IsAltDown())
+                && (!EnumHasAnyFlags(Modifiers, EDriveModifierKeys::Cmd) || Platform.IsCommandDown());
+        }
         FKeyEvent DownEvent(Key, ModState, InputDevice, /*bIsRepeat*/ false,
             CharCode, KeyCode, TOptional<int32>(static_cast<int32>(SlateUserIndex)));
         bOutHandled |= SlateApp.ProcessKeyDownEvent(DownEvent);
@@ -419,6 +529,17 @@ bool FDriveInput::PressKeyReportingHandled(FSlateApplication& SlateApp, const FK
         FKeyEvent UpEvent(Key, ModState, InputDevice, /*bIsRepeat*/ false,
             CharCode, KeyCode, TOptional<int32>(static_cast<int32>(SlateUserIndex)));
         bOutHandled |= SlateApp.ProcessKeyUpEvent(UpEvent);
+        EDriveModifierKeys Held = Modifiers;
+        for (int32 Index = ChordModifiers().Num() - 1; Index >= 0; --Index)
+        {
+            const FChordModifier& Modifier = ChordModifiers()[Index];
+            if (EnumHasAnyFlags(Modifiers, Modifier.Flag) && Modifier.Key != Key)
+            {
+                Held &= ~Modifier.Flag;
+                SendModifierEdge(Modifier.Key, Held, /*bDown*/ false);
+            }
+        }
+        SetPlatformModifiersHeld(Modifiers, false);
     }
 
     return true;

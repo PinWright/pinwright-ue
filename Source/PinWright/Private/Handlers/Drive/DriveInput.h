@@ -94,23 +94,30 @@ public:
     static bool ScrollAt(const FVector2D& ScreenPos, float Delta);
 
     // Inject a key event for Key with the given modifiers held. Action selects a
-    // full press or a single down/up edge.
+    // full press or a single down/up edge. Modifiers form a real chord: each
+    // modifier's key-down precedes the key's down edge and its key-up follows the
+    // key's up edge (and on Linux the platform modifier state is held between them).
+    // bOutPlatformModifiersHeld, when given, receives whether FSlateApplication::
+    // GetModifierKeys() reported every requested modifier held at the key's down edge:
+    // false where the platform application keeps its own state (Windows) or has none
+    // (Linux -RenderOffScreen runs FNullApplication), and for an up-only edge.
     static bool PressKey(const FKey& Key, EDriveModifierKeys Modifiers = EDriveModifierKeys::None,
-        EDriveKeyAction Action = EDriveKeyAction::Press);
+        EDriveKeyAction Action = EDriveKeyAction::Press, bool* bOutPlatformModifiersHeld = nullptr);
 
     // Same injection as PressKey, but additionally reports whether Slate CONSUMED the
     // event — the honest "something on the focus path handled it" signal. bOutHandled is the OR of the down/up
     // handled results for a full press. Returns false only when the event could not be
     // injected at all (Slate not initialized, or an invalid key).
     static bool PressKeyReportingHandled(const FKey& Key, EDriveModifierKeys Modifiers,
-        EDriveKeyAction Action, bool& bOutHandled);
+        EDriveKeyAction Action, bool& bOutHandled, bool* bOutPlatformModifiersHeld = nullptr);
 
     // Device-aware form for callers that already resolved Slate, the receiving device, and
     // Slate user. It owns the same modifier/key-code construction, inactive-input scope, and
     // down/up dispatch as the convenience overload without reacquiring global Slate state.
     static bool PressKeyReportingHandled(FSlateApplication& SlateApp, const FKey& Key,
         EDriveModifierKeys Modifiers, EDriveKeyAction Action,
-        FInputDeviceId InputDevice, uint32 SlateUserIndex, bool& bOutHandled);
+        FInputDeviceId InputDevice, uint32 SlateUserIndex, bool& bOutHandled,
+        bool* bOutPlatformModifiersHeld = nullptr);
 
     // Type Text one character at a time (key down, character event, key up per
     // char), holding Shift for characters that need it on a US layout.

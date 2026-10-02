@@ -308,15 +308,33 @@ REGISTER_RPC_HANDLER("drive.key", "drive",
     const FString Handle = Ctx.GetString(TEXT("handle"));
     const bool bHasHandle = !Handle.IsEmpty();
 
+    // A chord's modifiers always reach Slate as key events and event flags; whether the platform
+    // modifier state (FSlateApplication::GetModifierKeys) held them too is read back at the key's
+    // down edge and reported, because handlers that read only that state see a bare key without it.
+    const bool bReportPlatformModifiers =
+        Modifiers != EDriveModifierKeys::None && Action != EDriveKeyAction::Up;
+    const TSharedPtr<FJsonObject> InjectFields = bReportPlatformModifiers ? TSharedPtr<FJsonObject>(MakeShared<FJsonObject>()) : nullptr;
+
     FDriveActionCommon::RunAction(Ctx, Handle,
-        [Key, Modifiers, Action, bHasHandle](const FVector2D& Center, FDriveInjectFailure&)
+        [Key, Modifiers, Action, bHasHandle, InjectFields](const FVector2D& Center, FDriveInjectFailure&)
         {
             if (bHasHandle)
             {
                 FDriveInput::ClickAt(Center);
             }
-            return FDriveInput::PressKey(Key, Modifiers, Action);
-        });
+            bool bPlatformHeld = false;
+            const bool bInjected = FDriveInput::PressKey(Key, Modifiers, Action, &bPlatformHeld);
+            if (InjectFields.IsValid())
+            {
+                InjectFields->SetBoolField(TEXT("modifiers_platform_held"), bPlatformHeld);
+                if (!bPlatformHeld)
+                {
+                    InjectFields->SetStringField(TEXT("warning"),
+                        TEXT("The modifiers reached Slate as key events and event flags, but the platform modifier state (FSlateApplication::GetModifierKeys) did not hold them: this platform application keeps its own state (Windows) or has none (Linux -RenderOffScreen). Handlers that read only that state, such as the PIE Shift+F1 mouse release, saw a bare key."));
+                }
+            }
+            return bInjected;
+        }, nullptr, InjectFields);
     return true;
 }
 
