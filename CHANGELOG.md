@@ -156,6 +156,12 @@
   reads as its unused default.
 - Fixed: `blueprint.graph.replace_node` moves a wired `self` pin (an external-owner accessor's
   target) to the replacement, and lists it in `connectionsDropped` when it cannot move.
+- Fixed: BPIR `call_dispatcher` / `bind_dispatcher` / `unbind_dispatcher` / `clear_dispatcher`
+  accept a `K2Node_ConvertAsset` (Resolve Soft Reference) output as `Target:`, the shape the
+  decompiler prints, instead of failing with "Failed to create delegate node for dispatcher".
+- Fixed: `blueprint.decompile` no longer prints a self-bound dispatcher delegate twice (as
+  `event: @Fn` and as an extra `%n = call Create_Event(...)` line the compiler rejects), so a
+  decompiled `bind_dispatcher` / `unbind_dispatcher` body recompiles.
 - Fixed: `skeleton.remove_bone` and `skeleton.set_bone_parent` keep each bone's translation
   retargeting mode on that bone (they used to leave the modes on the old indices) and refresh the
   engine's dependent caches; both report `boundMeshes` with whether each bound mesh still matches.

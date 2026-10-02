@@ -64,6 +64,7 @@
 #include "Kismet/BlueprintAsyncActionBase.h"
 #include "UObject/UObjectIterator.h"
 #include "K2Node_ConstructObjectFromClass.h"
+#include "K2Node_ConvertAsset.h"
 #include "K2Node.h"
 #if __has_include("K2Node_CallDelegate.h")
 #include "K2Node_CallDelegate.h"
@@ -2546,6 +2547,31 @@ UClass* FBpirCompiler::ResolveTargetClass(const FString& TargetRef, FBpirEntryBl
     }
 
     UClass* TargetClass = GetAuthoritativePinClass(TargetPin);
+
+    // K2Node_ConvertAsset (Resolve Soft Reference) keeps a wildcard Output until its
+    // Input is linked, and the data-pin pass links it after this emit. Read the class
+    // from the producer's Input source the way UK2Node_ConvertAsset::GetTargetClass will.
+    if (!TargetClass && TargetRef.StartsWith(TEXT("%"))
+        && Cast<UK2Node_ConvertAsset>(TargetPin->GetOwningNodeUnchecked()))
+    {
+        FString RefName = TargetRef.Mid(1);
+        RefName.Split(TEXT("."), &RefName, nullptr);
+        if (const int32* RefIdx = Block.ValueIndex.Find(RefName))
+        {
+            for (const FBpirArg& Arg : Block.Instructions[*RefIdx].Args)
+            {
+                if (Arg.PinName.Equals(TEXT("Input"), ESearchCase::IgnoreCase))
+                {
+                    if (UEdGraphPin* SourcePin = ValueResolver->ResolveValue(Arg.Value, Block))
+                    {
+                        TargetClass = FBlueprintEditorUtils::GetTypeForPin(*SourcePin);
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
     if (!TargetClass)
     {
         UE_LOG(LogBpirCompiler, Error, TEXT("ResolveTargetClass: target '%s' pin type is not an object class"), *TargetRef);

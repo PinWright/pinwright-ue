@@ -74,9 +74,9 @@ Total: **329 tests** across 13 files.
 | `self` | `SelfKeyword` | `ParseSelf` | `GenericNode` (inline) | --- | `GenericNode` (inline) | Partial |
 | `subsystem` | `SubsystemIdentifier` | `ParseSubsystem` | `SubsystemAccess` | --- | --- | Partial |
 | `call_dispatcher` | `DispatcherKeywords` | `ParseCallDispatcher` | `CallDispatcher`, `CallDispatcher_WithDelegate` | --- | `Dispatcher` | Partial |
-| `bind_dispatcher` | `DispatcherKeywords` | `ParseBindDispatcher` | `BindDispatcher`, `BindDispatcher_WithDelegate`, `BindDispatcher_ExternalTarget_NoCrash` | --- | `Dispatcher` | Partial |
+| `bind_dispatcher` | `DispatcherKeywords` | `ParseBindDispatcher` | `BindDispatcher`, `BindDispatcher_WithDelegate`, `BindDispatcher_ExternalTarget_NoCrash` | --- | `Dispatcher`, `Dispatcher_ConvertAssetOutputTargetRoundTrips` | Partial |
 | `unbind_dispatcher` | `DispatcherKeywords` | `UnbindDispatcher` | `UnbindDispatcher`, `UnbindDispatcher_WithDelegate`, `UnbindDispatcher_NoDelegate` | --- | --- | Partial |
-| `clear_dispatcher` | `DispatcherKeywords` | `ParseClearDispatcher`, `ClearDispatcher` | `CompileClearDispatcher` | `DelegateNodeDecompile` | `ClearDispatcher` | Full |
+| `clear_dispatcher` | `DispatcherKeywords` | `ParseClearDispatcher`, `ClearDispatcher` | `CompileClearDispatcher` | `DelegateNodeDecompile` | `ClearDispatcher`, `Dispatcher_ConvertAssetOutputTargetRoundTrips` | Full |
 | `return` | --- | `ParseReturn`, `ParseReturnVoid`, `InlineCommentStripping.Return` | `ReturnStatement` | `ReturnNode` | `Return` | Full |
 | `return (named)` | --- | `ReturnNamedArgs` | `MultiBranchReturnKeepsBothBranches` | `MultiBranchReturn` | `MultiBranchReturn` | Full |
 | `return` (one per branch) | --- | --- | `MultiBranchReturnKeepsBothBranches` | `MultiBranchReturn` | `MultiBranchReturn` | Full |
@@ -182,6 +182,10 @@ The post-compile layout runs the layered formatter `PwGraphLayout` (see `bpir-co
 | `layout.material.GrowsLeftFromOutput` | Material adapter: left of the output node, no overlap, aligned output wire, undo, repeatable |
 | `layout.anim.PoseChainGrowsLeftFromResult` | AGIR compile with `bRunLayout`: pose chain left of the output pose, aligned, no overlap; undo restores every pose node |
 | `layout.controlrig.DataChainFlowsRight` | RigVM adapter: data flows left to right, aligned, no overlap, repeatable |
+| `layout.core.CommentRefitNested`, `layout.core.CommentWithFixedMembersIsObstacle` | Comment membership from rects (nested comment, parent), re-fit around moved members with both title bars, non-members (a data input, a fixed node only the grown frame reaches) kept out, idempotent; a comment around a fixed node keeps its rect and the chain avoids it |
+| `layout.blueprint.CommentsRefitAroundMovedMembers` | K2 adapter: comment around a 3-node sub-chain with a nested comment; after the move each encloses exactly its recorded members, no other node touches either, undo restores both rects |
+| `layout.blueprint.MeasuredSizesMatchGraphPanel`, `layout.blueprint.EstimatedSizesNeverReportedMeasured` | Offscreen widget measurement within 2 px of an `SGraphEditor` panel's node widgets, estimator within 15 %; with measurement off every size is estimated and reported so |
+| `layout.metrics.BackwardEdgeCounted`, `layout.metrics.PinAlignmentChangesStraightness`, `layout.metrics.PinCrossingsDifferFromCentres` | `GraphLayoutMetrics` backward edges (both flow directions), per-edge pin-row delta, pin-to-pin straightness and crossings vs the centre basis |
 
 ### 2.7 Authored-position coverage
 

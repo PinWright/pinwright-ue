@@ -31,6 +31,7 @@
 #include "K2Node_ExecutionSequence.h"
 #include "K2Node_Switch.h"
 #include "K2Node_Self.h"
+#include "K2Node_CreateDelegate.h"
 #include "K2Node_Knot.h"
 #include "K2Node_AsyncAction.h"
 #include "K2Node_InputKey.h"
@@ -1933,6 +1934,30 @@ void FBpirDecompiler::WalkExecChain(UEdGraphPin* ExecPin, FEntryState& State)
         // ------------------------------------------------------------------
         if (Semantics == ENodeSemantics::Dispatcher)
         {
+            // EmitDispatcherNode folds a CreateDelegate on the Delegate pin into `event: @Fn`,
+            // and the compiler rebuilds it bound to self. When it is bound to self, mark it
+            // visited so it is not also printed as `call Create_Event(...)`, which does not compile.
+            for (UEdGraphPin* Pin : Node->Pins)
+            {
+                if (!Pin || Pin->Direction != EGPD_Input || Pin->LinkedTo.Num() == 0
+                    || (Pin->PinType.PinCategory != UEdGraphSchema_K2::PC_Delegate
+                        && Pin->PinType.PinCategory != UEdGraphSchema_K2::PC_MCDelegate))
+                {
+                    continue;
+                }
+                UEdGraphPin* DeadEnd = nullptr;
+                UEdGraphPin* Source = BpirDecompiler::Helpers::FollowKnotsBackward(Pin->LinkedTo[0], DeadEnd);
+                UK2Node_CreateDelegate* CDNode = Source ? Cast<UK2Node_CreateDelegate>(Source->GetOwningNode()) : nullptr;
+                const UEdGraphPin* CDSelf = CDNode ? CDNode->FindPin(UEdGraphSchema_K2::PN_Self, EGPD_Input) : nullptr;
+                if (CDNode && !CDNode->GetFunctionName().IsNone()
+                    && (!CDSelf || CDSelf->LinkedTo.Num() == 0
+                        || (CDSelf->LinkedTo[0] && CDSelf->LinkedTo[0]->GetOwningNode()->IsA<UK2Node_Self>())))
+                {
+                    State.VisitedNodes.Add(CDNode);
+                }
+                break;
+            }
+
             EmitPureDependencies(Node, State);
 
             // Check if this node's output data pins are consumed by downstream nodes
