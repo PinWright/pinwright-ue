@@ -275,6 +275,12 @@ bool FSafePointKnownVictimsAreGatedTest::RunTest(const FString& Parameters)
         // is only effective while the handler stays synchronous — see the counterfactual
         // in Tests/Assets/TestAssetReloadHandler.cpp.
         TEXT("asset.reload"),
+        // Synchronous CollectGarbage through ObjectTools delete / package reload. Board:
+        // B-asset-delete-force-folder-gc-in-frame-end-pump-crash.
+        TEXT("asset.delete"),
+        TEXT("asset.bulk_delete"),
+        TEXT("level.delete"),
+        TEXT("source_control.revert"),
     };
 
     for (const FString& Method : MustBeGated)
@@ -909,6 +915,73 @@ bool FSafePointDispatcherDefersInsideSlowTaskTest::RunTest(const FString& Parame
 
     TestTrue(TEXT("the deferred request ran once the slow task ended"), Sink->bWasCalled);
     TestTrue(TEXT("the deferred request succeeded"), Sink->bSuccess);
+
+    return true;
+}
+
+// The REAL asset.delete, arriving on the stack the frame-end render sync opens
+// (FFrameEndSync::Sync -> ProcessThreadUntilIdle(GameThread), RenderingThread.cpp:2565),
+// must not reach its handler there: every delete ends in CollectGarbage, and a GC that
+// destroys an asset-editor preview world pumps the same queue again from
+// FAudioDevice::Teardown, which the engine asserts against (TaskGraph.cpp:705). Board:
+// B-asset-delete-force-folder-gc-in-frame-end-pump-crash.
+//
+// No fixture injection: the production table must cover the verb. The path does not
+// exist, so the handler deletes nothing wherever it runs; it still answers
+// synchronously, which is what makes "did not respond inside the pump" observable.
+//
+// Counterfactual: drop asset.delete from the table in Dispatch/SafePoint.cpp and "did
+// not run inside the named-thread pump" fails, because the handler responds inline.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSafePointAssetDeleteDefersFromPumpTest,
+    "PinWright.core.safe_point.AssetDeleteDefersFromNamedThreadPump",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FSafePointAssetDeleteDefersFromPumpTest::RunTest(const FString& Parameters)
+{
+    // Opening a second pump on a stack already inside one is the very assert this ticket
+    // is about; never do that to the suite's editor.
+    if (PinWrightSafePoint::IsInsideNamedThreadPump())
+    {
+        PinWrightTestSkip::SkipAssertions(*this, TEXT("automation-stack-inside-pump"),
+            TEXT("the test body already runs inside a named-thread pump, so a nested "
+                 "ProcessThreadUntilIdle would trip the TaskGraph recursion assert."));
+        return true;
+    }
+
+    TSharedRef<FRpcDispatcher> Dispatcher = MakeShared<FRpcDispatcher>();
+    DispatcherTestHelpers::FSinkPtr Sink;
+    DispatcherTestHelpers::MakeDispatcher(Sink, Dispatcher.Get());
+
+    TSharedRef<FJsonObject> Params = MakeShared<FJsonObject>();
+    Params->SetStringField(TEXT("path"),
+        TEXT("/Game/PinWrightTests/SafePointGcGate/DoesNotExist"));
+    Params->SetBoolField(TEXT("force"), true);
+
+    // The exact call FFrameEndSync::Sync makes once a frame (RenderingThread.cpp:2565),
+    // issued from the automation stack, which is not itself inside a pump.
+    TSharedRef<bool> bRanInsidePump = MakeShared<bool>(false);
+    AsyncTask(ENamedThreads::GameThread, [Dispatcher, Params, bRanInsidePump]()
+    {
+        *bRanInsidePump = PinWrightSafePoint::IsInsideNamedThreadPump();
+        Dispatcher->ProcessRequest(TEXT("req-safe-point-asset-delete"),
+            TEXT("asset.delete"), Params);
+    });
+    FTaskGraphInterface::Get().ProcessThreadUntilIdle(ENamedThreads::GameThread);
+
+    if (!*bRanInsidePump)
+    {
+        PinWrightTestSkip::SkipAssertions(*this, TEXT("frame-end-pump-not-observed"),
+            TEXT("ProcessThreadUntilIdle(GameThread) did not run the request with the game "
+                 "thread's named-thread pump flag raised, so the gate could not be observed."));
+        return true;
+    }
+
+    // THE COUNTERFACTUAL.
+    TestFalse(TEXT("asset.delete did not run inside the named-thread pump"), Sink->bWasCalled);
+
+    TestTrue(TEXT("the automation stack is a safe point"), PinWrightSafePoint::IsSafeNow());
+    Dispatcher->ProcessPendingRequests();
+    TestTrue(TEXT("the deferred asset.delete answered at the safe point"), Sink->bWasCalled);
 
     return true;
 }

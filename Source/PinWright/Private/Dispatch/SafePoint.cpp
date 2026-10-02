@@ -77,6 +77,19 @@ namespace
         // UIKRetargetBatchOperation::RunRetarget opens an FScopedSlowTask dialog (Slate pump)
         // and a partial result is rolled back with ObjectTools::ForceDeleteObjects (GC).
         TEXT("animation.retarget_animations"),
+        // ObjectTools delete -> CleanupAfterSuccessfulDelete -> UPackageTools::UnloadPackages
+        // -> CollectGarbage on the handler's stack, forced or not (ObjectTools.cpp:2828,
+        // :3448, :4031). The frame-end pump (FFrameEndSync::Sync -> ProcessThreadUntilIdle
+        // (GameThread), RenderingThread.cpp:2565) is where socket requests usually run; a GC
+        // there that destroys an asset-editor preview world reaches FAudioDevice::Teardown,
+        // which pumps the same queue again and trips the TaskGraph RecursionGuard assert
+        // (TaskGraph.cpp:705). Board: B-asset-delete-force-folder-gc-in-frame-end-pump-crash.
+        TEXT("asset.delete"),
+        TEXT("asset.bulk_delete"),
+        TEXT("level.delete"),
+        // SourceControlHelpers::ApplyOperationAndReloadPackages unloads and reloads the
+        // reverted packages - the same CollectGarbage path as asset.reload (family J).
+        TEXT("source_control.revert"),
 
         // --- B: re-entrant Slate tick / viewport draw / render flush ----------
         // McpSafeLevelSave flushes rendering and calls FEditorFileUtils::SaveLevel
