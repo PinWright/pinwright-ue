@@ -110,6 +110,7 @@
 #include "PhysicalMaterials/PhysicalMaterial.h"
 #include "UObject/SavePackage.h"
 #include "EditorAssetLibrary.h"
+#include "ScopedTransaction.h"
 
 // Landscape layer info (for add_landscape_layer)
 #include "LandscapeLayerInfoObject.h"
@@ -4447,7 +4448,7 @@ REGISTER_RPC_HANDLER("material.authoring.set_material_layer_stack", "material.au
 // returns METHOD_NOT_FOUND for material.authoring.auto_layout and the
 // regression test's InvokeHandler call returns false.
 REGISTER_RPC_HANDLER("material.authoring.auto_layout", "material.authoring",
-    "Re-flow expression positions on a UMaterial or UMaterialFunction with the layered graph layout (grows leftwards from the material output). Only repositions expressions whose (x,y) are still (0,0); already-positioned nodes are untouched. Layout-only — does not recompile shaders.",
+    "Re-flow expression positions on a UMaterial or UMaterialFunction with the layered graph layout (grows leftwards from the material output). Only repositions expressions whose (x,y) are still (0,0); already-positioned nodes are untouched. Reports movedCount / moved[{nodeId, from, to}] / unchangedCount from positions read back after the write; the edits are one undoable transaction (none when nothing changed). Layout-only — does not recompile shaders.",
     RPC_PARAMS(
         MaterialHandlerUtils::MaterialAssetPathParamReq(TEXT("assetPath"), TEXT("path"), TEXT("Material or material-function asset path"))
     ))
@@ -4463,17 +4464,20 @@ REGISTER_RPC_HANDLER("material.authoring.auto_layout", "material.authoring",
     UMaterial* Material = Target.Material;
     UMaterialFunction* Function = Target.Function;
 
-    // Count expressions before so we can report what was eligible.
-    int32 ExpressionCount = 0;
+    TArray<UMaterialExpression*> Expressions;
+    if (Material)
+        MGIRExpressionUtils::CopyMaterialExpressions(Material, Expressions);
+    else
+        MGIRExpressionUtils::CopyFunctionExpressions(Function, Expressions);
+    TArray<FIntPoint> Before;
+    for (const UMaterialExpression* Expression : Expressions)
     {
-        TArray<UMaterialExpression*> Expressions;
-        if (Material)
-            MGIRExpressionUtils::CopyMaterialExpressions(Material, Expressions);
-        else
-            MGIRExpressionUtils::CopyFunctionExpressions(Function, Expressions);
-        ExpressionCount = Expressions.Num();
+        Before.Add(FIntPoint(Expression->MaterialExpressionEditorX, Expression->MaterialExpressionEditorY));
     }
 
+    // The layout Modify()s each expression it moves, so this one transaction undoes the whole re-flow.
+    const FString TransactionName = TEXT("PinWright: material.authoring.auto_layout");
+    FScopedTransaction Transaction(FText::FromString(TransactionName));
     const double StartSeconds = FPlatformTime::Seconds();
     if (Material)
         PwGraphLayout::ArrangeMaterial(Material);
@@ -4481,14 +4485,48 @@ REGISTER_RPC_HANDLER("material.authoring.auto_layout", "material.authoring",
         PwGraphLayout::ArrangeMaterialFunction(Function);
     const double DurationMs = (FPlatformTime::Seconds() - StartSeconds) * 1000.0;
 
-    UObject* Asset = Target.AssetObject();
-    Asset->PreEditChange(nullptr);
-    Asset->PostEditChange();
-    Asset->MarkPackageDirty();
+    // Report from the positions read back after the write, never from the layout's own count.
+    auto Point = [](const FIntPoint& P)
+    {
+        TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
+        Obj->SetNumberField(TEXT("x"), P.X);
+        Obj->SetNumberField(TEXT("y"), P.Y);
+        return Obj;
+    };
+    TArray<TSharedPtr<FJsonValue>> Moved;
+    for (int32 Index = 0; Index < Expressions.Num(); ++Index)
+    {
+        const UMaterialExpression* Expression = Expressions[Index];
+        const FIntPoint After(Expression->MaterialExpressionEditorX, Expression->MaterialExpressionEditorY);
+        if (After == Before[Index])
+        {
+            continue;
+        }
+        TSharedPtr<FJsonObject> Entry = MakeShared<FJsonObject>();
+        Entry->SetStringField(TEXT("nodeId"), Expression->MaterialExpressionGuid.ToString());
+        Entry->SetObjectField(TEXT("from"), Point(Before[Index]));
+        Entry->SetObjectField(TEXT("to"), Point(After));
+        Moved.Add(MakeShared<FJsonValueObject>(Entry));
+    }
 
     TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+    if (Moved.Num() == 0)
+    {
+        Transaction.Cancel();
+    }
+    else
+    {
+        UObject* Asset = Target.AssetObject();
+        Asset->PreEditChange(nullptr);
+        Asset->PostEditChange();
+        Asset->MarkPackageDirty();
+        Result->SetStringField(TEXT("transaction"), TransactionName);
+    }
+
     Result->SetStringField(TEXT("target"), AssetPath);
-    Result->SetNumberField(TEXT("expressionsLaidOut"), ExpressionCount);
+    Result->SetNumberField(TEXT("movedCount"), Moved.Num());
+    Result->SetNumberField(TEXT("unchangedCount"), Expressions.Num() - Moved.Num());
+    Result->SetArrayField(TEXT("moved"), Moved);
     Result->SetNumberField(TEXT("durationMs"), DurationMs);
     Ctx.SendSuccess(Result);
     return true;

@@ -71,6 +71,10 @@
   `worldPath`, `netMode` and `kind`.
 - Fixed: `system.inspect.inspect_object` reports Transient UPROPERTYs (flagged `Transient`)
   instead of dropping them, and names every property it still leaves out in `omittedProperties`.
+- Changed: `material.authoring.auto_layout` reports what it actually moved (`movedCount`,
+  `unchangedCount`, `moved[{nodeId, from, to}]`, read back after the write) instead of
+  `expressionsLaidOut`, the total expression count; the moves are one undoable transaction, and
+  none is recorded when nothing moved.
 - Changed: graph auto-layout is PinWright's own layered formatter (`PwGraphLayout`) for BPIR
   compile/insert, `material.compile_mgir` / `material.authoring.auto_layout`, AGIR and CRIR
   compiles. It sizes every node (estimated from its title and pins), so laid-out nodes never

@@ -206,6 +206,10 @@ Both pin kinds get a persistent ID at creation — `add_function_input`, `add_fu
 
 `auto_layout` accepts a function path too, so you can lay the body out after building it.
 
+### material.authoring.auto_layout
+
+Moves only expressions still at (0,0); positioned expressions stay put and act as obstacles. The response is read back from the expressions after the write: `movedCount`, `unchangedCount` and `moved[{nodeId, from:{x,y}, to:{x,y}}]` (`nodeId` is the expression GUID). On an already-positioned graph it returns `movedCount: 0` and records nothing. When something moved, the whole re-flow is one undo entry, named in `transaction` (`PinWright: material.authoring.auto_layout`), so one `editor.undo` restores every position. The old `expressionsLaidOut` field (the total expression count, whether or not anything moved) is gone.
+
 ### material.authoring.add_function_input
 
 Adds a `UMaterialExpressionFunctionInput` to a material function. **By default the input is REQUIRED**: a material that calls the function but leaves this input unwired fails its *own* `compile_material` with `Missing function input <name>`. Make a multi-input reusable function callable without wiring every input at every call site by marking inputs optional at creation:
