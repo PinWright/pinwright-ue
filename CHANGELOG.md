@@ -30,6 +30,10 @@
 - Fixed: class lookups by bare short name (`Object`, `Actor`, `PointLight`) no longer log
   `Failed to find object 'Class <Name>'` warnings before succeeding; the class resolvers no longer
   attempt a load for a bare name or a `/Script/` class.
+- Fixed: `drive.observe` / `drive.expect` / action targeting report `visible:false` (geometry
+  `stale`) for an element lying wholly outside a clipping (`ClipToBounds`) ancestor, such as a
+  closed dropdown translated out of its panel; `drive.click` / `drive.hover` refuse it with
+  `TARGET_CHANGED` instead of settling with `no_change_within_budget`.
 - Changed: the six `system.inspect.get_*` game-framework singleton readers (`get_game_state`,
   `get_player_states`, ...) take `editor.console_command`'s `world` selector and, omitted, answer
   from the PIE authority (listen/dedicated server) instead of the newest PIE world, which was a

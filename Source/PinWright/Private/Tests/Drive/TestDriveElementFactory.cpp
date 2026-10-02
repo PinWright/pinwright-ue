@@ -36,8 +36,11 @@
 #include "Framework/Application/SlateApplication.h"
 #include "Layout/Visibility.h"
 #include "Misc/Guid.h"
+#include "Misc/ScopeExit.h"
 #include "Widgets/DeclarativeSyntaxSupport.h"
 #include "Widgets/Layout/SBorder.h"
+#include "Widgets/Layout/SBox.h"
+#include "Widgets/SOverlay.h"
 #include "Widgets/SBoxPanel.h"
 #include "Widgets/SWindow.h"
 #include "Widgets/Text/STextBlock.h"
@@ -429,6 +432,142 @@ bool FDriveElementFactoryDisabledAncestorTest::RunTest(const FString& Parameters
     TestFalse(TEXT("a disabled child's geometry is not marked stale"), Disabled->bGeometryStale);
     TestFalse(TEXT("a disabled child is refused by the action gate"),
         FDriveActionCommon::IsActionable(*Disabled));
+
+    return true;
+}
+
+// ============================================================================
+// Clipping: a child wholly outside a ClipToBounds ancestor is not visible.
+//
+// Shape of the reported defect: a closed dropdown keeps its items Visible inside a ClipToBounds
+// panel and parks them above it with a render translation. Every visibility attribute on the
+// chain says Visible, so only the ancestor clip rect can tell the walk they draw nothing.
+// ============================================================================
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveElementFactoryClipRectFoldTest,
+    "PinWright.drive.element_factory.ClipRectRejectsRectsOutsideTheClipper",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FDriveElementFactoryClipRectFoldTest::RunTest(const FString& Parameters)
+{
+    using namespace DriveElementFactory;
+
+    FAncestorState Unclipped;
+    TestFalse(TEXT("no clipping ancestor clips nothing"), Unclipped.ClipsOut(FSlateRect(-500, -500, -400, -400)));
+
+    FAncestorState Clipped;
+    Clipped.ClipRect = FSlateRect(100, 100, 300, 140);
+    TestFalse(TEXT("a rect inside the clip is drawn"), Clipped.ClipsOut(FSlateRect(110, 110, 210, 130)));
+    TestFalse(TEXT("a rect half inside the clip is drawn"), Clipped.ClipsOut(FSlateRect(110, 90, 210, 110)));
+    TestTrue(TEXT("a rect wholly above the clip draws nothing"), Clipped.ClipsOut(FSlateRect(110, 0, 210, 20)));
+    TestTrue(TEXT("a rect only touching the clip edge draws nothing"), Clipped.ClipsOut(FSlateRect(110, 80, 210, 100)));
+    TestFalse(TEXT("a never-painted zero-area rect inside the clip is not newly hidden"),
+        Clipped.ClipsOut(FSlateRect(150, 120, 150, 120)));
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveElementFactoryClippedOutChildTest,
+    "PinWright.drive.element_factory.ClippedOutChildIsNotVisible",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FDriveElementFactoryClippedOutChildTest::RunTest(const FString& Parameters)
+{
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
+    using namespace DriveElementFactoryTest;
+
+    if (!RequireSlate(*this))
+    {
+        return true;
+    }
+
+    FSlateApplication& SlateApp = FSlateApplication::Get();
+    const FString Title = FString::Printf(TEXT("PW_ElementFactoryClip_%s"),
+        *FGuid::NewGuid().ToString(EGuidFormats::Digits));
+    const TCHAR* InsideLabel  = TEXT("PwElementFactoryClipInsideLeaf");
+    const TCHAR* PartialLabel = TEXT("PwElementFactoryClipPartialLeaf");
+    const TCHAR* OutsideLabel = TEXT("PwElementFactoryClipOutsideLeaf");
+
+    // Each leaf is a fixed 100x20 box at the clipper's top-left; only its render translation
+    // differs. The clipper is 200x40, so: inside = 0..20, partial = -10..10, outside = -60..-40.
+    auto MakeLeaf = [](const TCHAR* Label, float TranslateY)
+    {
+        TSharedRef<SBox> Box = SNew(SBox).WidthOverride(100.0f).HeightOverride(20.0f)
+            [SNew(STextBlock).Text(FText::FromString(Label))];
+        Box->SetRenderTransform(FSlateRenderTransform(FVector2f(0.0f, TranslateY)));
+        return Box;
+    };
+
+    TSharedRef<SBox> Clipper = SNew(SBox).WidthOverride(200.0f).HeightOverride(40.0f)
+        [
+            SNew(SOverlay)
+            + SOverlay::Slot().HAlign(HAlign_Left).VAlign(VAlign_Top)[MakeLeaf(InsideLabel, 0.0f)]
+            + SOverlay::Slot().HAlign(HAlign_Left).VAlign(VAlign_Top)[MakeLeaf(PartialLabel, -10.0f)]
+            + SOverlay::Slot().HAlign(HAlign_Left).VAlign(VAlign_Top)[MakeLeaf(OutsideLabel, -60.0f)]
+        ];
+    Clipper->SetClipping(EWidgetClipping::ClipToBounds);
+
+    TSharedRef<SWindow> Window = SNew(SWindow)
+        .Title(FText::FromString(Title))
+        .ScreenPosition(FVector2D(320.0f, 240.0f))
+        .ClientSize(FVector2D(400.0f, 300.0f))
+        .FocusWhenFirstShown(false)
+        .SupportsMaximize(false)
+        .SupportsMinimize(false);
+    // A spacer row above the clipper so the outside leaf's rect lands on real window content (as
+    // the reported dropdown items sat over the header), not off the window.
+    Window->SetContent(
+        SNew(SVerticalBox)
+        + SVerticalBox::Slot().AutoHeight()[SNew(SBox).HeightOverride(100.0f)]
+        + SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Left)[Clipper]);
+
+    SlateApp.AddWindow(Window, /*bShowImmediately=*/true);
+    ON_SCOPE_EXIT
+    {
+        SlateApp.RequestDestroyWindow(Window);
+        SlateApp.Tick(ESlateTickType::All);
+    };
+    for (int32 Tick = 0; Tick < 8; ++Tick)
+    {
+        SlateApp.Tick(ESlateTickType::All);
+    }
+
+    if (Clipper->GetTickSpaceGeometry().GetAbsoluteSize().IsNearlyZero())
+    {
+        PinWrightTestSkip::SkipAssertions(*this, TEXT("fixture-window-never-painted"),
+            TEXT("The clip fixture's clipper has no arranged geometry; this host did not paint it."));
+        return true;
+    }
+
+    TArray<FDriveElement> Elements;
+    FDriveWindowSelector Selector;
+    Selector.Title = Title;
+    FString WindowTitle, ErrorCode, ErrorMessage;
+    if (!FDriveEditorChrome::BuildElementList(Selector, Elements, WindowTitle, ErrorCode, ErrorMessage))
+    {
+        AddError(FString::Printf(TEXT("Element-list failure over the clip fixture window: %s - %s"),
+            *ErrorCode, *ErrorMessage));
+        return false;
+    }
+
+    const FDriveElement* Inside = FindByLabel(Elements, InsideLabel);
+    const FDriveElement* Partial = FindByLabel(Elements, PartialLabel);
+    const FDriveElement* Outside = FindByLabel(Elements, OutsideLabel);
+    if (!Inside || !Partial || !Outside)
+    {
+        AddError(TEXT("The clip fixture's three leaves were not all emitted; a clipped-out element ")
+            TEXT("must still be listed, only flagged."));
+        return false;
+    }
+
+    TestTrue(TEXT("a leaf inside the ClipToBounds parent reads visible"), Inside->bVisible);
+    TestTrue(TEXT("the inside leaf passes the action gate"), FDriveActionCommon::IsActionable(*Inside));
+    TestTrue(TEXT("a leaf only partly clipped still reads visible"), Partial->bVisible);
+
+    TestFalse(TEXT("a leaf translated wholly outside its ClipToBounds parent reads visible:false"),
+        Outside->bVisible);
+    TestTrue(TEXT("the clipped-out leaf's geometry is marked stale"), Outside->bGeometryStale);
+    TestFalse(TEXT("the clipped-out leaf is refused by the action gate"),
+        FDriveActionCommon::IsActionable(*Outside));
 
     return true;
 }

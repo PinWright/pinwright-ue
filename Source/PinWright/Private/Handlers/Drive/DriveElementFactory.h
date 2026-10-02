@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Handlers/Drive/DriveTypes.h"
+#include "Layout/SlateRect.h"
 
 class SWidget;
 
@@ -34,9 +35,16 @@ namespace DriveElementFactory
         bool bAncestorsVisible = true;
         // True while every ancestor above this point is itself enabled.
         bool bAncestorsEnabled = true;
+        // Desktop-space rect the clipping ancestors (ClipToBounds and friends) still let draw;
+        // unset while no ancestor clips. A render-translated child can sit wholly outside it
+        // while every visibility attribute on the chain still says Visible.
+        TOptional<FSlateRect> ClipRect;
 
         // The state that applies to Widget's children, given this state at Widget.
         FAncestorState ForChildrenOf(const TSharedRef<SWidget>& Widget) const;
+
+        // True when Rect (desktop space) draws no pixel inside ClipRect.
+        bool ClipsOut(const FSlateRect& Rect) const;
     };
 
     // Fill the live state + geometry fields of OutElement from SlateWidget and the folded

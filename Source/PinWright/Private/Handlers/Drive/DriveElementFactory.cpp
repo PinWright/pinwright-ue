@@ -2,6 +2,7 @@
 
 #include "Handlers/Drive/DriveElementFactory.h"
 
+#include "Layout/Clipping.h"
 #include "Layout/Geometry.h"
 #include "Layout/Visibility.h"
 #include "Widgets/SWidget.h"
@@ -18,7 +19,40 @@ namespace DriveElementFactory
         // the only EVisibility values whose IsVisible() is false, so a HitTestInvisible or
         // SelfHitTestInvisible parent still leaves its children visible - which is what keeps the
         // SelfHitTestInvisible allowance below meaningful for nested HUD labels.
-        Child.bAncestorsVisible = bAncestorsVisible && Widget->GetVisibility().IsVisible();
+        //
+        // A widget its clipping ancestors leave no pixel of is not drawn either, and the same
+        // holds for everything under it.
+        const FGeometry& Geometry = Widget->GetTickSpaceGeometry();
+        Child.bAncestorsVisible = bAncestorsVisible && Widget->GetVisibility().IsVisible()
+            && !ClipsOut(Geometry.GetRenderBoundingRect());
+
+        // Mirrors SWidget::CalculateCullingAndClippingRules: ClipToBounds / ClipToBoundsAlways
+        // intersect with the inherited clip, ClipToBoundsWithoutIntersecting replaces it. OnDemand
+        // is left out (it clips only when the content overflows, which Slate decides at paint).
+        // ponytail: the rects are render BOUNDING rects, so a rotated clipper over-reports what it
+        // lets draw (never under-reports); exact clip quads only if rotated menus ever matter.
+        Child.ClipRect = ClipRect;
+        const EWidgetClipping Clipping = Widget->GetClipping();
+        if (Child.bAncestorsVisible && Clipping == EWidgetClipping::ClipToBoundsWithoutIntersecting)
+        {
+            Child.ClipRect = Geometry.GetRenderBoundingRect();
+        }
+        else if (Child.bAncestorsVisible
+            && (Clipping == EWidgetClipping::ClipToBounds || Clipping == EWidgetClipping::ClipToBoundsAlways))
+        {
+            Child.ClipRect = ClipRect.IsSet()
+                ? ClipRect->IntersectionWith(Geometry.GetRenderBoundingRect())
+                : Geometry.GetRenderBoundingRect();
+        }
+
+        // An SRetainerWidget paints its content into an SVirtualWindow rooted at (0,0), so the
+        // geometry below it is retainer-local and cannot be compared with a desktop clip rect
+        // (see FDriveElement::AbsolutePosition). Dropping the clip there only ever errs toward
+        // the old visible:true.
+        if (Widget->GetType() == TEXT("SRetainerWidget"))
+        {
+            Child.ClipRect.Reset();
+        }
 
         // Mirrors SWidget::ShouldBeEnabled(bool InParentEnabled) == InParentEnabled && IsEnabled().
         // This is also what recovers a disabled UMG/CommonUI button: UWidget::SetIsEnabled writes
@@ -27,6 +61,19 @@ namespace DriveElementFactory
         Child.bAncestorsEnabled = bAncestorsEnabled && Widget->IsEnabled();
 
         return Child;
+    }
+
+    bool FAncestorState::ClipsOut(const FSlateRect& Rect) const
+    {
+        if (!ClipRect.IsSet())
+        {
+            return false;
+        }
+        bool bOverlapping = false;
+        const FSlateRect Overlap = Rect.IntersectionWith(ClipRect.GetValue(), bOverlapping);
+        // Touching the clip edge draws nothing; a zero-area rect (a widget never painted) is
+        // judged by contact alone so it is not newly hidden by this check.
+        return !bOverlapping || (Rect.GetArea() > 0.0f && Overlap.GetArea() <= 0.0f);
     }
 
     void FillStateAndGeometry(
@@ -38,10 +85,11 @@ namespace DriveElementFactory
         // == Visible, so that SelfHitTestInvisible status text (a common case for non-clickable
         // HUD labels) still reports visible for verification reads. The ancestor term is what
         // makes the published value EFFECTIVE rather than a local attribute read.
-        OutElement.bVisible = Ancestors.bAncestorsVisible && SlateWidget->GetVisibility().IsVisible();
-        OutElement.bEnabled = Ancestors.bAncestorsEnabled && SlateWidget->IsEnabled();
-        OutElement.bFocused = SlateWidget->HasAnyUserFocus().IsSet();
-
+        //
+        // A widget lying wholly outside a ClipToBounds ancestor (a closed dropdown translated out
+        // of its clipping panel) draws nothing and takes no hover or click, so it is not visible
+        // either; that is what stops the action gate aiming input at a rect nobody can see.
+        //
         // DESKTOP space, and already so: GetTickSpaceGeometry() is the non-deprecated spelling of
         // what GetCachedGeometry() forwards to (SlateCore/Private/Widgets/SWidget.cpp:1163-1171,
         // both returning PersistentState.DesktopGeometry), and SWidget::Paint stores that as the
@@ -53,6 +101,10 @@ namespace DriveElementFactory
         // returns the raw window-space AllottedGeometry, which is the one coordinate FDriveInput
         // must never be handed.
         const FGeometry& DesktopGeometry = SlateWidget->GetTickSpaceGeometry();
+        OutElement.bVisible = Ancestors.bAncestorsVisible && SlateWidget->GetVisibility().IsVisible()
+            && !Ancestors.ClipsOut(DesktopGeometry.GetRenderBoundingRect());
+        OutElement.bEnabled = Ancestors.bAncestorsEnabled && SlateWidget->IsEnabled();
+        OutElement.bFocused = SlateWidget->HasAnyUserFocus().IsSet();
 
         // Slate skips arranging and painting a subtree an ancestor collapsed or hid, so a widget
         // that is not drawn keeps whatever rect the last frame that DID draw it left behind -

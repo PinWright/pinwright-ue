@@ -42,7 +42,8 @@ struct FDriveElement
     // EFFECTIVE state, folded down the ancestor chain, not the widget's own Slate attribute:
     // a widget under a disabled or Collapsed/Hidden ancestor reads false here even though its
     // own IsEnabled()/GetVisibility() say otherwise. bVisible means "is drawn", so a
-    // SelfHitTestInvisible label is visible.
+    // SelfHitTestInvisible label is visible and a widget lying wholly outside a clipping
+    // (ClipToBounds) ancestor's rect, e.g. a closed render-translated dropdown, is not.
     bool bEnabled = true;
     bool bVisible = true;
     bool bFocused = false;
@@ -56,7 +57,8 @@ struct FDriveElement
     // into an SVirtualWindow rooted at (0,0), so its geometry is retainer-local, not desktop.
     FVector2D AbsolutePosition = FVector2D::ZeroVector;
     FVector2D AbsoluteSize = FVector2D::ZeroVector;
-    // True when the element is not being arranged, i.e. it or an ancestor is Collapsed/Hidden;
+    // True when the element is not being arranged, i.e. it or an ancestor is Collapsed/Hidden,
+    // or it is clipped out entirely (Slate may cull it, so its stored rect is not trusted);
     // the rect above is then zeroed rather than carrying the last frame that DID draw it, and
     // the element is never a valid click target.
     //
