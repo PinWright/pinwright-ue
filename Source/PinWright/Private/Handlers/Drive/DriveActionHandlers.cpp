@@ -66,9 +66,13 @@
         "Inject through the OS instead of Slate: real X11/XTEST pointer events, so the input " \
         "traverses SDL mouse confinement (LockOnCapture) and relative mode the way a human's " \
         "mouse does, and nothing forces the Slate inactive-input flag (default false). " \
-        "Linux/X11 only — INVALID_ARGUMENT elsewhere or when no X display can be opened. " \
-        "TARGET_OCCLUDED, with nothing injected, when the top X window at the target belongs " \
-        "to another process (occluding_window / occluding_pid name it). " \
+        "Linux/X11 and Windows (SendInput, input_path os_win32; the editor is brought to the " \
+        "foreground before a press, FOREGROUND_LOCKED when Windows refuses) — INVALID_ARGUMENT " \
+        "elsewhere, when no X display can be opened, or in an offscreen / nullrhi / commandlet " \
+        "editor with no visible window. " \
+        "TARGET_OCCLUDED, with nothing injected, when another window of this editor is on top " \
+        "at the target by Slate's window order (occluding_window / occluding_window_type), or " \
+        "the top X window there belongs to another process (occluding_window / occluding_pid). " \
         "Serialized per X display across editors: OS_INPUT_BUSY (holder_pid) when another " \
         "injection holds the display for >5s; drive.click refuses with POINTER_MOVED, unpressed, " \
         "when the real pointer is not on the target right before the press. " \

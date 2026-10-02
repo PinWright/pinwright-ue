@@ -17,10 +17,14 @@
 //    button's OnClicked never fires.
 //  - UncoveredTargetIsClicked (counterfactual): the same fixture without the cover is clicked
 //    exactly once, so the routing gate does not refuse a reachable target.
+//  - OsInputOwnWindowIsRefused: os_input skips the routing wait, but another window of this
+//    editor stacked over the target would still take the real X click, so the same covered
+//    fixture is refused by Slate's window order, naming the cover, before any X event is sent.
 
 #include "Misc/AutomationTest.h"
 
 #include "Handlers/Drive/DriveEditorChrome.h"
+#include "Handlers/Drive/DriveOsInput.h"
 #include "Handlers/Drive/DriveTypes.h"
 
 #include "Tests/TestSkipReporting.h"
@@ -78,6 +82,10 @@ namespace DriveClickOcclusionTest
             .ScreenPosition(Position)
             .ClientSize(Size)
             .FocusWhenFirstShown(false)
+            // Top-most, so neither the host's top-most notification toasts nor its plugin windows
+            // sit above the fixture in Slate's window order; a later top-most window is above an
+            // earlier one, so the cover still covers the target.
+            .IsTopmostWindow(true)
             .SupportsMaximize(false)
             .SupportsMinimize(false);
         Window->SetContent(Content);
@@ -101,8 +109,19 @@ namespace DriveClickOcclusionTest
         Fixture->TargetTitle = FString::Printf(TEXT("PW_ClickOcclusion_Target_%s"), *Guid);
         Fixture->CoverTitle = FString::Printf(TEXT("PW_ClickOcclusion_Cover_%s"), *Guid);
 
+        // Place the fixture clear of every window this editor already shows (the same placement as
+        // the drive.weblive fixture), so no host window holds the target's center.
+        TArray<TSharedRef<SWindow>> Visible;
+        FSlateApplication::Get().GetAllVisibleWindowsOrdered(Visible);
+        double ClearX = 420.0;
+        for (const TSharedRef<SWindow>& Other : Visible)
+        {
+            ClearX = FMath::Max(ClearX, FVector2D(Other->GetPositionInScreen()).X + FVector2D(Other->GetSizeInScreen()).X + 80.0);
+        }
+        const FVector2D TargetPosition(ClearX, 320.0);
+
         const TSharedRef<int32> Clicks = Fixture->Clicks;
-        Fixture->TargetWindow = MakeWindow(Fixture->TargetTitle, FVector2D(420.0f, 320.0f), FVector2D(360.0f, 200.0f),
+        Fixture->TargetWindow = MakeWindow(Fixture->TargetTitle, TargetPosition, FVector2D(360.0f, 200.0f),
             SNew(SButton)
             .OnClicked_Lambda([Clicks]() { ++(*Clicks); return FReply::Handled(); })
             [
@@ -112,7 +131,7 @@ namespace DriveClickOcclusionTest
         {
             // Larger than the target on every side, so the button's center is covered however the
             // platform frames the two windows.
-            Fixture->CoverWindow = MakeWindow(Fixture->CoverTitle, FVector2D(380.0f, 280.0f), FVector2D(440.0f, 280.0f),
+            Fixture->CoverWindow = MakeWindow(Fixture->CoverTitle, TargetPosition - FVector2D(40.0, 40.0), FVector2D(440.0f, 280.0f),
                 SNew(SBorder)[SNew(STextBlock).Text(FText::FromString(TEXT("PwOcclusionCover")))]);
         }
 
@@ -153,10 +172,14 @@ namespace DriveClickOcclusionTest
     }
 
     // Starts drive.click on the fixture's button; the response arrives on a later frame.
-    void StartClick(FAutomationTestBase& Test, FFixture& Fixture)
+    void StartClick(FAutomationTestBase& Test, FFixture& Fixture, bool bOsInput = false)
     {
         TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
         Payload->SetStringField(TEXT("handle"), Fixture.ButtonHandle);
+        if (bOsInput)
+        {
+            Payload->SetBoolField(TEXT("os_input"), true);
+        }
         Payload->SetStringField(TEXT("surface"), TEXT("editor_chrome"));
         Payload->SetStringField(TEXT("window_title"), Fixture.TargetTitle);
         Test.TestTrue(TEXT("drive.click handler found"),
@@ -270,6 +293,56 @@ bool FDriveClickUncoveredTargetIsClickedTest::RunTest(const FString& Parameters)
         TestTrue(FString::Printf(TEXT("the uncovered click succeeds (error: %s %s)"), *Capture.ErrorCode, *Capture.Message),
             Capture.bSuccess);
         TestEqual(TEXT("the button received exactly one click"), *Fixture->Clicks, 1);
+        return true;
+    }));
+    return true;
+}
+
+// ============================================================================
+// os_input: this editor's own window over the target is refused before any X event.
+// ============================================================================
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveClickOsInputOwnWindowIsRefusedTest,
+    "PinWright.drive.click_occlusion.OsInputOwnWindowIsRefused",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FDriveClickOsInputOwnWindowIsRefusedTest::RunTest(const FString& Parameters)
+{
+    using namespace DriveClickOcclusionTest;
+
+    FString Unavailable;
+    if (!FDriveOsInput::IsAvailable(Unavailable))
+    {
+        PinWrightTestSkip::SkipAssertions(*this, TEXT("no-x-display"),
+            FString::Printf(TEXT("os_input is unavailable on this host: %s"), *Unavailable));
+        return true;
+    }
+
+    TSharedPtr<FFixture> Fixture = BuildFixture(*this, /*bCovered=*/true);
+    if (!Fixture.IsValid())
+    {
+        return true;
+    }
+
+    StartClick(*this, *Fixture, /*bOsInput=*/true);
+    ADD_LATENT_AUTOMATION_COMMAND(FDriveClickOcclusionPoll([this, Fixture]() -> bool
+    {
+        if (!ResponseArrived(*this, *Fixture))
+        {
+            return false;
+        }
+        const FTestResponseCapture& Capture = *Fixture->Capture;
+        TestFalse(TEXT("an os_input click on a covered target is not reported as a success"), Capture.bSuccess);
+        TestEqual(TEXT("the refusal is TARGET_OCCLUDED"), Capture.ErrorCode, FString(TEXT("TARGET_OCCLUDED")));
+        TestEqual(TEXT("the covered button never received the click"), *Fixture->Clicks, 0);
+
+        // The own-window gate names the Slate window; the X gate (another process) would add a pid.
+        FString Occluder;
+        TestTrue(TEXT("the refusal names the occluding window"),
+            Capture.Result.IsValid() && Capture.Result->TryGetStringField(TEXT("occluding_window"), Occluder));
+        TestEqual(TEXT("the occluder is the fixture's cover window"), Occluder, Fixture->CoverTitle);
+        TestFalse(TEXT("refused by this editor's window order, not by the foreign-X-window gate"),
+            Capture.Result.IsValid() && Capture.Result->HasField(TEXT("occluding_pid")));
         return true;
     }));
     return true;

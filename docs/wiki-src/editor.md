@@ -331,7 +331,13 @@ Provide `width` and/or `height` (px), and/or an `aspect` ratio. With `aspect`, t
 
 **Parameters:** window selector, `width`, `height`, `aspect`, `logical` (default `false`). At least one of `width` / `height` / `aspect` is required.
 
-The response returns `windowTitle`, `requestedClientSize` (physical px actually requested), and the post-resize read-back: `clientSize`, `windowSize`, `position` (each `{ x, y }`), `dpiScale`, and `wasMaximized`. Errors: `WINDOW_MAXIMIZED`, the window-selector codes, and `INVALID_ARGUMENT` when no dimension is given, `aspect` is malformed, or the resolved size is below 1×1.
+The response returns `windowTitle`, `requestedClientSize` (physical px actually requested), and the post-resize read-back: `clientSize`, `windowSize`, `position` (each `{ x, y }`), `dpiScale`, and `wasMaximized`. When the measured `clientSize` differs from `requestedClientSize` by more than 1 px, the response also carries a `warning`: the window manager or Slate kept another size. A notification toast is one such window, because the notification manager re-sizes it to its content every frame; close it with `editor.dismiss_notifications` instead. Errors: `WINDOW_MAXIMIZED`, the window-selector codes, and `INVALID_ARGUMENT` when no dimension is given, `aspect` is malformed, or the resolved size is below 1×1.
+
+### editor.dismiss_notifications
+
+Close every open editor notification toast. Each toast is its own untitled top-most window (`type: Notification` in `drive.list_windows`), so it covers whatever is under it, a PIE viewport included, and a drive pointer action there is refused with `TARGET_OCCLUDED` (`occluding_window_type: "Notification"`, `recovery: "editor.dismiss_notifications {}"`). `editor.resize_window` cannot clear a toast, because the notification manager re-sizes and re-places it every frame, and a persistent toast (one with no expiry, such as a setup warning) never leaves on its own.
+
+No params. The verb fades each toast out the way its own expiry would, with a zero-length fade, then waits up to 3 s for Slate to close the windows. The response is `{ dismissed, requested, notifications[{ text, closed }] }`. `text` is the toast's first line. `closed` is measured: the window is no longer in Slate's visible-window list, which is the list the drive occlusion gate reads. When a window is still open after the wait, the response carries a `warning`. Errors: `NO_NOTIFICATIONS` when no toast is open, `SLATE_NOT_INITIALIZED`.
 
 ### editor.set_window_state
 

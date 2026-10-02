@@ -833,6 +833,17 @@ REGISTER_RPC_HANDLER("editor.resize_window", "editor",
     Result->SetObjectField(TEXT("position"), MakePointObject(NewPos));
     Result->SetNumberField(TEXT("dpiScale"), Dpi);
     Result->SetBoolField(TEXT("wasMaximized"), bWasMaximized);
+    // The window manager, or Slate itself, may keep a different size (a notification toast is
+    // re-sized to its content every frame); say so rather than echo the request as done.
+    if (FMath::Abs(NewClient.X - PhysW) > 1.0 || FMath::Abs(NewClient.Y - PhysH) > 1.0)
+    {
+        Result->SetStringField(TEXT("warning"), FString::Printf(
+            TEXT("Requested client size %.0fx%.0f but the window measured %.0fx%.0f afterwards; the resize did not take.%s"),
+            PhysW, PhysH, NewClient.X, NewClient.Y,
+            Window->GetType() == EWindowType::Notification
+                ? TEXT(" Notification toasts size themselves; close them with editor.dismiss_notifications.")
+                : TEXT("")));
+    }
     Ctx.SendSuccess(Result);
     return true;
 }

@@ -1191,6 +1191,8 @@ namespace ErrorCodes
     // pcg.set_node_property: the resolved UPCGNode carries no UPCGSettings object, so there is
     // nothing to write a reflected property on.
     inline constexpr TCHAR ERR_NO_NODE_SETTINGS[]                           = TEXT("NO_NODE_SETTINGS");
+    // editor.dismiss_notifications: no editor notification toast is open, so nothing was dismissed.
+    inline constexpr TCHAR ERR_NO_NOTIFICATIONS[]                           = TEXT("NO_NOTIFICATIONS");
     inline constexpr TCHAR ERR_NO_PCG_GRAPH[]                               = TEXT("NO_PCG_GRAPH");
     inline constexpr TCHAR ERR_NO_PLAYER_CONTROLLER[]                       = TEXT("NO_PLAYER_CONTROLLER");
     inline constexpr TCHAR ERR_NO_SCS[]                                     = TEXT("NO_SCS");

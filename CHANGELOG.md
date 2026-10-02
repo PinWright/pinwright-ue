@@ -32,6 +32,12 @@
 - Fixed: class lookups by bare short name (`Object`, `Actor`, `PointLight`) no longer log
   `Failed to find object 'Class <Name>'` warnings before succeeding; the class resolvers no longer
   attempt a load for a bare name or a `/Script/` class.
+- Added: `editor.dismiss_notifications` closes the editor's notification toasts (which
+  `editor.resize_window` cannot clear) and reports each one's window closed as measured.
+  `drive.click {os_input:true}` (and `drive.hover`) now refuses with `TARGET_OCCLUDED` when
+  another window of this editor is on top at the target by Slate's window order, before any X
+  event is sent. `TARGET_OCCLUDED` adds `occluding_window_type` and `recovery`, and
+  `editor.resize_window` warns when the measured client size differs from the request.
 - Fixed: `drive.observe` / `drive.expect` / action targeting report `visible:false` (geometry
   `stale`) for an element lying wholly outside a clipping (`ClipToBounds`) ancestor, such as a
   closed dropdown translated out of its panel; `drive.click` / `drive.hover` refuse it with

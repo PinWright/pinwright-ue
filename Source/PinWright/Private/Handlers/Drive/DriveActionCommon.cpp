@@ -43,6 +43,10 @@ namespace DriveActionCommonLocal
         const TSharedPtr<SWindow>& Under)
     {
         const FString Title = Under.IsValid() ? Under->GetTitle().ToString() : FString();
+        const FString Type = Under.IsValid() ? FDriveEditorChrome::WindowTypeToString(Under->GetType()) : FString();
+        // A notification toast is untitled, and the notification manager re-places and re-sizes it
+        // every frame, so editor.resize_window cannot clear it; only dismissing it can.
+        const bool bNotification = Under.IsValid() && Under->GetType() == EWindowType::Notification;
         TSharedPtr<FJsonObject> Details = MakeShared<FJsonObject>();
         Details->SetStringField(TEXT("handle"), Handle);
         Details->SetNumberField(TEXT("x"), Point.X);
@@ -50,12 +54,20 @@ namespace DriveActionCommonLocal
         if (Under.IsValid())
         {
             Details->SetStringField(TEXT("occluding_window"), Title);
+            Details->SetStringField(TEXT("occluding_window_type"), Type);
+            Details->SetStringField(TEXT("recovery"), bNotification
+                ? TEXT("editor.dismiss_notifications {}")
+                : TEXT("editor.resize_window (shrink it) or close it, then retry"));
         }
         Token.SendError(ErrorCodes::ERR_TARGET_OCCLUDED,
-            Under.IsValid()
+            bNotification
                 ? FString::Printf(
-                    TEXT("Element '%s' is covered at (%.0f, %.0f) by window '%s', which would receive the input instead. Close or move that window (drive.list_windows lists it), then retry."),
+                    TEXT("Element '%s' is covered at (%.0f, %.0f) by an editor notification toast (window '%s', type Notification), which would receive the input instead. Dismiss it with editor.dismiss_notifications {}, then retry."),
                     *Handle, Point.X, Point.Y, *Title)
+            : Under.IsValid()
+                ? FString::Printf(
+                    TEXT("Element '%s' is covered at (%.0f, %.0f) by window '%s' (type %s), which would receive the input instead. Shrink it with editor.resize_window or close it (drive.list_windows lists it), then retry."),
+                    *Handle, Point.X, Point.Y, *Title, *Type)
                 : FString::Printf(
                     TEXT("No window accepts pointer input at element '%s''s center (%.0f, %.0f), so the input would land nowhere."),
                     *Handle, Point.X, Point.Y),
@@ -420,11 +432,25 @@ void FDriveActionCommon::RunAction(FHandlerContext& Ctx, const FString& Handle, 
     // pumped, so the first click into another window is hit-tested in the old one and lands on
     // nothing. Either way the widget never sees it and the settle loop reports a benign
     // no_change_within_budget. So move the pointer first and inject only once the routing names
-    // the target's window. os_input is left alone: it never warps the Slate cursor, and the X
-    // server routes its events itself. A retainer's virtual window never appears in that routing.
+    // the target's window. os_input skips that wait: it never warps the Slate cursor, and the X
+    // server routes its events itself; it gets the two window-order checks below instead. A retainer's virtual window never appears in that routing.
     // os_input's counterpart: the X server routes real input to the top-most X window at the
     // point, which may be another process's (a peer editor or game on a shared display).
     // Check before anything is injected; ClickAt re-checks before the press.
+    // The X check is about process ownership only, so another window of THIS editor stacked over
+    // the target (a Message Log, a plugin window, a notification toast) would still take the real
+    // click. Slate's window order mirrors the X stacking of this editor's own windows (it brings a
+    // window to front on activation, and keeps top-most windows above), so refuse when it names
+    // another window at the point. Checked first so the occluder named is this editor's own.
+    if (InputPathLabel == FDriveOsInput::InputPathLabel() && TargetWindow.IsValid() && !TargetWindow->IsVirtualWindow())
+    {
+        const TSharedPtr<SWindow> Top = FDriveInput::TopWindowAtPoint(TargetCenter);
+        if (Top.IsValid() && Top != TargetWindow)
+        {
+            SendOccluded(*Ctx.MakeAsyncToken(), Handle, TargetCenter, Top);
+            return;
+        }
+    }
     FDriveOsInput::FForeignWindow Foreign;
     if (InputPathLabel == TEXT("os_x11") && FDriveOsInput::FindForeignWindowAt(TargetCenter, Foreign))
     {

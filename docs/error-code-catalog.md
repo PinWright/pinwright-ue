@@ -814,6 +814,7 @@ these also carry a row in the frequency table. Kept for the semantics a count ca
 | `NO_INSTANCED_COMPONENT` | 1 | 1 |
 | `NO_INVALID_DATALAYERS` | 1 | 1 |
 | `NO_NODE_SETTINGS` | 1 | 1 |
+| `NO_NOTIFICATIONS` | 1 | 1 |
 | `NO_PCG_GRAPH` | 1 | 1 |
 | `NO_PLAYER_CONTROLLER` | 1 | 1 |
 | `NO_SCS` | 1 | 1 |
