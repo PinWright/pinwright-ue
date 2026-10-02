@@ -359,6 +359,32 @@ namespace WidgetAuthoringHelpers
             REN_DontCreateRedirectors | MCP_REN_NO_RESET_LOADERS);
     }
 
+    namespace
+    {
+        // Initialize() on a UUserWidget binds each of its class's widget properties to the
+        // instance's own transient runtime tree. On a template in a designer tree those values
+        // would be saved into the parent asset as a stale copy of the child's layout; runtime
+        // rebinds them from the class, so a template carries null there (as a loaded one does).
+        void ClearRuntimeTreeReferences(UObject* Object)
+        {
+            UUserWidget* UserWidget = Cast<UUserWidget>(Object);
+            if (!UserWidget)
+            {
+                return;
+            }
+
+            for (TFieldIterator<FObjectPropertyBase> It(UserWidget->GetClass()); It; ++It)
+            {
+                UObject* Value = It->GetObjectPropertyValue_InContainer(UserWidget);
+                UWidgetTree* OwnerTree = Value ? Value->GetTypedOuter<UWidgetTree>() : nullptr;
+                if (OwnerTree && Cast<UUserWidget>(OwnerTree->GetOuter()))
+                {
+                    It->SetObjectPropertyValue_InContainer(UserWidget, nullptr);
+                }
+            }
+        }
+    }
+
     UWidget* ConstructWidgetForAuthoring(UWidgetBlueprint* WidgetBP, UClass* WidgetClass,
         const FName& WidgetName, FString* OutError)
     {
@@ -431,6 +457,7 @@ namespace WidgetAuthoringHelpers
                 return nullptr;
             }
 
+            ClearRuntimeTreeReferences(UserWidget);
             return UserWidget;
         }
 
@@ -1235,6 +1262,8 @@ namespace WidgetAuthoringHelpers
         Options.SkipPropertyNames.Add(FName(TEXT("Parent")));
         Options.SkipPropertyNames.Add(FName(TEXT("Content")));
         CopyFilteredMatchingProperties(Src, Dst, Options);
+        // A source template bound in this session would hand Dst references into its tree.
+        ClearRuntimeTreeReferences(Dst);
     }
 
     UWidget* ReplaceWidgetClass(UWidgetBlueprint* WidgetBP, UWidget* OldTarget,

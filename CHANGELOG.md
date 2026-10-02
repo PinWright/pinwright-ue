@@ -61,6 +61,9 @@
   `stale`) for an element lying wholly outside a clipping (`ClipToBounds`) ancestor, such as a
   closed dropdown translated out of its panel; `drive.click` / `drive.hover` refuse it with
   `TARGET_CHANGED` instead of settling with `no_change_within_budget`.
+- Fixed: `widget.add`, `widget.duplicate`, `widget.replace_class` and `widget.import_xml` no longer
+  save a placed Blueprint UserWidget's own widget-variable references (its inner widgets) into the
+  parent asset; the placed template carries them null, as a loaded one does.
 - Changed: the six `system.inspect.get_*` game-framework singleton readers (`get_game_state`,
   `get_player_states`, ...) take `editor.console_command`'s `world` selector and, omitted, answer
   from the PIE authority (listen/dedicated server) instead of the newest PIE world, which was a
