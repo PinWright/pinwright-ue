@@ -18,7 +18,7 @@
 
 namespace
 {
-    bool IsPythonFileCommand(const FString& Command)
+    bool IsPythonFileCommand(const FString& Command, FString* OutFilePath = nullptr)
     {
         const FString Trimmed = Command.TrimStartAndEnd();
         FString FilePath;
@@ -54,6 +54,10 @@ namespace
             FilePath = Trimmed.Left(EndPathPos);
         }
 
+        if (OutFilePath)
+        {
+            *OutFilePath = FilePath;
+        }
         return FilePath.EndsWith(TEXT(".py"), ESearchCase::IgnoreCase);
     }
 
@@ -208,6 +212,19 @@ REGISTER_RPC_HANDLER("python.execute", "python", "Execute Python code or a .py f
             == PinWright::PythonCallbacks::EReadyStatus::Ready;
     const FString RequestId = Ctx.GetRequestId();
 
+    // The engine's Python wrapper for a Blueprint event-dispatcher property has answered
+    // is_bound() == False on a dispatcher that was bound (and dir() on the same value
+    // SIGSEGV'd the editor). Engine code, so the most PinWright can do is point at the
+    // typed read whenever the script leans on is_bound() at all
+    // (board: B-python-bp-dispatcher-property-unsafe).
+    FString ScannedSource = Code;
+    FString ScriptFilePath;
+    if (IsPythonFileCommand(Code, &ScriptFilePath))
+    {
+        FFileHelper::LoadFileToString(ScannedSource, *ScriptFilePath);
+    }
+    const bool bUsesIsBound = ScannedSource.Contains(TEXT("is_bound("), ESearchCase::CaseSensitive);
+
     FPythonCommandEx Cmd;
     FString CommandToExecute = Code;
     FString TempScriptPath;
@@ -243,7 +260,7 @@ REGISTER_RPC_HANDLER("python.execute", "python", "Execute Python code or a .py f
     // so a streaming caller and a plain-JSON caller cannot receive different answers for
     // the same script.
     auto RunPython = [&Python, &Cmd, &TempScriptPath, bIsolateModules,
-                      bCallbackTrackingReady, &RequestId]() -> TSharedPtr<FJsonObject>
+                      bCallbackTrackingReady, bUsesIsBound, &RequestId]() -> TSharedPtr<FJsonObject>
     {
         const bool bPieActiveBeforeExecution = PinWrightPieState::IsPlayInEditorActive();
         const bool bSnapshotted = bIsolateModules && RunModuleTableScript(*Python, SnapshotModulesScript);
@@ -325,6 +342,19 @@ REGISTER_RPC_HANDLER("python.execute", "python", "Execute Python code or a .py f
                 TEXT("editor crashes. Use object.call_function (it keeps the engine's RPC routing in PIE) or change ")
                 TEXT("the server world's object instead."));
             LogArray.Add(MakeShared<FJsonValueObject>(RpcEntry));
+        }
+
+        if (bUsesIsBound)
+        {
+            TSharedPtr<FJsonObject> LogEntry = MakeShared<FJsonObject>();
+            LogEntry->SetStringField(TEXT("type"), LexToString(EPythonLogOutputType::Warning));
+            LogEntry->SetStringField(TEXT("output"),
+                TEXT("This script calls is_bound(). On a Blueprint event-dispatcher (multicast delegate) ")
+                TEXT("property read with get_editor_property, is_bound() has returned False while the ")
+                TEXT("dispatcher was bound, and dir() on that value crashed the editor. Read dispatcher ")
+                TEXT("bindings with property.get {objectPath, propertyName}: its value carries bindingStatus ")
+                TEXT("and bindings[] (object and function per bound entry)."));
+            LogArray.Add(MakeShared<FJsonValueObject>(LogEntry));
         }
 
         // A tick or shutdown callback registered here outlives this call, PIE, and every

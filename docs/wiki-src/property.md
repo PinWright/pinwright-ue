@@ -38,6 +38,10 @@ The supported route is the scoped `previewScene` capture parameter, which touche
 
 **Why documented rather than refused.** Gating would mean a class allow-list on a general-purpose reflection verb — a much larger contract change — and it would not hold: this object is reachable through any of the four resolution stages under a different path spelling. That is a knowingly incomplete answer and it is recorded as one.
 
+## Delegates and event dispatchers
+
+`property.get` reads a delegate or Blueprint event dispatcher as a marker, not a string: `value` is `{_kind, type, bindingStatus, bindings[]}`. `_kind` is `FMulticastInlineDelegateProperty` for a Blueprint dispatcher (`FMulticastSparseDelegateProperty` / `FMulticastDelegateProperty` / `FDelegateProperty` for the native kinds), `bindingStatus` is `bound`, `empty`, or `unreadable` (bound, but no entry could be parsed), and each `bindings[]` entry is `{object, function}` — the bound object's path and the function it calls. This is the reliable way to check whether a dispatcher is bound on a live (including PIE) object; `python.execute`'s `get_editor_property(...).is_bound()` is not (see [`python`](python.md) → "Calls that crash the editor").
+
 ### property.set
 
 Discover the property name first with `property.list` — names are case-sensitive and match the C++ `UPROPERTY` declaration, not the Blueprint display name (e.g. `bHidden`, not "Hidden"). For struct fields, pass nested JSON matching the struct layout. For array properties, pass a JSON array; the call replaces the entire array.

@@ -47,6 +47,10 @@
 - Fixed: class lookups by bare short name (`Object`, `Actor`, `PointLight`) no longer log
   `Failed to find object 'Class <Name>'` warnings before succeeding; the class resolvers no longer
   attempt a load for a bare name or a `/Script/` class.
+- Changed: `python.execute` adds a `Warning` to `log` when the script calls `is_bound(`: the
+  engine's Python wrapper for a Blueprint event dispatcher has reported unbound while bound (and
+  `dir()` on it crashed the editor). `property.get` is the reliable read; its delegate value
+  (`bindingStatus`, `bindings[]` of `{object, function}`) is now documented on the `property` page.
 - Added: `editor.dismiss_notifications` closes the editor's notification toasts (which
   `editor.resize_window` cannot clear) and reports each one's window closed as measured.
   `drive.click {os_input:true}` (and `drive.hover`) now refuses with `TARGET_OCCLUDED` when
