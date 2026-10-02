@@ -1448,7 +1448,7 @@ TSharedPtr<FJsonObject> ExportPropertyToJsonValueWithInheritance(
     return Result;
 }
 
-bool ShouldEmitClassDumpProperty(const FProperty* Property)
+bool ShouldEmitClassDumpProperty(const FProperty* Property, bool bIncludeNonPersistent)
 {
     if (!Property)
     {
@@ -1469,8 +1469,10 @@ bool ShouldEmitClassDumpProperty(const FProperty* Property)
     // The mask mirrors FProperty::ShouldSerializeValue's own skip set; UHT strips the
     // `_DEPRECATED` suffix from a property's engine name and sets CPF_Deprecated, so
     // legacy upgrade fields such as UActorComponent::bInstanceComponent land here.
+    // A live-object reader opts back into the non-persistent ones; deprecated stays out.
+    const EPropertyFlags NonPersistent = CPF_Transient | CPF_DuplicateTransient | CPF_SkipSerialization;
     if (Property->HasAnyPropertyFlags(
-            CPF_Transient | CPF_DuplicateTransient | CPF_Deprecated | CPF_SkipSerialization))
+            CPF_Deprecated | (bIncludeNonPersistent ? CPF_None : NonPersistent)))
     {
         return false;
     }
@@ -1478,7 +1480,7 @@ bool ShouldEmitClassDumpProperty(const FProperty* Property)
     return !IsCompilerManagedUserWidgetFlag(Property);
 }
 
-TSharedPtr<FJsonObject> BuildClassPropertyJson(UObject* CDO, UObject* ParentCDO)
+TSharedPtr<FJsonObject> BuildClassPropertyJson(UObject* CDO, UObject* ParentCDO, bool bIncludeNonPersistent)
 {
     TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
     if (!CDO)
@@ -1503,7 +1505,7 @@ TSharedPtr<FJsonObject> BuildClassPropertyJson(UObject* CDO, UObject* ParentCDO)
 
     for (FProperty* Prop : Properties)
     {
-        if (!ShouldEmitClassDumpProperty(Prop))
+        if (!ShouldEmitClassDumpProperty(Prop, bIncludeNonPersistent))
         {
             continue;
         }

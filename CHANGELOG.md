@@ -22,6 +22,13 @@
 - Fixed: class lookups by bare short name (`Object`, `Actor`, `PointLight`) no longer log
   `Failed to find object 'Class <Name>'` warnings before succeeding; the class resolvers no longer
   attempt a load for a bare name or a `/Script/` class.
+- Changed: the six `system.inspect.get_*` game-framework singleton readers (`get_game_state`,
+  `get_player_states`, ...) take `editor.console_command`'s `world` selector and, omitted, answer
+  from the PIE authority (listen/dedicated server) instead of the newest PIE world, which was a
+  client in a listen-server session. Responses add `world`, `worldDefaulted`, `pieInstance`,
+  `worldPath`, `netMode` and `kind`.
+- Fixed: `system.inspect.inspect_object` reports Transient UPROPERTYs (flagged `Transient`)
+  instead of dropping them, and names every property it still leaves out in `omittedProperties`.
 - Changed: graph auto-layout is PinWright's own layered formatter (`PwGraphLayout`) for BPIR
   compile/insert, `material.compile_mgir` / `material.authoring.auto_layout`, AGIR and CRIR
   compiles. It sizes every node (estimated from its title and pins), so laid-out nodes never

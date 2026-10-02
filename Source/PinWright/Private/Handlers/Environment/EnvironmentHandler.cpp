@@ -1802,8 +1802,21 @@ REGISTER_RPC_HANDLER("system.inspect.inspect_object", "system.inspect", "Inspect
 
     // Reflected property dump for every target type (fulfills the doc's "properties"
     // promise). Passing nullptr as the parent CDO emits all properties rather than a
-    // CDO-vs-parent diff.
-    Resp->SetObjectField(TEXT("properties"), BuildClassPropertyJson(TargetObject, nullptr));
+    // CDO-vs-parent diff. Transient properties are kept (flagged `Transient`): on a live
+    // object they are usually the runtime state being inspected. Whatever the dump filter
+    // still drops (deprecated, editor-regenerated) is named in omittedProperties, never
+    // silently absent (board B-inspect-object-omits-transient-props).
+    const TSharedPtr<FJsonObject> Properties = BuildClassPropertyJson(TargetObject, nullptr, /*bIncludeNonPersistent=*/true);
+    TArray<TSharedPtr<FJsonValue>> Omitted;
+    for (TFieldIterator<FProperty> It(TargetObject->GetClass(), EFieldIteratorFlags::IncludeSuper); It; ++It)
+    {
+        if (!Properties->HasField(It->GetName()))
+        {
+            Omitted.Add(MakeShared<FJsonValueString>(It->GetName()));
+        }
+    }
+    Resp->SetObjectField(TEXT("properties"), Properties);
+    Resp->SetArrayField(TEXT("omittedProperties"), Omitted);
 
     // If it's an actor, add actor-specific info
     if (AActor* Actor = Cast<AActor>(TargetObject))

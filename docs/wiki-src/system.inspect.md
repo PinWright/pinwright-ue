@@ -34,6 +34,16 @@ For Blueprint *assets* prefer `call("blueprint.inspect")` — it returns graph +
 
 For repeatable content asset inspection, dump the package with [`asset.dump`](asset.dump.md) or sweep a folder with [`asset.dump_folder`](asset.dump_folder.md), then read the mirror files from disk. That cache is usually the better source of truth for Blueprint, Widget Blueprint, SCS, level, and property audits; use `inspect_object` when you specifically need the currently loaded UObject state.
 
+`properties` includes **Transient** (and `DuplicateTransient` / `SkipSerialization`) UPROPERTYs, each carrying that name in its `flags` array: on a live PIE object they are usually the runtime state you came for (replicated gameplay flags, caches). Asset mirrors (`asset.dump`) still leave them out. The few reflected properties this verb does not report (deprecated fields and editor-regenerated noise) are listed by name in **`omittedProperties`**, so a property missing from `properties` and absent from that list does not exist on the class; read an omitted one with `property.get`.
+
+### system.inspect.get_game_state
+
+Takes the same `world` selector as `editor.console_command` (`editor`, `server`, `client`, `client:N`, `pie:N`). **Omitted, it answers from the PIE authority** (the listen or dedicated server, or the sole standalone instance) while PIE runs, and from the editor world otherwise; in a listen-server session that is the server's `GameState`, not a client's replicated copy. Pass `world:"client:1"` to read what a client sees. The response adds `world` (the selector applied; `pie:N` when defaulted), `worldDefaulted`, `pieInstance`, `worldPath`, `netMode` (`Standalone` / `ListenServer` / `DedicatedServer` / `Client`) and `kind` (`server` / `client` / `standalone`) beside `objectPath` / `className`. An unknown selector is `INVALID_ARGUMENT`; one that matches no running PIE world is `WORLD_NOT_FOUND` listing the available contexts. The sibling singleton readers (`get_game_instance`, `get_game_mode`, `get_player_controllers`, `get_local_players`) take the same parameter and echo the same fields.
+
+### system.inspect.get_player_states
+
+Same `world` selector and default as `get_game_state` (authority first), so the rows are the server's `PlayerState`s in a listen-server session. The response carries `world`, `worldDefaulted`, `pieInstance`, `worldPath`, `netMode` and `kind` beside `playerStates`; an empty array with `worldPath` set means that world has no GameState or no players yet.
+
 ### system.inspect.get_viewport_info
 
 Return the active viewport's pixel `width`/`height` plus the level-editor camera transform — `cameraLocation` `{x,y,z}`, `cameraRotation` `{pitch,yaw,roll}`, `fov` — read from the level-editor viewport client. (Returns `success:true` with no dimensions/camera when no viewport is active.)

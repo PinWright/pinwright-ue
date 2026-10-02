@@ -266,6 +266,23 @@ inline EOmittedWorld ResolveOmitted(const TArray<FPieContextInfo>& Contexts)
         : EOmittedWorld::Ambiguous;
 }
 
+// What an OMITTED `world` resolves to for a read-only accessor (system.inspect.get_game_state
+// and its siblings): index into Contexts, or INDEX_NONE for the editor world (no PIE). Unlike
+// ResolveOmitted, several PIE worlds are not ambiguous for a read: the authority (the "server"
+// selector's pick) holds the state every client copy is replicated from, so it answers; with no
+// authority in the session the first PIE world does. The caller echoes which one it was.
+inline int32 ResolveOmittedForRead(const TArray<FPieContextInfo>& Contexts)
+{
+    if (Contexts.Num() == 0)
+    {
+        return INDEX_NONE;
+    }
+    FParsedSelector Server;
+    Server.Kind = ESelectorKind::Server;
+    const int32 Authority = ResolveSelector(Server, Contexts);
+    return Authority != INDEX_NONE ? Authority : 0;
+}
+
 // Human-readable summary of the available PIE contexts for WORLD_NOT_FOUND messages,
 // e.g. "pie:0 server [MyMap], pie:1 client (client:1) [MyMap]".
 inline FString DescribeContexts(const TArray<FPieContextInfo>& Contexts)

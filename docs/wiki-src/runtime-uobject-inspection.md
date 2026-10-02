@@ -40,7 +40,7 @@ For singleton actors there are six dedicated read-only handlers:
 - `system.inspect.get_player_states`
 - `system.inspect.get_local_players`
 
-Each returns `{objectPath, className}` (or a typed `*_NOT_FOUND` error) for singletons, or an array of those records for the multi-instance variants. Arrays come back empty when no world resolves.
+Each returns `{objectPath, className}` (or a typed `*_NOT_FOUND` error) for singletons, or an array of those records for the multi-instance variants. Arrays come back empty when no world resolves. These six take `editor.console_command`'s `world` selector (`editor`, `server`, `client`, `client:N`, `pie:N`), not the `editor|pie|auto` mode above: omitted, they answer from the PIE **authority** (listen/dedicated server, or the sole standalone instance), so a listen-server session returns the server's objects rather than a client's replicated copies. Every response echoes `world`, `worldDefaulted`, `pieInstance`, `worldPath`, `netMode` and `kind`, so read those to confirm which instance answered.
 
 ## Step 3: the live subsystem object-path shape
 

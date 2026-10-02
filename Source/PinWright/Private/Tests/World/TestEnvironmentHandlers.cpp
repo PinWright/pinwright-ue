@@ -1315,6 +1315,77 @@ bool FSystemInspectInspectObjectEmitsClassKeyTest::RunTest(const FString& Parame
     return true;
 }
 
+// Regression for B-inspect-object-omits-transient-props: `properties` was built with the asset
+// dump's persistence filter, so every Transient UPROPERTY (a replicated runtime flag, a cache)
+// vanished from a live-object read with no marker. Now Transient properties are reported with
+// `Transient` in their flags, and every reflected property the verb still leaves out is named in
+// omittedProperties. AActor declares Transient UPROPERTYs on every supported engine version, so a
+// plain actor exercises it without a custom class.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSystemInspectInspectObjectIncludesTransientPropertiesTest,
+    "PinWright.system.inspect.inspect_object.IncludesTransientProperties",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FSystemInspectInspectObjectIncludesTransientPropertiesTest::RunTest(const FString& Parameters)
+{
+    FScopedEditorWorldActorGuard WorldGuard;
+    USceneComponent* Scene = nullptr;
+    AActor* Actor = SpawnActorWithRootScene(*this, TEXT("PW_InspectTransient"), TEXT("InspectedTransientScene"), Scene);
+    if (!Actor)
+    {
+        return false;
+    }
+
+    TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+    Payload->SetStringField(TEXT("objectPath"), Actor->GetPathName());
+    FTestResponseCapture Capture;
+    TestTrue(TEXT("inspect_object handler found"),
+        InvokeHandlerWithCapture(TEXT("system.inspect.inspect_object"), Payload, Capture));
+    TestTrue(TEXT("inspect_object succeeded"), Capture.bSuccess);
+    if (!Capture.Result.IsValid()
+        || !Capture.Result->HasTypedField<EJson::Object>(TEXT("properties"))
+        || !Capture.Result->HasTypedField<EJson::Array>(TEXT("omittedProperties")))
+    {
+        AddError(TEXT("response lacks properties object or omittedProperties array"));
+        return false;
+    }
+    const TSharedPtr<FJsonObject> Props = Capture.Result->GetObjectField(TEXT("properties"));
+    TSet<FString> Omitted;
+    for (const TSharedPtr<FJsonValue>& Value : Capture.Result->GetArrayField(TEXT("omittedProperties")))
+    {
+        Omitted.Add(Value->AsString());
+    }
+
+    int32 TransientChecked = 0;
+    for (TFieldIterator<FProperty> It(Actor->GetClass(), EFieldIteratorFlags::IncludeSuper); It; ++It)
+    {
+        const FString Name = It->GetName();
+        const bool bListed = Props->HasField(Name);
+        // No silent omission: every reflected property is either reported or named as omitted.
+        TestTrue(*FString::Printf(TEXT("'%s' is in properties xor omittedProperties"), *Name),
+            bListed != Omitted.Contains(Name));
+
+        if (!It->HasAnyPropertyFlags(CPF_Transient) || It->HasAnyPropertyFlags(CPF_Deprecated))
+        {
+            continue;
+        }
+        ++TransientChecked;
+        TestTrue(*FString::Printf(TEXT("Transient '%s' is reported in properties"), *Name), bListed);
+        const TSharedPtr<FJsonObject>* Entry = nullptr;
+        const TArray<TSharedPtr<FJsonValue>>* Flags = nullptr;
+        bool bFlagged = false;
+        if (Props->TryGetObjectField(Name, Entry) && (*Entry)->TryGetArrayField(TEXT("flags"), Flags))
+        {
+            for (const TSharedPtr<FJsonValue>& Flag : *Flags)
+            {
+                bFlagged |= Flag->AsString() == TEXT("Transient");
+            }
+        }
+        TestTrue(*FString::Printf(TEXT("Transient '%s' carries the Transient flag"), *Name), bFlagged);
+    }
+    TestTrue(TEXT("AActor declares at least one Transient UPROPERTY to check"), TransientChecked > 0);
+    return true;
+}
+
 // ============================================================================
 // FoliageHandler — foliage.paint
 // ============================================================================
