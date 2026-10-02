@@ -1453,6 +1453,9 @@ namespace ErrorCodes
     inline constexpr TCHAR ERR_SIMULATION_STAGE_INVALID_INDEX[]             = TEXT("SIMULATION_STAGE_INVALID_INDEX");
     inline constexpr TCHAR ERR_SIMULATION_STAGE_NOT_FOUND[]                 = TEXT("SIMULATION_STAGE_NOT_FOUND");
     inline constexpr TCHAR ERR_SKELETAL_MESH_NOT_FOUND[]                    = TEXT("SKELETAL_MESH_NOT_FOUND");
+    // skeleton.edit_mesh_bones: the edited mesh hierarchy would no longer match its USkeleton
+    // (parent chains differ), which is the case where the engine's commit opens a modal merge dialog.
+    inline constexpr TCHAR ERR_SKELETON_EDIT_INCOMPATIBLE[]                 = TEXT("SKELETON_EDIT_INCOMPATIBLE");
     inline constexpr TCHAR ERR_SKELETON_HAS_NO_BONES[]                      = TEXT("SKELETON_HAS_NO_BONES");
     inline constexpr TCHAR ERR_SKELETON_MISMATCH[]                          = TEXT("SKELETON_MISMATCH");
     inline constexpr TCHAR ERR_SKELETON_NOT_FOUND[]                         = TEXT("SKELETON_NOT_FOUND");

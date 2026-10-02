@@ -99,6 +99,12 @@ Recorded so the next backport does not re-derive them:
 - `SplineHandler.cpp` reaches `UWaterSplineComponent` by reflection
   (`FindObject<UClass>("/Script/Water.WaterSplineComponent")`), so it carries no Water link and no
   version dependency.
+- `skeleton.edit_mesh_bones` (`Handlers/Animation/SkeletonMeshBonesHandler.cpp`) reaches
+  `USkeletonModifier` by reflection (`/Script/SkeletalMeshModifiers.SkeletonModifier`, UFUNCTIONs
+  called through `ProcessEvent`). Its module sits in `MeshModelingToolsetExp` on 5.3-5.5 and in
+  `MeshModelingToolset` on 5.6+, so no one link dependency covers the range; the verb verifies every
+  function and parameter name it uses and refuses `NOT_SUPPORTED` when any is missing. Only the 5.8
+  signatures were read on the authoring host.
 - `render.capture_ortho_tiles`' remaining scene-capture surface is portable 5.3-5.8:
   `bEnableOrthographicTiling` (`SceneCaptureComponent2D.h`, all six), `OrthoWidth`, `ProjectionType`,
   `CaptureSource`/`SCS_FinalColorLDR`, `PostProcessSettings`/`PostProcessBlendWeight`, the

@@ -692,22 +692,42 @@ REGISTER_RPC_HANDLER("skeleton.rename_bone", "skeleton",
 // ===========================================================================
 
 REGISTER_RPC_HANDLER("skeleton.create_skeleton", "skeleton",
-    "Create an empty USkeleton asset with a single root bone. Add bones afterwards via skeleton.add_bone; sockets via skeleton.create_socket.",
+    "Create a USkeleton asset: either empty with a single root bone, or (fromSkeletalMesh) holding an existing SkeletalMesh's whole bone hierarchy, with that mesh rebound to it. Add bones afterwards via skeleton.add_bone; sockets via skeleton.create_socket.",
     RPC_PARAMS(
         ParamAliasUtils::MakeAliasParamSpec(TEXT("path"), TEXT("path"),
             TEXT("Full asset path for the new Skeleton (e.g. /Game/Characters/SK_Foo); 'skeletonPath' alias accepted."),
             /*bRequired=*/true, TArray<FString>({TEXT("path"), TEXT("skeletonPath")})),
-        RPC_PARAM_OPT("rootBoneName", "string", "Identifier of the initial root bone; defaults to 'Root'.")
+        RPC_PARAM_OPT("rootBoneName", "string", "Identifier of the initial root bone; defaults to 'Root'. Not accepted with fromSkeletalMesh."),
+        RPC_PARAM_OPT("fromSkeletalMesh", "path", "USkeletalMesh whose reference skeleton the new Skeleton copies bone for bone; the mesh is then rebound to the new Skeleton.")
     ))
 {
     const TSharedPtr<FJsonObject>& Payload = Ctx.GetRawPayload();
     FString SkeletonPath = Ctx.GetStringFirstOf({TEXT("path"), TEXT("skeletonPath")});
     FString RootBoneName = Ctx.GetString(TEXT("rootBoneName"), TEXT("Root"));
+    const FString FromMeshPath = Ctx.GetString(TEXT("fromSkeletalMesh"));
 
     if (SkeletonPath.IsEmpty())
     {
         Ctx.SendError(TEXT("MISSING_PARAM"), TEXT("path or skeletonPath is required"));
         return true;
+    }
+
+    USkeletalMesh* FromMesh = nullptr;
+    if (!FromMeshPath.IsEmpty())
+    {
+        if (Payload.IsValid() && Payload->HasField(TEXT("rootBoneName")))
+        {
+            Ctx.SendError(TEXT("INVALID_ARGUMENT"), TEXT("rootBoneName and fromSkeletalMesh cannot be combined: the mesh's own root bone becomes the Skeleton's root. Drop rootBoneName."));
+            return true;
+        }
+        FString MeshError;
+        bool bMeshWrongType = false;
+        FromMesh = LoadSkeletalMeshFromPathSkel(FromMeshPath, MeshError, &bMeshWrongType);
+        if (!FromMesh)
+        {
+            SendTypedPathError(Ctx, TEXT("SKELETAL_MESH_NOT_FOUND"), MeshError, bMeshWrongType);
+            return true;
+        }
     }
 
     // Validate path to prevent path traversal attacks
@@ -772,19 +792,62 @@ REGISTER_RPC_HANDLER("skeleton.create_skeleton", "skeleton",
         return true;
     }
 
-    FReferenceSkeletonModifier Modifier(NewSkeleton);
-    FMeshBoneInfo RootBone;
-    RootBone.Name = FName(*RootBoneName);
-    RootBone.ParentIndex = INDEX_NONE;
-    RootBone.ExportName = RootBoneName;
-    Modifier.Add(RootBone, FTransform::Identity, true);
+    TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject());
+    if (FromMesh)
+    {
+        // USkeletonFactory::TargetSkeletalMesh does the same merge, but reports a failure through a
+        // modal FMessageDialog; call the merge directly so nothing can block the game thread.
+        const FReferenceSkeleton& MeshRef = FromMesh->GetRefSkeleton();
+        bool bHierarchyMatches = NewSkeleton->MergeAllBonesToBoneTree(FromMesh, /*bShowProgress=*/false);
+        const FReferenceSkeleton& NewRef = NewSkeleton->GetReferenceSkeleton();
+        bHierarchyMatches = bHierarchyMatches && NewRef.GetRawBoneNum() == MeshRef.GetRawBoneNum();
+        for (int32 Index = 0; bHierarchyMatches && Index < MeshRef.GetRawBoneNum(); ++Index)
+        {
+            const int32 MeshParent = MeshRef.GetRawParentIndex(Index);
+            const int32 NewParent = NewRef.GetRawParentIndex(Index);
+            bHierarchyMatches = NewRef.GetBoneName(Index) == MeshRef.GetBoneName(Index)
+                && (MeshParent == INDEX_NONE ? NAME_None : MeshRef.GetBoneName(MeshParent))
+                    == (NewParent == INDEX_NONE ? NAME_None : NewRef.GetBoneName(NewParent));
+        }
+        if (!bHierarchyMatches)
+        {
+            NewSkeleton->ClearFlags(RF_Public | RF_Standalone);
+            Ctx.SendError(TEXT("CREATION_FAILED"), FString::Printf(
+                TEXT("The new Skeleton does not reproduce the bone hierarchy of '%s' (USkeleton::MergeAllBonesToBoneTree); the mesh was not rebound and nothing was saved."),
+                *FromMesh->GetPathName()));
+            return true;
+        }
+
+        const USkeleton* PreviousSkeleton = FromMesh->GetSkeleton();
+        Result->SetStringField(TEXT("previousSkeletonPath"), PreviousSkeleton ? PreviousSkeleton->GetPathName() : FString());
+        FromMesh->Modify();
+        FromMesh->SetSkeleton(NewSkeleton);
+        NewSkeleton->SetPreviewMesh(FromMesh);
+        McpSafeAssetSave(FromMesh);
+
+        Result->SetStringField(TEXT("fromSkeletalMesh"), FromMesh->GetPathName());
+        Result->SetBoolField(TEXT("hierarchyMatches"), bHierarchyMatches);
+        Result->SetStringField(TEXT("meshSkeletonPath"), FromMesh->GetSkeleton() ? FromMesh->GetSkeleton()->GetPathName() : FString());
+        TSharedPtr<FJsonObject> MeshSave = MakeShared<FJsonObject>();
+        AddMarkDirtySaveReport(MeshSave, FromMesh, /*bSaveRequested=*/true);
+        Result->SetObjectField(TEXT("skeletalMeshSave"), MeshSave);
+    }
+    else
+    {
+        FReferenceSkeletonModifier Modifier(NewSkeleton);
+        FMeshBoneInfo RootBone;
+        RootBone.Name = FName(*RootBoneName);
+        RootBone.ParentIndex = INDEX_NONE;
+        RootBone.ExportName = RootBoneName;
+        Modifier.Add(RootBone, FTransform::Identity, true);
+    }
 
     McpSafeAssetSave(NewSkeleton);
 
-    TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject());
+    const FReferenceSkeleton& CreatedRef = NewSkeleton->GetReferenceSkeleton();
     Result->SetStringField(TEXT("skeletonPath"), NewSkeleton->GetPathName());
-    Result->SetStringField(TEXT("rootBoneName"), RootBoneName);
-    Result->SetNumberField(TEXT("boneCount"), 1);
+    Result->SetStringField(TEXT("rootBoneName"), CreatedRef.GetRawBoneNum() > 0 ? CreatedRef.GetBoneName(0).ToString() : FString());
+    Result->SetNumberField(TEXT("boneCount"), CreatedRef.GetRawBoneNum());
 
     // McpSafeAssetSave only marks the package dirty; it never writes. Report that
     // measured rather than leaving the caller to assume a bare success reached disk.

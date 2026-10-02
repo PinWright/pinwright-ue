@@ -333,6 +333,22 @@ Errors:
 
 The asset is marked dirty, not written: the response's save report says so. Add bones with `skeleton.add_bone`, sockets with `skeleton.create_socket`.
 
+`fromSkeletalMesh` (a `USkeletalMesh` path) creates the Skeleton from that mesh's whole reference skeleton instead of a single root, then rebinds the mesh to it and makes it the preview mesh. It cannot be combined with `rootBoneName` (`INVALID_ARGUMENT`). The copy is checked bone for bone (names and parent names by index) before the mesh is touched; a mismatch is `CREATION_FAILED` and the mesh keeps its old Skeleton. The response adds `fromSkeletalMesh`, `hierarchyMatches`, `meshSkeletonPath` (read back from the mesh), `previousSkeletonPath`, and `skeletalMeshSave` (the mesh's save report); `boneCount` and `rootBoneName` are read from the created Skeleton. A missing mesh is `SKELETAL_MESH_NOT_FOUND`, another asset class `INVALID_ASSET_TYPE`.
+
+### skeleton.edit_mesh_bones
+
+Edits a SkeletalMesh's own bones: its reference skeleton and the skin weights that index it, then merges the result into the mesh's `USkeleton`. `skeleton.add_bone` and its siblings edit only the Skeleton, so use this verb to give an imported mesh a new IK, twist or weapon bone. It drives the engine's `USkeletonModifier` (the Skeletal Mesh editor's skeleton-editing tool, from the Mesh Modeling Toolset plugin); without that plugin the verb returns `NOT_SUPPORTED`.
+
+`ops` is one ordered batch, and each op sees the ones before it: `add` (`bone`, `parent`, optional `location`/`rotation`/`scale` bind pose relative to the parent), `remove` (`bone`, `removeChildren`; without it the children move to the removed bone's parent), `rename` (`bone`, `newName`), `reparent` (`bone`, `parent`), `set_transform` (`bone` plus any of `location`/`rotation`/`scale`; omitted parts keep their value and children move with the bone). Those eight keys are the whole op schema; any other key inside an op is refused `UNKNOWN_NESTED_PARAMS`. The whole batch is validated before anything reaches the mesh, and a refused op names its index: `BONE_NOT_FOUND`, `BONE_EXISTS`, `PARENT_REQUIRED`, `PARENT_NOT_FOUND`, `PARENT_CYCLE`, `CANNOT_REMOVE_ROOT`, `INVALID_ARGUMENT`. In every refusal nothing was changed.
+
+**An edit that makes the mesh incompatible with its Skeleton is refused `SKELETON_EDIT_INCOMPATIBLE`.** The test is the engine's own: every mesh bone the Skeleton has (or else its nearest ancestor that the Skeleton has) must have the same parent chain by name. Reparenting an existing bone, or removing a middle bone without `removeChildren`, usually fails it. The engine would open a modal merge dialog at that point, so the verb refuses first. The error names the bone and carries `bone` and `skeletonPath`. Make the same hierarchy change on the Skeleton first (`skeleton.add_bone` / `skeleton.set_bone_parent` / `skeleton.remove_bone`), then repeat the batch.
+
+`dryRun: true` runs the same validation, including the compatibility check, and returns the resulting `bones` without changing or dirtying any asset (`committed: false`).
+
+A committed batch runs in one undo transaction. The response reports `bones` (`name`, `parent`) read back from the mesh, `boneCount`, `skeletonBoneCount`, `skeletonCompatible` (`USkeleton::IsCompatibleMesh` after the merge), and the mesh's save report. `skinnedBonesRemoved` lists removed bones that some section's vertices were weighted to. The engine moves those weights to the root bone, so re-skin those vertices if that is not what you want.
+
+Limits: engine content (`/Engine/...`), and a mesh bound to an engine Skeleton, are refused `INVALID_ARGUMENT`; duplicate both first. The engine remaps skin weights on LOD 0 only, so on a mesh with more than one LOD a batch that moves existing bone indices (`remove`, `reparent`) is refused `OPERATION_NOT_SUPPORTED`; adds, renames and transform edits are accepted. A batch that changes nothing is refused `OPERATION_FAILED` by the engine.
+
 ### skeleton.add_bone
 
 The new bone gets its own per-bone retargeting entry (translation retargeting `Animation`), and the hierarchy change is announced the same way as for `skeleton.remove_bone`.

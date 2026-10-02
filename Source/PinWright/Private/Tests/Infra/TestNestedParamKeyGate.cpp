@@ -556,6 +556,8 @@ bool FNestedParamKeyGateAdoptionRatchetTest::RunTest(const FString& Parameters)
         // New batch forms, closed from their first release: per-actor transform/nudge entries.
         TEXT("actor.set_transform:actors"),
         TEXT("actor.nudge:actors"),
+        // New verb, closed from its first release: mesh bone-edit ops.
+        TEXT("skeleton.edit_mesh_bones:ops"),
         // New verb, closed from its first release: Control Rig key entries.
         TEXT("sequencer.set_control_keys:keys"),
         // The gate fixture in this file.
