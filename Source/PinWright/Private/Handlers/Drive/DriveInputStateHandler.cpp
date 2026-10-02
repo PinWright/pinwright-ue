@@ -4,6 +4,7 @@
 #include "Handlers/ParamSpec.h"
 #include "Handlers/HandlerContext.h"
 #include "Handlers/ErrorCodes.h"
+#include "Handlers/Drive/DriveOsInput.h"
 
 #include "Utils/JsonBuilders.h"
 
@@ -60,7 +61,7 @@ using namespace DriveInputStateLocal;
 // It takes drive.observe's surface / root selectors for symmetry, but ignores them: the
 // state reported here is per-application and per-game-viewport, not per-UMG-root.
 REGISTER_RPC_HANDLER("drive.input_state", "drive",
-    "Read the live mouse-capture and focus state: Slate active, cursor captor, focused widget, game-viewport capture/lock modes, and OS cursor position.",
+    "Read the live mouse-capture and focus state: Slate active, cursor captor, focused widget, game-viewport capture/lock modes, OS cursor position, and active X pointer/keyboard grabs.",
     RPC_PARAMS(
         RPC_PARAM_DEF("surface", "string", "Accepted for symmetry with drive.observe and ignored: the reported state is per-application / per-game-viewport, not per-surface.", "auto"),
         RPC_PARAM_OPT("instance_name", "string", "Accepted for symmetry with drive.observe and ignored."),
@@ -151,6 +152,30 @@ REGISTER_RPC_HANDLER("drive.input_state", "drive",
     OsCursor->SetNumberField(TEXT("x"), CursorPos.X);
     OsCursor->SetNumberField(TEXT("y"), CursorPos.Y);
     Result->SetObjectField(TEXT("os_cursor"), OsCursor);
+
+    // Slate's capture flags above are the engine's view; an X grab is the OS's, and the two
+    // disagree in both directions. A pointer grab sends every real event (os_input's too) to
+    // the grabber, and on a shared display confines everyone's pointer. Null without X.
+    FDriveOsInput::FGrabState Grab;
+    if (FDriveOsInput::ProbeGrabs(Grab))
+    {
+        TSharedPtr<FJsonObject> OsGrab = MakeShared<FJsonObject>();
+        OsGrab->SetBoolField(TEXT("pointer"), Grab.bPointerGrabbed);
+        OsGrab->SetBoolField(TEXT("keyboard"), Grab.bKeyboardGrabbed);
+        if (Grab.bHeldByThisEditor.IsSet())
+        {
+            OsGrab->SetBoolField(TEXT("held_by_this_editor"), Grab.bHeldByThisEditor.GetValue());
+        }
+        else
+        {
+            OsGrab->SetField(TEXT("held_by_this_editor"), MakeShared<FJsonValueNull>());
+        }
+        Result->SetObjectField(TEXT("os_grab"), OsGrab);
+    }
+    else
+    {
+        Result->SetField(TEXT("os_grab"), MakeShared<FJsonValueNull>());
+    }
 
     Ctx.SendSuccess(Result);
     return true;

@@ -1284,6 +1284,11 @@ namespace ErrorCodes
     inline constexpr TCHAR ERR_PLAY_FAILED[]                                = TEXT("PLAY_FAILED");
     inline constexpr TCHAR ERR_PLUGIN_DISABLED[]                            = TEXT("PLUGIN_DISABLED");
     inline constexpr TCHAR ERR_PLUGIN_NOT_FOUND[]                           = TEXT("PLUGIN_NOT_FOUND");
+    // drive.click / drive.hover os_input: another X client (often this editor's own SDL, for a
+    // game viewport captured in relative mouse mode) holds an active pointer grab, so real
+    // input would go to the grabber. Nothing was moved or pressed. Payload: held_by_this_editor
+    // (bool, or null when SDL's state is unreadable).
+    inline constexpr TCHAR ERR_POINTER_GRABBED[]                            = TEXT("POINTER_GRABBED");
     // drive.click os_input: right before the press the real pointer was not on the target (a
     // human, a raw xdotool script, or a pointer grab moved or clamped it), so the button was not
     // pressed. Payload: x, y (target), pointer_x, pointer_y.

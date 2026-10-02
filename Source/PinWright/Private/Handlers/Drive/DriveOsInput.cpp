@@ -5,6 +5,7 @@
 #include "Handlers/ErrorCodes.h"
 
 #include "Dom/JsonObject.h"
+#include "Dom/JsonValue.h"
 #include "HAL/PlatformMisc.h"
 #include "HAL/PlatformProcess.h"
 #include "HAL/PlatformTime.h"
@@ -75,6 +76,10 @@ namespace DriveOsInputLocal
         int (*FetchName)(XDisplay, XWindow, char**) = nullptr;
         int (*Free)(void*) = nullptr;
         XErrorHandler (*SetErrorHandler)(XErrorHandler) = nullptr;
+        int (*GrabPointer)(XDisplay, XWindow, int, unsigned int, int, int, XWindow, unsigned long, unsigned long) = nullptr;
+        int (*UngrabPointer)(XDisplay, unsigned long) = nullptr;
+        int (*GrabKeyboard)(XDisplay, XWindow, int, int, int, unsigned long) = nullptr;
+        int (*UngrabKeyboard)(XDisplay, unsigned long) = nullptr;
         XAtom NetWmPid = 0;
 
         // Caller-facing reason the API is unusable; empty once Display is open.
@@ -105,11 +110,16 @@ namespace DriveOsInputLocal
         Api.FetchName = reinterpret_cast<decltype(Api.FetchName)>(dlsym(Xlib, "XFetchName"));
         Api.Free = reinterpret_cast<decltype(Api.Free)>(dlsym(Xlib, "XFree"));
         Api.SetErrorHandler = reinterpret_cast<decltype(Api.SetErrorHandler)>(dlsym(Xlib, "XSetErrorHandler"));
+        Api.GrabPointer = reinterpret_cast<decltype(Api.GrabPointer)>(dlsym(Xlib, "XGrabPointer"));
+        Api.UngrabPointer = reinterpret_cast<decltype(Api.UngrabPointer)>(dlsym(Xlib, "XUngrabPointer"));
+        Api.GrabKeyboard = reinterpret_cast<decltype(Api.GrabKeyboard)>(dlsym(Xlib, "XGrabKeyboard"));
+        Api.UngrabKeyboard = reinterpret_cast<decltype(Api.UngrabKeyboard)>(dlsym(Xlib, "XUngrabKeyboard"));
         XAtom (*InternAtom)(XDisplay, const char*, int) = reinterpret_cast<XAtom (*)(XDisplay, const char*, int)>(dlsym(Xlib, "XInternAtom"));
 
         if (!OpenDisplay || !Api.Flush || !Api.DefaultRootWindow || !Api.QueryPointer
             || !Api.FakeMotionEvent || !Api.FakeButtonEvent || !Api.TranslateCoordinates
-            || !Api.GetWindowProperty || !Api.FetchName || !Api.Free || !Api.SetErrorHandler || !InternAtom)
+            || !Api.GetWindowProperty || !Api.FetchName || !Api.Free || !Api.SetErrorHandler || !InternAtom
+            || !Api.GrabPointer || !Api.UngrabPointer || !Api.GrabKeyboard || !Api.UngrabKeyboard)
         {
             Api.Error = TEXT("libX11 / libXtst loaded but an expected symbol is missing; OS input is unavailable.");
             return;
@@ -208,6 +218,75 @@ namespace DriveOsInputLocal
         return false;
     }
 
+    // Whether another X client holds the pointer (or keyboard) grab: try to take it on the
+    // root from this connection and give it straight back. A successful probe costs the
+    // window under the pointer a NotifyGrab/NotifyUngrab crossing (or focus) pair, which SDL
+    // ignores. GrabModeAsync = 1, CurrentTime = 0, GrabSuccess = 0.
+    bool IsGrabbedByAnother(FX11Api& Api, bool bPointer)
+    {
+        const XWindow Root = Api.DefaultRootWindow(Api.Display);
+        const int Status = bPointer
+            ? Api.GrabPointer(Api.Display, Root, /*owner_events*/ 0, /*event_mask*/ 0, 1, 1, /*confine_to*/ 0, /*cursor*/ 0, 0)
+            : Api.GrabKeyboard(Api.Display, Root, /*owner_events*/ 0, 1, 1, 0);
+        if (Status == 0)
+        {
+            bPointer ? Api.UngrabPointer(Api.Display, 0) : Api.UngrabKeyboard(Api.Display, 0);
+            Api.Flush(Api.Display);
+        }
+        // AlreadyGrabbed = 1, GrabFrozen = 4. GrabNotViewable / GrabInvalidTime cannot
+        // happen for the root at CurrentTime.
+        return Status == 1 || Status == 4;
+    }
+
+    // SDL's own view: a window grab, or relative mouse mode on the input-focus window (SDL
+    // implements that as a confining XGrabPointer). Resolved from the process's global scope,
+    // where ApplicationCore exports SDL; unset when an entry point is missing (an older SDL).
+    TOptional<bool> SdlHoldsGrab()
+    {
+        using FGetWindow = void* (*)();
+        using FGetRelative = bool (*)(void*);
+        static const FGetWindow GetGrabbedWindow = reinterpret_cast<FGetWindow>(dlsym(RTLD_DEFAULT, "SDL_GetGrabbedWindow"));
+        static const FGetWindow GetKeyboardFocus = reinterpret_cast<FGetWindow>(dlsym(RTLD_DEFAULT, "SDL_GetKeyboardFocus"));
+        static const FGetRelative GetRelative = reinterpret_cast<FGetRelative>(dlsym(RTLD_DEFAULT, "SDL_GetWindowRelativeMouseMode"));
+        if (!GetGrabbedWindow || !GetKeyboardFocus || !GetRelative)
+        {
+            return {};
+        }
+        void* Focus = GetKeyboardFocus();
+        return GetGrabbedWindow() != nullptr || (Focus && GetRelative(Focus));
+    }
+
+    // Under a pointer grab every real event goes to the grabber: motion is clamped to its
+    // confine window and a press never reaches the target, with no error anywhere. True,
+    // filling OutFailure with POINTER_GRABBED, when another client holds one.
+    bool RefuseIfPointerGrabbed(FX11Api& Api, FDriveInjectFailure& OutFailure)
+    {
+        if (!IsGrabbedByAnother(Api, /*bPointer*/ true))
+        {
+            return false;
+        }
+        const TOptional<bool> bOurs = SdlHoldsGrab();
+        TSharedPtr<FJsonObject> Details = MakeShared<FJsonObject>();
+        if (bOurs.IsSet())
+        {
+            Details->SetBoolField(TEXT("held_by_this_editor"), bOurs.GetValue());
+        }
+        else
+        {
+            Details->SetField(TEXT("held_by_this_editor"), MakeShared<FJsonValueNull>());
+        }
+        Fail(OutFailure, ErrorCodes::ERR_POINTER_GRABBED,
+            FString::Printf(TEXT("Another X client holds an active pointer grab on this display (%s), so real input would go to the grabber, not the target. Nothing was moved or pressed. %s"),
+                !bOurs.IsSet() ? TEXT("this editor's SDL state is unreadable")
+                    : bOurs.GetValue() ? TEXT("this editor's SDL holds it: a captured game viewport in relative mouse mode")
+                    : TEXT("not this editor's SDL"),
+                bOurs.Get(false)
+                    ? TEXT("Release the game's mouse capture (Shift+F1 with X focus on the editor, or stop PIE), or use the Slate path (omit os_input).")
+                    : TEXT("Find the holder with `xdotool key XF86LogGrabInfo` (written to the Xorg log) and release it there.")),
+            Details);
+        return true;
+    }
+
     // The motion half of MoveTo, for a caller that already holds the display lock.
     bool MoveUnlocked(const FVector2D& ScreenPos, FDriveInjectFailure& OutFailure)
     {
@@ -215,6 +294,11 @@ namespace DriveOsInputLocal
         if (!Api.IsValid())
         {
             Fail(OutFailure, ErrorCodes::ERR_INPUT_FAILED, Api.Error);
+            return false;
+        }
+
+        if (RefuseIfPointerGrabbed(Api, OutFailure))
+        {
             return false;
         }
 
@@ -377,6 +461,24 @@ bool FDriveOsInput::FindForeignWindowAt(const FVector2D& ScreenPos, FForeignWind
     return !bOwned;
 #else
     (void)ScreenPos;
+    (void)Out;
+    return false;
+#endif
+}
+
+bool FDriveOsInput::ProbeGrabs(FGrabState& Out)
+{
+#if PLATFORM_LINUX
+    FX11Api& Api = GetApi();
+    if (!Api.IsValid())
+    {
+        return false;
+    }
+    Out.bPointerGrabbed = IsGrabbedByAnother(Api, /*bPointer*/ true);
+    Out.bKeyboardGrabbed = IsGrabbedByAnother(Api, /*bPointer*/ false);
+    Out.bHeldByThisEditor = SdlHoldsGrab();
+    return true;
+#else
     (void)Out;
     return false;
 #endif

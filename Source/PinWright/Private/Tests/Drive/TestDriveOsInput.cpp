@@ -16,6 +16,11 @@
 #include "HAL/PlatformTime.h"
 #include "Misc/Paths.h"
 #include "Tests/TestSkipReporting.h"
+#include "Tests/TestUtils.h"
+
+#if PLATFORM_LINUX
+#include <dlfcn.h>
+#endif
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveOsInputMotionPathTest,
     "PinWright.drive.os_input.MotionPath",
@@ -227,6 +232,109 @@ bool FDriveOsInputPrePressPointerCheckTest::RunTest(const FString& Parameters)
     FIntPoint Again(-1, -1);
     TestTrue(TEXT("a pointer on the target lets the press through"), FDriveOsInput::IsPointerAt(Pointer, Again));
     TestEqual(TEXT("... at the same point"), Again, Pointer);
+    return true;
+}
+
+// ---- An X pointer grab swallows real input (E-input-state-blind-to-x-pointer-grab) ----
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveOsInputPointerGrabRefusesTest,
+    "PinWright.drive.os_input.PointerGrabRefuses",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FDriveOsInputPointerGrabRefusesTest::RunTest(const FString& Parameters)
+{
+    // A second X client stands in for whoever holds the grab (in the field: this editor's SDL
+    // in relative mouse mode). While it holds pointer + keyboard grabs, drive.input_state must
+    // report both and an os_input click must refuse with POINTER_GRABBED, moving nothing.
+    // Both grabs last only a few milliseconds, but they are real on the shared display.
+    FString Unavailable;
+    if (FPlatformMisc::GetEnvironmentVariable(TEXT("DISPLAY")).IsEmpty() || !FDriveOsInput::IsAvailable(Unavailable))
+    {
+        PinWrightTestSkip::SkipAssertions(*this, TEXT("no-x-display"),
+            FString::Printf(TEXT("the grab probe needs a live X display and this editor has none (%s)."), *Unavailable));
+        return true;
+    }
+
+    using XDisplay = void*;
+    void* Xlib = dlopen("libX11.so.6", RTLD_LAZY | RTLD_LOCAL);
+    if (!TestNotNull(TEXT("libX11 loads (IsAvailable already loaded it)"), Xlib))
+    {
+        return false;
+    }
+    const auto OpenDisplay = reinterpret_cast<XDisplay (*)(const char*)>(dlsym(Xlib, "XOpenDisplay"));
+    const auto CloseDisplay = reinterpret_cast<int (*)(XDisplay)>(dlsym(Xlib, "XCloseDisplay"));
+    const auto RootWindow = reinterpret_cast<unsigned long (*)(XDisplay)>(dlsym(Xlib, "XDefaultRootWindow"));
+    const auto GrabPointer = reinterpret_cast<int (*)(XDisplay, unsigned long, int, unsigned int, int, int, unsigned long, unsigned long, unsigned long)>(dlsym(Xlib, "XGrabPointer"));
+    const auto UngrabPointer = reinterpret_cast<int (*)(XDisplay, unsigned long)>(dlsym(Xlib, "XUngrabPointer"));
+    const auto GrabKeyboard = reinterpret_cast<int (*)(XDisplay, unsigned long, int, int, int, unsigned long)>(dlsym(Xlib, "XGrabKeyboard"));
+    const auto UngrabKeyboard = reinterpret_cast<int (*)(XDisplay, unsigned long)>(dlsym(Xlib, "XUngrabKeyboard"));
+    const auto Sync = reinterpret_cast<int (*)(XDisplay, int)>(dlsym(Xlib, "XSync"));
+    XDisplay Holder = OpenDisplay ? OpenDisplay(nullptr) : nullptr;
+    if (!TestNotNull(TEXT("the stand-in grab holder opens its own X connection"), Holder))
+    {
+        return false;
+    }
+
+    FDriveOsInput::FGrabState Before;
+    TestTrue(TEXT("the probe runs with an X display"), FDriveOsInput::ProbeGrabs(Before));
+    if (Before.bPointerGrabbed || Before.bKeyboardGrabbed)
+    {
+        CloseDisplay(Holder);
+        PinWrightTestSkip::SkipAssertions(*this, TEXT("x-grab-already-held"),
+            TEXT("another X client already holds a pointer or keyboard grab on this display, so the free-to-grabbed transition cannot be staged."));
+        return true;
+    }
+
+    // GrabModeAsync = 1, CurrentTime = 0, GrabSuccess = 0.
+    const unsigned long Root = RootWindow(Holder);
+    const bool bPointerHeld = GrabPointer(Holder, Root, 0, 0, 1, 1, 0, 0, 0) == 0;
+    const bool bKeyboardHeld = GrabKeyboard(Holder, Root, 0, 1, 1, 0) == 0;
+    Sync(Holder, 0);
+
+    FIntPoint PointerBefore(-1, -1);
+    FDriveOsInput::IsPointerAt(FIntPoint(-100000, -100000), PointerBefore);
+
+    FDriveOsInput::FGrabState During;
+    FDriveOsInput::ProbeGrabs(During);
+    FTestResponseCapture Capture;
+    InvokeHandlerWithCapture(TEXT("drive.input_state"), MakeShared<FJsonObject>(), Capture);
+    FDriveInjectFailure Failure;
+    const bool bClicked = FDriveOsInput::ClickAt(FVector2D(PointerBefore.X + 40, PointerBefore.Y + 40), EDriveMouseButton::Left, Failure);
+    FIntPoint PointerAfter(-1, -1);
+    FDriveOsInput::IsPointerAt(FIntPoint(-100000, -100000), PointerAfter);
+
+    UngrabKeyboard(Holder, 0);
+    UngrabPointer(Holder, 0);
+    Sync(Holder, 0);
+
+    FDriveOsInput::FGrabState After;
+    FDriveOsInput::ProbeGrabs(After);
+    CloseDisplay(Holder);
+
+    TestTrue(TEXT("the stand-in holder took the pointer grab"), bPointerHeld);
+    TestTrue(TEXT("the stand-in holder took the keyboard grab"), bKeyboardHeld);
+    TestTrue(TEXT("the probe sees the pointer grab"), During.bPointerGrabbed);
+    TestTrue(TEXT("the probe sees the keyboard grab"), During.bKeyboardGrabbed);
+    TestFalse(TEXT("this editor's SDL is not the holder"), During.bHeldByThisEditor.Get(false));
+
+    const TSharedPtr<FJsonObject>* OsGrab = nullptr;
+    TestTrue(TEXT("drive.input_state succeeds"), Capture.bSuccess);
+    if (TestTrue(TEXT("drive.input_state reports os_grab"),
+            Capture.Result.IsValid() && Capture.Result->TryGetObjectField(TEXT("os_grab"), OsGrab)))
+    {
+        TestTrue(TEXT("... with the pointer grabbed"), (*OsGrab)->GetBoolField(TEXT("pointer")));
+        TestTrue(TEXT("... and the keyboard grabbed"), (*OsGrab)->GetBoolField(TEXT("keyboard")));
+        TestTrue(TEXT("... and held_by_this_editor present"), (*OsGrab)->HasField(TEXT("held_by_this_editor")));
+    }
+
+    TestFalse(TEXT("the os_input click is refused"), bClicked);
+    TestEqual(TEXT("... with POINTER_GRABBED"), Failure.Code, FString(TEXT("POINTER_GRABBED")));
+    TestTrue(TEXT("... with held_by_this_editor in the payload"),
+        Failure.Details.IsValid() && Failure.Details->HasField(TEXT("held_by_this_editor")));
+    TestEqual(TEXT("... and the pointer was not moved"), PointerAfter, PointerBefore);
+
+    TestFalse(TEXT("the pointer grab reads free again once released"), After.bPointerGrabbed);
+    TestFalse(TEXT("the keyboard grab reads free again once released"), After.bKeyboardGrabbed);
     return true;
 }
 

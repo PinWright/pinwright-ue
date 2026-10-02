@@ -76,6 +76,8 @@
         "Serialized per X display across editors: OS_INPUT_BUSY (holder_pid) when another " \
         "injection holds the display for >5s; drive.click refuses with POINTER_MOVED, unpressed, " \
         "when the real pointer is not on the target right before the press. " \
+        "POINTER_GRABBED (held_by_this_editor), with nothing injected, while any X client " \
+        "holds a pointer grab (drive.input_state os_grab shows it). " \
         "Mouse only; drive.key has no os_input. Blocks the editor for ~0.5s while the motion " \
         "path and button hold are paced. The response's input_path reports which path ran.", \
         "false")

@@ -43,6 +43,7 @@ public:
     // Move the real pointer to ScreenPos (absolute desktop pixels, the space an element's
     // geometry.absolute already reports) along ComputeMotionPath. Blocks ~250 ms, plus up to
     // LockTimeoutSeconds waiting for another injector on this display (OS_INPUT_BUSY).
+    // Refuses with POINTER_GRABBED, moving nothing, while any client holds an X pointer grab.
     static bool MoveTo(const FVector2D& ScreenPos, FDriveInjectFailure& OutFailure);
 
     // MoveTo, then a real button press held ~80 ms and released, all under the display lock.
@@ -101,6 +102,24 @@ public:
     // XTEST input there would reach another application. False when this process owns the
     // point, and when X is unavailable (IsAvailable already refused os_input then).
     static bool FindForeignWindowAt(const FVector2D& ScreenPos, FForeignWindow& Out);
+
+    // Active X grabs on this display. X does not say who holds a grab, so each flag is a
+    // probe: PinWright's own X connection (a separate client from SDL's) tries XGrabPointer /
+    // XGrabKeyboard on the root and releases at once; AlreadyGrabbed or GrabFrozen means
+    // another client holds it. While the pointer is grabbed, real input goes to the grabber,
+    // so an XTEST click lands nowhere near its target.
+    struct FGrabState
+    {
+        bool bPointerGrabbed = false;
+        bool bKeyboardGrabbed = false;
+        // SDL in this process holds a grab (a window grab, or relative mouse mode on its
+        // input-focus window, which SDL implements as a confining XGrabPointer). Unset when
+        // this engine's SDL lacks the entry points to tell.
+        TOptional<bool> bHeldByThisEditor;
+    };
+
+    // False when X is unavailable (non-Linux, no display); Out is then left untouched.
+    static bool ProbeGrabs(FGrabState& Out);
 
     // ---- Pure helpers (no X11 dependency; unit-tested) ----
 
