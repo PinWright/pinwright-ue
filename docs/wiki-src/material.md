@@ -4,7 +4,7 @@ Material asset authoring, material instance parameter editing, and material grap
 
 ## How to use
 
-Use `call("material.authoring")` for high-level material/instance work (creation, blend/shading/domain, nodes, typed setters, batch writes, and read-back), and `call("material.graph")` for low-level expression graphs or node types the authoring layer lacks. `call("material.compile_mgir")` and `call("material.decompile_mgir")` are bulk MGIR import/export; see [`material.mgir`](material.mgir.md) for syntax and modes.
+Use `call("material.authoring")` for high-level material/instance work (creation, blend/shading/domain, nodes, typed setters, batch writes, and read-back), and `call("material.graph")` for low-level expression graphs or node types the authoring layer lacks. `call("material.compile_mgir")` and `call("material.decompile_mgir")` are bulk MGIR import/export; see [`material.mgir`](material.mgir.md) for syntax and modes. `call("material.audit")` validates material graphs read-only (islands, missing textures and functions, parameter problems, blend-mode/pin mismatches).
 
 Material instance parameters (the runtime tweakable values) go through the typed `material.authoring.set_*_parameter_value` setters or the batch `set_material_instance_parameters`. Parent-side declarations use the `add_*_parameter` variants. Use `clear_parameter_override` to drop a single override and `get_material_instance_info` for read-back.
 
@@ -33,3 +33,37 @@ The same call is also what makes the edit *visible*. A graph mutator changes the
 - [`asset`](asset.md) for moving, renaming, and fixing references on materials and material instances.
 - [`landscape`](landscape.md) for landscape material assignment.
 - [`asset-audit`](asset-audit.md) — repeatable text mirrors of materials for analysis and diffing.
+
+### material.audit
+
+A §18 audit (`Audit/AuditFramework.h`) over the expression graph of each `UMaterial` named in
+`assets` or found under `folder`. It writes nothing and has no fix mode: findings carry the `nodeId`
+that `material.graph.remove_node` accepts, so a caller removes islands itself.
+
+| check | flags | severity |
+| --- | --- | --- |
+| `island` | an expression no root reaches | warning |
+| `null_texture` | a texture node with no texture and no `TextureObject` input | error if reachable, else warning |
+| `null_function` | a `MaterialFunctionCall` with no function | error if reachable, else warning |
+| `unused_param` | a parameter node no root reaches | warning |
+| `duplicate_param` | one parameter name on several nodes whose types differ (error) or whose defaults differ (warning); identical copies are one shared parameter and pass | error / warning |
+| `blend_output_mismatch` | Masked without OpacityMask (error), PostProcess without EmissiveColor (error), Translucent without Opacity (warning), any connected pin the domain / blend mode / shading model ignores (warning, from `UMaterial::IsPropertyActiveInEditor`) | per rule |
+| `uv_width` | texture-sample coordinates of a definite width the texture does not take: too narrow (error if reachable), too wide and silently truncated (warning) | per rule |
+| `expression_budget` | more than 200 expressions | warning |
+| `shader_compile` | off by default; `includeShaderCompile: true` selects it. Blocks on a full compile (`material.compile-state`); failed permutations are errors, no final verdict is unrunnable | error |
+
+**Roots.** Reachability starts at every material-property input (including CustomizedUVs and
+FrontMaterial), every `MaterialExpressionCustomOutput` (vertex interpolators, RVT output, landscape
+grass / physical-material output), and follows named-reroute usages to their declarations. Composite
+scaffolding (the composite node, its pin bases and their reroutes) is never reported.
+
+**Reading the report.** The default `failOn` is `error`, so a material whose only findings are
+islands, unused parameters or ignored pins passes; pass `failOn: "any"` to fail on warnings. Each
+material lands in exactly one of `clean` / `flagged` / `unrunnable` / `not_applicable` (a non-material
+asset such as a material instance), and the per-check rows carry the same buckets.
+`blend_output_mismatch` is **unrunnable** on a material that uses material attributes: which properties
+are written is decided inside the attributes graph, which this check does not evaluate. Omit it from
+`checks` to audit such a material. A path that loads nothing is unrunnable (`MATERIAL_AUDIT_UNLOADABLE`);
+an unknown id in `checks` is `AUDIT_UNKNOWN_CHECK`; a folder that matches nothing is `NO_ASSETS_MATCHED`.
+More matches than `limit` (default 100) audits the first `limit` by path and reports `truncated: true`,
+which fails `pass`.

@@ -881,6 +881,21 @@ namespace ErrorCodes
     // actors than the caller's expectedMatches. Refused BEFORE any actor is moved; the response
     // names what matched, so the caller can see which actors are not theirs.
     inline constexpr TCHAR ERR_MATCH_COUNT_MISMATCH[]                       = TEXT("MATCH_COUNT_MISMATCH");
+    // material.audit finding codes (Handlers/Material/MaterialAuditHandler.cpp), one per check plus
+    // the unrunnable forms: the material would not load, its blend check could not read per-property
+    // pins (material-attributes mode), or the shader probe gave no final verdict.
+    inline constexpr TCHAR ERR_MATERIAL_AUDIT_BLEND_OUTPUT_MISMATCH[]       = TEXT("MATERIAL_AUDIT_BLEND_OUTPUT_MISMATCH");
+    inline constexpr TCHAR ERR_MATERIAL_AUDIT_BLEND_UNRUNNABLE[]            = TEXT("MATERIAL_AUDIT_BLEND_UNRUNNABLE");
+    inline constexpr TCHAR ERR_MATERIAL_AUDIT_DUPLICATE_PARAM[]             = TEXT("MATERIAL_AUDIT_DUPLICATE_PARAM");
+    inline constexpr TCHAR ERR_MATERIAL_AUDIT_EXPRESSION_BUDGET[]           = TEXT("MATERIAL_AUDIT_EXPRESSION_BUDGET");
+    inline constexpr TCHAR ERR_MATERIAL_AUDIT_ISLAND[]                      = TEXT("MATERIAL_AUDIT_ISLAND");
+    inline constexpr TCHAR ERR_MATERIAL_AUDIT_NULL_FUNCTION[]               = TEXT("MATERIAL_AUDIT_NULL_FUNCTION");
+    inline constexpr TCHAR ERR_MATERIAL_AUDIT_NULL_TEXTURE[]                = TEXT("MATERIAL_AUDIT_NULL_TEXTURE");
+    inline constexpr TCHAR ERR_MATERIAL_AUDIT_SHADER_COMPILE_FAILED[]       = TEXT("MATERIAL_AUDIT_SHADER_COMPILE_FAILED");
+    inline constexpr TCHAR ERR_MATERIAL_AUDIT_SHADER_UNVERIFIED[]           = TEXT("MATERIAL_AUDIT_SHADER_UNVERIFIED");
+    inline constexpr TCHAR ERR_MATERIAL_AUDIT_UNLOADABLE[]                  = TEXT("MATERIAL_AUDIT_UNLOADABLE");
+    inline constexpr TCHAR ERR_MATERIAL_AUDIT_UNUSED_PARAM[]                = TEXT("MATERIAL_AUDIT_UNUSED_PARAM");
+    inline constexpr TCHAR ERR_MATERIAL_AUDIT_UV_WIDTH[]                    = TEXT("MATERIAL_AUDIT_UV_WIDTH");
     // A capture subject is known from material-resource state to be drawing the engine Default
     // Material. The caller must opt in with allowFallback:true to keep that image as evidence.
     inline constexpr TCHAR ERR_MATERIAL_FALLBACK[]                          = TEXT("MATERIAL_FALLBACK");

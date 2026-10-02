@@ -50,6 +50,10 @@
   as `editor.console_command`) to act in one instance of a multi-client PIE, and echo `pieInstance`.
   An omitted `world` with several PIE worlds running returns `TARGET_AMBIGUOUS` instead of acting in
   whichever instance came first.
+- Added: `material.audit` validates material graphs (`assets` or `folder`): `island`, `null_texture`,
+  `null_function`, `unused_param`, `duplicate_param`, `blend_output_mismatch`, `uv_width`,
+  `expression_budget`, plus opt-in `shader_compile` (`includeShaderCompile`). Findings carry the
+  `nodeId` material.graph verbs accept; read-only, no fix mode; `pass` follows the shared audit rule.
 - Added (untested): `drive.click` / `drive.hover` `os_input` on Windows through `SendInput`
   (`input_path: "os_win32"`): virtual-desktop absolute moves with the X11 path's pacing, a
   session-wide named-mutex lock, `WindowFromPoint` ownership gate, a foreground step before the
