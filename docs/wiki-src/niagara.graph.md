@@ -34,6 +34,15 @@ Searches the Niagara op catalog by name, category, and keywords. The optional `l
 
 ### niagara.graph.create_node
 
+`assetPath` may also be a standalone Niagara Script (module, function or dynamic input). The node is
+created in that script's single graph; `target.emitter` must be omitted.
+
+For `nodeClass: "NiagaraNodeCustomHlsl"`, `payload.inputs` and `payload.outputs` take
+`[{name, type}]` and become the node's typed pins. A parameter-map pin named `Map` comes first on each
+side. Without them the node has only its add pins: the HLSL text never creates pins. Names must be bare
+HLSL identifiers (`INVALID_ARGUMENT`); types take the `niagara.set_parameter` spellings
+(`INVALID_PARAMETER_TYPE`). Every returned pin carries `niagaraType`, read back off the node.
+
 For `nodeClass: "NiagaraNodeOp"`, `payload.opName` accepts either `niagara.graph.search_ops` form: bare `opName` (`"Mul"`) or qualified `signature` (`"Numeric::Mul"`). A bare leaf is canonicalized to the engine's `Category::Leaf` key, so both forms resolve to the real op and its pins (for `Mul`, A/B/Result). An unknown op returns `INVALID_OP`. Previously, storing the bare leaf verbatim created a pinless `Unknown` node but reported success.
 
 A `nodeClass` outside the v1 list is refused with `UNSUPPORTED_NODE_CLASS` before anything is
@@ -44,6 +53,9 @@ removed, leaving the same net-zero result. `ResolveNiagaraSubclassByPath` accept
 subclass, so the class gate is what separates a resolvable class from a supported one.
 
 ### niagara.graph.connect_pins
+
+`assetPath` may also be a standalone Niagara Script. Its one graph is used, and `emitterName` /
+`scriptType` must be omitted (`INVALID_ARGUMENT` otherwise). The same applies to `niagara.graph.remove_node`.
 
 Wires two script-graph pins through the Niagara schema. The optional `scriptType` target is `Spawn` by default when omitted or empty (including whitespace-only input); a supplied value is matched case-insensitively against only `Spawn` and `Update`. Any other value returns `TARGET_NOT_FOUND`, includes the requested value and valid candidates `Spawn` and `Update`, and is rejected before node or pin lookup, schema work, transactions, notifications, or mutation.
 

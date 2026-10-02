@@ -316,6 +316,10 @@ asset open, and the message names the open editor and what the edit would have b
 keys off the asset, not off who opened it: in a shared editor process the toolkit is routinely one
 another caller left behind. Close it with `editor.close_asset` and retry.
 
+Graph writes to a **standalone Niagara Script** asset (`niagara.graph.create_node`, `connect_pins`,
+`remove_node`, `niagara.set_pin_default`) refuse with `EDITOR_OPEN` while the script editor has it
+open: that toolkit edits a duplicate and overwrites the asset on Apply, so the write would be lost.
+
 Every other `niagara.*` mutator is deliberately allowed while an editor is open. Those go through
 engine mutators that announce the change on a delegate the toolkit already listens to, so the open
 stack refreshes itself; refusing them would cost an edit and prevent nothing.
@@ -1200,3 +1204,59 @@ Refusals execute nothing: `ISSUE_NOT_FOUND` (ids change when an issue's text or 
 re-list), `ISSUE_AMBIGUOUS` (the id is reported by more than one stack entry), `FIX_NOT_FOUND`,
 `FIX_AMBIGUOUS` (`fixId` omitted, several applicable fixes), `FIX_IS_LINK`, `COMPILE_IN_PROGRESS`. The
 `FIX_*` refusals carry the issue's `fixes` in the error data. The fix runs in one undo transaction.
+
+### niagara.create_module_script
+
+Creates a standalone module script whose body is one CustomHlsl node, wired
+`Input -> MapGet(Module.<in>) -> CustomHlsl -> MapSet(<namespace>.<out>) -> Output`. UE 5.5+; 5.3/5.4
+refuse with `UNSUPPORTED_ENGINE_VERSION` (the exported map-pin helpers do not exist there).
+
+```json
+{
+  "assetPath": "/Game/FX/Modules/M_Swirl",
+  "hlsl": "Velocity = float3(0, 0, Scale);",
+  "inputs":  [{"name": "Scale", "type": "float"}],
+  "outputs": [{"name": "Velocity", "type": "vec3", "namespace": "Particles"}],
+  "usages":  ["ParticleUpdate"]
+}
+```
+
+- `usages` is required (no default is safe): ParticleSpawn, ParticleUpdate, EmitterSpawn,
+  EmitterUpdate, SystemSpawn, SystemUpdate. It becomes the module's usage bitmask, which
+  `niagara.add_module` enforces.
+- Pin names are bare HLSL identifiers (no `.`); `Map` is reserved for the parameter-map pin. Types
+  take the same spellings as `niagara.set_parameter`. Each output needs a `namespace`: Particles,
+  Emitter, System, Output, Local, Transient or StackContext.
+- An existing `assetPath` is refused `ASSET_ALREADY_EXISTS`; nothing is overwritten. A refused call
+  leaves nothing behind.
+- `compile` (default true) runs the synchronous standalone compile. `compile.status` is the measured
+  result (`succeeded`, `succeededWithWarnings`, `failed`, ...), and `compile.errors` lists the error
+  events. A failed compile keeps the asset and returns `status: "failed"`.
+- `nodeGuid` appears on an error only when the engine attributed it. A syntax error inside the HLSL
+  body is reported by the VM backend compiler with no node, so match it against `customHlslNodeGuid`
+  (the only node holding authored code).
+- `save` defaults to false. The response reads back `nodes`, the CustomHlsl `pins` (with
+  `niagaraType` and `links`), `inputParameters`, `outputParameters` and `usages` from the asset.
+  `niagara.decompile_nir` shows the result as a `customHlsl` block.
+
+### niagara.get_compiled_script
+
+Reads what the last compile produced for each script of a system, emitter or standalone script. This
+is the same data as the editor's Generated Code tab.
+
+- `include` defaults to `["stats"]`; add `"hlsl"` and/or `"assembly"` for the text.
+- `stats`: `byteCodeBytes`, `numTempRegisters`, `attributeCount`, `dataInterfaceCount`, `simStages`,
+  `opCount` (`null` unless the assembly it was counted from is retained), and `compileEvents`. A GPU
+  compute script adds `gpu: {permutations, shaderCompileFinished, shaderCompileSucceeded, shaderErrors}`.
+- Text longer than `maxChars` (default 20000) is cut and reports `hlslTruncated` / `hlslTotalChars`
+  (and the `assembly*` pair).
+- Missing text is reported as `hlslMissing` / `assemblyMissing` `{reason, hint}`, never `""`. CPU HLSL,
+  assembly and op count are Transient on 5.4+: they are empty after an editor restart or a DDC-hit
+  compile (`reason: "transientNotRetained"`). The GPU HLSL is persisted.
+- `forceCompile: true` (system and script assets) forces a fresh translate and compile first, which
+  fills the transient fields. It stops the system's running instances, preserves rapid-iteration
+  values as `niagara.compile` does, and puts the package dirty flag back as it found it
+  (`compile.dirtyFlagRestored`). A standalone emitter is refused: its scripts compile only inside the
+  systems that use it.
+- `emitter` (systems only) and `scriptUsage` filter the list. A filter that matches nothing is
+  `TARGET_NOT_FOUND`, listing the usages present.

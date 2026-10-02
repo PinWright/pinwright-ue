@@ -7,10 +7,12 @@
 #include "Handlers/ParamAliasUtils.h"
 #include "Handlers/Niagara/NiagaraDumpBuilder.h"
 #include "Handlers/Niagara/NiagaraEditTypes.h"
+#include "Handlers/Niagara/NiagaraEditorOpenGuard.h"
 #include "Handlers/Niagara/NiagaraGraphResetUtils.h"
 #include "Handlers/Niagara/NiagaraGraphCreateNodePayload.h"
 #include "Handlers/Niagara/NiagaraJsonHelpers.h"
 #include "Handlers/Niagara/NiagaraOpCatalog.h"
+#include "Handlers/Niagara/NiagaraParameterTypeResolver.h"
 #include "PinWrightSubsystem.h"
 #include "PinWrightHelpers.h"
 
@@ -41,11 +43,12 @@
 // Shared helper: Resolve target Niagara graph from asset path, emitter name, and script type
 static UNiagaraGraph* ResolveNiagaraGraph(
     FHandlerContext& Ctx,
-    UNiagaraSystem*& OutSystem,
+    UObject*& OutAsset,
     FString& OutGraphUsage,
     ENiagaraScriptUsage& OutScriptUsage,
     FGuid& OutScriptUsageId)
 {
+    OutAsset = nullptr;
     OutGraphUsage.Empty();
     OutScriptUsage = ENiagaraScriptUsage::Function;
     OutScriptUsageId.Invalidate();
@@ -57,16 +60,49 @@ static UNiagaraGraph* ResolveNiagaraGraph(
         return nullptr;
     }
 
-    OutSystem = LoadObject<UNiagaraSystem>(nullptr, *AssetPath);
-    if (!OutSystem)
-    {
-        Ctx.SendError(ErrorCodes::ERR_ASSET_NOT_FOUND, TEXT("Could not load Niagara System."));
-        return nullptr;
-    }
-
     FString EmitterName = Ctx.GetString(TEXT("emitterName"));
     FString ScriptType = Ctx.GetString(TEXT("scriptType"));
     ScriptType.TrimStartAndEndInline();
+
+    // A standalone module / function / dynamic-input script owns exactly one graph, so neither
+    // selector applies to it. Same open-toolkit refusal as NiagaraEdit::ResolveTarget: the script
+    // toolkit edits a duplicate and overwrites the asset on Apply.
+    // Loaded untyped and then cast: a typed LoadObject on the wrong class logs a load warning.
+    UObject* const LoadedAsset = LoadObject<UObject>(nullptr, *AssetPath);
+    if (UNiagaraScript* StandaloneScript = Cast<UNiagaraScript>(LoadedAsset))
+    {
+        if (!EmitterName.IsEmpty() || !ScriptType.IsEmpty())
+        {
+            Ctx.SendError(ErrorCodes::ERR_INVALID_ARGUMENT,
+                TEXT("A standalone Niagara Script has one graph; omit 'emitterName' and 'scriptType'."));
+            return nullptr;
+        }
+        FString RefusalMessage;
+        if (PinWrightNiagara::RefuseScriptAssetEditWhileToolkitOpen(StandaloneScript, AssetPath, RefusalMessage))
+        {
+            Ctx.SendError(ErrorCodes::ERR_EDITOR_OPEN, RefusalMessage);
+            return nullptr;
+        }
+        UNiagaraGraph* ScriptGraph = NiagaraJsonHelpers::GetGraphFromScript(StandaloneScript);
+        if (!ScriptGraph)
+        {
+            Ctx.SendError(ErrorCodes::ERR_GRAPH_NOT_FOUND, TEXT("Could not resolve the Niagara Script's graph."));
+            return nullptr;
+        }
+        OutAsset = StandaloneScript;
+        OutGraphUsage = NiagaraEdit::StackScriptUsageToString(StandaloneScript->GetUsage());
+        OutScriptUsage = StandaloneScript->GetUsage();
+        OutScriptUsageId = StandaloneScript->GetUsageId();
+        return ScriptGraph;
+    }
+
+    UNiagaraSystem* OutSystem = Cast<UNiagaraSystem>(LoadedAsset);
+    OutAsset = OutSystem;
+    if (!OutSystem)
+    {
+        Ctx.SendError(ErrorCodes::ERR_ASSET_NOT_FOUND, TEXT("Could not load a Niagara System or Niagara Script."));
+        return nullptr;
+    }
     if (!ScriptType.IsEmpty()
         && !ScriptType.Equals(TEXT("Spawn"), ESearchCase::IgnoreCase)
         && !ScriptType.Equals(TEXT("Update"), ESearchCase::IgnoreCase))
@@ -406,7 +442,7 @@ REGISTER_RPC_HANDLER("niagara.graph.get", "niagara.graph", "Read Niagara graph m
 // ---- niagara.graph.connect_pins ----
 REGISTER_RPC_HANDLER("niagara.graph.connect_pins", "niagara.graph", "Wire two pins on Niagara script-graph nodes (UNiagaraNode). Pin types must be compatible; otherwise the connection is rejected.",
     RPC_PARAMS(
-        RPC_PARAM_REQ("assetPath", "path", "Path to the Niagara System asset"),
+        RPC_PARAM_REQ("assetPath", "path", "Path to the Niagara System or standalone Niagara Script (module/function/dynamic input) asset"),
         RPC_PARAM_OPT("emitterName", "string", "Name of emitter"),
         RPC_PARAM_OPT("scriptType", "string", "Script type: Spawn or Update"),
         RPC_PARAM_REQ("fromNode", "string", "Source node ID or name"),
@@ -415,7 +451,7 @@ REGISTER_RPC_HANDLER("niagara.graph.connect_pins", "niagara.graph", "Wire two pi
         RPC_PARAM_REQ("toPin", "string", "Destination pin name")
     ))
 {
-    UNiagaraSystem* System = nullptr;
+    UObject* System = nullptr;
     FString GraphUsage;
     ENiagaraScriptUsage ScriptUsage;
     FGuid ScriptUsageId;
@@ -548,13 +584,13 @@ REGISTER_RPC_HANDLER("niagara.graph.connect_pins", "niagara.graph", "Wire two pi
 // ---- niagara.graph.remove_node ----
 REGISTER_RPC_HANDLER("niagara.graph.remove_node", "niagara.graph", "Delete a node from a Niagara script graph by id, breaking any incident connections.",
     RPC_PARAMS(
-        RPC_PARAM_REQ("assetPath", "path", "Path to the Niagara System asset"),
+        RPC_PARAM_REQ("assetPath", "path", "Path to the Niagara System or standalone Niagara Script (module/function/dynamic input) asset"),
         RPC_PARAM_OPT("emitterName", "string", "Name of emitter"),
         RPC_PARAM_OPT("scriptType", "string", "Script type: Spawn or Update"),
         RPC_PARAM_REQ("nodeId", "string", "Node GUID to remove")
     ))
 {
-    UNiagaraSystem* System = nullptr;
+    UObject* System = nullptr;
     FString GraphUsage;
     ENiagaraScriptUsage ScriptUsage;
     FGuid ScriptUsageId;
@@ -612,6 +648,99 @@ REGISTER_RPC_HANDLER("niagara.graph.remove_node", "niagara.graph", "Delete a nod
 
 namespace NiagaraGraphCreate
 {
+    FNiagaraEditError ParseCustomHlslPinSpecs(
+        const TSharedPtr<FJsonObject>& Payload,
+        const TCHAR* Field,
+        TArray<FCustomHlslPinSpec>& OutSpecs)
+    {
+        OutSpecs.Reset();
+        if (!Payload.IsValid() || !Payload->HasField(Field))
+        {
+            return FNiagaraEditError{};
+        }
+        const TArray<TSharedPtr<FJsonValue>>* Entries = nullptr;
+        if (!Payload->TryGetArrayField(Field, Entries) || !Entries)
+        {
+            return FNiagaraEditError::Make(ErrorCodes::ERR_INVALID_ARGUMENT,
+                FString::Printf(TEXT("'%s' must be an array of {name, type} objects."), Field));
+        }
+
+        for (int32 Index = 0; Index < Entries->Num(); ++Index)
+        {
+            const TSharedPtr<FJsonObject> Entry = (*Entries)[Index].IsValid() ? (*Entries)[Index]->AsObject() : nullptr;
+            FString Name;
+            FString TypeName;
+            if (!Entry.IsValid()
+                || !Entry->TryGetStringField(TEXT("name"), Name)
+                || !Entry->TryGetStringField(TEXT("type"), TypeName))
+            {
+                return FNiagaraEditError::Make(ErrorCodes::ERR_INVALID_ARGUMENT,
+                    FString::Printf(TEXT("%s[%d] must be an object with string 'name' and 'type'."), Field, Index));
+            }
+
+            // The pin name is spliced into HLSL as a bare token, so it has to be an identifier. A
+            // dotted name would read as a parameter-map path and never bind to the pin.
+            bool bIdentifier = !Name.IsEmpty() && (FChar::IsAlpha(Name[0]) || Name[0] == TEXT('_'));
+            for (const TCHAR Ch : Name)
+            {
+                bIdentifier &= FChar::IsAlnum(Ch) || Ch == TEXT('_');
+            }
+            if (!bIdentifier)
+            {
+                return FNiagaraEditError::Make(ErrorCodes::ERR_INVALID_ARGUMENT,
+                    FString::Printf(TEXT("%s[%d].name '%s' is not a bare HLSL identifier ([A-Za-z_][A-Za-z0-9_]*, no '.')."),
+                        Field, Index, *Name));
+            }
+            if (Name.Equals(CustomHlslParameterMapPinName(), ESearchCase::IgnoreCase))
+            {
+                return FNiagaraEditError::Make(ErrorCodes::ERR_INVALID_ARGUMENT,
+                    FString::Printf(TEXT("%s[%d].name '%s' is reserved for the node's parameter-map pin."),
+                        Field, Index, *Name));
+            }
+            if (OutSpecs.ContainsByPredicate([&Name](const FCustomHlslPinSpec& Spec) { return Spec.Name.ToString().Equals(Name, ESearchCase::IgnoreCase); }))
+            {
+                return FNiagaraEditError::Make(ErrorCodes::ERR_INVALID_ARGUMENT,
+                    FString::Printf(TEXT("%s names '%s' twice."), Field, *Name));
+            }
+
+            PinWrightNiagara::FNiagaraResolvedParameterType Resolved;
+            if (!PinWrightNiagara::ResolveNiagaraParameterType(TypeName, Resolved))
+            {
+                return FNiagaraEditError::Make(ErrorCodes::ERR_INVALID_PARAMETER_TYPE,
+                    FString::Printf(TEXT("%s[%d].type '%s' is not a Niagara value type. Accepted spellings: %s."),
+                        Field, Index, *TypeName,
+                        *FString::Join(PinWrightNiagara::GetNiagaraParameterTypeAliases(), TEXT(", "))));
+            }
+            OutSpecs.Add({FName(*Name), Resolved.Definition});
+        }
+        return FNiagaraEditError{};
+    }
+
+    void SetCustomHlslSignature(
+        UNiagaraNodeCustomHlsl& Node,
+        const TArray<FCustomHlslPinSpec>& Inputs,
+        const TArray<FCustomHlslPinSpec>& Outputs)
+    {
+        // Parameter map first on each side: UNiagaraNodeCustomHlsl::BuildParameterMapHistory only
+        // pairs pins with signature entries when the pin and signature counts line up, and the
+        // translator passes an output parameter map through from the input one (the same shape
+        // FNiagaraHlslTranslator synthesizes for its own custom-HLSL signatures).
+        FNiagaraFunctionSignature& Signature = Node.Signature;
+        Signature.bRequiresExecPin = false;
+        Signature.Inputs.Reset();
+        Signature.Outputs.Reset();
+        Signature.Inputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetParameterMapDef(), CustomHlslParameterMapPinName()));
+        Signature.Outputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetParameterMapDef(), CustomHlslParameterMapPinName()));
+        for (const FCustomHlslPinSpec& Spec : Inputs)
+        {
+            Signature.Inputs.Add(FNiagaraVariable(Spec.Type, Spec.Name));
+        }
+        for (const FCustomHlslPinSpec& Spec : Outputs)
+        {
+            Signature.Outputs.Add(FNiagaraVariable(Spec.Type, Spec.Name));
+        }
+    }
+
     FNiagaraEditError ValidateCreateNodeClass(UClass* NodeClass)
     {
         if (!NodeClass)
@@ -747,9 +876,26 @@ namespace NiagaraGraphCreate
             return FNiagaraEditError{};
         }
 
-        // CustomHlsl — customHlsl text is applied post-AllocateDefaultPins by the caller
-        if (NodeClass->IsChildOf(UNiagaraNodeCustomHlsl::StaticClass()))
+        // CustomHlsl — customHlsl text is applied post-AllocateDefaultPins by the caller. The typed
+        // pins cannot be: a script-less function-call node allocates its pins from Signature, so
+        // payload.inputs / payload.outputs are written into Signature here, before Finalize().
+        if (UNiagaraNodeCustomHlsl* HlslNode = Cast<UNiagaraNodeCustomHlsl>(Node))
         {
+            if (!Payload.IsValid() || (!Payload->HasField(TEXT("inputs")) && !Payload->HasField(TEXT("outputs"))))
+            {
+                return FNiagaraEditError{};
+            }
+            TArray<FCustomHlslPinSpec> Inputs;
+            TArray<FCustomHlslPinSpec> Outputs;
+            if (FNiagaraEditError Error = ParseCustomHlslPinSpecs(Payload, TEXT("inputs"), Inputs); Error.HasError())
+            {
+                return Error;
+            }
+            if (FNiagaraEditError Error = ParseCustomHlslPinSpecs(Payload, TEXT("outputs"), Outputs); Error.HasError())
+            {
+                return Error;
+            }
+            SetCustomHlslSignature(*HlslNode, Inputs, Outputs);
             return FNiagaraEditError{};
         }
 
@@ -807,7 +953,7 @@ REGISTER_RPC_HANDLER("niagara.graph.create_node", "niagara.graph",
     "v1 supported classes: NiagaraNodeOp, NiagaraNodeInput, NiagaraNodeOutput, NiagaraNodeCustomHlsl, "
     "NiagaraNodeStaticSwitch, NiagaraNodeIf, NiagaraNodeReroute, NiagaraNodeConvert.",
     RPC_PARAMS(
-        RPC_PARAM_REQ("assetPath",  "path", "Path to the Niagara System or Emitter asset"),
+        RPC_PARAM_REQ("assetPath",  "path", "Path to the Niagara System, Emitter, or standalone Niagara Script asset"),
         RPC_PARAM_OPT("target",     "object", "Target spec: {kind, emitter, scriptUsage}. Defaults to kind=graph."),
         RPC_PARAM_REQ("nodeClass",  "classref", "Short class name (e.g. NiagaraNodeOp) or full class path"),
         RPC_PARAM_REQ("x",          "number", "Horizontal position in the graph canvas"),
@@ -980,11 +1126,12 @@ REGISTER_RPC_HANDLER("niagara.graph.create_node", "niagara.graph",
         {
             // UNiagaraNodeCustomHlsl::SetCustomHlsl is declared public but is not
             // NIAGARAEDITOR_API in UE 5.6. Replicate it by writing the CustomHlsl
-            // UPROPERTY (visible via UE reflection) and then reallocating pins so
-            // the node's signature is rebuilt from the new HLSL source — same
-            // observable effect as the private setter. ReallocatePins is
-            // NIAGARAEDITOR_API exported but `protected` on UNiagaraNode, so we
-            // access it through a `using`-shim derived class.
+            // UPROPERTY (visible via UE reflection) and then reallocating pins.
+            // ReallocatePins does NOT derive pins from the HLSL text: a script-less
+            // function-call node reallocates them from Signature, which
+            // ApplyCreateNodePayload filled from payload.inputs / payload.outputs.
+            // ReallocatePins is NIAGARAEDITOR_API exported but `protected` on
+            // UNiagaraNode, so we access it through a `using`-shim derived class.
             struct FNiagaraNodeReallocatePinsAccessor : public UNiagaraNode
             {
                 using UNiagaraNode::ReallocatePins;
@@ -1010,6 +1157,8 @@ REGISTER_RPC_HANDLER("niagara.graph.create_node", "niagara.graph",
         PinObj->SetStringField(TEXT("name"),      Pin->PinName.ToString());
         PinObj->SetStringField(TEXT("direction"), Pin->Direction == EGPD_Input ? TEXT("input") : TEXT("output"));
         PinObj->SetStringField(TEXT("type"),      Pin->PinType.PinCategory.ToString());
+        // Read back off the pin, so typed CustomHlsl pins prove their declared type landed.
+        PinObj->SetStringField(TEXT("niagaraType"), UEdGraphSchema_Niagara::PinToTypeDefinition(Pin).GetName());
         PinArray.Add(MakeShared<FJsonValueObject>(PinObj));
     }
 

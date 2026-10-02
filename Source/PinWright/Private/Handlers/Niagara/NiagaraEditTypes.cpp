@@ -562,7 +562,12 @@ namespace
         const FNiagaraEditTargetSpec& TargetSpec,
         FNiagaraResolvedTarget& OutTarget)
     {
-        UNiagaraScript* Script = ResolveScript(OutTarget.System, OutTarget.EmitterData, TargetSpec.ScriptUsage);
+        // A standalone script asset (module / function / dynamic input) owns exactly one graph.
+        UNiagaraScript* Script = Cast<UNiagaraScript>(OutTarget.Asset);
+        if (!Script)
+        {
+            Script = ResolveScript(OutTarget.System, OutTarget.EmitterData, TargetSpec.ScriptUsage);
+        }
         OutTarget.Graph = NiagaraJsonHelpers::GetGraphFromScript(Script);
         if (!OutTarget.Graph)
         {
@@ -1055,11 +1060,39 @@ namespace NiagaraEdit
 
         OutTarget.System = Cast<UNiagaraSystem>(OutTarget.Asset);
         OutTarget.Emitter = Cast<UNiagaraEmitter>(OutTarget.Asset);
-        if (!OutTarget.System && !OutTarget.Emitter)
+        if (UNiagaraScript* StandaloneScript = Cast<UNiagaraScript>(OutTarget.Asset))
         {
-            return FNiagaraEditError::Make(TEXT("UNSUPPORTED_ASSET"), TEXT("Asset is not a Niagara System or Niagara Emitter."));
+            // Standalone module / function / dynamic-input scripts own one graph and nothing
+            // else, so only the graph-addressing kinds apply to them.
+            if (TargetSpec.Kind != ENiagaraEditTargetKind::Graph
+                && TargetSpec.Kind != ENiagaraEditTargetKind::Node
+                && TargetSpec.Kind != ENiagaraEditTargetKind::Pin)
+            {
+                return FNiagaraEditError::Make(TEXT("UNSUPPORTED_ASSET"),
+                    FString::Printf(TEXT("Niagara Script asset '%s' supports only graph, node and pin targets."), *AssetPath));
+            }
+            if (!TargetSpec.EmitterName.IsEmpty())
+            {
+                return FNiagaraEditError::Make(TEXT("INVALID_TARGET"),
+                    TEXT("A standalone Niagara Script has no emitters; omit 'emitter'."));
+            }
+            FString RefusalMessage;
+            if (PinWrightNiagara::RefuseScriptAssetEditWhileToolkitOpen(StandaloneScript, AssetPath, RefusalMessage))
+            {
+                return FNiagaraEditError::Make(TEXT("EDITOR_OPEN"), RefusalMessage);
+            }
+            // No System and no Emitter is set, so the emitter-resolution block below is skipped and
+            // the graph/node/pin cases resolve through ResolveGraphTarget's script-asset branch.
+            OutTarget.AssetKind = TEXT("NiagaraScript");
         }
-        OutTarget.AssetKind = OutTarget.System ? TEXT("NiagaraSystem") : TEXT("NiagaraEmitter");
+        else if (!OutTarget.System && !OutTarget.Emitter)
+        {
+            return FNiagaraEditError::Make(TEXT("UNSUPPORTED_ASSET"), TEXT("Asset is not a Niagara System, Niagara Emitter, or Niagara Script."));
+        }
+        else
+        {
+            OutTarget.AssetKind = OutTarget.System ? TEXT("NiagaraSystem") : TEXT("NiagaraEmitter");
+        }
 
         // Asset-kind guard. An open emitter toolkit edits a DUPLICATE of the emitter asset and
         // re-duplicates that copy over the original on Apply, so a write landing on the original
@@ -1816,6 +1849,19 @@ namespace NiagaraEdit
             return Target.CompileRequestSystems.Num() > 0;
         }
 
+        // Standalone module / function / dynamic-input script. UNiagaraScript::RequestCompile is
+        // synchronous (it blocks on GetCompileJobResult), which is the editor's own standalone path
+        // (FNiagaraScriptViewModel::CompileStandaloneScript); nothing is left in flight to wait for.
+        if (UNiagaraScript* Script = Cast<UNiagaraScript>(Target.Asset))
+        {
+            if (!Script->IsCompilable())
+            {
+                return false;
+            }
+            Script->RequestCompile(Script->GetExposedVersion().VersionGuid, bForce);
+            return true;
+        }
+
         return false;
     }
 
@@ -1896,6 +1942,12 @@ namespace NiagaraEdit
             // Always forced here: this runs immediately after a mutation, so the graph the
             // engine last compiled is known stale regardless of what its change ids say.
             bCompileIssued = RequestNiagaraCompile(Target, /*bForce=*/true);
+            // A standalone script compiles synchronously inside the request, so an issued
+            // compile has already landed when it returns.
+            if (bCompileIssued && Cast<UNiagaraScript>(Target.Asset))
+            {
+                bOutCompiled = true;
+            }
         }
 
         // The `{compile: true, save: true}` pair on one call is a data-corrupting race, and it

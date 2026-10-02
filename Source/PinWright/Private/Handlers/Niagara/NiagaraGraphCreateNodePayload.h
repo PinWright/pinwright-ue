@@ -6,10 +6,12 @@
 #include "CoreMinimal.h"
 #include "Dom/JsonObject.h"
 #include "Handlers/Niagara/NiagaraEditTypes.h"
+#include "NiagaraTypes.h"
 
 
 class UClass;
 class UNiagaraNode;
+class UNiagaraNodeCustomHlsl;
 
 namespace NiagaraGraphCreate
 {
@@ -37,4 +39,35 @@ namespace NiagaraGraphCreate
     PINWRIGHT_API FNiagaraEditError ApplyCreateNodePayload(
         UNiagaraNode* Node,
         const TSharedPtr<FJsonObject>& Payload);
+
+    /** One typed CustomHlsl pin requested on the wire as {name, type}. */
+    struct FCustomHlslPinSpec
+    {
+        FName Name;
+        FNiagaraTypeDefinition Type;
+    };
+
+    /** The name CustomHlsl signatures give their leading parameter-map pin on both sides. */
+    inline const TCHAR* CustomHlslParameterMapPinName() { return TEXT("Map"); }
+
+    /**
+     * Parse Payload[Field] as [{name, type}]. A missing field yields an empty list. Each name must
+     * be a bare HLSL identifier (no '.'), unique within the list and not the reserved parameter-map
+     * pin name; each type must resolve through PinWrightNiagara::ResolveNiagaraParameterType.
+     * Refusals: INVALID_ARGUMENT for the shape/name, INVALID_PARAMETER_TYPE for the type.
+     */
+    PINWRIGHT_API FNiagaraEditError ParseCustomHlslPinSpecs(
+        const TSharedPtr<FJsonObject>& Payload,
+        const TCHAR* Field,
+        TArray<FCustomHlslPinSpec>& OutSpecs);
+
+    /**
+     * Fill a CustomHlsl node's Signature (parameter map first on each side, bRequiresExecPin
+     * false). Must run BEFORE FGraphNodeCreator::Finalize: UNiagaraNodeFunctionCall allocates a
+     * script-less node's pins from Signature, so the typed pins exist only if it is set first.
+     */
+    PINWRIGHT_API void SetCustomHlslSignature(
+        UNiagaraNodeCustomHlsl& Node,
+        const TArray<FCustomHlslPinSpec>& Inputs,
+        const TArray<FCustomHlslPinSpec>& Outputs);
 }

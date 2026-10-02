@@ -153,4 +153,32 @@ namespace PinWrightNiagara
             *AssetPath, *OpenEditor->GetEditorName().ToString());
         return true;
     }
+
+    // Same hazard, standalone SCRIPT assets (module / function / dynamic input). The script
+    // toolkit edits a transient duplicate (FNiagaraScriptToolkit::Initialize:
+    // StaticDuplicateObject(InputScript, GetTransientPackage(), ...)) and Apply re-duplicates that
+    // copy over the original (FNiagaraScriptToolkit::UpdateOriginalNiagaraScript). A graph write
+    // that reaches the original while the toolkit is open is therefore invisible to it and is
+    // destroyed by the next Apply after reporting success.
+    inline bool RefuseScriptAssetEditWhileToolkitOpen(
+        UObject* ScriptAsset,
+        const FString& AssetPath,
+        FString& OutMessage)
+    {
+        IAssetEditorInstance* OpenEditor = FindOpenAssetEditorForNiagaraAsset(ScriptAsset);
+        if (!OpenEditor)
+        {
+            return false;
+        }
+
+        OutMessage = FString::Printf(
+            TEXT("Niagara script asset '%s' is open in the '%s' asset editor. The script toolkit ")
+            TEXT("edits a DUPLICATE of the script and overwrites this asset wholesale on Apply ")
+            TEXT("(FNiagaraScriptToolkit::UpdateOriginalNiagaraScript), so this write would be ")
+            TEXT("reported as succeeding and then destroyed. Close the asset first ")
+            TEXT("(editor.close_asset), then retry. The editor may have been opened by another ")
+            TEXT("caller sharing this editor process."),
+            *AssetPath, *OpenEditor->GetEditorName().ToString());
+        return true;
+    }
 }

@@ -4236,7 +4236,7 @@ REGISTER_RPC_HANDLER("niagara.disconnect_pin", "niagara", "Disconnect one Niagar
 
 REGISTER_RPC_HANDLER("niagara.set_pin_default", "niagara", "Set one Niagara graph pin default value.",
     RPC_PARAMS(
-        RPC_PARAM_REQ("assetPath", "path", "Path to the Niagara System or Niagara Emitter asset"),
+        RPC_PARAM_REQ("assetPath", "path", "Path to the Niagara System, Niagara Emitter, or standalone Niagara Script asset"),
         RPC_PARAM_REQ("nodeId", "string", "Node id/name"),
         RPC_PARAM_REQ("pin", "string", "Pin name/id"),
         RPC_PARAM_REQ("defaultValue", "any", "Default value"),
