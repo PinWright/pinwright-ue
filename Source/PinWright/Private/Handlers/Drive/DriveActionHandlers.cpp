@@ -176,7 +176,7 @@ REGISTER_RPC_HANDLER("drive.click", "drive",
             }
             return FDriveInput::ClickAt(Center, Button);
         },
-        bOsInput ? TEXT("os_x11") : TEXT("slate"));
+        bOsInput ? FDriveOsInput::InputPathLabel() : TEXT("slate"));
     return true;
 }
 
@@ -212,7 +212,7 @@ REGISTER_RPC_HANDLER("drive.hover", "drive",
             }
             return FDriveInput::HoverAt(Center);
         },
-        bOsInput ? TEXT("os_x11") : TEXT("slate"));
+        bOsInput ? FDriveOsInput::InputPathLabel() : TEXT("slate"));
     return true;
 }
 

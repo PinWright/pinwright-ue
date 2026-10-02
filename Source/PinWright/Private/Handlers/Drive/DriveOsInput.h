@@ -63,7 +63,8 @@ public:
     // click lands wherever the other one left the pointer. flock on a per-display file; the
     // lock belongs to the open file, so two instances in one process exclude each other too.
     // The holder writes its pid into the file so a peer that times out can name it.
-    // Linux only; elsewhere it is never held.
+    // On Windows a named mutex per logon session instead (HolderPid stays 0: a mutex does not
+    // record its owner). Elsewhere it is never held.
     class FDisplayLock
     {
     public:
@@ -73,7 +74,7 @@ public:
         FDisplayLock(const FDisplayLock&) = delete;
         FDisplayLock& operator=(const FDisplayLock&) = delete;
 
-        bool IsHeld() const { return Fd >= 0; }
+        bool IsHeld() const { return Fd >= 0 || Mutex != nullptr; }
 
         // When not held: whether another holder outlasted the timeout (vs. an I/O failure),
         // the pid that holder recorded (0 = unknown), and the caller-facing reason.
@@ -83,6 +84,7 @@ public:
 
     private:
         int32 Fd = -1;
+        void* Mutex = nullptr;  // Windows: the owned named-mutex HANDLE
     };
 
     // The lock file for this editor's display ($DISPLAY and uid).
@@ -156,6 +158,15 @@ public:
 
     // X button number for a drive button: left 1, middle 2, right 3.
     static int32 ButtonToXButton(EDriveMouseButton Button);
+
+    // SendInput's MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK coordinate (0..65535) for a
+    // virtual-desktop pixel, given the virtual screen's origin (SM_XVIRTUALSCREEN, negative when
+    // a monitor sits left of / above the primary) and extent (SM_CXVIRTUALSCREEN). Pixels off
+    // the desktop clamp to its edge.
+    static int32 NormalizeVirtualDeskCoord(int32 Pixel, int32 Origin, int32 Extent);
+
+    // The response's input_path for os_input on this platform: "os_win32" on Windows, else "os_x11".
+    static const TCHAR* InputPathLabel();
 
     // Who owns input at a point, from the _NET_WM_PID values (0 = unset) of the X windows
     // containing it, outermost (the root's child) first. The DEEPEST window naming a pid

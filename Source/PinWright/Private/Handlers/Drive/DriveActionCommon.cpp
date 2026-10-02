@@ -88,7 +88,7 @@ namespace DriveActionCommonLocal
         Details->SetNumberField(TEXT("occluding_pid"), Foreign.Pid);
         Ctx.SendError(ErrorCodes::ERR_TARGET_OCCLUDED,
             FString::Printf(
-                TEXT("Element '%s' is covered at (%.0f, %.0f) by X window 0x%llx '%s' (pid %u), which is not this editor's and would receive the real input. Nothing was injected. Raise this editor's window or move that one, then retry."),
+                TEXT("Element '%s' is covered at (%.0f, %.0f) by OS window 0x%llx '%s' (pid %u), which is not this editor's and would receive the real input. Nothing was injected. Raise this editor's window or move that one, then retry."),
                 *Handle, Point.X, Point.Y, Foreign.WindowId, *Foreign.Title, Foreign.Pid),
             Details);
     }
@@ -471,14 +471,14 @@ void FDriveActionCommon::RunAction(FHandlerContext& Ctx, const FString& Handle, 
         }
     }
     FDriveOsInput::FForeignWindow Foreign;
-    if (InputPathLabel == TEXT("os_x11") && FDriveOsInput::FindForeignWindowAt(TargetCenter, Foreign))
+    if (InputPathLabel == FDriveOsInput::InputPathLabel() && FDriveOsInput::FindForeignWindowAt(TargetCenter, Foreign))
     {
         SendOsOccluded(Ctx, Handle, TargetCenter, Foreign);
         return;
     }
 
     const bool bGatePointer = TargetWindow.IsValid() && !TargetWindow->IsVirtualWindow()
-        && InputPathLabel != TEXT("os_x11");
+        && InputPathLabel != FDriveOsInput::InputPathLabel();
     if (bGatePointer)
     {
         FDriveInput::MoveTo(TargetCenter);

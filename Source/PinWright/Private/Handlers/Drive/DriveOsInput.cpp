@@ -2,6 +2,7 @@
 
 #include "Handlers/Drive/DriveOsInput.h"
 
+#include "Handlers/Drive/DriveOsInputWindows.h"
 #include "Handlers/ErrorCodes.h"
 
 #include "Dom/JsonObject.h"
@@ -412,6 +413,28 @@ int32 FDriveOsInput::ButtonToXButton(EDriveMouseButton Button)
     }
 }
 
+int32 FDriveOsInput::NormalizeVirtualDeskCoord(int32 Pixel, int32 Origin, int32 Extent)
+{
+    if (Extent <= 0)
+    {
+        return 0;
+    }
+    // Windows maps a normalized n back to Origin + (n * Extent) >> 16, so the smallest n that
+    // lands on Pixel is ceil((Pixel - Origin) * 65536 / Extent). The naive (Pixel - Origin) *
+    // 65535 / Extent rounds down and lands one pixel short across most of the desktop.
+    const int64 Offset = FMath::Clamp<int64>(static_cast<int64>(Pixel) - Origin, 0, Extent - 1);
+    return static_cast<int32>(FMath::Min<int64>((Offset * 65536 + Extent - 1) / Extent, 65535));
+}
+
+const TCHAR* FDriveOsInput::InputPathLabel()
+{
+#if PLATFORM_WINDOWS
+    return TEXT("os_win32");
+#else
+    return TEXT("os_x11");
+#endif
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // Injection
 // ────────────────────────────────────────────────────────────────────────────
@@ -422,8 +445,10 @@ bool FDriveOsInput::IsAvailable(FString& OutError)
     FX11Api& Api = GetApi();
     OutError = Api.Error;
     return Api.IsValid();
+#elif PLATFORM_WINDOWS
+    return DriveOsInputWindows::IsAvailable(OutError);
 #else
-    OutError = TEXT("os_input is Linux/X11-only (it injects through XTEST); this editor is not running on Linux. Omit os_input to use the Slate injection path.");
+    OutError = TEXT("os_input is Linux/X11 and Windows only (it injects through XTEST / SendInput); this editor runs on neither. Omit os_input to use the Slate injection path.");
     return false;
 #endif
 }
@@ -472,6 +497,8 @@ bool FDriveOsInput::FindForeignWindowAt(const FVector2D& ScreenPos, FForeignWind
     }
     Api.SetErrorHandler(Previous);
     return !bOwned;
+#elif PLATFORM_WINDOWS
+    return DriveOsInputWindows::FindForeignWindowAt(ScreenPos, Out);
 #else
     (void)ScreenPos;
     (void)Out;
@@ -501,6 +528,8 @@ FString FDriveOsInput::DisplayLockPath()
 {
 #if PLATFORM_LINUX
     return LockPathFor(FPlatformMisc::GetEnvironmentVariable(TEXT("DISPLAY")), static_cast<uint32>(getuid()));
+#elif PLATFORM_WINDOWS
+    return DriveOsInputWindows::LockName();
 #else
     return FString();
 #endif
@@ -553,6 +582,8 @@ FDriveOsInput::FDisplayLock::FDisplayLock(const FString& Path, double TimeoutSec
     {
         (void)!pwrite(Fd, Buf, Len, 0);
     }
+#elif PLATFORM_WINDOWS
+    Mutex = DriveOsInputWindows::AcquireLock(Path, TimeoutSeconds, bTimedOut, Error);
 #else
     (void)Path;
     (void)TimeoutSeconds;
@@ -568,6 +599,8 @@ FDriveOsInput::FDisplayLock::~FDisplayLock()
         // Closing the last descriptor of the open file releases the flock.
         close(Fd);
     }
+#elif PLATFORM_WINDOWS
+    DriveOsInputWindows::ReleaseLock(Mutex);
 #endif
 }
 
@@ -576,6 +609,8 @@ bool FDriveOsInput::IsPointerAt(const FIntPoint& Target, FIntPoint& OutPointer)
 #if PLATFORM_LINUX
     FX11Api& Api = GetApi();
     return Api.IsValid() && QueryPointerPos(Api, OutPointer) && OutPointer == Target;
+#elif PLATFORM_WINDOWS
+    return DriveOsInputWindows::IsPointerAt(Target, OutPointer);
 #else
     (void)Target;
     (void)OutPointer;
@@ -589,6 +624,8 @@ bool FDriveOsInput::MoveTo(const FVector2D& ScreenPos, FDriveInjectFailure& OutF
     const FString LockPath = DisplayLockPath();
     const FDisplayLock Lock(LockPath, LockTimeoutSeconds);
     return LockHeldOrFail(Lock, LockPath, OutFailure) && MoveUnlocked(ScreenPos, OutFailure);
+#elif PLATFORM_WINDOWS
+    return DriveOsInputWindows::MoveTo(ScreenPos, OutFailure);
 #else
     (void)ScreenPos;
     FString Error;
@@ -622,6 +659,8 @@ bool FDriveOsInput::ClickAt(const FVector2D& ScreenPos, EDriveMouseButton Button
     Api.FakeButtonEvent(Api.Display, XButton, /*is_press*/ 0, 0);
     FlushAndWait(Api, ReleaseSettleMs);
     return true;
+#elif PLATFORM_WINDOWS
+    return DriveOsInputWindows::ClickAt(ScreenPos, Button, OutFailure);
 #else
     (void)ScreenPos;
     (void)Button;
@@ -690,6 +729,9 @@ TSharedPtr<FDriveOsInput::FDisplayLock> FDriveOsInput::BeginGesture(FIntPoint& O
         return nullptr;
     }
     return Lock;
+#elif PLATFORM_WINDOWS
+    TSharedPtr<FDisplayLock> Lock = MakeShared<FDisplayLock>(DisplayLockPath(), LockTimeoutSeconds);
+    return DriveOsInputWindows::BeginGesture(*Lock, OutPointer, OutFailure) ? Lock : nullptr;
 #else
     (void)OutPointer;
     FString Error;
@@ -708,6 +750,8 @@ void FDriveOsInput::SendMotion(const FIntPoint& Point)
         Api.FakeMotionEvent(Api.Display, -1, Point.X, Point.Y, 0);
         Api.Flush(Api.Display);
     }
+#elif PLATFORM_WINDOWS
+    DriveOsInputWindows::SendMotion(Point);
 #else
     (void)Point;
 #endif
@@ -722,6 +766,8 @@ void FDriveOsInput::SendButton(EDriveMouseButton Button, bool bPress)
         Api.FakeButtonEvent(Api.Display, static_cast<unsigned int>(ButtonToXButton(Button)), bPress ? 1 : 0, 0);
         Api.Flush(Api.Display);
     }
+#elif PLATFORM_WINDOWS
+    DriveOsInputWindows::SendButton(Button, bPress);
 #else
     (void)Button;
     (void)bPress;

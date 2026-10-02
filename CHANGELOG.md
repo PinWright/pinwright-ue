@@ -24,6 +24,11 @@
   `button`, `hold_ms` and pressed `waypoints`, and runs its steps across engine frames, so per-frame
   mouse polling (gizmo drags, box select) sees the button held. The `os_input` gates apply.
   `drive.drag` now accepts `os_input`.
+- Added (untested): `drive.click` / `drive.hover` `os_input` on Windows through `SendInput`
+  (`input_path: "os_win32"`): virtual-desktop absolute moves with the X11 path's pacing, a
+  session-wide named-mutex lock, `WindowFromPoint` ownership gate, a foreground step before the
+  press (`FOREGROUND_LOCKED` when Windows refuses), and a typed refusal in offscreen / nullrhi /
+  commandlet editors. Written on Linux; not yet compiled or run on Windows.
 - Changed: game-surface `drive.*` with no `instance_name` / `root_index` walks every live UMG root
   on the viewport (z-order, bottom-most first) instead of failing `AMBIGUOUS_LIVE_ROOT`; each
   element carries `root`, handles are unique across roots, and `root_name` lists the walked roots.

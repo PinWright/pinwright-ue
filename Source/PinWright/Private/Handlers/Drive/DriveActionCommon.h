@@ -56,7 +56,7 @@ public:
     // no-PIE case is a clean error rather than a hang.
     //
     // InputPath, when set, is echoed back as the response's `input_path` field so a
-    // caller can see WHICH injection layer ran ("slate" vs "os_x11") instead of
+    // caller can see WHICH injection layer ran ("slate" vs "os_x11" / "os_win32") instead of
     // inferring it from the request. Null (the default) omits the field for the verbs
     // that only ever take one path.
     //

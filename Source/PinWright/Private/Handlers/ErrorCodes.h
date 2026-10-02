@@ -542,6 +542,10 @@ namespace ErrorCodes
     inline constexpr TCHAR ERR_FIX_NOT_FOUND[]                              = TEXT("FIX_NOT_FOUND");
     inline constexpr TCHAR ERR_FOLIAGE_ACTOR_FAILED[]                       = TEXT("FOLIAGE_ACTOR_FAILED");
     inline constexpr TCHAR ERR_FOLIAGE_ACTOR_NOT_FOUND[]                    = TEXT("FOLIAGE_ACTOR_NOT_FOUND");
+    // drive.click os_input on Windows: this editor is not the foreground process and Windows
+    // refused SetForegroundWindow (the foreground lock), so the button was not pressed.
+    // Payload: foreground_window, foreground_pid.
+    inline constexpr TCHAR ERR_FOREGROUND_LOCKED[]                          = TEXT("FOREGROUND_LOCKED");
     inline constexpr TCHAR ERR_FUNCTION_NOT_FOUND[]                         = TEXT("FUNCTION_NOT_FOUND");
     inline constexpr TCHAR ERR_GAME_FEATURES_NOT_AVAILABLE[]                = TEXT("GAME_FEATURES_NOT_AVAILABLE");
     inline constexpr TCHAR ERR_GAME_INSTANCE_NOT_FOUND[]                    = TEXT("GAME_INSTANCE_NOT_FOUND");
@@ -1527,7 +1531,8 @@ namespace ErrorCodes
     // drive.* pointer verbs: the target's center is routed to a different top-level window (one
     // stacked over it, e.g. a Message Log the editor opened on PIE start) or to no window at all,
     // so the injected input would land there instead. Refused before any button/wheel event.
-    // With os_input, also when the top X window at the point belongs to another process.
+    // With os_input, also when the top X window (Windows: the WindowFromPoint root window) at the
+    // point belongs to another process.
     inline constexpr TCHAR ERR_TARGET_OCCLUDED[]                            = TEXT("TARGET_OCCLUDED");
     inline constexpr TCHAR ERR_TARGET_STATE_NOT_FOUND[]                    = TEXT("TARGET_STATE_NOT_FOUND");
     inline constexpr TCHAR ERR_TEMP_FILE_WRITE_FAILED[]                     = TEXT("TEMP_FILE_WRITE_FAILED");
