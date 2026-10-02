@@ -15,10 +15,19 @@
 #include "ScopedTransaction.h"
 #include "UObject/Package.h"
 
-#if __has_include("PoseSearch/PoseSearchSchema.h") && __has_include("PoseSearch/PoseSearchDatabase.h") && __has_include("PoseSearch/PoseSearchFeatureChannel_Position.h")
+// Gate on the schema and database headers only. The concrete channel headers
+// (PoseSearchFeatureChannel_Position.h etc.) are Private on UE 5.3-5.5 and Public from 5.6, so
+// channels are created by reflection from their UClass instead of by type
+// (B-pose-search-gate-private-header).
+#if __has_include("PoseSearch/PoseSearchSchema.h") && __has_include("PoseSearch/PoseSearchDatabase.h")
+#include "BoneContainer.h"
+#include "JsonObjectConverter.h"
 #include "PoseSearch/PoseSearchDatabase.h"
-#include "PoseSearch/PoseSearchFeatureChannel_Position.h"
+#include "PoseSearch/PoseSearchFeatureChannel.h"
 #include "PoseSearch/PoseSearchSchema.h"
+#include "UObject/StrongObjectPtr.h"
+#include "UObject/UObjectHash.h"
+#include "Utils/PropertyImport.h"
 #define MCP_HAS_POSESEARCH 1
 #else
 #define MCP_HAS_POSESEARCH 0
@@ -342,7 +351,48 @@ bool AddDatabaseAnimation(FHandlerContext& Ctx, UPoseSearchDatabase* Database, c
     return true;
 }
 
-bool AddChannelFromSpec(FHandlerContext& Ctx, UPoseSearchSchema* Schema, const TSharedPtr<FJsonValue>& ChannelValue, int32& OutChannelCount)
+// Short kind of a channel class: "PoseSearchFeatureChannel_Trajectory" -> "Trajectory".
+FString ChannelKindName(const UClass* Class)
+{
+    FString Name = Class->GetName();
+    Name.RemoveFromStart(TEXT("PoseSearchFeatureChannel_"));
+    return Name;
+}
+
+// Comparison key for a kind: case, '-', ' ' and '_' are ignored, and an object path or
+// "/Script/PoseSearch.PoseSearchFeatureChannel_X" reduces to its last segment.
+FString ChannelKindKey(const FString& Value)
+{
+    FString Key = NormalizeToken(Value);
+    int32 DotIndex = INDEX_NONE;
+    if (Key.FindLastChar(TEXT('.'), DotIndex))
+    {
+        Key.RightChopInline(DotIndex + 1);
+    }
+    Key.ReplaceInline(TEXT("_"), TEXT(""));
+    Key.RemoveFromStart(TEXT("posesearchfeaturechannel"));
+    return Key;
+}
+
+// Every concrete UPoseSearchFeatureChannel subclass, so engine (or project) channel kinds need
+// no handler change.
+TArray<UClass*> GetCreatableChannelClasses()
+{
+    TArray<UClass*> Classes;
+    GetDerivedClasses(UPoseSearchFeatureChannel::StaticClass(), Classes, /*bRecursive=*/true);
+    Classes.RemoveAll([](const UClass* Class)
+    {
+        return Class->HasAnyClassFlags(CLASS_Abstract | CLASS_Deprecated | CLASS_NewerVersionExists)
+            || Class->GetName().StartsWith(TEXT("SKEL_"));
+    });
+    return Classes;
+}
+
+// Build one channel from a spec ("Trajectory" or {type|kind, <property>: value, ...}) under the
+// transient package, so a bad spec is refused before the schema asset exists. Spec keys other
+// than type/kind name editable properties of the channel class (case-insensitive) and are set
+// through reflection; an FBoneReference property also takes a bare bone-name string.
+UPoseSearchFeatureChannel* BuildChannelFromSpec(FHandlerContext& Ctx, const TSharedPtr<FJsonValue>& ChannelValue)
 {
     FString Type = TEXT("position");
     TSharedPtr<FJsonObject> ChannelObject;
@@ -357,62 +407,122 @@ bool AddChannelFromSpec(FHandlerContext& Ctx, UPoseSearchSchema* Schema, const T
         if (ChannelValue->TryGetObject(Object) && Object && Object->IsValid())
         {
             ChannelObject = *Object;
-            ChannelObject->TryGetStringField(TEXT("type"), Type);
-            if (Type.IsEmpty())
+            if (!ChannelObject->TryGetStringField(TEXT("type"), Type))
             {
                 ChannelObject->TryGetStringField(TEXT("kind"), Type);
             }
         }
     }
 
-    const FString NormalizedType = NormalizeToken(Type);
-    if (NormalizedType != TEXT("position"))
+    const TArray<UClass*> ChannelClasses = GetCreatableChannelClasses();
+    const FString RequestedKey = ChannelKindKey(Type);
+    UClass* const* Found = ChannelClasses.FindByPredicate([&RequestedKey](const UClass* Class)
     {
+        return ChannelKindKey(Class->GetName()) == RequestedKey;
+    });
+    if (!Found)
+    {
+        TArray<FString> Kinds;
+        for (const UClass* Class : ChannelClasses)
+        {
+            Kinds.Add(ChannelKindName(Class));
+        }
+        Kinds.Sort();
         Ctx.SendError(TEXT("UNSUPPORTED_CHANNEL"),
-            FString::Printf(TEXT("Unsupported Pose Search channel '%s'. Supported channels: Position."), *Type));
-        return false;
+            FString::Printf(TEXT("Unsupported Pose Search channel '%s'. Supported channels: %s."),
+                *Type, *FString::Join(Kinds, TEXT(", "))));
+        return nullptr;
     }
+    UClass* ChannelClass = *Found;
 
-    UPoseSearchFeatureChannel_Position* Channel = NewObject<UPoseSearchFeatureChannel_Position>(
-        Schema, NAME_None, RF_Transactional);
+    UPoseSearchFeatureChannel* Channel = NewObject<UPoseSearchFeatureChannel>(
+        GetTransientPackage(), ChannelClass, NAME_None, RF_Transactional);
     if (!Channel)
     {
-        Ctx.SendError(TEXT("CREATE_FAILED"), TEXT("Failed to create Pose Search Position channel."));
-        return false;
+        Ctx.SendError(TEXT("CREATE_FAILED"),
+            FString::Printf(TEXT("Failed to create Pose Search %s channel."), *ChannelKindName(ChannelClass)));
+        return nullptr;
     }
 
-    if (ChannelObject.IsValid())
+    if (!ChannelObject.IsValid())
     {
-        FString BoneName;
-        if (ChannelObject->TryGetStringField(TEXT("bone"), BoneName) || ChannelObject->TryGetStringField(TEXT("boneName"), BoneName))
+        return Channel;
+    }
+
+    for (const TPair<FString, TSharedPtr<FJsonValue>> Pair : ChannelObject->Values)
+    {
+        if (Pair.Key.Equals(TEXT("type"), ESearchCase::IgnoreCase) || Pair.Key.Equals(TEXT("kind"), ESearchCase::IgnoreCase))
         {
-            Channel->Bone.BoneName = FName(*BoneName);
+            continue;
         }
 
-        FString OriginBoneName;
-        if (ChannelObject->TryGetStringField(TEXT("originBone"), OriginBoneName) || ChannelObject->TryGetStringField(TEXT("originBoneName"), OriginBoneName))
+        // Legacy aliases from the Position-only handler.
+        FString PropertyName = Pair.Key;
+        if (PropertyName.Equals(TEXT("boneName"), ESearchCase::IgnoreCase))
         {
-            Channel->OriginBone.BoneName = FName(*OriginBoneName);
+            PropertyName = TEXT("Bone");
+        }
+        else if (PropertyName.Equals(TEXT("originBoneName"), ESearchCase::IgnoreCase))
+        {
+            PropertyName = TEXT("OriginBone");
         }
 
-        double Number = 0.0;
-        if (ChannelObject->TryGetNumberField(TEXT("sampleTimeOffset"), Number))
+        FProperty* Property = ChannelClass->FindPropertyByName(FName(*PropertyName));
+        if (!Property || !Property->HasAnyPropertyFlags(CPF_Edit))
         {
-            Channel->SampleTimeOffset = static_cast<float>(Number);
+            TArray<FString> Settable;
+            for (TFieldIterator<FProperty> It(ChannelClass); It; ++It)
+            {
+                if (It->HasAnyPropertyFlags(CPF_Edit))
+                {
+                    Settable.Add(FJsonObjectConverter::StandardizeCase(It->GetName()));
+                }
+            }
+            Ctx.SendError(TEXT("INVALID_ARGUMENT"),
+                FString::Printf(TEXT("Unknown setting '%s' for Pose Search %s channel. Settable: %s."),
+                    *Pair.Key, *ChannelKindName(ChannelClass), *FString::Join(Settable, TEXT(", "))));
+            return nullptr;
         }
-        if (ChannelObject->TryGetNumberField(TEXT("originTimeOffset"), Number))
+
+        TSharedPtr<FJsonValue> Value = Pair.Value;
+        const FStructProperty* StructProperty = CastField<FStructProperty>(Property);
+        if (StructProperty && StructProperty->Struct == FBoneReference::StaticStruct() && Value.IsValid() && Value->Type == EJson::String)
         {
-            Channel->OriginTimeOffset = static_cast<float>(Number);
+            TSharedPtr<FJsonObject> BoneObject = MakeShared<FJsonObject>();
+            BoneObject->SetStringField(TEXT("BoneName"), Value->AsString());
+            Value = MakeShared<FJsonValueObject>(BoneObject);
         }
-        if (ChannelObject->TryGetNumberField(TEXT("weight"), Number))
+
+        FString ApplyError;
+        if (!ApplyJsonValueToProperty(Channel, Property, Value, ApplyError))
         {
-            Channel->Weight = static_cast<float>(Number);
+            Ctx.SendError(TEXT("INVALID_ARGUMENT"),
+                FString::Printf(TEXT("Invalid value for '%s' on Pose Search %s channel: %s"),
+                    *Pair.Key, *ChannelKindName(ChannelClass), *ApplyError));
+            return nullptr;
+        }
+    }
+    return Channel;
+}
+
+// {kind, className, settings} for a created channel; settings holds every editable property.
+TSharedPtr<FJsonObject> DescribeChannel(const UPoseSearchFeatureChannel* Channel)
+{
+    TSharedPtr<FJsonObject> Settings = MakeShared<FJsonObject>();
+    for (TFieldIterator<FProperty> It(Channel->GetClass()); It; ++It)
+    {
+        if (It->HasAnyPropertyFlags(CPF_Edit))
+        {
+            Settings->SetField(FJsonObjectConverter::StandardizeCase(It->GetName()),
+                FJsonObjectConverter::UPropertyToJsonValue(*It, It->ContainerPtrToValuePtr<void>(Channel)));
         }
     }
 
-    Schema->AddChannel(Channel);
-    ++OutChannelCount;
-    return true;
+    TSharedPtr<FJsonObject> Description = MakeShared<FJsonObject>();
+    Description->SetStringField(TEXT("kind"), ChannelKindName(Channel->GetClass()));
+    Description->SetStringField(TEXT("className"), Channel->GetClass()->GetName());
+    Description->SetObjectField(TEXT("settings"), Settings);
+    return Description;
 }
 
 void AddPoseSearchAssetFields(TSharedPtr<FJsonObject> Result, UObject* Asset, const FString& ClassName)
@@ -460,6 +570,19 @@ bool HandleCreateSchema(FHandlerContext& Ctx)
         return true;
     }
 
+    // Build every channel before the schema exists so a bad channel spec leaves no half-created
+    // schema behind (the same prevalidation create_database applies to its animations).
+    TArray<TStrongObjectPtr<UPoseSearchFeatureChannel>> NewChannels;
+    for (const TSharedPtr<FJsonValue>& ChannelValue : *Channels)
+    {
+        UPoseSearchFeatureChannel* Channel = BuildChannelFromSpec(Ctx, ChannelValue);
+        if (!Channel)
+        {
+            return true;
+        }
+        NewChannels.Emplace(Channel);
+    }
+
     // PackagePath is safe to hand to CreatePackage because BuildCreatePaths already ran
     // SanitizeProjectRelativePath (collapses "//") AND FPackageName::IsValidLongPackageName
     // (rejects "//", empty/too-short, missing leading slash, trailing slash, invalid chars) over
@@ -495,17 +618,14 @@ bool HandleCreateSchema(FHandlerContext& Ctx)
         Schema->Modify(true);
         Schema->AddSkeleton(Skeleton);
 
-        int32 RequestedChannelCount = 0;
-        for (const TSharedPtr<FJsonValue>& ChannelValue : *Channels)
+        for (const TStrongObjectPtr<UPoseSearchFeatureChannel>& Channel : NewChannels)
         {
-            if (!AddChannelFromSpec(Ctx, Schema, ChannelValue, RequestedChannelCount))
-            {
-                return true;
-            }
+            Channel->Rename(nullptr, Schema, REN_DontCreateRedirectors | REN_DoNotDirty);
+            Schema->AddChannel(Channel.Get());
         }
 
         FinishPoseSearchAsset(Schema, false);
-        if (RequestedChannelCount > 0 && Schema->GetChannels().Num() == 0)
+        if (NewChannels.Num() > 0 && Schema->GetChannels().Num() == 0)
         {
             Ctx.SendError(TEXT("SCHEMA_FINALIZE_FAILED"), TEXT("Pose Search schema did not finalize any channels."));
             return true;
@@ -523,6 +643,12 @@ bool HandleCreateSchema(FHandlerContext& Ctx)
     AddPoseSearchAssetFields(Result, Schema, TEXT("UPoseSearchSchema"));
     Result->SetNumberField(TEXT("skeletonCount"), Schema->GetRoledSkeletons().Num());
     Result->SetNumberField(TEXT("channelCount"), Schema->GetChannels().Num());
+    TArray<TSharedPtr<FJsonValue>> ChannelDescriptions;
+    for (const TStrongObjectPtr<UPoseSearchFeatureChannel>& Channel : NewChannels)
+    {
+        ChannelDescriptions.Add(MakeShared<FJsonValueObject>(DescribeChannel(Channel.Get())));
+    }
+    Result->SetArrayField(TEXT("channels"), ChannelDescriptions);
     AddAssetSaveReport(Result, bSaveRequested, bSavedToDisk);
     Ctx.SendSuccess(Result);
     return true;
@@ -722,11 +848,11 @@ bool HandleAddDatabaseAnimation(FHandlerContext& Ctx)
 } // namespace PinWrightPoseSearch
 
 REGISTER_RPC_HANDLER("pose_search.create_schema", "pose_search",
-    "Create a UPoseSearchSchema asset, bind its skeleton, and append supported feature channels.",
+    "Create a UPoseSearchSchema asset, bind its skeleton, and append feature channels of any kind.",
     RPC_PARAMS(
         RPC_PARAM_REQ("assetPath", "path", "Full package or object path for the new Pose Search schema asset."),
         RPC_PARAM_REQ("skeleton", "path", "Skeleton asset path."),
-        RPC_PARAM_REQ("channels", "array", "Channel specs. Supported kind: Position."),
+        RPC_PARAM_REQ("channels", "array", "Channel specs: a kind string or {type|kind, <setting>: value}. Kind is any concrete UPoseSearchFeatureChannel class (Position, Trajectory, Velocity, Heading, Pose, ...); other keys set the channel's editable properties by name."),
         RPC_PARAM_DEF("save", "boolean", "Save the asset to disk after creation.", "true")
     ))
 {

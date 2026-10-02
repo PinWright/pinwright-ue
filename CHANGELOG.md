@@ -24,6 +24,15 @@
   `button`, `hold_ms` and pressed `waypoints`, and runs its steps across engine frames, so per-frame
   mouse polling (gizmo drags, box select) sees the button held. The `os_input` gates apply.
   `drive.drag` now accepts `os_input`.
+- Added: `pose_search.create_schema` accepts any concrete `UPoseSearchFeatureChannel` kind
+  (`Trajectory`, `Velocity`, `Heading`, `Pose`, `Phase`, ... as well as `Position`); every other
+  key of a channel spec sets that channel's editable property of the same name by reflection, and
+  the response echoes each created channel as `channels[]` `{kind, className, settings}`. An unknown
+  setting is now refused with `INVALID_ARGUMENT` instead of silently ignored, a `kind`-only spec is
+  honoured, and channel specs are validated before the schema asset is created.
+- Fixed: `pose_search.*` no longer compiles out to `PLUGIN_DISABLED` on UE 5.3-5.5. The handler
+  gated on `PoseSearchFeatureChannel_Position.h`, which is a Private header before 5.6; it now gates
+  on the schema/database headers and reaches channel classes by reflection (unverified on 5.3-5.5).
 - Added: `ui.create_hud`, `ui.set_widget_*`, `ui.remove_widget_from_viewport`, `ui.activatable_*`,
   `ui.list_stack_widgets` and `ui.get_active_widget` take `world` (`server` / `client:N` / `pie:N`,
   as `editor.console_command`) to act in one instance of a multi-client PIE, and echo `pieInstance`.

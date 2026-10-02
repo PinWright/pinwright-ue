@@ -80,13 +80,14 @@
 #include "Tests/TestSkipReporting.h"
 #include "Tests/TestUtils.h"
 
-// The same three-header condition PoseSearchHandler.cpp compiles its own MCP_HAS_POSESEARCH
-// from. UE 5.4 ships PoseSearchFeatureChannel_Position.h under the plugin's PRIVATE source
-// directory, so the condition is false there, every pose_search verb answers PLUGIN_DISABLED
-// out of EnsurePoseSearchAvailable before BuildCreatePaths runs, and the INVALID_PATH contract
-// asserted below simply does not exist on that engine. The name is file-local because the two
-// sibling Gameplay TUs define MCP_TEST_HAS_POSESEARCH and Unity merges all three.
-#if __has_include("PoseSearch/PoseSearchSchema.h") && __has_include("PoseSearch/PoseSearchDatabase.h") && __has_include("PoseSearch/PoseSearchFeatureChannel_Position.h")
+// The same header condition PoseSearchHandler.cpp compiles its own MCP_HAS_POSESEARCH from:
+// schema + database headers only (the concrete channel headers are Private before UE 5.6 and the
+// handler reaches channels by reflection, B-pose-search-gate-private-header). When it is false
+// every pose_search verb answers PLUGIN_DISABLED out of EnsurePoseSearchAvailable before
+// BuildCreatePaths runs, and the INVALID_PATH contract asserted below does not exist. The name is
+// file-local because the two sibling Gameplay TUs define MCP_TEST_HAS_POSESEARCH and Unity merges
+// all three.
+#if __has_include("PoseSearch/PoseSearchSchema.h") && __has_include("PoseSearch/PoseSearchDatabase.h")
 #define PWPS_PATHSAFETY_HAS_POSESEARCH 1
 #else
 #define PWPS_PATHSAFETY_HAS_POSESEARCH 0
@@ -200,15 +201,14 @@ namespace PoseSearchCreateAssetPathSafetyHelpers
                  "assertions."));
         return true;
 #else
-        // Header-gated, not module-gated: the module loads on UE 5.4 and the handlers still
-        // refuse every call PLUGIN_DISABLED, because they were compiled without the channel
-        // header. Checking IsModuleLoaded alone let this file run there and measure that
-        // refusal against an INVALID_PATH the build cannot produce.
+        // Header-gated, not module-gated: without the schema/database headers the handlers
+        // refuse every call PLUGIN_DISABLED even when the module loads, so checking
+        // IsModuleLoaded alone would measure that refusal against an INVALID_PATH the build
+        // cannot produce.
         PinWrightTestSkip::SkipAssertions(Test, TEXT("optional-plugin-not-shipped"),
-            TEXT("PoseSearch public headers are absent from this engine (UE 5.4 keeps "
-                 "PoseSearchFeatureChannel_Position.h private), so pose_search.* is compiled out "
-                 "and answers PLUGIN_DISABLED ahead of the path guard; skipping the assetPath "
-                 "safety assertions."));
+            TEXT("PoseSearch schema/database headers are absent from this engine, so "
+                 "pose_search.* is compiled out and answers PLUGIN_DISABLED ahead of the path "
+                 "guard; skipping the assetPath safety assertions."));
         return true;
 #endif
     }

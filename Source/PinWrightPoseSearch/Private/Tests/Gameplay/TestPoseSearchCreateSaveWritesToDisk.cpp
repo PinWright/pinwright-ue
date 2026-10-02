@@ -39,11 +39,10 @@
 #include "Misc/ScopeExit.h"
 #include "Tests/TestUtils.h"
 
-#if __has_include("PoseSearch/PoseSearchSchema.h") && __has_include("PoseSearch/PoseSearchFeatureChannel_Position.h")
+#if __has_include("PoseSearch/PoseSearchSchema.h") && __has_include("PoseSearch/PoseSearchDatabase.h")
 #include "Animation/Skeleton.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Modules/ModuleManager.h"
-#include "PoseSearch/PoseSearchFeatureChannel_Position.h"
 #include "PoseSearch/PoseSearchSchema.h"
 #include "ReferenceSkeleton.h"
 #include "UObject/Package.h"

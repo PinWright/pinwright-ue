@@ -12,15 +12,18 @@
 #include "Tests/TestUtils.h"
 #include "Tests/TestSkipReporting.h"
 
-#if __has_include("PoseSearch/PoseSearchSchema.h") && __has_include("PoseSearch/PoseSearchDatabase.h") && __has_include("PoseSearch/PoseSearchFeatureChannel_Position.h")
+// Same gate as PoseSearchHandler.cpp: schema + database headers only, because the concrete
+// channel headers are Private before UE 5.6 (B-pose-search-gate-private-header).
+#if __has_include("PoseSearch/PoseSearchSchema.h") && __has_include("PoseSearch/PoseSearchDatabase.h")
 #include "Animation/AnimSequence.h"
 #include "Animation/AnimTypes.h"
 #include "Animation/AnimData/IAnimationDataController.h"
 #include "Animation/Skeleton.h"
 #include "AssetRegistry/AssetRegistryModule.h"
+#include "BoneContainer.h"
 #include "Modules/ModuleManager.h"
 #include "PoseSearch/PoseSearchDatabase.h"
-#include "PoseSearch/PoseSearchFeatureChannel_Position.h"
+#include "PoseSearch/PoseSearchFeatureChannel.h"
 #include "PoseSearch/PoseSearchSchema.h"
 #include "ReferenceSkeleton.h"
 #include "UObject/Package.h"
@@ -204,8 +207,9 @@ bool FPoseSearchSchemaDatabaseAuthoringPipelineTest::RunTest(const FString& Para
     TestEqual(TEXT("schema has one skeleton"), Schema->GetRoledSkeletons().Num(), 1);
     TestEqual(TEXT("schema skeleton matches"), Schema->GetRoledSkeletons()[0].Skeleton.Get(), Skeleton);
     TestEqual(TEXT("schema has one finalized channel"), Schema->GetChannels().Num(), 1);
-    TestNotNull(TEXT("schema channel is Position"),
-        Cast<UPoseSearchFeatureChannel_Position>(Schema->GetChannels()[0].Get()));
+    TestEqual(TEXT("schema channel is Position"),
+        GetNameSafe(Schema->GetChannels()[0] ? Schema->GetChannels()[0]->GetClass() : nullptr),
+        FString(TEXT("PoseSearchFeatureChannel_Position")));
 
     TSharedPtr<FJsonObject> InvalidAnimation = MakeShared<FJsonObject>();
     InvalidAnimation->SetStringField(TEXT("sequencePath"), ToPoseSearchTestObjectPath(OtherSequencePackagePath));
@@ -309,6 +313,244 @@ bool FPoseSearchSchemaDatabaseAuthoringPipelineTest::RunTest(const FString& Para
 #endif
     TestEqual(TEXT("sampling range min matches"), Entry->SamplingRange.Min, 0.125f);
     TestEqual(TEXT("sampling range max matches"), Entry->SamplingRange.Max, 0.75f);
+
+    return true;
+}
+
+namespace PoseSearchChannelKindsTestHelpers
+{
+// Channels are read by reflection so the test stays portable to engines whose concrete channel
+// headers are Private (UE 5.3-5.5).
+const UPoseSearchFeatureChannel* FindChannelOfClass(const UPoseSearchSchema* Schema, const TCHAR* ClassName)
+{
+    for (const TObjectPtr<UPoseSearchFeatureChannel>& Channel : Schema->GetChannels())
+    {
+        if (Channel && Channel->GetClass()->GetName() == ClassName)
+        {
+            return Channel.Get();
+        }
+    }
+    return nullptr;
+}
+
+float ReadFloat(const void* Container, const UStruct* Struct, const TCHAR* PropertyName)
+{
+    const FFloatProperty* Property = FindFProperty<FFloatProperty>(Struct, PropertyName);
+    return Property ? Property->GetPropertyValue_InContainer(Container) : -999.f;
+}
+
+FName ReadBoneName(const UObject* Channel, const TCHAR* PropertyName)
+{
+    const FStructProperty* Property = FindFProperty<FStructProperty>(Channel->GetClass(), PropertyName);
+    return Property ? Property->ContainerPtrToValuePtr<FBoneReference>(Channel)->BoneName : NAME_None;
+}
+
+TSharedPtr<FJsonObject> MakeChannel(const TCHAR* Kind)
+{
+    TSharedPtr<FJsonObject> Channel = MakeShared<FJsonObject>();
+    Channel->SetStringField(TEXT("type"), Kind);
+    return Channel;
+}
+
+TSharedPtr<FJsonObject> MakeSchemaPayload(const FString& SchemaPackagePath, const FString& SkeletonObjectPath,
+    const TArray<TSharedPtr<FJsonObject>>& ChannelSpecs)
+{
+    TArray<TSharedPtr<FJsonValue>> Channels;
+    for (const TSharedPtr<FJsonObject>& Spec : ChannelSpecs)
+    {
+        Channels.Add(MakeShared<FJsonValueObject>(Spec));
+    }
+    TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+    Payload->SetStringField(TEXT("assetPath"), SchemaPackagePath);
+    Payload->SetStringField(TEXT("skeleton"), SkeletonObjectPath);
+    Payload->SetArrayField(TEXT("channels"), Channels);
+    Payload->SetBoolField(TEXT("save"), false);
+    return Payload;
+}
+} // namespace PoseSearchChannelKindsTestHelpers
+
+// F-pose-search-schema-channel-kinds: create_schema builds Trajectory, Velocity, Heading and Pose
+// channels (not only Position) with their settings applied, echoes each channel, and refuses an
+// unknown kind or setting before any schema asset exists.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPoseSearchSchemaChannelKindsTest,
+    "PinWright.pose_search.CreateSchemaChannelKinds",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FPoseSearchSchemaChannelKindsTest::RunTest(const FString& Parameters)
+{
+    using namespace PoseSearchChannelKindsTestHelpers;
+
+    if (!FModuleManager::Get().IsModuleLoaded(TEXT("PoseSearch")))
+    {
+        PinWrightTestSkip::SkipAssertions(*this, TEXT("optional-plugin-not-shipped"),
+            TEXT("PoseSearch module is not loaded; skipping gated Pose Search channel-kinds test."));
+        return true;
+    }
+
+    const FString SkeletonPackagePath = MakePoseSearchTestPackagePath(TEXT("SK_PoseSearchKinds"));
+    const FString SchemaPackagePath = MakePoseSearchTestPackagePath(TEXT("PSSchemaKinds"));
+    const FString BadKindSchemaPackagePath = MakePoseSearchTestPackagePath(TEXT("PSSchemaBadKind"));
+    const FString BadSettingSchemaPackagePath = MakePoseSearchTestPackagePath(TEXT("PSSchemaBadSetting"));
+
+    USkeleton* Skeleton = CreatePoseSearchTestSkeleton(SkeletonPackagePath);
+    ON_SCOPE_EXIT
+    {
+        if (Skeleton)
+        {
+            Skeleton->RemoveFromRoot();
+        }
+        CleanupTestAsset(BadSettingSchemaPackagePath);
+        CleanupTestAsset(BadKindSchemaPackagePath);
+        CleanupTestAsset(SchemaPackagePath);
+        CleanupTestAsset(SkeletonPackagePath);
+    };
+    if (!TestNotNull(TEXT("test skeleton created"), Skeleton))
+    {
+        return false;
+    }
+    const FString SkeletonObjectPath = ToPoseSearchTestObjectPath(SkeletonPackagePath);
+
+    // Trajectory with explicit samples (array of structs).
+    TSharedPtr<FJsonObject> Trajectory = MakeChannel(TEXT("Trajectory"));
+    {
+        TArray<TSharedPtr<FJsonValue>> Samples;
+        for (const double Offset : {-0.5, 0.5})
+        {
+            TSharedPtr<FJsonObject> Sample = MakeShared<FJsonObject>();
+            Sample->SetNumberField(TEXT("offset"), Offset);
+            Sample->SetNumberField(TEXT("flags"), 32); // EPoseSearchTrajectoryFlags::PositionXY
+            Samples.Add(MakeShared<FJsonValueObject>(Sample));
+        }
+        Trajectory->SetArrayField(TEXT("samples"), Samples);
+    }
+
+    // Velocity via the "kind" key and a lower-case kind.
+    TSharedPtr<FJsonObject> Velocity = MakeShared<FJsonObject>();
+    Velocity->SetStringField(TEXT("kind"), TEXT("velocity"));
+    Velocity->SetStringField(TEXT("bone"), TEXT("root"));
+    Velocity->SetNumberField(TEXT("weight"), 2.5);
+
+    TSharedPtr<FJsonObject> Heading = MakeChannel(TEXT("Heading"));
+    Heading->SetStringField(TEXT("bone"), TEXT("root"));
+    Heading->SetStringField(TEXT("headingAxis"), TEXT("Y"));
+
+    // Position keeps the legacy boneName alias.
+    TSharedPtr<FJsonObject> Position = MakeChannel(TEXT("Position"));
+    Position->SetStringField(TEXT("boneName"), TEXT("root"));
+    Position->SetNumberField(TEXT("sampleTimeOffset"), 0.25);
+
+    TSharedPtr<FJsonObject> Pose = MakeChannel(TEXT("Pose"));
+    {
+        TSharedPtr<FJsonObject> Reference = MakeShared<FJsonObject>();
+        Reference->SetStringField(TEXT("boneName"), TEXT("root"));
+        TSharedPtr<FJsonObject> SampledBone = MakeShared<FJsonObject>();
+        SampledBone->SetObjectField(TEXT("reference"), Reference);
+        SampledBone->SetNumberField(TEXT("flags"), 2); // EPoseSearchBoneFlags::Position
+        Pose->SetArrayField(TEXT("sampledBones"), { MakeShared<FJsonValueObject>(SampledBone) });
+    }
+
+    FTestResponseCapture Capture;
+    TestTrue(TEXT("create_schema handler found"), InvokeHandlerWithCapture(TEXT("pose_search.create_schema"),
+        MakeSchemaPayload(SchemaPackagePath, SkeletonObjectPath, {Trajectory, Velocity, Heading, Position, Pose}), Capture));
+    if (!TestTrue(TEXT("create_schema with Trajectory/Velocity/Heading/Position/Pose succeeded"), Capture.bSuccess))
+    {
+        AddError(FString::Printf(TEXT("create_schema failed: %s %s"), *Capture.ErrorCode, *Capture.Message));
+        return false;
+    }
+
+    // Response echoes each created channel with its resolved settings.
+    const TArray<TSharedPtr<FJsonValue>>* Echo = nullptr;
+    if (TestTrue(TEXT("response has channels[]"), Capture.Result.IsValid() && Capture.Result->TryGetArrayField(TEXT("channels"), Echo)) && Echo)
+    {
+        const TCHAR* ExpectedKinds[] = {TEXT("Trajectory"), TEXT("Velocity"), TEXT("Heading"), TEXT("Position"), TEXT("Pose")};
+        if (TestEqual(TEXT("one echo per requested channel"), Echo->Num(), static_cast<int32>(UE_ARRAY_COUNT(ExpectedKinds))))
+        {
+            for (int32 Index = 0; Index < Echo->Num(); ++Index)
+            {
+                const TSharedPtr<FJsonObject> Entry = (*Echo)[Index]->AsObject();
+                TestEqual(FString::Printf(TEXT("channels[%d].kind"), Index), Entry->GetStringField(TEXT("kind")), FString(ExpectedKinds[Index]));
+                TestEqual(FString::Printf(TEXT("channels[%d].className"), Index), Entry->GetStringField(TEXT("className")),
+                    FString(TEXT("PoseSearchFeatureChannel_")) + ExpectedKinds[Index]);
+            }
+            const TSharedPtr<FJsonObject>* HeadingSettings = nullptr;
+            if (TestTrue(TEXT("heading echo has settings"), (*Echo)[2]->AsObject()->TryGetObjectField(TEXT("settings"), HeadingSettings)))
+            {
+                TestEqual(TEXT("heading echo resolves headingAxis"), (*HeadingSettings)->GetStringField(TEXT("headingAxis")), FString(TEXT("Y")));
+            }
+        }
+    }
+
+    UPoseSearchSchema* Schema = LoadObject<UPoseSearchSchema>(nullptr, *ToPoseSearchTestObjectPath(SchemaPackagePath));
+    if (!TestNotNull(TEXT("schema asset created"), Schema))
+    {
+        return false;
+    }
+
+    const UPoseSearchFeatureChannel* TrajectoryChannel = FindChannelOfClass(Schema, TEXT("PoseSearchFeatureChannel_Trajectory"));
+    const UPoseSearchFeatureChannel* VelocityChannel = FindChannelOfClass(Schema, TEXT("PoseSearchFeatureChannel_Velocity"));
+    const UPoseSearchFeatureChannel* HeadingChannel = FindChannelOfClass(Schema, TEXT("PoseSearchFeatureChannel_Heading"));
+    const UPoseSearchFeatureChannel* PositionChannel = FindChannelOfClass(Schema, TEXT("PoseSearchFeatureChannel_Position"));
+    const UPoseSearchFeatureChannel* PoseChannel = FindChannelOfClass(Schema, TEXT("PoseSearchFeatureChannel_Pose"));
+    TestNotNull(TEXT("schema finalized a Trajectory channel"), TrajectoryChannel);
+    TestNotNull(TEXT("schema finalized a Velocity channel"), VelocityChannel);
+    TestNotNull(TEXT("schema finalized a Heading channel"), HeadingChannel);
+    TestNotNull(TEXT("schema finalized a Position channel"), PositionChannel);
+    TestNotNull(TEXT("schema finalized a Pose channel"), PoseChannel);
+
+    if (TrajectoryChannel)
+    {
+        TestTrue(TEXT("trajectory channel is owned by the schema"), TrajectoryChannel->GetOuter() == Schema);
+        const FArrayProperty* SamplesProperty = FindFProperty<FArrayProperty>(TrajectoryChannel->GetClass(), TEXT("Samples"));
+        if (TestNotNull(TEXT("trajectory has Samples"), SamplesProperty))
+        {
+            FScriptArrayHelper Samples(SamplesProperty, SamplesProperty->ContainerPtrToValuePtr<void>(TrajectoryChannel));
+            if (TestEqual(TEXT("trajectory samples replaced by the spec"), Samples.Num(), 2))
+            {
+                const UStruct* SampleStruct = CastFieldChecked<FStructProperty>(SamplesProperty->Inner)->Struct;
+                TestEqual(TEXT("trajectory sample[0].Offset"), ReadFloat(Samples.GetRawPtr(0), SampleStruct, TEXT("Offset")), -0.5f);
+                TestEqual(TEXT("trajectory sample[1].Offset"), ReadFloat(Samples.GetRawPtr(1), SampleStruct, TEXT("Offset")), 0.5f);
+            }
+        }
+    }
+    if (VelocityChannel)
+    {
+        TestEqual(TEXT("velocity bone"), ReadBoneName(VelocityChannel, TEXT("Bone")), FName(TEXT("root")));
+        TestEqual(TEXT("velocity weight"), ReadFloat(VelocityChannel, VelocityChannel->GetClass(), TEXT("Weight")), 2.5f);
+    }
+    if (PositionChannel)
+    {
+        TestEqual(TEXT("position boneName alias"), ReadBoneName(PositionChannel, TEXT("Bone")), FName(TEXT("root")));
+        TestEqual(TEXT("position sampleTimeOffset"),
+            ReadFloat(PositionChannel, PositionChannel->GetClass(), TEXT("SampleTimeOffset")), 0.25f);
+    }
+    if (PoseChannel)
+    {
+        const FArrayProperty* BonesProperty = FindFProperty<FArrayProperty>(PoseChannel->GetClass(), TEXT("SampledBones"));
+        if (TestNotNull(TEXT("pose has SampledBones"), BonesProperty))
+        {
+            FScriptArrayHelper Bones(BonesProperty, BonesProperty->ContainerPtrToValuePtr<void>(PoseChannel));
+            TestEqual(TEXT("pose sampled one bone"), Bones.Num(), 1);
+        }
+    }
+
+    // An unknown kind is refused, names the supported kinds, and leaves no schema object.
+    TestTrue(TEXT("bad-kind handler found"), InvokeHandlerWithCapture(TEXT("pose_search.create_schema"),
+        MakeSchemaPayload(BadKindSchemaPackagePath, SkeletonObjectPath, {MakeChannel(TEXT("Trajectory")), MakeChannel(TEXT("NotAChannel"))}), Capture));
+    TestFalse(TEXT("unknown kind refused"), Capture.bSuccess);
+    TestEqual(TEXT("unknown kind error code"), Capture.ErrorCode, FString(TEXT("UNSUPPORTED_CHANNEL")));
+    TestTrue(TEXT("unknown kind message lists Trajectory"), Capture.Message.Contains(TEXT("Trajectory")));
+    TestNull(TEXT("unknown kind leaves no schema object"),
+        FindObject<UPoseSearchSchema>(nullptr, *ToPoseSearchTestObjectPath(BadKindSchemaPackagePath)));
+
+    // An unknown setting is refused rather than silently dropped.
+    TSharedPtr<FJsonObject> BadSetting = MakeChannel(TEXT("Velocity"));
+    BadSetting->SetNumberField(TEXT("notASetting"), 1.0);
+    TestTrue(TEXT("bad-setting handler found"), InvokeHandlerWithCapture(TEXT("pose_search.create_schema"),
+        MakeSchemaPayload(BadSettingSchemaPackagePath, SkeletonObjectPath, {BadSetting}), Capture));
+    TestFalse(TEXT("unknown setting refused"), Capture.bSuccess);
+    TestEqual(TEXT("unknown setting error code"), Capture.ErrorCode, FString(TEXT("INVALID_ARGUMENT")));
+    TestNull(TEXT("unknown setting leaves no schema object"),
+        FindObject<UPoseSearchSchema>(nullptr, *ToPoseSearchTestObjectPath(BadSettingSchemaPackagePath)));
 
     return true;
 }

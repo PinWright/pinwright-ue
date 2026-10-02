@@ -11,7 +11,7 @@ Author `UPoseSearchSchema` and `UPoseSearchDatabase` assets used by Motion Match
 The supported pipeline is schema first, database second:
 
 1. Create a `UPoseSearchSchema` with `pose_search.create_schema`.
-2. Add at least one supported channel. The initial handler supports `Position` channels.
+2. Add channels. Any concrete `UPoseSearchFeatureChannel` class is accepted (see [Channels](#channels)); a usable Motion Matching schema normally has at least `Trajectory` plus `Position`/`Velocity` or a `Pose` channel.
 3. Create a `UPoseSearchDatabase` with `pose_search.create_database`.
 4. Add sequence entries with `pose_search.add_database_animation`, or pass sequence entries through `animations` during database creation.
 
@@ -22,6 +22,8 @@ call("pose_search.create_schema", {
   "assetPath": "/Game/Animation/PS_Schema",
   "skeleton": "/Game/Characters/Heroes/Mannequin/Meshes/SK_Mannequin_Skeleton.SK_Mannequin_Skeleton",
   "channels": [
+    { "type": "Trajectory" },
+    { "type": "Velocity", "bone": "foot_l", "weight": 1.0 },
     { "type": "Position", "bone": "root", "sampleTimeOffset": 0.0 }
   ]
 })
@@ -40,6 +42,22 @@ call("pose_search.add_database_animation", {
 
 `samplingRange` accepts `{min,max}`, `{start,end}`, or `[min,max]`. `[0,0]` means the full source sequence, matching UE's `FPoseSearchDatabaseSequence` default.
 
+## Channels
+
+Each `channels[]` entry is a kind string (`"Trajectory"`) or an object `{ "type" | "kind": <kind>, <setting>: <value>, ... }`; a missing kind means `Position`. The kind is any concrete `UPoseSearchFeatureChannel` subclass loaded in the editor, matched by its class name without the `PoseSearchFeatureChannel_` prefix, ignoring case and `_`/`-`/spaces (`Trajectory`, `Velocity`, `Heading`, `Pose`, `Position`, `Phase`, `Curve`, `Distance`, `Padding`, `SamplingTime`, `TimeToEvent`, ... on UE 5.8). An unknown kind returns `UNSUPPORTED_CHANNEL` listing the kinds this engine has.
+
+Every other key names an editable property of that channel class (case-insensitive: `bone`, `originBone`, `sampleTimeOffset`, `weight`, `headingAxis`, `samples`, `sampledBones`, ...) and is set by reflection, so its value takes the property's own shape: numbers, enum names, objects for structs, arrays of objects for struct arrays. A bone-reference property also takes a bare bone name (`"bone": "root"`); nested ones use `{ "boneName": "root" }`. Bitmask fields such as `Trajectory.samples[].flags` and `Pose.sampledBones[].flags` are integers (the engine's `EPoseSearchTrajectoryFlags` / `EPoseSearchBoneFlags` bits). `boneName` / `originBoneName` stay as aliases. An unknown key or a value that does not fit returns `INVALID_ARGUMENT` naming the settable properties; nothing is created. Unset properties keep the engine defaults — a bare `Trajectory` gets UE's default locomotion samples.
+
+```
+{ "type": "Trajectory", "samples": [ { "offset": -0.4, "flags": 32 }, { "offset": 0.5, "flags": 48 } ] }
+{ "type": "Pose", "sampledBones": [ { "reference": { "boneName": "foot_l" }, "flags": 3 } ] }
+{ "type": "Heading", "bone": "pelvis", "headingAxis": "Y" }
+```
+
+The response's `channels[]` echoes each created channel in request order as `{ kind, className, settings }`, where `settings` holds every editable property's resolved value. `channelCount` is the schema's finalized channel count, which can exceed the request when the engine injects dependent channels. Group channels (`Group`) are created, but their instanced `subChannels` cannot be authored through this verb.
+
+Channels are reached through reflection rather than their C++ headers, which are Private on UE 5.3-5.5 and Public from 5.6, so the namespace compiles in on every supported engine.
+
 ## Validation
 
 Database authoring validates animation entries before mutation. `pose_search.create_database` prevalidates every supplied `animations` entry against the schema before creating the database asset, so a bad entry cannot leave a half-created database behind. `pose_search.add_database_animation` validates skeleton/schema compatibility before `UPoseSearchDatabase::AddAnimationAsset`; mismatches return `SKELETON_MISMATCH` and leave the database animation list unchanged.
@@ -53,7 +71,7 @@ Implementation code should reuse the shared path/load/save helpers around this f
 
 ### pose_search.create_schema
 
-Create a `UPoseSearchSchema`, add the target Skeleton through `UPoseSearchSchema::AddSkeleton`, append supported feature channels, and use the normal editor change/save path so `GetChannels()` reflects authored channels.
+Create a `UPoseSearchSchema`, add the target Skeleton through `UPoseSearchSchema::AddSkeleton`, append feature channels of any kind (see [Channels](#channels)), and use the normal editor change/save path so `GetChannels()` reflects authored channels. Every channel spec is validated before the schema asset is created, so a refused spec leaves no schema behind.
 
 ### pose_search.create_database
 

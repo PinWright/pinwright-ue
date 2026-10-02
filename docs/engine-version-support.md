@@ -87,6 +87,13 @@ Recorded so the next backport does not re-derive them:
   pins it to 5.8.
 - `USplineComponent::AllowsSplinePointScaleEditing` — present 5.3-5.8 (`SplineComponent.h:350` on
   5.3 … `:425` on 5.8), so the derived-scale refusal in `SplineHandler.cpp:688` is portable.
+- `pose_search.*` gates on `PoseSearch/PoseSearchSchema.h` + `PoseSearchDatabase.h` only and
+  creates feature channels by reflection (`GetDerivedClasses(UPoseSearchFeatureChannel)` +
+  `FProperty` writes), because the concrete `PoseSearchFeatureChannel_*.h` headers are under the
+  plugin's `Source/Runtime/Private/` on 5.3-5.5 and Public only from 5.6. The old gate also
+  required `PoseSearchFeatureChannel_Position.h`, which compiled the whole namespace out to
+  `PLUGIN_DISABLED` on 5.3-5.5 (B-pose-search-gate-private-header). Compiled and tested on 5.8
+  only; 5.3-5.5 are unverified.
 - `SplineHandler.cpp` reaches `UWaterSplineComponent` by reflection
   (`FindObject<UClass>("/Script/Water.WaterSplineComponent")`), so it carries no Water link and no
   version dependency.
