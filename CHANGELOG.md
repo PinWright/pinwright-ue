@@ -2,6 +2,18 @@
 
 ## 1.0.0
 
+- Added: graph layout keeps comment boxes. Every PinWright layout (BPIR / MGIR / AGIR compiles,
+  `material.authoring.auto_layout`) records each comment's members from the rects before it runs;
+  a comment around unmoved nodes is an obstacle the moved nodes stay out of, and a comment with
+  moved members is re-fitted around them (title bar included, nested comments inner first), undoable
+  with the moves. `material.authoring.auto_layout` reports `commentsRefit[{nodeId, from, to}]` and
+  `sizeSource {measured, estimated}`. BPIR's unused comment-box emitter was deleted.
+- Added: Blueprint, anim and state-machine layouts measure node sizes and pin rows from the nodes'
+  editor widgets (offscreen Slate prepass, no window) whenever Slate runs, falling back to the
+  estimator in commandlets; `UBpirLayoutSettings::bMeasureNodeSizes` turns it off.
+- Added: `GraphLayoutMetrics` counts backward edges and, for edges carrying pin anchors, scores
+  straightness and crossings on pin-to-pin segments with a per-edge row delta and the basis used.
+
 - Added: `editor_start`, `editor_restart`, `editor_run_tests` and `editor_build` refuse before
   spawning when the machine is short of memory (`LAUNCH_MEMORY_LOW`: available physical memory, or
   Windows available commit, below the launch's expected peak plus `$PINWRIGHT_LAUNCH_RESERVE_GB`,

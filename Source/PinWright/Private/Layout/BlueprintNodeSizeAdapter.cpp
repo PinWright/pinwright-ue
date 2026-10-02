@@ -78,6 +78,14 @@ namespace GraphLayout
             return K2Node && K2Node->ShouldDrawCompact();
         }
 
+        // Variable getters draw as a headerless pill: just the pin label, its pin centred
+        // (measured: a one-pin getter is 38 px tall and its label plus ~48 px wide).
+        bool IsDrawnAsVariable(const UEdGraphNode* Node)
+        {
+            const UK2Node* K2Node = Cast<UK2Node>(Node);
+            return K2Node && K2Node->DrawNodeAsVariable();
+        }
+
         struct FSides
         {
             int32 Inputs = 0;
@@ -170,9 +178,9 @@ namespace GraphLayout
             }
         }
         const double RowHeight = Settings.PinRowHeightPx;
-        if (IsCompact(Node))
+        if (IsCompact(Node) || IsDrawnAsVariable(Node))
         {
-            // Compact pure nodes centre each side's pins vertically.
+            // Compact pure nodes and variable getters centre each side's pins vertically.
             const double Height = CompactHeight(MeasureSides(Node), RowHeight);
             return 0.5 * (Height - SideCount * RowHeight) + (Row + 0.5) * RowHeight;
         }
@@ -190,6 +198,12 @@ namespace GraphLayout
         }
 
         const FSides Sides = MeasureSides(Node);
+        if (IsDrawnAsVariable(Node))
+        {
+            return FVector2D(
+                FMath::Max(CompactMinWidth, Sides.WidestInput + Sides.WidestOutput + 2.0 * Settings.HorizontalPaddingPx),
+                CompactHeight(Sides, Settings.PinRowHeightPx));
+        }
         if (IsCompact(Node))
         {
             return FVector2D(

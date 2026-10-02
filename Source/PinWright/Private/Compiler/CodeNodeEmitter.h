@@ -43,7 +43,6 @@ class UK2Node_ComponentBoundEvent;
 class UK2Node_AsyncAction;
 class UK2Node_GetSubsystem;
 class UK2Node_FormatText;
-class UEdGraphNode_Comment;
 
 namespace BpirCompilerMacroUtils
 {
@@ -99,7 +98,6 @@ public:
     UK2Node_InputKey*           CreateInputKeyNode(FName KeyName, bool bReleased);
     UEdGraphNode*               CreateEnhancedInputActionNode(UInputAction* InputAction);
     UK2Node_ComponentBoundEvent* CreateComponentEventNode(FName CompName, FName EventName, UBlueprint* BP);
-    UEdGraphNode_Comment*       CreateCommentBox(const FString& Text, const TArray<UEdGraphNode*>& Nodes);
     // ProvidedArgNames is retained for source compatibility with existing callers; async-action
     // factory selection is explicit via K2Node_AsyncAction_<FactoryFunction>.
     UEdGraphNode*               CreateGenericK2Node(const FString& NodeClassName, UEdGraph* Graph, const TArray<FString>& ProvidedArgNames = TArray<FString>(), const FString& ClassPath = FString());
@@ -157,9 +155,6 @@ public:
 
     // Undo tracking — returns the GUIDs of every node created since construction or last clear
     TArray<FGuid>& GetCreatedNodeGUIDs() { return CreatedNodeGUIDs; }
-
-    // Build comment boxes from a map of label -> node list, using bounding-box padding
-    void FinalizeCommentBoxes(TMap<FString, TArray<UEdGraphNode*>>& CommentMap);
 
 private:
     // Assigns a new GUID, calls PostPlacedNewNode/AllocateDefaultPins, adds to graph, tracks GUID

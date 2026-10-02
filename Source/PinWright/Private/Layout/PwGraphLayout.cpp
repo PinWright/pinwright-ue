@@ -21,12 +21,27 @@ namespace PwGraphLayoutCore
         int32 OtherPin = INDEX_NONE;
     };
 
+    // An occupied rect: a placed node's (Node) or a comment's frame or reservation (Comment).
     struct FRect
     {
         double L = 0.0;
         double T = 0.0;
         double R = 0.0;
         double B = 0.0;
+        int32 Node = INDEX_NONE;
+        int32 Comment = INDEX_NONE;
+    };
+
+    // A rect being fitted: a node, or the reservation of a comment anchored on a node. Top and
+    // Bottom are relative to the candidate offset.
+    struct FShape
+    {
+        double L = 0.0;
+        double R = 0.0;
+        double Top = 0.0;
+        double Bottom = 0.0;
+        int32 Node = INDEX_NONE;
+        int32 Comment = INDEX_NONE;
     };
 
     struct FSpan
@@ -66,7 +81,16 @@ namespace PwGraphLayoutCore
                 }
             }
             AssignX();
-            AssignY();
+            PrepareComments();
+            for (int32 Pass = 1; ; ++Pass)
+            {
+                AssignY();
+                if (Pass == MaxCommentPasses || !GrowReservations())
+                {
+                    break;
+                }
+                ResetPlacement();
+            }
             return Commit();
         }
 
@@ -107,6 +131,18 @@ namespace PwGraphLayoutCore
         TArray<double> PosY;
         TArray<bool> bPlaced;
         TArray<FRect> Occupied;
+
+        // Comments. Live = has a movable member (re-fitted); the others are fixed obstacles.
+        static constexpr int32 MaxCommentPasses = 4;
+        TArray<bool> bLiveComment;
+        TArray<TArray<bool>> bInComment;
+        TArray<TArray<int32>> CommentsOf;
+        TArray<TArray<int32>> ChildComments;
+        TArray<int32> CommentAnchor;
+        TArray<double> FrameL;
+        TArray<double> FrameR;
+        TArray<double> ReserveTop;
+        TArray<double> ReserveBottom;
 
         const FLayoutNode& Node(int32 Index) const { return Graph.Nodes[Index]; }
         double Width(int32 Index) const { return Node(Index).Size.X; }
@@ -172,6 +208,8 @@ namespace PwGraphLayoutCore
 
             for (int32 Index = 0; Index < Num; ++Index)
             {
+                PosX[Index] = Node(Index).Position.X;
+                PosY[Index] = Node(Index).Position.Y;
                 for (const FPinSlot& Pin : Node(Index).Pins)
                 {
                     bHasFlowPin[Index] |= Pin.Kind == EWireKind::Flow;
@@ -682,33 +720,57 @@ namespace PwGraphLayoutCore
             }
         }
 
+        // Marks Index placed; the live comments it is the first placed member of reserve their
+        // frame around it from now on.
         void Occupy(int32 Index)
         {
             bPlaced[Index] = true;
-            Occupied.Add({ PosX[Index], PosY[Index], PosX[Index] + Width(Index), PosY[Index] + Height(Index) });
+            Occupied.Add({ PosX[Index], PosY[Index], PosX[Index] + Width(Index), PosY[Index] + Height(Index), Index, INDEX_NONE });
+            for (int32 Comment : CommentsOf[Index])
+            {
+                if (bLiveComment[Comment] && CommentAnchor[Comment] == INDEX_NONE)
+                {
+                    CommentAnchor[Comment] = Index;
+                    const FSpan Reach = ReservationReach(Comment, Index);
+                    Occupied.Add({ FrameL[Comment], PosY[Index] - Reach.Lo, FrameR[Comment], PosY[Index] + Reach.Hi, INDEX_NONE, Comment });
+                }
+            }
         }
 
-        // Lowest offset >= Want at which the group (X already fixed, Y relative to the offset)
-        // clears every occupied rect by RowGap. Each occupied rect sharing an X range with a group
-        // member blocks one open interval of offsets; one sweep over the intervals sorted by their
-        // low end finds the first free offset. A pushed offset lands on the grid.
+        FShape NodeShape(int32 Index, double Offset) const
+        {
+            return { PosX[Index], PosX[Index] + Width(Index), Offset, Offset + Height(Index), Index, INDEX_NONE };
+        }
+
+        // True when Rect does not constrain Shape: a node inside a comment ignores that comment's
+        // frame, a reservation ignores its own members and comments nested with it.
+        bool Ignores(const FShape& Shape, const FRect& Rect) const
+        {
+            if (Rect.Comment != INDEX_NONE)
+            {
+                return Shape.Comment == INDEX_NONE
+                    ? bInComment[Rect.Comment][Shape.Node]
+                    : IsWithin(Rect.Comment, Shape.Comment) || IsWithin(Shape.Comment, Rect.Comment);
+            }
+            return Shape.Comment != INDEX_NONE && bInComment[Shape.Comment][Rect.Node];
+        }
+
+        // Lowest offset >= Want at which every shape (X already fixed, Y relative to the offset)
+        // clears every occupied rect it does not ignore by RowGap. Each such rect sharing an X range
+        // with a shape blocks one open interval of offsets; one sweep over the intervals sorted by
+        // their low end finds the first free offset. A pushed offset lands on the grid.
         // ponytail: O(group x occupied) per placement, so O(n^2) per graph; index the occupied
         // rects by X if graphs of thousands of nodes need arranging.
-        double FirstFreeOffset(const TArray<int32>& Group, const TArray<double>& Offsets, double Want) const
+        double FirstFreeOffset(const TArray<FShape>& Shapes, double Want) const
         {
             TArray<FSpan> Blocked;
-            for (int32 Member = 0; Member < Group.Num(); ++Member)
+            for (const FShape& Shape : Shapes)
             {
-                const int32 Index = Group[Member];
-                const double Left = PosX[Index];
-                const double Right = Left + Width(Index);
-                const double Top = Offsets[Member];
-                const double Bottom = Top + Height(Index);
                 for (const FRect& Rect : Occupied)
                 {
-                    if (Rect.L < Right && Left < Rect.R)
+                    if (Rect.L < Shape.R && Shape.L < Rect.R && !Ignores(Shape, Rect))
                     {
-                        Blocked.Add({ Rect.T - Spacing.RowGap - Bottom, Rect.B + Spacing.RowGap - Top });
+                        Blocked.Add({ Rect.T - Spacing.RowGap - Shape.Bottom, Rect.B + Spacing.RowGap - Shape.Top });
                     }
                 }
             }
@@ -732,16 +794,19 @@ namespace PwGraphLayoutCore
         // spine offsets if long exec chains show up in profiles.
         double FirstFreeY(int32 Index, double Want) const
         {
-            TArray<int32> Spine = { Index };
-            TArray<double> Offsets = { 0.0 };
-            while (Kids[Spine.Last()].Num() > 0)
+            TArray<FShape> Shapes = { NodeShape(Index, 0.0) };
+            AddReservations(Shapes, Index, 0.0);
+            int32 Last = Index;
+            double Offset = 0.0;
+            while (Kids[Last].Num() > 0)
             {
-                const int32 Child = Kids[Spine.Last()][0];
+                const int32 Child = Kids[Last][0];
                 const FLayoutWire& In = Graph.Wires[ParentWire[Child]];
-                Offsets.Add(Offsets.Last() + PinY(In.FromNode, In.FromPin) - PinY(Child, In.ToPin));
-                Spine.Add(Child);
+                Offset += PinY(In.FromNode, In.FromPin) - PinY(Child, In.ToPin);
+                Shapes.Add(NodeShape(Child, Offset));
+                Last = Child;
             }
-            return FirstFreeOffset(Spine, Offsets, Want);
+            return FirstFreeOffset(Shapes, Want);
         }
 
         void PlaceBlock(int32 Owner)
@@ -751,12 +816,13 @@ namespace PwGraphLayoutCore
             {
                 return;
             }
-            TArray<double> Offsets;
+            TArray<FShape> Shapes;
             for (int32 Member : Members)
             {
-                Offsets.Add(RelY[Member]);
+                Shapes.Add(NodeShape(Member, RelY[Member]));
+                AddReservations(Shapes, Member, RelY[Member]);
             }
-            const double Base = FirstFreeOffset(Members, Offsets, PosY[Owner]);
+            const double Base = FirstFreeOffset(Shapes, PosY[Owner]);
             for (int32 Member : Members)
             {
                 PosY[Member] = Base + RelY[Member];
@@ -766,13 +832,27 @@ namespace PwGraphLayoutCore
 
         void AssignY()
         {
+            TArray<int32> Fixed;
             for (int32 Index = 0; Index < Num; ++Index)
             {
                 if (!Node(Index).bMovable)
                 {
                     PosX[Index] = Node(Index).Position.X;
                     PosY[Index] = Node(Index).Position.Y;
-                    Occupy(Index);
+                    Fixed.Add(Index);
+                }
+            }
+            Fixed.Sort([this](int32 A, int32 B) { return PlacedBefore(A, B); });
+            for (int32 Index : Fixed)
+            {
+                Occupy(Index);
+            }
+            for (int32 Comment = 0; Comment < Graph.Comments.Num(); ++Comment)
+            {
+                if (!bLiveComment[Comment])
+                {
+                    const FLayoutComment& C = Graph.Comments[Comment];
+                    Occupied.Add({ C.Position.X, C.Position.Y, C.Position.X + C.Size.X, C.Position.Y + C.Size.Y, INDEX_NONE, Comment });
                 }
             }
 
@@ -784,7 +864,9 @@ namespace PwGraphLayoutCore
                     const double Want = SnapNear(Node(Root).Position.Y);
                     // The first tree's root stays put unless it would overlap something itself;
                     // later roots also make room for their exec spine below earlier trees.
-                    PosY[Root] = Tree == 0 ? FirstFreeOffset({ Root }, { 0.0 }, Want) : FirstFreeY(Root, Want);
+                    TArray<FShape> Shapes = { NodeShape(Root, 0.0) };
+                    AddReservations(Shapes, Root, 0.0);
+                    PosY[Root] = Tree == 0 ? FirstFreeOffset(Shapes, Want) : FirstFreeY(Root, Want);
                     Occupy(Root);
                 }
                 PlaceBlock(Root);
@@ -806,6 +888,174 @@ namespace PwGraphLayoutCore
             }
         }
 
+        // True when Inner is Outer or nested (at any depth) inside it.
+        bool IsWithin(int32 Inner, int32 Outer) const
+        {
+            for (int32 Comment = Inner; Comment != INDEX_NONE; Comment = Graph.Comments[Comment].Parent)
+            {
+                if (Comment == Outer)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // The comment's frame around its members' and nested comments' current rects (Y is only
+        // meaningful once they are placed), inner comments fitted first. A fixed comment keeps
+        // its own rect.
+        FRect FitFrame(int32 Comment) const
+        {
+            const FLayoutComment& C = Graph.Comments[Comment];
+            if (!bLiveComment[Comment])
+            {
+                return { C.Position.X, C.Position.Y, C.Position.X + C.Size.X, C.Position.Y + C.Size.Y };
+            }
+            FRect Box = { TNumericLimits<double>::Max(), TNumericLimits<double>::Max(),
+                TNumericLimits<double>::Lowest(), TNumericLimits<double>::Lowest() };
+            auto Extend = [&Box](const FRect& Rect)
+            {
+                Box.L = FMath::Min(Box.L, Rect.L);
+                Box.T = FMath::Min(Box.T, Rect.T);
+                Box.R = FMath::Max(Box.R, Rect.R);
+                Box.B = FMath::Max(Box.B, Rect.B);
+            };
+            for (int32 Member : C.Members)
+            {
+                Extend({ PosX[Member], PosY[Member], PosX[Member] + Width(Member), PosY[Member] + Height(Member) });
+            }
+            for (int32 Child : ChildComments[Comment])
+            {
+                Extend(FitFrame(Child));
+            }
+            const double Pad = Spacing.CommentPad;
+            return { Box.L - Pad, Box.T - Pad - C.TitleHeight, Box.R + Pad, Box.B + Pad };
+        }
+
+        // How far a comment's frame reaches above (Lo) and below (Hi) the top of its anchor
+        // member: at least the nested title bars and pads around the anchor itself, at least
+        // what the previous pass measured.
+        FSpan ReservationReach(int32 Comment, int32 Index) const
+        {
+            double Above = 0.0;
+            double Below = Height(Index);
+            for (int32 Enclosing : CommentsOf[Index])
+            {
+                if (IsWithin(Enclosing, Comment))
+                {
+                    Above += Graph.Comments[Enclosing].TitleHeight + Spacing.CommentPad;
+                    Below += Spacing.CommentPad;
+                }
+            }
+            return { FMath::Max(Above, ReserveTop[Comment]), FMath::Max(Below, ReserveBottom[Comment]) };
+        }
+
+        // The reservations Index would anchor if it were placed at Offset now.
+        void AddReservations(TArray<FShape>& Shapes, int32 Index, double Offset) const
+        {
+            for (int32 Comment : CommentsOf[Index])
+            {
+                const bool bListed = Shapes.ContainsByPredicate([Comment](const FShape& S) { return S.Comment == Comment; });
+                if (bLiveComment[Comment] && CommentAnchor[Comment] == INDEX_NONE && !bListed)
+                {
+                    const FSpan Reach = ReservationReach(Comment, Index);
+                    Shapes.Add({ FrameL[Comment], FrameR[Comment], Offset - Reach.Lo, Offset + Reach.Hi, INDEX_NONE, Comment });
+                }
+            }
+        }
+
+        // Membership tables and the frames' X ranges (X is final before any Y is assigned).
+        void PrepareComments()
+        {
+            const int32 CommentNum = Graph.Comments.Num();
+            bLiveComment.Init(false, CommentNum);
+            bInComment.SetNum(CommentNum);
+            CommentsOf.SetNum(Num);
+            ChildComments.SetNum(CommentNum);
+            CommentAnchor.Init(INDEX_NONE, CommentNum);
+            FrameL.Init(0.0, CommentNum);
+            FrameR.Init(0.0, CommentNum);
+            ReserveTop.Init(0.0, CommentNum);
+            ReserveBottom.Init(0.0, CommentNum);
+            for (int32 Comment = 0; Comment < CommentNum; ++Comment)
+            {
+                FLayoutComment& C = Graph.Comments[Comment];
+                if (!Graph.Comments.IsValidIndex(C.Parent) || C.Parent == Comment)
+                {
+                    C.Parent = INDEX_NONE;
+                }
+                else
+                {
+                    ChildComments[C.Parent].Add(Comment);
+                }
+                bInComment[Comment].Init(false, Num);
+                TArray<int32> Members;
+                for (int32 Member : C.Members)
+                {
+                    if (Graph.Nodes.IsValidIndex(Member) && !bInComment[Comment][Member])
+                    {
+                        bInComment[Comment][Member] = true;
+                        Members.Add(Member);
+                        CommentsOf[Member].Add(Comment);
+                        bLiveComment[Comment] |= Node(Member).bMovable;
+                    }
+                }
+                C.Members = Members;
+            }
+            // A comment whose nested comment is live is live too.
+            for (int32 Comment = 0; Comment < CommentNum; ++Comment)
+            {
+                if (bLiveComment[Comment])
+                {
+                    for (int32 Outer = Graph.Comments[Comment].Parent; Outer != INDEX_NONE; Outer = Graph.Comments[Outer].Parent)
+                    {
+                        bLiveComment[Outer] = true;
+                    }
+                }
+            }
+            for (int32 Comment = 0; Comment < CommentNum; ++Comment)
+            {
+                if (bLiveComment[Comment])
+                {
+                    const FRect Frame = FitFrame(Comment);
+                    FrameL[Comment] = Frame.L;
+                    FrameR[Comment] = Frame.R;
+                }
+            }
+        }
+
+        // Widens every reservation its fitted frame outgrew. True when one grew.
+        bool GrowReservations()
+        {
+            bool bGrew = false;
+            for (int32 Comment = 0; Comment < Graph.Comments.Num(); ++Comment)
+            {
+                const int32 At = CommentAnchor[Comment];
+                if (!bLiveComment[Comment] || At == INDEX_NONE)
+                {
+                    continue;
+                }
+                const FRect Frame = FitFrame(Comment);
+                const FSpan Reach = ReservationReach(Comment, At);
+                const double Above = PosY[At] - Frame.T;
+                const double Below = Frame.B - PosY[At];
+                if (Above > Reach.Lo + 0.01 || Below > Reach.Hi + 0.01)
+                {
+                    ReserveTop[Comment] = FMath::Max(Reach.Lo, Above);
+                    ReserveBottom[Comment] = FMath::Max(Reach.Hi, Below);
+                    bGrew = true;
+                }
+            }
+            return bGrew;
+        }
+
+        void ResetPlacement()
+        {
+            Occupied.Reset();
+            bPlaced.Init(false, Num);
+            CommentAnchor.Init(INDEX_NONE, Graph.Comments.Num());
+        }
+
         FArrangeReport Commit()
         {
             FArrangeReport Report;
@@ -825,9 +1075,24 @@ namespace PwGraphLayoutCore
                     Target.Position = Arranged;
                 }
             }
+            for (int32 Comment = 0; Comment < Graph.Comments.Num(); ++Comment)
+            {
+                if (!bLiveComment[Comment])
+                {
+                    continue;
+                }
+                FLayoutComment& Target = Graph.Comments[Comment];
+                const FRect Frame = FitFrame(Comment);
+                const FVector2D Position(Frame.L, Frame.T);
+                const FVector2D Size(Frame.R - Frame.L, Frame.B - Frame.T);
+                Target.bRefit = !Position.Equals(Target.Position, 0.01) || !Size.Equals(Target.Size, 0.01);
+                Target.Position = Position;
+                Target.Size = Size;
+                Report.CommentsRefit += Target.bRefit ? 1 : 0;
+            }
             UE_LOG(LogPwGraphLayout, Verbose,
-                TEXT("Arranged %d nodes in %d trees: moved=%d, sizes measured=%d estimated=%d"),
-                Num, Report.Trees, Report.Moved, Report.MeasuredSizes, Report.EstimatedSizes);
+                TEXT("Arranged %d nodes in %d trees: moved=%d, comments refit=%d, sizes measured=%d estimated=%d"),
+                Num, Report.Trees, Report.Moved, Report.CommentsRefit, Report.MeasuredSizes, Report.EstimatedSizes);
             return Report;
         }
     };
@@ -838,5 +1103,50 @@ namespace PwGraphLayout
     FArrangeReport Arrange(FLayoutGraph& Graph, const FSpacing& Spacing)
     {
         return PwGraphLayoutCore::FArranger(Graph, Spacing).Run();
+    }
+
+    void RecordCommentMembers(FLayoutGraph& Graph)
+    {
+        auto Contains = [](const FLayoutComment& Outer, const FVector2D& Position, const FVector2D& Size)
+        {
+            return Position.X >= Outer.Position.X && Position.Y >= Outer.Position.Y
+                && Position.X + Size.X <= Outer.Position.X + Outer.Size.X
+                && Position.Y + Size.Y <= Outer.Position.Y + Outer.Size.Y;
+        };
+        auto Area = [](const FLayoutComment& C) { return C.Size.X * C.Size.Y; };
+        // Outer encloses Inner: contains its rect and is larger, or equal and first by Key.
+        auto Encloses = [&](const FLayoutComment& Outer, const FLayoutComment& Inner)
+        {
+            return Contains(Outer, Inner.Position, Inner.Size)
+                && (Area(Outer) > Area(Inner) || (Area(Outer) == Area(Inner) && Outer.Key < Inner.Key));
+        };
+
+        for (int32 Comment = 0; Comment < Graph.Comments.Num(); ++Comment)
+        {
+            FLayoutComment& C = Graph.Comments[Comment];
+            C.Members.Reset();
+            C.Parent = INDEX_NONE;
+            for (int32 Index = 0; Index < Graph.Nodes.Num(); ++Index)
+            {
+                const FLayoutNode& Node = Graph.Nodes[Index];
+                const bool bUnplaced = Node.bMovable && Node.Position.IsZero();
+                if (!bUnplaced && Contains(C, Node.Position, Node.Size))
+                {
+                    C.Members.Add(Index);
+                }
+            }
+            for (int32 Other = 0; Other < Graph.Comments.Num(); ++Other)
+            {
+                const FLayoutComment& O = Graph.Comments[Other];
+                if (Other == Comment || !Encloses(O, C))
+                {
+                    continue;
+                }
+                if (C.Parent == INDEX_NONE || Encloses(Graph.Comments[C.Parent], O))
+                {
+                    C.Parent = Other;
+                }
+            }
+        }
     }
 }

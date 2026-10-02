@@ -184,6 +184,14 @@ namespace PwGraphLayoutTest
         {
             Out.Roots.Add(NewIndexOf[Root]);
         }
+        for (const FLayoutComment& Comment : G.Comments)
+        {
+            FLayoutComment& Copy = Out.Comments.Add_GetRef(Comment);
+            for (int32& Member : Copy.Members)
+            {
+                Member = NewIndexOf[Member];
+            }
+        }
         return Out;
     }
 

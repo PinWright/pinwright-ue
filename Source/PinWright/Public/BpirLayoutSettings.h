@@ -20,6 +20,10 @@ public:
     UPROPERTY(EditAnywhere, config, Category = "BPIR Layout")
     bool bEnableBpirLayoutPass;
 
+    /** Measure node sizes and pin rows from the nodes' editor widgets (offscreen Slate prepass) when Slate is running; when false, or without Slate, sizes are estimated. */
+    UPROPERTY(EditAnywhere, config, Category = "BPIR Layout|Size Estimation")
+    bool bMeasureNodeSizes;
+
     /** Estimated height (in pixels) of a single pin row; used when sizing node bounds. */
     UPROPERTY(EditAnywhere, config, Category = "BPIR Layout|Size Estimation", meta = (ClampMin = "1", UIMin = "1"))
     int32 PinRowHeightPx;

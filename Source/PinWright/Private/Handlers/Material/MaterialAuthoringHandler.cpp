@@ -143,6 +143,7 @@
 #include "Handlers/Material/MaterialLightFunctionAtlas.h"
 #include "MGIR/MGIRExpressionUtils.h"
 #include "Layout/PwGraphLayoutMaterial.h"
+#include "Materials/MaterialExpressionComment.h"
 // FMaterialUpdateContext — compile_material scopes the master's PostEditChange inside one
 // so dependent material instances recache. MaterialCompileErrorCollector.h already pulls
 // MaterialShared.h in, but the -StrictIncludes -DisableUnity packaging build does not
@@ -4448,7 +4449,7 @@ REGISTER_RPC_HANDLER("material.authoring.set_material_layer_stack", "material.au
 // returns METHOD_NOT_FOUND for material.authoring.auto_layout and the
 // regression test's InvokeHandler call returns false.
 REGISTER_RPC_HANDLER("material.authoring.auto_layout", "material.authoring",
-    "Re-flow expression positions on a UMaterial or UMaterialFunction with the layered graph layout (grows leftwards from the material output). Only repositions expressions whose (x,y) are still (0,0); already-positioned nodes are untouched. Reports movedCount / moved[{nodeId, from, to}] / unchangedCount from positions read back after the write; the edits are one undoable transaction (none when nothing changed). Layout-only — does not recompile shaders.",
+    "Re-flow expression positions on a UMaterial or UMaterialFunction with the layered graph layout (grows leftwards from the material output). Only repositions expressions whose (x,y) are still (0,0); already-positioned nodes are untouched. Reports movedCount / moved[{nodeId, from, to}] / unchangedCount from positions read back after the write, commentsRefit[{nodeId, from, to}] for comment boxes re-fitted around moved members (a comment around positioned expressions is an obstacle and keeps its rect), and sizeSource {measured, estimated} node-size counts; the edits are one undoable transaction (none when nothing changed). Layout-only — does not recompile shaders.",
     RPC_PARAMS(
         MaterialHandlerUtils::MaterialAssetPathParamReq(TEXT("assetPath"), TEXT("path"), TEXT("Material or material-function asset path"))
     ))
@@ -4474,15 +4475,32 @@ REGISTER_RPC_HANDLER("material.authoring.auto_layout", "material.authoring",
     {
         Before.Add(FIntPoint(Expression->MaterialExpressionEditorX, Expression->MaterialExpressionEditorY));
     }
+    TArray<UMaterialExpressionComment*> Comments;
+    for (const TObjectPtr<UMaterialExpressionComment>& Comment : Material ? Material->GetEditorComments() : Function->GetEditorComments())
+    {
+        if (Comment)
+        {
+            Comments.Add(Comment.Get());
+        }
+    }
+    auto CommentRect = [](const UMaterialExpressionComment* Comment)
+    {
+        return FIntRect(Comment->MaterialExpressionEditorX, Comment->MaterialExpressionEditorY,
+            Comment->MaterialExpressionEditorX + Comment->SizeX, Comment->MaterialExpressionEditorY + Comment->SizeY);
+    };
+    TArray<FIntRect> CommentsBefore;
+    for (const UMaterialExpressionComment* Comment : Comments)
+    {
+        CommentsBefore.Add(CommentRect(Comment));
+    }
 
     // The layout Modify()s each expression it moves, so this one transaction undoes the whole re-flow.
     const FString TransactionName = TEXT("PinWright: material.authoring.auto_layout");
     FScopedTransaction Transaction(FText::FromString(TransactionName));
     const double StartSeconds = FPlatformTime::Seconds();
-    if (Material)
-        PwGraphLayout::ArrangeMaterial(Material);
-    else
-        PwGraphLayout::ArrangeMaterialFunction(Function);
+    const PwGraphLayout::FArrangeReport Report = Material
+        ? PwGraphLayout::ArrangeMaterial(Material)
+        : PwGraphLayout::ArrangeMaterialFunction(Function);
     const double DurationMs = (FPlatformTime::Seconds() - StartSeconds) * 1000.0;
 
     // Report from the positions read back after the write, never from the layout's own count.
@@ -4508,9 +4526,32 @@ REGISTER_RPC_HANDLER("material.authoring.auto_layout", "material.authoring",
         Entry->SetObjectField(TEXT("to"), Point(After));
         Moved.Add(MakeShared<FJsonValueObject>(Entry));
     }
+    auto Rect = [](const FIntRect& R)
+    {
+        TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
+        Obj->SetNumberField(TEXT("x"), R.Min.X);
+        Obj->SetNumberField(TEXT("y"), R.Min.Y);
+        Obj->SetNumberField(TEXT("w"), R.Width());
+        Obj->SetNumberField(TEXT("h"), R.Height());
+        return Obj;
+    };
+    TArray<TSharedPtr<FJsonValue>> CommentsRefit;
+    for (int32 Index = 0; Index < Comments.Num(); ++Index)
+    {
+        const FIntRect After = CommentRect(Comments[Index]);
+        if (After == CommentsBefore[Index])
+        {
+            continue;
+        }
+        TSharedPtr<FJsonObject> Entry = MakeShared<FJsonObject>();
+        Entry->SetStringField(TEXT("nodeId"), Comments[Index]->MaterialExpressionGuid.ToString());
+        Entry->SetObjectField(TEXT("from"), Rect(CommentsBefore[Index]));
+        Entry->SetObjectField(TEXT("to"), Rect(After));
+        CommentsRefit.Add(MakeShared<FJsonValueObject>(Entry));
+    }
 
     TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
-    if (Moved.Num() == 0)
+    if (Moved.Num() == 0 && CommentsRefit.Num() == 0)
     {
         Transaction.Cancel();
     }
@@ -4527,6 +4568,11 @@ REGISTER_RPC_HANDLER("material.authoring.auto_layout", "material.authoring",
     Result->SetNumberField(TEXT("movedCount"), Moved.Num());
     Result->SetNumberField(TEXT("unchangedCount"), Expressions.Num() - Moved.Num());
     Result->SetArrayField(TEXT("moved"), Moved);
+    Result->SetArrayField(TEXT("commentsRefit"), CommentsRefit);
+    TSharedPtr<FJsonObject> SizeSource = MakeShared<FJsonObject>();
+    SizeSource->SetNumberField(TEXT("measured"), Report.MeasuredSizes);
+    SizeSource->SetNumberField(TEXT("estimated"), Report.EstimatedSizes);
+    Result->SetObjectField(TEXT("sizeSource"), SizeSource);
     Result->SetNumberField(TEXT("durationMs"), DurationMs);
     Ctx.SendSuccess(Result);
     return true;

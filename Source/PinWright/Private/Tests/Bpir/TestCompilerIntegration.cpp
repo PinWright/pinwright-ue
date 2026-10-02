@@ -6,7 +6,7 @@
 #include "Compiler/BpirCompiler.h"
 #include "Compiler/CompilerTypes.h"
 #include "BpirLayoutSettings.h"
-#include "Layout/BlueprintNodeSizeAdapter.h"
+#include "Layout/PwGraphLayoutEdGraph.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "K2Node_Event.h"
 #include "K2Node_IfThenElse.h"
@@ -3770,10 +3770,21 @@ bool FCompilerIntegrationInsertAnchorFallbackTest::RunTest(const FString& Parame
     // "Share a row" means the event's exec output and the call's exec input are level on screen.
     // The custom event's "Custom Event" subtitle deepens its header by one title line, so equal
     // NodePosY would put the call's exec pin above the event's (seen in the layout vision check).
-    const GraphLayout::FBlueprintNodeSizeAdapter Sizer(*GetDefault<UBpirLayoutSettings>());
+    // Pin rows are read from the layout's own node geometry (measured from the node widgets when
+    // Slate is running, else estimated), i.e. the screen the layout aligned against.
+    const PwGraphLayout::FEdGraphModel Model =
+        PwGraphLayout::BuildEdGraphModel(Graph, TSet<UEdGraphNode*>(), *GetDefault<UBpirLayoutSettings>());
+    const int32 EventIndex = Model.Nodes.IndexOfByKey(Event);
+    const int32 CallIndex = Model.Nodes.IndexOfByKey(Call);
+    const PwGraphLayout::FLayoutWire* Wire = Model.Layout.Wires.FindByPredicate(
+        [EventIndex, CallIndex](const PwGraphLayout::FLayoutWire& W) { return W.FromNode == EventIndex && W.ToNode == CallIndex; });
+    if (!TestNotNull(TEXT("the layout model has the event -> call exec wire"), Wire))
+    {
+        return false;
+    }
     TestEqual(TEXT("Event and Call share a row"),
-        Call->NodePosY + Sizer.PinOffsetY(Call->FindPin(UEdGraphSchema_K2::PN_Execute, EGPD_Input)),
-        Event->NodePosY + Sizer.PinOffsetY(Event->FindPin(UEdGraphSchema_K2::PN_Then, EGPD_Output)));
+        Call->NodePosY + Model.Layout.Nodes[CallIndex].Pins[Wire->ToPin].OffsetY,
+        Event->NodePosY + Model.Layout.Nodes[EventIndex].Pins[Wire->FromPin].OffsetY);
     return true;
 }
 

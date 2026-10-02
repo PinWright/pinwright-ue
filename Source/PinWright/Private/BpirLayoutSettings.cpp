@@ -4,6 +4,7 @@
 
 UBpirLayoutSettings::UBpirLayoutSettings()
     : bEnableBpirLayoutPass(true)
+    , bMeasureNodeSizes(true)
     , PinRowHeightPx(32)
     , HeaderHeightPx(24)
     , HorizontalPaddingPx(24)

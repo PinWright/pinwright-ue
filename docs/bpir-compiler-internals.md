@@ -799,8 +799,13 @@ The pass calls `PwGraphLayout::ArrangeEdGraph` (`Private/Layout/PwGraphLayoutEdG
 3. **X.** Flow nodes take longest-path X with real widths: the maximum over flow predecessors of (right edge + `ColumnGapPx`), plus room for their own block. Re-converging paths land right of the right-most predecessor.
 4. **Y.** Each node is first put where its incoming wire is horizontal (pin aligned), then moved down to the first offset where it and its exec spine (the chain of first flow children, each pin-aligned) are free of everything already placed and every fixed node, so a short node never strands its taller first child against a neighbour. Every occupied rect sharing the node's X range blocks one interval of offsets; one sweep over the intervals sorted by their low end finds the free offset, so nothing overlaps and no push-down loop runs. A node's whole subtree is placed before its next sibling, so later siblings settle below. Blocks move as a unit. Roots keep X; the first root moves down only if it overlaps a fixed node itself, later roots also make room for their spine below earlier trees.
 5. **Grid.** X is snapped to `GridSnapPx`; Y is snapped wherever a node is not pin-aligned to its parent (an aligned node keeps the exact row).
+6. **Comments.** The adapters pass comment boxes in as model comments and record each one's members from the current rects (`RecordCommentMembers`: nodes whose rect lies inside; a movable node at the origin is unplaced and joins none; a comment nests in the smallest comment containing it). A comment with no movable member is a fixed obstacle. A comment with a movable member is *live*: when its first member is placed it reserves its frame (the members' X range, known before Y, and the height the frame needs relative to that member), and non-members stay out of the reservation while members ignore it. After Y the frame is fitted around the members and nested frames (`CommentPad` around them, the title bar above), inner comments first; a frame that outgrew its reservation widens it and Y runs again (at most four passes). Re-fitted rects are written through `Modify()`; `FArrangeReport::CommentsRefit` counts the rects actually written.
 
-Every tie breaks on pin index, then node key (GUID), so the result never depends on `Graph->Nodes` order, and a second pass moves nothing. The core reports how many sizes were measured and how many estimated (all are estimated today).
+Every tie breaks on pin index, then node key (GUID), so the result never depends on `Graph->Nodes` order, and a second pass moves nothing. The core reports how many sizes were measured and how many estimated.
+
+### Measured sizes
+
+When Slate is running (any editor, including `-NullRHI`) and `bMeasureNodeSizes` is on, the K2 / anim / state-machine adapter measures every node instead of estimating it (`GraphLayout::MeasureEdGraphNode`, `Private/Layout/EdGraphNodeMeasure.*`): the node's widget is built offscreen through `FNodeFactory::CreateNodeWidget`, given one `SlatePrepass(1)`, and its desired size is the node size, the same widget and size a graph panel uses for the node's bounds (`SGraphPanel` prepasses new node widgets the same way; node widgets take no outer layout into account). Pin centres come from arranging the widget tree once at scale 1 and finding each `SGraphPin`, rounded to whole pixels so pin-aligned rows stay exact on integer node positions. No window, open editor or tick is needed. Commandlets have no Slate renderer and fall back to the estimator below; so does any node whose widget has no size, and any pin the widget does not draw. Each model node carries `bMeasuredSize`, and the report's `MeasuredSizes` / `EstimatedSizes` never count an estimate as measured. Material expressions and RigVM nodes are always estimated (a material has no `UEdGraph` unless its editor is open).
 
 ### Size estimation
 
@@ -810,8 +815,10 @@ Every tie breaks on pin index, then node key (GUID), so the result never depends
 - **Header**: `HeaderHeightPx` plus 16 px per extra title line, so a subtitle ("Custom Event", "Target is Actor", "Group 'DefaultGroup'") deepens it the way the editor draws it.
 - **Height**: header + `(rows + 0.5) × PinRowHeightPx`, rows = shown pins on the busier side (hidden and folded advanced pins do not count, nor an event's delegate output, which is drawn in the title bar), plus 20 px for an advanced-pin expander and 20 px for a "Development Only" bar; at least 64. Pin `r` on a side sits at `header + (r + 0.5) × PinRowHeightPx`.
 - **Compact nodes** (math operators, conversions): no header, `max(rows, 1) × PinRowHeightPx + 8` tall, each side's pins centred vertically, 110 px plus the widest value box wide.
+- **Variable getters** (`DrawNodeAsVariable`): no header, as tall as a compact node, pins centred, the widest input plus widest output label plus `HorizontalPaddingPx` per side wide (measured on UE 5.8: a one-pin int getter is 165 x 38).
 - The defaults (24 px header, 32 px rows, 16 px subtitle line) were measured on UE 5.8 editor screenshots in the layout vision check; the material adapter uses 24 / 28 px plus a 112 px preview for open previews, the RigVM adapter 16 / 24 px rows (expanded sub-pins included) and at least 260 px width for its value editors.
-- **Fallback**: without a Slate renderer (`-NullRHI`), 8 px per title character and 7 px per label character.
+- **Fallback**: without a Slate renderer (commandlets), 8 px per title character and 7 px per label character.
+- The estimator is what the layout uses when measurement is off or impossible; `layout.blueprint.MeasuredSizesMatchGraphPanel` holds it to within 15 % of the measured size on a Print String, a Branch, a variable getter and an integer Add.
 
 ### Settings
 
@@ -820,6 +827,7 @@ Every tie breaks on pin index, then node key (GUID), so the result never depends
 | Setting | Default | Purpose |
 |---------|---------|---------|
 | `bEnableBpirLayoutPass` | true | Kill switch — false disables the pass entirely |
+| `bMeasureNodeSizes` | true | Measure node sizes and pin rows from the node widgets when Slate is running; false always estimates |
 | `PinRowHeightPx` | 32 | Height per pin row |
 | `HeaderHeightPx` | 24 | Node header height (one title line) |
 | `HorizontalPaddingPx` | 24 | Interior horizontal padding |
@@ -837,14 +845,17 @@ Every tie breaks on pin index, then node key (GUID), so the result never depends
 | `Private/Layout/PwGraphLayoutMaterial.h/.cpp` | Material and material-function adapter |
 | `Private/Layout/PwGraphLayoutRigVM.h/.cpp` | RigVM adapter |
 | `Private/Layout/BlueprintNodeSizeAdapter.h/.cpp` | `UEdGraphNode` size estimator |
+| `Private/Layout/EdGraphNodeMeasure.h/.cpp` | `UEdGraphNode` measured size and pin rows (offscreen widget prepass) |
+| `Private/Layout/GraphLayoutMetrics.h/.cpp` | Layout-quality metrics: overlap, spacing, straightness, crossings, grid, backward edges; pin-to-pin geometry when edges carry pin anchors |
 | `Public/BpirLayoutSettings.h` | UDeveloperSettings subclass |
 | `Private/Compiler/BpirCompiler.cpp` | `RunLayoutPass()` static helper + 3 call sites |
 
 ### Limitations
 
 - No reroute (knot) insertion; long wires are accepted as-is.
-- No comment-box re-fit (comments still use `FinalizeCommentBoxes` bounding-box math).
-- Sizes are estimated; measured widget sizes are not wired in yet.
+- BPIR never creates comment boxes (the old unused `FinalizeCommentBoxes` path was deleted); existing comments are kept around their members or avoided.
+- A non-member placed between two members of a live comment before the second member is known can still end up inside the fitted frame if four passes do not settle it; the comment tests assert none does on their fixtures.
+- Material and RigVM sizes are estimated.
 - A data node shared by consumers in different branches sits with the first by flow depth, so a wire to a shallower consumer in another branch can run backwards.
 - Placement is O(n²) in the nodes of a graph.
 - Only operates on nodes in `CreatedNodeGUIDs` — user-authored nodes are never repositioned.

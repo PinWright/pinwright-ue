@@ -24,6 +24,12 @@
 //      sorted sweep over the blocked intervals, so nothing can overlap and no push-down loop runs.
 //      Trees are placed in root order; the first root moves only if it overlaps something itself.
 //   5. Grid. X is snapped; Y is snapped wherever the node is not pin-aligned to its parent.
+//   6. Comments. A comment with no movable member is a fixed obstacle. A comment with a movable
+//      member reserves its frame (the members' X range, as tall as the frame needs relative to
+//      its first placed member) as soon as that member is placed; non-members stay out of the
+//      reservation, and the frame is re-fitted around its members afterwards, inner comments
+//      first. When a fitted frame outgrows its reservation, Y is assigned again with the larger
+//      reservation (at most four passes).
 //
 // Every tie breaks on pin index, then node Key, so the result never depends on input node order.
 
@@ -80,10 +86,28 @@ namespace PwGraphLayout
         int32 ToPin = INDEX_NONE;
     };
 
+    // A comment box drawn behind the nodes it encloses.
+    struct PINWRIGHT_API FLayoutComment
+    {
+        FString Key;
+        // In: the current rect. Out: the re-fitted rect, for a comment with a movable member.
+        FVector2D Position = FVector2D::ZeroVector;
+        FVector2D Size = FVector2D::ZeroVector;
+        // Depth of the title bar above the members.
+        double TitleHeight = 40.0;
+        // Indices into FLayoutGraph::Nodes of every enclosed node, nested comments' members
+        // included, and the smallest enclosing comment. Filled by RecordCommentMembers.
+        TArray<int32> Members;
+        int32 Parent = INDEX_NONE;
+        // Out: the rect changed.
+        bool bRefit = false;
+    };
+
     struct PINWRIGHT_API FLayoutGraph
     {
         TArray<FLayoutNode> Nodes;
         TArray<FLayoutWire> Wires;
+        TArray<FLayoutComment> Comments;
         // Explicit roots in priority order (auto roots follow). A movable root keeps its X and its
         // Y, snapped to the grid. The first root moves down only if it overlaps a fixed node; later
         // roots move down until they and their exec spine clear fixed nodes and earlier trees.
@@ -99,6 +123,8 @@ namespace PwGraphLayout
         // Between data columns, and between a data column and its consumer.
         double DataColumnGap = 48.0;
         double Grid = 16.0;
+        // Between a comment's border and its members (and the border of a nested comment).
+        double CommentPad = 16.0;
     };
 
     struct PINWRIGHT_API FArrangeReport
@@ -107,7 +133,14 @@ namespace PwGraphLayout
         int32 Trees = 0;
         int32 MeasuredSizes = 0;
         int32 EstimatedSizes = 0;
+        int32 CommentsRefit = 0;
     };
+
+    // Fills every comment's Members and Parent from the current rects. A node is a member when
+    // its rect lies inside the comment's rect; a movable node at the origin is unplaced and joins
+    // no comment. A comment nests in the smallest other comment containing its rect (equal rects
+    // nest by Key).
+    PINWRIGHT_API void RecordCommentMembers(FLayoutGraph& Graph);
 
     // Arranges every movable node in place (Graph.Nodes[i].Position). Deterministic and
     // idempotent: a second call with the result moves nothing.

@@ -36,7 +36,6 @@
 #include "K2Node_ComponentBoundEvent.h"
 #include "K2Node_GetSubsystem.h"
 #include "K2Node_FormatText.h"
-#include "EdGraphNode_Comment.h"
 #include "K2Node_AsyncAction.h"
 #include "Kismet/BlueprintAsyncActionBase.h"
 #include "K2Node_ConstructObjectFromClass.h"
@@ -1087,57 +1086,6 @@ UK2Node_ComponentBoundEvent* FCodeNodeEmitter::CreateComponentEventNode(
     CurrentNodeX = 300;
     CurrentPureNodeYOffset = 80;
     return Node;
-}
-
-UEdGraphNode_Comment* FCodeNodeEmitter::CreateCommentBox(
-    const FString& Text, const TArray<UEdGraphNode*>& Nodes)
-{
-    if (!Graph || Nodes.IsEmpty())
-    {
-        return nullptr;
-    }
-
-    constexpr int32 Padding = 30;
-
-    int32 MinX = INT32_MAX, MinY = INT32_MAX;
-    int32 MaxX = INT32_MIN, MaxY = INT32_MIN;
-
-    for (const UEdGraphNode* Node : Nodes)
-    {
-        if (!Node) { continue; }
-        MinX = FMath::Min(MinX, Node->NodePosX);
-        MinY = FMath::Min(MinY, Node->NodePosY);
-        // Approximate node width/height since UEdGraphNode does not expose them at edit time
-        MaxX = FMath::Max(MaxX, Node->NodePosX + 200);
-        MaxY = FMath::Max(MaxY, Node->NodePosY + 100);
-    }
-
-    UEdGraphNode_Comment* Comment = NewObject<UEdGraphNode_Comment>(Graph);
-    Comment->CreateNewGuid();
-    Comment->PostPlacedNewNode();
-    Comment->AllocateDefaultPins();
-    Graph->AddNode(Comment, true, false);
-    CreatedNodeGUIDs.Add(Comment->NodeGuid);
-    NodeCount++;
-
-    Comment->NodePosX = MinX - Padding;
-    Comment->NodePosY = MinY - Padding;
-    Comment->NodeWidth  = (MaxX - MinX) + Padding * 2;
-    Comment->NodeHeight = (MaxY - MinY) + Padding * 2;
-    Comment->NodeComment = Text;
-
-    return Comment;
-}
-
-void FCodeNodeEmitter::FinalizeCommentBoxes(TMap<FString, TArray<UEdGraphNode*>>& CommentMap)
-{
-    for (auto& Pair : CommentMap)
-    {
-        if (!Pair.Value.IsEmpty())
-        {
-            CreateCommentBox(Pair.Key, Pair.Value);
-        }
-    }
 }
 
 UEdGraphNode* FCodeNodeEmitter::CreateGenericK2Node(const FString& NodeClassName, UEdGraph* InGraph, const TArray<FString>& /*ProvidedArgNames*/, const FString& ClassPath)

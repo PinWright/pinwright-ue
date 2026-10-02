@@ -65,9 +65,11 @@ namespace GraphLayout
     FGraphLayoutMetricsResult ComputeGraphLayoutMetrics(
         const TArray<FNodeRect>& Nodes,
         const TArray<FGraphEdge>& Edges,
-        double GridSizePx)
+        double GridSizePx,
+        EFlowDirection Flow)
     {
         FGraphLayoutMetricsResult Result;
+        Result.PinRowDeltaPx.Init(-1.0, Edges.Num());
 
         const int32 N = Nodes.Num();
         // A graph with 0 or 1 node is trivially well-laid-out; nothing to score.
@@ -147,30 +149,57 @@ namespace GraphLayout
             }
         }
 
-        // --- Build a center lookup for edge-based metrics (reusing the centers computed above). ---
-        TMap<FString, FVector2D> CenterById;
-        CenterById.Reserve(N);
+        // --- Node lookup for edge-based metrics. ---
+        TMap<FString, int32> IndexById;
+        IndexById.Reserve(N);
         for (int32 k = 0; k < N; ++k)
         {
-            CenterById.Add(Nodes[k].NodeId, Centers[k]);
+            IndexById.Add(Nodes[k].NodeId, k);
         }
 
-        // Resolved edge segments (both endpoints known and distinct).
+        // Resolved edge segments (both endpoints known and distinct): pin to pin when anchored,
+        // centre to centre otherwise. Backward edges and row deltas come out of the same pass.
+        const bool bLeftToRight = Flow == EFlowDirection::LeftToRight;
         struct FSeg { FVector2D P0; FVector2D P1; };
         TArray<FSeg> Segments;
         Segments.Reserve(Edges.Num());
-        for (const FGraphEdge& Edge : Edges)
+        int32 Resolved = 0;
+        int32 Anchored = 0;
+        for (int32 e = 0; e < Edges.Num(); ++e)
         {
-            const FVector2D* A = CenterById.Find(Edge.From);
-            const FVector2D* B = CenterById.Find(Edge.To);
-            if (A && B && !A->Equals(*B))
+            const FGraphEdge& Edge = Edges[e];
+            const int32* A = IndexById.Find(Edge.From);
+            const int32* B = IndexById.Find(Edge.To);
+            if (!A || !B)
             {
-                Segments.Add({ *A, *B });
+                continue;
+            }
+            const FNodeRect& Source = Nodes[*A];
+            const FNodeRect& Target = Nodes[*B];
+            ++Resolved;
+            FSeg Seg = { Centers[*A], Centers[*B] };
+            if (Edge.bHasPinAnchors)
+            {
+                ++Anchored;
+                Seg.P0 = FVector2D(bLeftToRight ? Source.Right() : Source.X, Source.Y + Edge.FromPinY);
+                Seg.P1 = FVector2D(bLeftToRight ? Target.X : Target.Right(), Target.Y + Edge.ToPinY);
+            }
+            Result.PinRowDeltaPx[e] = FMath::Abs(Seg.P1.Y - Seg.P0.Y);
+            const bool bBackward = bLeftToRight ? Target.X < Source.Right() : Target.Right() > Source.X;
+            if (*A != *B && bBackward)
+            {
+                Result.BackwardEdges.Add(Edge);
+            }
+            if (!Seg.P0.Equals(Seg.P1))
+            {
+                Segments.Add(Seg);
             }
         }
+        Result.BackwardEdgeCount = Result.BackwardEdges.Num();
+        Result.GeometryBasis = Anchored == 0 ? TEXT("centers") : (Anchored == Resolved ? TEXT("pins") : TEXT("mixed"));
 
         // --- Straightness: how axis-aligned each edge is. A perfectly horizontal or vertical
-        // run scores 1; a 45-degree diagonal scores lowest. Approximated from node centers. ---
+        // run scores 1; a 45-degree diagonal scores lowest. ---
         if (Segments.Num() > 0)
         {
             double SumScore = 0.0;
@@ -191,7 +220,7 @@ namespace GraphLayout
             Result.Straightness = 1.0;
         }
 
-        // --- Edge crossings: count proper interior crossings of center-to-center segments. ---
+        // --- Edge crossings: count proper interior crossings of the edge segments. ---
         int32 Crossings = 0;
         for (int32 a = 0; a < Segments.Num(); ++a)
         {

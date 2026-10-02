@@ -3,14 +3,15 @@
 // GraphLayoutMetrics.h - Engine-agnostic node-graph layout-quality metrics + node-size adapter seam.
 //
 // Pure geometry util: no editor RPC, no asset deps, no node-type coupling. Feed it a flat list of
-// node rects ([{nodeId,x,y,w,h}]) plus center-to-center edges and it returns layout-quality
-// sub-scores and a combined 0-1 score. Callable from every layout engine, the layout_report RPCs,
-// and the bounds-aware engine work. Unit-testable in isolation.
+// node rects ([{nodeId,x,y,w,h}]) plus edges and it returns layout-quality sub-scores, a combined
+// 0-1 score and the backward edges. Callable from every layout engine and the bounds-aware engine
+// work. Unit-testable in isolation.
 //
-// LIMITATION (documented intentionally): straightness and edge-crossings are approximated from
-// node *centers*, not pin coordinates or actual wire routing — pin positions and routed-wire
-// geometry are not exposed at this layer. The scores are therefore a layout-quality proxy, not a
-// pixel-exact wire measurement.
+// An edge with pin anchors (each end's pin centre measured from its node's top) is drawn pin to
+// pin: from the source's output side to the target's input side, as the editor draws the wire.
+// Straightness, crossings and the per-edge row delta use that segment. An edge without anchors
+// falls back to its node centres, and the result says which basis was used. Wires are still
+// straight segments, not routed splines.
 
 #pragma once
 
@@ -39,15 +40,28 @@ namespace GraphLayout
         FVector2D Center() const { return FVector2D(X + W * 0.5, Y + H * 0.5); }
     };
 
-    // A directed connection between two node ids. The metrics treat edges as undirected
-    // center-to-center segments for crossing/straightness; From/To are kept for reporting.
+    // A directed connection between two node ids, optionally anchored at its two pins.
     struct PINWRIGHT_API FGraphEdge
     {
         FString From;
         FString To;
+        // Pin centres from the From / To node's top edge; used only when bHasPinAnchors.
+        bool bHasPinAnchors = false;
+        double FromPinY = 0.0;
+        double ToPinY = 0.0;
 
         FGraphEdge() = default;
         FGraphEdge(const FString& InFrom, const FString& InTo) : From(InFrom), To(InTo) {}
+        FGraphEdge(const FString& InFrom, double InFromPinY, const FString& InTo, double InToPinY)
+            : From(InFrom), To(InTo), bHasPinAnchors(true), FromPinY(InFromPinY), ToPinY(InToPinY) {}
+    };
+
+    // Which way wires flow: outputs on the right edge, inputs on the left (every UE graph), or
+    // the mirror. An edge whose target lies upstream of its source in this direction is backward.
+    enum class EFlowDirection : uint8
+    {
+        LeftToRight,
+        RightToLeft
     };
 
     // A pair of node ids whose bounding boxes intersect (positive-area overlap).
@@ -73,6 +87,17 @@ namespace GraphLayout
         TArray<FOverlapPair> OverlappingPairs;
         int32 EdgeCrossingCount = 0;
 
+        // Edges whose target's input side lies upstream of the source's output side (left of it,
+        // for LeftToRight), so the wire has to run backwards. Self-edges are not counted.
+        int32 BackwardEdgeCount = 0;
+        TArray<FGraphEdge> BackwardEdges;
+        // Parallel to the input edges: |source Y - target Y| on the edge's own basis (pin rows when
+        // anchored, else centres); -1 when an endpoint id is unknown.
+        TArray<double> PinRowDeltaPx;
+        // Geometry basis of straightness / crossings: "pins" (every resolved edge anchored),
+        // "centers" (none) or "mixed".
+        FString GeometryBasis = TEXT("centers");
+
         bool HasOverlap() const { return OverlappingPairs.Num() > 0; }
     };
 
@@ -82,7 +107,8 @@ namespace GraphLayout
     PINWRIGHT_API FGraphLayoutMetricsResult ComputeGraphLayoutMetrics(
         const TArray<FNodeRect>& Nodes,
         const TArray<FGraphEdge>& Edges,
-        double GridSizePx = 16.0);
+        double GridSizePx = 16.0,
+        EFlowDirection Flow = EFlowDirection::LeftToRight);
 
     // ------------------------------------------------------------------------
     // Node-size adapter seam.

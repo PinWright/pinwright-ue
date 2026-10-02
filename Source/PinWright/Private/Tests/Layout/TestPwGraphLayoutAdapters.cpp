@@ -19,7 +19,7 @@
 #include "K2Node_IfThenElse.h"
 #include "Kismet/KismetMathLibrary.h"
 #include "Kismet/KismetStringLibrary.h"
-#include "Layout/BlueprintNodeSizeAdapter.h"
+#include "Layout/EdGraphNodeMeasure.h"
 #include "Layout/PwGraphLayoutEdGraph.h"
 #include "Layout/PwGraphLayoutMaterial.h"
 #include "Layout/PwGraphLayoutRigVM.h"
@@ -134,7 +134,11 @@ bool FPwGraphLayoutBlueprintAdapterTest::RunTest(const FString& Parameters)
         FScopedTransaction Transaction(NSLOCTEXT("PinWrightTests", "PwLayoutBlueprint", "Arrange test graph"));
         const FArrangeReport Report = ArrangeEdGraph(Graph, Movable, { Event }, *Settings);
         TestTrue(TEXT("the arrange reports moved nodes"), Report.Moved > 0);
-        TestTrue(TEXT("sizes are reported as estimated"), Report.EstimatedSizes > 0 && Report.MeasuredSizes == 0);
+        // Measured from the node widgets when Slate can measure here, else estimated; never mixed.
+        TestTrue(TEXT("every size is measured (Slate running) or every size is estimated (no Slate)"),
+            GraphLayout::CanMeasureEdGraphNodes()
+                ? Report.MeasuredSizes > 0 && Report.EstimatedSizes == 0
+                : Report.MeasuredSizes == 0 && Report.EstimatedSizes > 0);
     }
     const TMap<UEdGraphNode*, FIntPoint> Arranged = Positions(Movable);
 
@@ -151,15 +155,15 @@ bool FPwGraphLayoutBlueprintAdapterTest::RunTest(const FString& Parameters)
         TestTrue(*FString::Printf(TEXT("%s -> %s is horizontal"), *Pair.Key->GetName(), *Pair.Value->GetName()),
             Wire != INDEX_NONE && IsHorizontal(G, Wire));
     }
-    // The event's exec output and the call's exec input must be level on screen. The event's
-    // delegate pin sits in its title bar (no row), but its "Custom Event" subtitle deepens the
-    // header, so level pins mean the call's NodePosY is one title line below the event's.
-    const GraphLayout::FBlueprintNodeSizeAdapter Sizer(*Settings);
-    TestEqual(TEXT("the event's exec output and its first call's exec input are level"),
-        Event->NodePosY + Sizer.PinOffsetY(Event->FindPin(UEdGraphSchema_K2::PN_Then, EGPD_Output)),
-        Print->NodePosY + Sizer.PinOffsetY(Print->FindPin(UEdGraphSchema_K2::PN_Execute, EGPD_Input)));
+    // The event's exec output and the call's exec input must be level on screen (pin rows from
+    // the layout's own geometry: measured widgets when Slate runs, else the estimator). The
+    // event's delegate pin sits in its title bar and its "Custom Event" subtitle deepens the
+    // header, so equal NodePosY would not be level.
+    const int32 EventToPrint = FindWire(G, At(Event), At(Print));
+    TestTrue(TEXT("the event's exec output and its first call's exec input are level"),
+        EventToPrint != INDEX_NONE && IsHorizontal(G, EventToPrint));
     // The event -> print exec wire crosses the pure chain's columns; the chain stays below it.
-    const double ExecWireY = Print->NodePosY + Sizer.PinOffsetY(Print->FindPin(UEdGraphSchema_K2::PN_Execute, EGPD_Input));
+    const double ExecWireY = EventToPrint != INDEX_NONE ? PinScreenY(G, At(Print), G.Wires[EventToPrint].ToPin) : 0.0;
     TestTrue(TEXT("the pure chain stays below the incoming exec wire"),
         Top(G, At(Sum)) > ExecWireY && Top(G, At(ToText)) > ExecWireY);
     TestTrue(TEXT("the false branch stacks below the true branch"), PrintFalse->NodePosY > PrintTrue->NodePosY);

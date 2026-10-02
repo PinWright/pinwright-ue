@@ -7,7 +7,7 @@
 // subtitle such as "Custom Event" or "Target is Actor" deepens the header), the widest input and
 // output pin labels plus the default-value boxes of unlinked inputs, one row per shown pin, and the
 // advanced-pin expander and "Development Only" bars. Compact nodes (math operators, conversions)
-// have no header and centre their pins. Measured sizes (F-graph-node-size-measured) plug in behind
+// and variable getters have no header and centre their pins. Measured sizes (F-graph-node-size-measured) plug in behind
 // the same seam later.
 
 #pragma once

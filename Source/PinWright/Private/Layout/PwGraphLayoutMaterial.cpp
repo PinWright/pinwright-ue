@@ -4,6 +4,8 @@
 
 #include "Layout/PwGraphLayoutMaterial.h"
 
+#include "Layout/PwGraphLayoutEdGraph.h"
+
 #include "MGIR/MGIRExpressionUtils.h"
 #include "Material/MaterialInputIterCompat.h"
 #include "Materials/Material.h"
@@ -70,7 +72,7 @@ namespace PwGraphLayoutMaterialImpl
     FArrangeReport ArrangeAndWrite(UMaterial* Material, UMaterialFunction* Function)
     {
         FMaterialModel Model = BuildMaterialModel(Material, Function);
-        const FArrangeReport Report = Arrange(Model.Layout, MaterialSpacing());
+        FArrangeReport Report = Arrange(Model.Layout, MaterialSpacing());
         for (int32 Index = 0; Index < Model.Expressions.Num(); ++Index)
         {
             UMaterialExpression* Expression = Model.Expressions[Index];
@@ -83,6 +85,27 @@ namespace PwGraphLayoutMaterialImpl
                 Expression->Modify();
                 Expression->MaterialExpressionEditorX = X;
                 Expression->MaterialExpressionEditorY = Y;
+            }
+        }
+        // The fitted rect, widened to whole pixels; written only where it changes.
+        Report.CommentsRefit = 0;
+        for (int32 Index = 0; Index < Model.Comments.Num(); ++Index)
+        {
+            const FLayoutComment& Fitted = Model.Layout.Comments[Index];
+            UMaterialExpressionComment* Comment = Model.Comments[Index];
+            const int32 X = FMath::FloorToInt(Fitted.Position.X);
+            const int32 Y = FMath::FloorToInt(Fitted.Position.Y);
+            const int32 W = FMath::CeilToInt(Fitted.Position.X + Fitted.Size.X) - X;
+            const int32 H = FMath::CeilToInt(Fitted.Position.Y + Fitted.Size.Y) - Y;
+            if (Fitted.bRefit && (Comment->MaterialExpressionEditorX != X || Comment->MaterialExpressionEditorY != Y
+                || Comment->SizeX != W || Comment->SizeY != H))
+            {
+                Comment->Modify();
+                Comment->MaterialExpressionEditorX = X;
+                Comment->MaterialExpressionEditorY = Y;
+                Comment->SizeX = W;
+                Comment->SizeY = H;
+                ++Report.CommentsRefit;
             }
         }
         return Report;
@@ -208,6 +231,30 @@ namespace PwGraphLayout
             }
             Model.Layout.Roots.Add(Root);
         }
+
+        if (Material || Function)
+        {
+            for (const TObjectPtr<UMaterialExpressionComment>& Comment : Material ? Material->GetEditorComments() : Function->GetEditorComments())
+            {
+                if (Comment)
+                {
+                    Model.Comments.Add(Comment.Get());
+                }
+            }
+        }
+        Model.Comments.Sort([](const UMaterialExpressionComment& A, const UMaterialExpressionComment& B)
+        {
+            return ExpressionKey(&A) < ExpressionKey(&B);
+        });
+        for (const UMaterialExpressionComment* Comment : Model.Comments)
+        {
+            FLayoutComment& Out = Model.Layout.Comments.AddDefaulted_GetRef();
+            Out.Key = ExpressionKey(Comment);
+            Out.Position = FVector2D(Comment->MaterialExpressionEditorX, Comment->MaterialExpressionEditorY);
+            Out.Size = FVector2D(Comment->SizeX, Comment->SizeY);
+            Out.TitleHeight = CommentTitleHeight(Comment->FontSize);
+        }
+        RecordCommentMembers(Model.Layout);
         return Model;
     }
 

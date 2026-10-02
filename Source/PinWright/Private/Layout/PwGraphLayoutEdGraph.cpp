@@ -15,6 +15,7 @@
 #include "EdGraphSchema_K2.h"
 #include "Handlers/Animation/AnimGraphConstructionUtils.h"
 #include "Layout/BlueprintNodeSizeAdapter.h"
+#include "Layout/EdGraphNodeMeasure.h"
 
 namespace PwGraphLayoutEdGraphImpl
 {
@@ -88,6 +89,11 @@ namespace PwGraphLayout
         return Spacing;
     }
 
+    double CommentTitleHeight(int32 FontSize)
+    {
+        return FontSize * 1.4 + 14.0;
+    }
+
     FEdGraphModel BuildEdGraphModel(
         UEdGraph* Graph, const TSet<UEdGraphNode*>& Movable, const UBpirLayoutSettings& Settings)
     {
@@ -100,22 +106,30 @@ namespace PwGraphLayout
         }
         for (UEdGraphNode* Node : Graph->Nodes)
         {
-            if (Node && !Node->IsA<UEdGraphNode_Comment>())
+            if (UEdGraphNode_Comment* Comment = Cast<UEdGraphNode_Comment>(Node))
+            {
+                Model.Comments.Add(Comment);
+            }
+            else if (Node)
             {
                 Model.Nodes.Add(Node);
             }
         }
-        Model.Nodes.Sort([](const UEdGraphNode& A, const UEdGraphNode& B) { return NodeKey(&A) < NodeKey(&B); });
+        auto ByKey = [](const UEdGraphNode& A, const UEdGraphNode& B) { return NodeKey(&A) < NodeKey(&B); };
+        Model.Nodes.Sort(ByKey);
+        Model.Comments.Sort(ByKey);
 
         const GraphLayout::FBlueprintNodeSizeAdapter Sizer(Settings);
         TMap<const UEdGraphPin*, TPair<int32, int32>> SlotOfPin;
         for (int32 Index = 0; Index < Model.Nodes.Num(); ++Index)
         {
-            const UEdGraphNode* Node = Model.Nodes[Index];
+            UEdGraphNode* Node = Model.Nodes[Index];
             FLayoutNode& Out = Model.Layout.Nodes.AddDefaulted_GetRef();
             Out.Key = NodeKey(Node);
             Out.Position = FVector2D(Node->NodePosX, Node->NodePosY);
-            Out.Size = Sizer.EstimateNodeSize(Node);
+            GraphLayout::FMeasuredNode Measured;
+            Out.bMeasuredSize = Settings.bMeasureNodeSizes && GraphLayout::MeasureEdGraphNode(Node, Measured);
+            Out.Size = Out.bMeasuredSize ? Measured.Size : Sizer.EstimateNodeSize(Node);
             Out.bMovable = Movable.Contains(Node);
 
             for (const UEdGraphPin* Pin : Node->Pins)
@@ -127,10 +141,22 @@ namespace PwGraphLayout
                 FPinSlot Slot;
                 Slot.Side = Pin->Direction == EGPD_Input ? EPinSide::Input : EPinSide::Output;
                 Slot.Kind = Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_Exec ? EWireKind::Flow : EWireKind::Data;
-                Slot.OffsetY = Sizer.PinOffsetY(Pin);
+                // Whole pixels: node positions are integers, so a pin-aligned row stays exact.
+                const double* MeasuredY = Out.bMeasuredSize ? Measured.PinOffsetY.Find(Pin) : nullptr;
+                Slot.OffsetY = MeasuredY ? FMath::RoundToDouble(*MeasuredY) : Sizer.PinOffsetY(Pin);
                 SlotOfPin.Add(Pin, TPair<int32, int32>(Index, Out.Pins.Add(Slot)));
             }
         }
+
+        for (const UEdGraphNode_Comment* Comment : Model.Comments)
+        {
+            FLayoutComment& Out = Model.Layout.Comments.AddDefaulted_GetRef();
+            Out.Key = NodeKey(Comment);
+            Out.Position = FVector2D(Comment->NodePosX, Comment->NodePosY);
+            Out.Size = FVector2D(Comment->NodeWidth, Comment->NodeHeight);
+            Out.TitleHeight = CommentTitleHeight(Comment->GetFontSize());
+        }
+        RecordCommentMembers(Model.Layout);
 
         for (int32 Index = 0; Index < Model.Nodes.Num(); ++Index)
         {
@@ -169,7 +195,7 @@ namespace PwGraphLayout
             }
         }
 
-        const FArrangeReport Report = Arrange(Model.Layout, SpacingFrom(Settings));
+        FArrangeReport Report = Arrange(Model.Layout, SpacingFrom(Settings));
         for (int32 Index = 0; Index < Model.Nodes.Num(); ++Index)
         {
             UEdGraphNode* Node = Model.Nodes[Index];
@@ -181,6 +207,26 @@ namespace PwGraphLayout
                 Node->Modify();
                 Node->NodePosX = X;
                 Node->NodePosY = Y;
+            }
+        }
+        // The fitted rect, widened to whole pixels; written only where it changes.
+        Report.CommentsRefit = 0;
+        for (int32 Index = 0; Index < Model.Comments.Num(); ++Index)
+        {
+            const FLayoutComment& Fitted = Model.Layout.Comments[Index];
+            UEdGraphNode_Comment* Comment = Model.Comments[Index];
+            const int32 X = FMath::FloorToInt(Fitted.Position.X);
+            const int32 Y = FMath::FloorToInt(Fitted.Position.Y);
+            const int32 W = FMath::CeilToInt(Fitted.Position.X + Fitted.Size.X) - X;
+            const int32 H = FMath::CeilToInt(Fitted.Position.Y + Fitted.Size.Y) - Y;
+            if (Fitted.bRefit && (Comment->NodePosX != X || Comment->NodePosY != Y || Comment->NodeWidth != W || Comment->NodeHeight != H))
+            {
+                Comment->Modify();
+                Comment->NodePosX = X;
+                Comment->NodePosY = Y;
+                Comment->NodeWidth = W;
+                Comment->NodeHeight = H;
+                ++Report.CommentsRefit;
             }
         }
         return Report;
@@ -213,6 +259,7 @@ namespace PwGraphLayout
             Total.Trees += Report.Trees;
             Total.MeasuredSizes += Report.MeasuredSizes;
             Total.EstimatedSizes += Report.EstimatedSizes;
+            Total.CommentsRefit += Report.CommentsRefit;
         }
         return Total;
     }
