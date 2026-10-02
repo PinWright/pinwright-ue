@@ -86,6 +86,15 @@ public:
     // Wire-string form of a settle outcome (snake_case), e.g. "settled_changed".
     static FString SettleOutcomeToString(EDriveSettleOutcome Outcome);
 
+    // The settle fields of an action response: { outcome, changed, settled, condition_met,
+    // elapsed_ms, ticks, diff }. The settle loop's per-tick fingerprint is shape-only and
+    // handle-blind, while Diff compares handles and values, so a list that recreates its rows
+    // in place or a value-only edit is "no change" to the loop but not to the diff. A non-empty
+    // Diff therefore forces changed=true, and a quiet no_change_within_budget becomes
+    // settled_changed (the shape held still the whole budget), so outcome, changed and diff
+    // never contradict. Pure, like IsActionable.
+    static TSharedPtr<FJsonObject> WriteSettleResult(FDriveSettleResult Result, const FDriveDiff& Diff, bool bFullDiff);
+
     // A GetElements sampler bound to one surface/root; returns an empty list on
     // any sampling failure so the settle loop keeps polling instead of throwing.
     // WindowSelector picks the editor window for the EditorChrome surface (ignored

@@ -405,17 +405,9 @@ namespace DriveWebHandlersLocal
             MoveTemp(IsWaitForMet),
             [Token, Params, Baseline](const FDriveSettleResult& Result, const TArray<FDriveElement>& Final)
             {
-                TSharedPtr<FJsonObject> Resp = MakeShared<FJsonObject>();
-                Resp->SetStringField(TEXT("outcome"), FDriveActionCommon::SettleOutcomeToString(Result.Outcome));
+                TSharedPtr<FJsonObject> Resp = FDriveActionCommon::WriteSettleResult(
+                    Result, FDriveChangeDetector::Diff(Baseline, Final), Params.bFullDiff);
                 Resp->SetStringField(TEXT("input_path"), Params.InputPath);
-                Resp->SetBoolField(TEXT("changed"), Result.bChanged);
-                Resp->SetBoolField(TEXT("settled"), Result.bSettled);
-                Resp->SetBoolField(TEXT("condition_met"), Result.bConditionMet);
-                Resp->SetNumberField(TEXT("elapsed_ms"), Result.ElapsedMs);
-                Resp->SetNumberField(TEXT("ticks"), Result.Ticks);
-                const FDriveDiff Diff = FDriveChangeDetector::Diff(Baseline, Final);
-                Resp->SetObjectField(TEXT("diff"),
-                    Params.bFullDiff ? FDriveJson::WriteDiffFull(Diff) : FDriveJson::WriteDiffSummary(Diff));
                 if (TSharedPtr<FJsonObject> Observation = BuildWebObservationJson(Final, Params.ObserveMode, Params.MarkCap))
                 {
                     Resp->SetObjectField(TEXT("observation"), Observation);

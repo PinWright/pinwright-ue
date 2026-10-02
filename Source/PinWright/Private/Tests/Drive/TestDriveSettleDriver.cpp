@@ -10,6 +10,8 @@
 
 #include "Handlers/Drive/DriveTypes.h"
 #include "Handlers/Drive/DriveSettleDriver.h"
+#include "Handlers/Drive/DriveActionCommon.h"
+#include "Dom/JsonObject.h"
 
 namespace
 {
@@ -217,6 +219,56 @@ bool FDriveSettleDriverWaitForMetTest::RunTest(const FString& Parameters)
     TestTrue(TEXT("result bConditionMet true"), CapturedResult.bConditionMet);
     TestFalse(TEXT("result bSettled false"), CapturedResult.bSettled);
     TestEqual(TEXT("result ElapsedMs"), CapturedResult.ElapsedMs, 200);
+
+    return true;
+}
+
+// ============================================================================
+// A list that recreates its rows in place (same types and rects, new handles) is
+// invisible to the shape-only settle fingerprint, so the driver ends quiet. The
+// response written from that result must not then report no_change / changed:false
+// beside a diff listing the rows as appeared/disappeared. With no diff the quiet
+// outcome stands.
+// ============================================================================
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveSettleDriverRowChurnAgreesWithDiffTest,
+    "PinWright.drive.settledriver.RowChurnAgreesWithDiff",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FDriveSettleDriverRowChurnAgreesWithDiffTest::RunTest(const FString& Parameters)
+{
+    FDriveSettleConfig Config;
+    Config.StableTicks = 2;
+    Config.QuietBudgetMs = 400;
+
+    const TArray<FDriveElement> Before = { MakeElement(TEXT("Row_496"), 0.0f) };
+    const TArray<FDriveElement> After = { MakeElement(TEXT("Row_504"), 0.0f) };
+
+    int32 Sample = 0;
+    auto GetElements = [&]() -> TArray<FDriveElement> { return Sample++ == 0 ? Before : After; };
+
+    FDriveSettleResult Result;
+    TArray<FDriveElement> Final;
+    TSharedRef<FDriveSettleDriver> Driver = FDriveSettleDriver::CreateForStep(
+        Config, GetElements, nullptr,
+        [&](const FDriveSettleResult& Res, const TArray<FDriveElement>& Fin) { Result = Res; Final = Fin; },
+        0.0);
+    Driver->Tick(0.2);
+    Driver->Tick(0.4);
+    TestTrue(TEXT("driver completed"), Driver->IsComplete());
+    TestEqual(TEXT("fingerprint saw no shape change"),
+        SettleDriverOutcomeInt(Result.Outcome), SettleDriverOutcomeInt(EDriveSettleOutcome::NoChangeWithinBudget));
+
+    const FDriveDiff Diff = FDriveChangeDetector::Diff(Before, Final);
+    TestEqual(TEXT("diff has the churned row"), Diff.Appeared.Num() + Diff.Disappeared.Num(), 2);
+
+    const TSharedPtr<FJsonObject> Resp = FDriveActionCommon::WriteSettleResult(Result, Diff, false);
+    TestTrue(TEXT("changed agrees with the non-empty diff"), Resp->GetBoolField(TEXT("changed")));
+    TestEqual(TEXT("outcome is not no_change"), Resp->GetStringField(TEXT("outcome")), FString(TEXT("settled_changed")));
+    TestTrue(TEXT("settled"), Resp->GetBoolField(TEXT("settled")));
+
+    const TSharedPtr<FJsonObject> Quiet = FDriveActionCommon::WriteSettleResult(Result, FDriveDiff(), false);
+    TestFalse(TEXT("empty diff keeps changed:false"), Quiet->GetBoolField(TEXT("changed")));
+    TestEqual(TEXT("empty diff keeps no_change"), Quiet->GetStringField(TEXT("outcome")), FString(TEXT("no_change_within_budget")));
 
     return true;
 }

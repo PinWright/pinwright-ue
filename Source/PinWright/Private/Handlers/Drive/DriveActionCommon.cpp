@@ -132,6 +132,30 @@ FString FDriveActionCommon::SettleOutcomeToString(EDriveSettleOutcome Outcome)
     }
 }
 
+TSharedPtr<FJsonObject> FDriveActionCommon::WriteSettleResult(FDriveSettleResult Result, const FDriveDiff& Diff, bool bFullDiff)
+{
+    if (!Diff.IsEmpty() && !Result.bChanged)
+    {
+        Result.bChanged = true;
+        if (Result.Outcome == EDriveSettleOutcome::NoChangeWithinBudget)
+        {
+            Result.Outcome = EDriveSettleOutcome::SettledChanged;
+            Result.bSettled = true;
+        }
+    }
+
+    TSharedPtr<FJsonObject> Resp = MakeShared<FJsonObject>();
+    Resp->SetStringField(TEXT("outcome"), SettleOutcomeToString(Result.Outcome));
+    Resp->SetBoolField(TEXT("changed"), Result.bChanged);
+    Resp->SetBoolField(TEXT("settled"), Result.bSettled);
+    Resp->SetBoolField(TEXT("condition_met"), Result.bConditionMet);
+    Resp->SetNumberField(TEXT("elapsed_ms"), Result.ElapsedMs);
+    Resp->SetNumberField(TEXT("ticks"), Result.Ticks);
+    // Compact summary by default; full handle lists only when full_diff was set.
+    Resp->SetObjectField(TEXT("diff"), bFullDiff ? FDriveJson::WriteDiffFull(Diff) : FDriveJson::WriteDiffSummary(Diff));
+    return Resp;
+}
+
 FDriveSettleDriver::FGetElements FDriveActionCommon::MakeGetElements(
     EDriveSurface Surface, const FDriveRootSelector& Selector,
     const FDriveWindowSelector& WindowSelector)
@@ -358,22 +382,12 @@ void FDriveActionCommon::RunAction(FHandlerContext& Ctx, const FString& Handle, 
             [Token, Surface, Selector, WindowSelector, PreElements, ObserveMode, MarkCap, bIncludeJournal, JournalSince, bFullDiff, InputPathLabel]
             (const FDriveSettleResult& Result, const TArray<FDriveElement>& FinalElements)
             {
-                TSharedPtr<FJsonObject> Resp = MakeShared<FJsonObject>();
-                Resp->SetStringField(TEXT("outcome"), SettleOutcomeToString(Result.Outcome));
+                TSharedPtr<FJsonObject> Resp = WriteSettleResult(
+                    Result, FDriveChangeDetector::Diff(PreElements, FinalElements), bFullDiff);
                 if (!InputPathLabel.IsEmpty())
                 {
                     Resp->SetStringField(TEXT("input_path"), InputPathLabel);
                 }
-                Resp->SetBoolField(TEXT("changed"), Result.bChanged);
-                Resp->SetBoolField(TEXT("settled"), Result.bSettled);
-                Resp->SetBoolField(TEXT("condition_met"), Result.bConditionMet);
-                Resp->SetNumberField(TEXT("elapsed_ms"), Result.ElapsedMs);
-                Resp->SetNumberField(TEXT("ticks"), Result.Ticks);
-
-                // Compact summary by default; full handle lists only when full_diff was set.
-                const FDriveDiff Diff = FDriveChangeDetector::Diff(PreElements, FinalElements);
-                Resp->SetObjectField(TEXT("diff"),
-                    bFullDiff ? FDriveJson::WriteDiffFull(Diff) : FDriveJson::WriteDiffSummary(Diff));
 
                 if (TSharedPtr<FJsonObject> Observation =
                         BuildObservationField(Surface, Selector, ObserveMode, MarkCap, WindowSelector))
