@@ -157,7 +157,8 @@ static TSharedPtr<FJsonObject> BuildNodeDetailsJson(
         for (UEdGraphPin* Pin : Node->Pins)
         {
             if (!Pin) continue;
-            Pins.Add(MakeShared<FJsonValueObject>(BuildPinJson(Pin, false, bIncludePinDefaults)));
+            // Links on: a wired input otherwise reads as its (engine-ignored) defaultValue.
+            Pins.Add(MakeShared<FJsonValueObject>(BuildPinJson(Pin, true, bIncludePinDefaults)));
         }
         NodeObj->SetArrayField(TEXT("pins"), Pins);
     }

@@ -1752,10 +1752,19 @@ REGISTER_RPC_HANDLER("blueprint.graph.replace_node", "blueprint.graph",
     TMap<UEdGraphPin*, UEdGraphPin*> PinMatches;
     TSet<UEdGraphPin*> ClaimedNewPins;
 
+    // A non-CallFunction pair's self pin is the replacement's own context and is skipped,
+    // except when it is wired (an external-owner accessor's target object): that wire moves
+    // like any matched pin, or is reported in connectionsDropped when the new node has no
+    // compatible visible self pin. It never refuses the replace.
+    auto IsContextSelfPin = [&](const UEdGraphPin* Pin)
+    {
+        return Pin->PinName == UEdGraphSchema_K2::PN_Self && !bBothCallFunction;
+    };
+
     for (UEdGraphPin* OldPin : OldNode->Pins)
     {
         if (!OldPin) continue;
-        if (OldPin->PinName == UEdGraphSchema_K2::PN_Self && !bBothCallFunction) continue;
+        if (IsContextSelfPin(OldPin) && OldPin->LinkedTo.Num() == 0) continue;
 
         const FName* RemappedPinName = PinRemap.Find(OldPin->PinName);
         if (RemappedPinName)
@@ -1779,6 +1788,7 @@ REGISTER_RPC_HANDLER("blueprint.graph.replace_node", "blueprint.graph",
         }
 
         UEdGraphPin* ExactPin = NewNode->FindPin(OldPin->PinName, OldPin->Direction);
+        if (ExactPin && IsContextSelfPin(OldPin) && ExactPin->bHidden) ExactPin = nullptr;
         if (ExactPin && !ClaimedNewPins.Contains(ExactPin) && CanMovePinLinksTo(OldPin, ExactPin))
         {
             PinMatches.Add(OldPin, ExactPin);
@@ -1791,7 +1801,7 @@ REGISTER_RPC_HANDLER("blueprint.graph.replace_node", "blueprint.graph",
     for (UEdGraphPin* OldPin : OldNode->Pins)
     {
         if (!OldPin) continue;
-        if (OldPin->PinName == UEdGraphSchema_K2::PN_Self && !bBothCallFunction) continue;
+        if (IsContextSelfPin(OldPin)) continue;
         if (PinMatches.Contains(OldPin)) continue;
         if (OldPin->LinkedTo.Num() > 0 && !bAllowOrphanPlaceholders)
         {
@@ -1826,7 +1836,7 @@ REGISTER_RPC_HANDLER("blueprint.graph.replace_node", "blueprint.graph",
     for (UEdGraphPin* OldPin : OldNode->Pins)
     {
         if (!OldPin) continue;
-        if (OldPin->PinName == UEdGraphSchema_K2::PN_Self && !bBothCallFunction) continue;
+        if (IsContextSelfPin(OldPin) && OldPin->LinkedTo.Num() == 0) continue;
 
         if (OldPin->bOrphanedPin)
         {
@@ -1850,6 +1860,11 @@ REGISTER_RPC_HANDLER("blueprint.graph.replace_node", "blueprint.graph",
                 {
                     RecordDropped(OldPin, TEXT("NO_MATCH"));
                 }
+            }
+            else if (OldPin->LinkedTo.Num() > 0)
+            {
+                // Only a wired context self pin reaches here; other unmatched wired pins were refused above.
+                RecordDropped(OldPin, TEXT("NO_MATCH"));
             }
             continue;
         }

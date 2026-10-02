@@ -297,6 +297,8 @@ Pin migration runs in three passes:
 
 If a requested remap points at a missing replacement pin or an incompatible pin, the response includes `pinRemapUnmatched[]`. If any old wired pin is still unmatched after all passes, the default behavior is to cancel the replace with `PIN_REMAP_INVALID` and leave the old node in place. Setting `allowOrphanPlaceholders=true` creates a red, non-connectable placeholder pin on the new node and re-points the wire onto it; callers can then audit and either reconnect or `break_pin_links` to clean up. Pre-existing orphans on the old node follow the same flag.
 
+**The `self` pin.** Outside a CallFunction-to-CallFunction swap, an unwired `self` is the replacement's own context and is not migrated. A **wired** `self` (an external-owner accessor's target object, for example `Get OtherActor.Health` fed by an actor reference) moves like any matched pin and counts in `connectionsRewired`. When the replacement has no visible `self` that accepts the wire (self-context replacement, or an owner the wired object cannot convert to), the replace still succeeds and the wire is listed in `connectionsDropped` with reason `NO_MATCH`; reconnect it with `connect_pins` if the new owner should keep a target.
+
 **Refusal list**
 
 Refused with `REPLACE_REFUSED`:
@@ -393,6 +395,14 @@ For a leaner read, pass **`namesOnly:true`** (`nodeId/nodeName/nodeType/nodeTitl
 | `namesOnly` | boolean | false | `nodeId/nodeName/nodeType/nodeTitle/x/y` per node, pins dropped. `names_only` accepted. Wins over `includeNodeDetails`; ignored when `fields` is supplied. |
 | `fields` | array | — | Per-node key allow-list (`nodeId,nodeName,nodeType,nodeTitle,nodeComment,x,y,pins,nodeState`). A bare string is accepted. Wins over `namesOnly` and `includeNodeDetails`. |
 | `includeConnections` | boolean | false | Also emit the `connections` / `connectionCount` edge payload. |
+
+### blueprint.graph.get_node_details
+
+Each `pins[]` entry is `{pinName, direction, pinType, pinSubType?, linkedTo?, defaultValue | defaultTextValue | defaultObjectPath}`. `linkedTo` lists every connection as `"<nodeId>:<pinName>"` (the `get_pin_details` shape) and is absent on an unconnected pin. A connected input still reports its stored default, but the engine ignores that value while the link exists: read `linkedTo` before concluding a pin uses its literal. `includePinDefaults:false` drops the default fields and keeps `linkedTo`.
+
+### blueprint.graph.get_node_details_batch
+
+Each `items[].details.pins[]` entry has the same shape as `get_node_details`, including `linkedTo` on connected pins. `fields` / `namesOnly` drop `pins` entirely; `includePinDefaults:false` sheds only the defaults.
 
 ### blueprint.graph.get_execution_flow
 

@@ -469,6 +469,107 @@ bool FReplaceNodeVariableGet_QualifiedOtherClass_RemainsExternalTest::RunTest(co
     return true;
 }
 
+namespace
+{
+    // External-owner VariableGet (OwnerClass::Member) whose self pin is wired from a
+    // Blueprint member variable of type OwnerRefClass. Returns the old node; OutSourcePin is
+    // the owner-ref getter's output feeding the self pin.
+    UK2Node_VariableGet* AddExternalGetWithWiredSelf(UBlueprint* Blueprint, UEdGraph* Graph,
+        UClass* OwnerClass, const FName Member, UClass* OwnerRefClass, UEdGraphPin*& OutSourcePin)
+    {
+        FEdGraphPinType RefType = MakePinType(UEdGraphSchema_K2::PC_Object);
+        RefType.PinSubCategoryObject = OwnerRefClass;
+        FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("OwnerRef"), RefType);
+        UK2Node_VariableGet* RefGet = AddVariableGetNode(Graph, TEXT("OwnerRef"));
+        UK2Node_VariableGet* OldNode = AddConfiguredNode<UK2Node_VariableGet>(
+            Graph,
+            [OwnerClass, Member](UK2Node_VariableGet* Node)
+            {
+                Node->VariableReference.SetExternalMember(Member, OwnerClass);
+            },
+            300, 0);
+
+        OutSourcePin = RefGet->FindPin(TEXT("OwnerRef"), EGPD_Output);
+        UEdGraphPin* OldSelf = OldNode->FindPin(UEdGraphSchema_K2::PN_Self, EGPD_Input);
+        if (OutSourcePin && OldSelf)
+        {
+            OutSourcePin->MakeLinkTo(OldSelf);
+        }
+        return OldSelf && OldSelf->LinkedTo.Num() == 1 ? OldNode : nullptr;
+    }
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FReplaceNodeVariableGet_ExternalOwner_KeepsSelfWireTest,
+    "PinWright.blueprint.graph.replace_node.VariableGet_ExternalOwner_KeepsSelfWire",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FReplaceNodeVariableGet_ExternalOwner_KeepsSelfWireTest::RunTest(const FString& Parameters)
+{
+    // B-replace-node-drops-external-self-wire: the wired self pin of an external-owner
+    // accessor was skipped like a self-context pin, so the target-object wire vanished with
+    // connectionsRewired 0 and connectionsDropped []. Revert the fix and "self wire moved" fails.
+    const TStrongObjectPtr<UBlueprint> BlueprintOwner(CreateReplaceNodeTestBlueprint(TEXT("ReplaceVarGetExtSelf")));
+    UBlueprint* Blueprint = BlueprintOwner.Get();
+    UEdGraph* Graph = GetEventGraph(Blueprint);
+    TestNotNull(TEXT("event graph exists"), Graph);
+
+    UEdGraphPin* SourcePin = nullptr;
+    UK2Node_VariableGet* OldNode = AddExternalGetWithWiredSelf(
+        Blueprint, Graph, APawn::StaticClass(), TEXT("BaseEyeHeight"), APawn::StaticClass(), SourcePin);
+    if (!TestNotNull(TEXT("fixture: external getter with wired self"), OldNode))
+    {
+        return true;
+    }
+
+    FTestResponseCapture Capture;
+    TestTrue(TEXT("replace_node handler found"),
+        InvokeReplaceNode(Blueprint, OldNode, TEXT("VariableGet"), Capture, TEXT("Pawn::AIControllerClass")));
+
+    UK2Node_VariableGet* NewGet = Cast<UK2Node_VariableGet>(
+        AssertSuccessAndFindNewNode(*this, Blueprint, Capture, TEXT("explicit"), TEXT("K2Node_VariableGet")));
+    TestNotNull(TEXT("new node is VariableGet"), NewGet);
+    UEdGraphPin* NewSelf = NewGet ? NewGet->FindPin(UEdGraphSchema_K2::PN_Self, EGPD_Input) : nullptr;
+    TestTrue(TEXT("self wire moved to the replacement"), NewSelf && NewSelf->LinkedTo.Contains(SourcePin));
+
+    double Rewired = 0.0;
+    TestTrue(TEXT("connectionsRewired counts the self wire"),
+        Capture.Result.IsValid() && Capture.Result->TryGetNumberField(TEXT("connectionsRewired"), Rewired) && Rewired >= 1.0);
+    const TArray<TSharedPtr<FJsonValue>>* Dropped = nullptr;
+    TestTrue(TEXT("nothing dropped"),
+        Capture.Result.IsValid() && Capture.Result->TryGetArrayField(TEXT("connectionsDropped"), Dropped) && Dropped->Num() == 0);
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FReplaceNodeVariableGet_ExternalOwner_IncompatibleSelfReportedTest,
+    "PinWright.blueprint.graph.replace_node.VariableGet_ExternalOwner_IncompatibleSelfReported",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FReplaceNodeVariableGet_ExternalOwner_IncompatibleSelfReportedTest::RunTest(const FString& Parameters)
+{
+    // An Actor-typed owner wire cannot feed a Pawn-owned accessor's self pin. The wire is
+    // still lost, but it must be reported; before the fix connectionsDropped was empty.
+    const TStrongObjectPtr<UBlueprint> BlueprintOwner(CreateReplaceNodeTestBlueprint(TEXT("ReplaceVarGetExtSelfDrop")));
+    UBlueprint* Blueprint = BlueprintOwner.Get();
+    UEdGraph* Graph = GetEventGraph(Blueprint);
+    TestNotNull(TEXT("event graph exists"), Graph);
+
+    UEdGraphPin* SourcePin = nullptr;
+    UK2Node_VariableGet* OldNode = AddExternalGetWithWiredSelf(
+        Blueprint, Graph, AActor::StaticClass(), TEXT("Tags"), AActor::StaticClass(), SourcePin);
+    if (!TestNotNull(TEXT("fixture: external getter with wired self"), OldNode))
+    {
+        return true;
+    }
+
+    FTestResponseCapture Capture;
+    TestTrue(TEXT("replace_node handler found"),
+        InvokeReplaceNode(Blueprint, OldNode, TEXT("VariableGet"), Capture, TEXT("Pawn::BaseEyeHeight")));
+
+    AssertSuccessAndFindNewNode(*this, Blueprint, Capture, TEXT("explicit"), TEXT("K2Node_VariableGet"));
+    AssertPinIssueArrayContains(*this, Capture, TEXT("connectionsDropped"), TEXT("self"), TEXT("NO_MATCH"), 1);
+    return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FReplaceNodeEvent_To_CustomEvent_PreservesUserDefinedPinsTest,
     "PinWright.blueprint.graph.replace_node.Event_To_CustomEvent_PreservesUserDefinedPins",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
