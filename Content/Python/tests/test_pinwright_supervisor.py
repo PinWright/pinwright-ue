@@ -16,6 +16,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from unittest import mock
@@ -244,7 +245,13 @@ class LinuxContainmentTest(TempDirTest):
         self.assertIsNone(reason)
         self.assertEqual(prefix, ["/usr/bin/systemd-run", "--user", "--scope", "--quiet",
                                   "-p", "MemoryMax=2048", "--"])
-        self.assertEqual(ok.call_args[0][0], prefix + ["true"])
+        probe_argv, stop_argv = ok.call_args_list[0][0][0], ok.call_args_list[1][0][0]
+        unit = probe_argv[4][len("--unit="):]
+        self.assertTrue(unit.startswith("pinwright-probe-") and unit.endswith(".scope"), unit)
+        self.assertEqual(probe_argv, prefix[:4] + ["--unit=" + unit] + prefix[4:] + ["true"])
+        # The probe scope is stopped by name: the user manager can fail to collect one that
+        # emptied at once, and it then stays 'active (running)' with 0 tasks.
+        self.assertEqual(stop_argv, ["systemctl", "--user", "stop", "--no-block", unit])
         raising = mock.MagicMock(side_effect=subprocess.TimeoutExpired("x", 15))
         self.assertIn("probe failed", pl.systemd_scope_prefix(1, run=raising, which=lambda n: "s")[1])
 
@@ -380,6 +387,143 @@ class ResultLineTest(TempDirTest):
         pl._write_atomic(path, line + "\n")
         self.assertEqual(pl.read_result(path), (line, "COMMAND_EXITED", 0))
         self.assertEqual(pl.read_result(os.path.join(self.tmp, "missing")), (None, None, None))
+
+
+class LinuxExitEvidenceTest(TempDirTest):
+    """How a run ended, as the supervisor reads it (B-supervisor-linux-paths-unverified,
+    F-memory-aware-editor-launch)."""
+
+    def scan(self, text):
+        return pl._scan_log(self.write("e.log", text))
+
+    def test_killed_verdict_ranks_below_timeout_cap_and_cef_race(self):
+        self.assertEqual(pl.verdict_for("suite", False, False, -9, killed=True), "EDITOR_KILLED_EXTERNALLY")
+        self.assertEqual(pl.verdict_for("command", False, False, -9, killed=True), "COMMAND_KILLED_EXTERNALLY")
+        self.assertEqual(pl.verdict_for("suite", True, False, -9, killed=True), "TIMEOUT")
+        self.assertEqual(pl.verdict_for("suite", False, True, -9, killed=True), "MEMORY_CAP_HIT")
+        self.assertEqual(pl.verdict_for("suite", False, False, 1, cef_race=True, killed=True),
+                         "EDITOR_STARTUP_CEF_RACE")
+
+    def test_linux_kill_is_sigkill_only(self):
+        # UE shuts down gracefully on SIGTERM (exit 143) and re-raises crash signals after logging.
+        with mock.patch.object(pl.os, "name", "posix"):
+            self.assertTrue(pl.killed_externally(-9))
+            for code in (0, 1, 143, -11, -6, -15):
+                self.assertFalse(pl.killed_externally(code), code)
+
+    def test_windows_kill_is_a_nonzero_exit_with_no_crash_and_no_exit_request(self):
+        stopped = self.scan(_DRAINED.replace("LogExit: Display: **** TestExit: Automation Test Queue Empty ****\n", ""))
+        crashed = self.scan("LogWindows: Error: Fatal error: [File:x.cpp] [Line: 1]\n")
+        exited = self.scan("LogWindows: FPlatformMisc::RequestExit(1, UEngine::Exec)\n")
+        with mock.patch.object(pl.os, "name", "nt"):
+            self.assertTrue(pl.killed_externally(1, stopped))
+            self.assertFalse(pl.killed_externally(0, stopped))
+            self.assertFalse(pl.killed_externally(3, crashed))
+            self.assertFalse(pl.killed_externally(1, exited))
+            self.assertFalse(pl.killed_externally(1, None))
+
+    def test_scan_records_the_last_exit_request_and_the_first_crash_line(self):
+        scan = self.scan(_DRAINED + "LogCore: FUnixPlatformMisc::RequestExit(1, FEngineLoop::Tick.GScopedTestExit)\n")
+        self.assertIn(pl._TEST_EXIT_CALL_SITE, scan["exitRequestLine"])
+        self.assertIsNone(scan["crashLine"])
+        self.assertIn("Caught signal", self.scan("LogCore: Error: Caught signal 11 Segmentation fault\n")["crashLine"])
+
+    def test_cap_seen_is_written_as_na(self):
+        scan = self.scan(_TRUNCATED)
+        scan["capSeenByEditor"] = "n/a"
+        line = pl.format_suite_result("EDITOR_EXITED", 1024 ** 3, 0, "BelowNormal", 1, scan, 60, "/l/a.log")
+        self.assertIn(" capSeenByEditor=n/a ", line)
+
+    @unittest.skipIf(os.name == "nt", "the forced -TestExit exit is _exit(1) on Unix only")
+    def test_forced_test_exit_of_a_drained_linux_run_is_not_a_failure(self):
+        # Every drained suite on the Linux dev host exited 1 (UnixPlatformMisc.cpp RequestExit,
+        # Force -> _exit(1)) and was reported EDITOR_EXIT_NONZERO capSeenByEditor=False.
+        log = self.write("s/automation.log", _DRAINED +
+                         "LogCore: FUnixPlatformMisc::RequestExit(1, FEngineLoop::Tick.GScopedTestExit)\n")
+        result = _supervise_inline(self, [sys.executable, "-c", "raise SystemExit(1)"], kind="suite",
+                                   capped=False, logPath=log)
+        self.assertIn("verdict=EDITOR_EXITED ", result)
+        self.assertIn(" exit=1 ", result)
+        self.assertIn(" capSeenByEditor=n/a ", result)
+
+
+def _supervise_inline(test, argv, kind="command", capped=True, cap_bytes=256 * 1024 ** 2, **extra):
+    """Run supervise() in this process on a real child; returns the result line. The supervisor
+    log goes to test.supervisor_log."""
+    spec = dict({"argv": argv, "mode": "headless", "kind": kind, "capped": capped,
+                 "capBytes": cap_bytes, "priority": "BelowNormal", "timeoutMinutes": 2,
+                 "handoffPath": os.path.join(test.tmp, "handoff.json"),
+                 "resultPath": os.path.join(test.tmp, "result.txt")}, **extra)
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        test.assertEqual(pl.supervise(spec), 0)
+    test.supervisor_log = err.getvalue()
+    with open(spec["resultPath"], encoding="utf-8") as fh:
+        return fh.read().strip()
+
+
+def _real_scope_available():
+    if not sys.platform.startswith("linux"):
+        return False
+    return pl.systemd_scope_prefix(256 * 1024 ** 2)[0] is not None
+
+
+@unittest.skipUnless(_real_scope_available(), "needs Linux with a delegated systemd --user memory controller")
+class LinuxRealScopeTest(TempDirTest):
+    """The Linux containment on a REAL systemd --user scope, no mocks: the paths
+    B-supervisor-linux-paths-unverified found verified only against a fake /proc."""
+
+    def test_scope_holds_the_popen_pid_tree_niced_grouped_and_reaped(self):
+        report = os.path.join(self.tmp, "child.json")
+        code = ("import json, os, subprocess, sys\n"
+                "g = subprocess.Popen(['sleep', '300'])\n"
+                "json.dump({'pid': os.getpid(), 'nice': os.nice(0), 'pgid': os.getpgid(0),"
+                " 'cgroup': open('/proc/self/cgroup').read().strip(), 'grandchild': g.pid},"
+                " open(sys.argv[1], 'w'))\n")
+        result = _supervise_inline(self, [sys.executable, "-c", code, report])
+        with open(report) as fh:
+            child = json.load(fh)
+        started = int(self.supervisor_log.split("started pid ")[1].split(":")[0])
+        self.assertEqual(child["pid"], started)  # systemd-run --scope execs: the Popen pid is the child
+        self.assertTrue(child["cgroup"].endswith(".scope"), child["cgroup"])
+        self.assertEqual((child["nice"], child["pgid"]), (pl.NICE["BelowNormal"], child["pid"]))
+        self.assertIn("verdict=COMMAND_EXITED ", result)
+        self.assertIn(" cap_gb=0.25 ", result)  # memory.max read back as the cap
+        stat = "/proc/%d/stat" % child["grandchild"]
+        self.assertFalse(os.path.exists(stat) and open(stat).read().split()[2] != "Z",
+                         "killpg did not reach the grandchild")
+
+    def test_an_oom_kill_is_counted_although_the_scope_is_gone(self):
+        # The child dies inside the first 2 s poll, so the in-loop read never saw the kill, and
+        # systemd removes the emptied scope before the final read: oom_kill used to read 0 and
+        # the run was reported as a plain non-zero exit.
+        # The sleep lets linux_wait_for_scope find the scope first (a child dead before that is
+        # reported uncapped), and still ends well inside the first poll.
+        code = "import time\ntime.sleep(0.8)\nb = []\nwhile True: b.append(bytearray(16 << 20))\n"
+        result = _supervise_inline(self, [sys.executable, "-c", code], cap_bytes=128 * 1024 ** 2)
+        self.assertIn("verdict=MEMORY_CAP_HIT ", result)
+        self.assertIn("exit=-9 ", result)
+        self.assertRegex(self.supervisor_log, r"violation oom_kill=[1-9]")
+
+    def test_a_sigkill_from_outside_is_named(self):
+        pid_file = os.path.join(self.tmp, "pid")
+        code = ("import os, sys, time\nopen(sys.argv[1], 'w').write(str(os.getpid()))\n"
+                "time.sleep(60)\n")
+
+        def kill_when_started():
+            deadline = time.monotonic() + 30
+            while not os.path.exists(pid_file) and time.monotonic() < deadline:
+                time.sleep(0.1)
+            time.sleep(0.3)
+            with open(pid_file) as fh:
+                os.kill(int(fh.read()), 9)  # this test's own child, never an editor
+
+        killer = threading.Thread(target=kill_when_started)
+        killer.start()
+        result = _supervise_inline(self, [sys.executable, "-c", code, pid_file])
+        killer.join()
+        self.assertIn("verdict=COMMAND_KILLED_EXTERNALLY ", result)
+        self.assertIn("killed from outside the run (exit -9", self.supervisor_log)
 
 
 class SupervisedRunTest(TempDirTest):

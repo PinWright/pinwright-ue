@@ -129,5 +129,18 @@ class EndlessStreamTest(unittest.TestCase):
         self.assertIn("system.job_status", text)
 
 
+# The machine-wide memory / editor-count refusal reads this host's live memory and editors; launch
+# tests must not depend on either (it has its own tests in test_launch_capacity.py).
+_CAPACITY_PATCH = mock.patch("mcp_proxy.Proxy._launch_capacity_guard", return_value=None)
+
+
+def setUpModule():
+    _CAPACITY_PATCH.start()
+
+
+def tearDownModule():
+    _CAPACITY_PATCH.stop()
+
+
 if __name__ == "__main__":
     unittest.main()

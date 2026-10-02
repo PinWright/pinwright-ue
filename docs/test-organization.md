@@ -391,8 +391,14 @@ returns:
 PINWRIGHT_SUITE_RESULT verdict=EDITOR_EXITED cap_gb=37.92 peak_gb=14.83 priority=BelowNormal exit=0 oom_alloc=0 oom_backup_pool=0 watermark_markers=0 capSeenByEditor=True wall_min=21 log=...
 ```
 
+On Linux `capSeenByEditor` is `n/a` (UE's Unix layer never reads cgroup limits; the supervisor
+log names the scope whose `memory.max` read back as the cap), and a drained suite's `exit=1` from
+the forced `-TestExit` exit still reads `verdict=EDITOR_EXITED`. A run killed from outside (an OOM
+watchdog, `kill -9`) reads `verdict=EDITOR_KILLED_EXTERNALLY`; see `mcp-transport.md` → **Killed
+from outside**.
+
 A build (`editor_build`) writes the sibling line
-`PINWRIGHT_JOB_RESULT verdict=<COMMAND_EXITED|COMMAND_EXIT_NONZERO|MEMORY_CAP_HIT|TIMEOUT> exit=<n> priority=<...> cap_gb=<...> peak_gb=<...> wall_min=<n> command=<...> output=<...>`
+`PINWRIGHT_JOB_RESULT verdict=<COMMAND_EXITED|COMMAND_EXIT_NONZERO|COMMAND_KILLED_EXTERNALLY|MEMORY_CAP_HIT|TIMEOUT> exit=<n> priority=<...> cap_gb=<...> peak_gb=<...> wall_min=<n> command=<...> output=<...>`
 to `<build.log>.result.txt`, returned by `editor_build_status` as `supervisorResult` / `verdict`.
 Both kinds time out at 120 minutes. Editor launches get the launch-identity switches
 (`-PinWrightLaunchedBy=<tool>`); a build gets none.

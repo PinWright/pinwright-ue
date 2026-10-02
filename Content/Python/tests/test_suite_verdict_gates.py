@@ -20,6 +20,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 # mcp_proxy.py and check_suite_log.py live one directory up (Content/Python/).
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -782,6 +783,19 @@ class CompletenessSelfTest(unittest.TestCase):
         result = check_suite_log.check_log(path)
         self.assertEqual(result["state"], STATE_CRASHED)
         self.assertIn("UECC-Windows-GGG_0001", result["reason"])
+
+
+# The machine-wide memory / editor-count refusal reads this host's live memory and editors; launch
+# tests must not depend on either (it has its own tests in test_launch_capacity.py).
+_CAPACITY_PATCH = mock.patch("mcp_proxy.Proxy._launch_capacity_guard", return_value=None)
+
+
+def setUpModule():
+    _CAPACITY_PATCH.start()
+
+
+def tearDownModule():
+    _CAPACITY_PATCH.stop()
 
 
 if __name__ == "__main__":

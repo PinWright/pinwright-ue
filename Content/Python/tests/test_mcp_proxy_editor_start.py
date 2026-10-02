@@ -57,15 +57,20 @@ from mcp_proxy import (
 _LOCK_DIR = tempfile.TemporaryDirectory()
 _LOCK_PATCH = mock.patch("mcp_proxy._launch_lock_path",
                          return_value=os.path.join(_LOCK_DIR.name, "editor-launch.lock"))
+# The machine-wide memory / editor-count refusal reads this host's live memory and editors; launch
+# tests must not depend on either (it has its own tests in test_launch_capacity.py).
+_CAPACITY_PATCH = mock.patch("mcp_proxy.Proxy._launch_capacity_guard", return_value=None)
 
 
 def setUpModule():
     # A real PinWright launch on this machine holds the machine-wide editor-launch lock; these
     # tests must neither wait on it nor block it.
     _LOCK_PATCH.start()
+    _CAPACITY_PATCH.start()
 
 
 def tearDownModule():
+    _CAPACITY_PATCH.stop()
     _LOCK_PATCH.stop()
     _LOCK_DIR.cleanup()
 
@@ -1680,7 +1685,7 @@ class ProxyEditorRunTestsTest(unittest.TestCase):
     def test_tool_schemas(self):
         schema = EDITOR_RUN_TESTS_TOOL["inputSchema"]
         self.assertEqual(set(schema["required"]), {"filter", "reason", "mode"})
-        self.assertEqual(set(schema["properties"]), {"filter", "reason", "mode"})
+        self.assertEqual(set(schema["properties"]), {"filter", "reason", "mode", "slot_wait"})
         self.assertFalse(schema["additionalProperties"])
         self.assertEqual(set(EDITOR_TEST_STATUS_TOOL["inputSchema"]["properties"]),
                          {"logPath", "runId"})

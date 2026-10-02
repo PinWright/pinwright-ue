@@ -64,7 +64,11 @@ SUPERVISOR
             command=.. output=..
     Verdict ladder: TIMEOUT > MEMORY_CAP_HIT > EDITOR_STARTUP_CEF_RACE (suites: non-zero exit, no
     test started, and the log's last CEF line is the concurrent-CEF retry warning; relaunch) >
-    {EDITOR|COMMAND}_EXIT_NONZERO > {..}_EXITED.
+    {EDITOR|COMMAND}_KILLED_EXTERNALLY (killed_externally()) > {EDITOR|COMMAND}_EXIT_NONZERO >
+    {..}_EXITED. A suite whose log ends in the forced -TestExit exit counts as exited: on Linux
+    that path is _exit(1) (UnixPlatformMisc.cpp RequestExit), so every drained Linux run exits 1.
+    capSeenByEditor is n/a on Linux: the Unix platform layer never reads cgroup limits, so the
+    kernel-side readback of the scope's memory.max (linux_wait_for_scope) is the cap evidence.
     The suite verdict authority stays
     check_suite_log.check_log(); this module never classifies a suite.
 
@@ -524,6 +528,22 @@ def total_physical_bytes():
     return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
 
 
+def available_memory_bytes(meminfo="/proc/meminfo"):
+    """(available physical bytes, available commit bytes or None). Linux reports no commit
+    figure: under the default overcommit heuristic CommitLimit is not enforced."""
+    if os.name == "nt":
+        status = MEMORYSTATUSEX()
+        status.dwLength = ctypes.sizeof(status)
+        if not _kernel32().GlobalMemoryStatusEx(ctypes.byref(status)):
+            raise OSError(_last_error(), "GlobalMemoryStatusEx failed")
+        return status.ullAvailPhys, status.ullAvailPageFile
+    with open(meminfo) as fh:
+        for line in fh:
+            if line.startswith("MemAvailable:"):
+                return int(line.split()[1]) * 1024, None
+    raise OSError("MemAvailable missing from %s" % meminfo)
+
+
 def cap_bytes_for(total_bytes, fraction):
     return int(math.floor(total_bytes * fraction))
 
@@ -557,11 +577,15 @@ def systemd_scope_prefix(cap_bytes, run=subprocess.run, which=shutil.which):
     if not exe:
         return None, "systemd-run not found on PATH"
     prefix = [exe, "--user", "--scope", "--quiet", "-p", "MemoryMax=%d" % cap_bytes, "--"]
+    # Named, so a probe scope the user manager fails to collect can be stopped (stop_scope).
+    unit = "pinwright-probe-%s.scope" % uuid.uuid4().hex
     try:
-        probe = run(prefix + ["true"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+        probe = run(prefix[:4] + ["--unit=" + unit] + prefix[4:] + ["true"],
+                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                     stderr=subprocess.PIPE, timeout=15)
     except (OSError, subprocess.TimeoutExpired) as exc:
         return None, "systemd-run probe failed: %s" % exc
+    stop_scope(unit, run)
     if probe.returncode != 0:
         detail = (probe.stderr or b"").decode("utf-8", "replace").strip()[:300]
         return None, "systemd-run probe exited %d: %s" % (probe.returncode, detail)
@@ -605,8 +629,22 @@ def linux_wait_for_scope(pid, cap_bytes, timeout=10.0, proc_root="/proc", cgroup
         time.sleep(0.2)
 
 
+def stop_scope(directory, run=subprocess.run):
+    """Stop a transient scope that outlived its processes. The systemd 249 user manager on the
+    Linux dev host sometimes misses a scope going empty and keeps it 'active (running)' with 0
+    tasks forever (probe scopes running `true` and finished editors both); stopping an empty
+    scope kills nothing."""
+    try:
+        run(["systemctl", "--user", "stop", "--no-block", os.path.basename(directory)],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            timeout=15)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
 def linux_scope_usage(directory):
-    """(memory.peak bytes or 0, oom_kill count) of a scope."""
+    """(memory.peak bytes or 0, oom_kill count) of a scope. memory.events counts are hierarchical,
+    so on a scope's parent slice oom_kill includes every scope under it."""
     peak = _read_text(os.path.join(directory, "memory.peak")) if directory else None
     events = _read_text(os.path.join(directory, "memory.events")) if directory else None
     kills = 0
@@ -622,13 +660,16 @@ def linux_scope_usage(directory):
 _PATH_RE = re.compile(r"Path=\{([^}]*)\}")
 _CAP_SEEN = ("Detected a per-process memory limit of",
              "running as part of a Windows Job with separate resource limits")
+_CRASH_MARKERS = ("Fatal error", "Assertion failed:", "Caught signal")
+_TEST_EXIT_CALL_SITE = "FEngineLoop::Tick.GScopedTestExit"
 
 
 def _scan_log(path):
     """One streaming pass: test progress plus the memory evidence of an out-of-memory run."""
     scan = {"exists": False, "started": 0, "succeeded": 0, "failed": 0, "lastTest": None,
             "oomAlloc": 0, "oomBackupPool": 0, "watermarkMarkers": 0,
-            "capSeenByEditor": None, "memoryTotalLine": None, "cefRaceLine": None}
+            "capSeenByEditor": None, "memoryTotalLine": None, "cefRaceLine": None,
+            "crashLine": None, "exitRequestLine": None}
     last = last_cef = None
     try:
         fh = open(path, encoding="utf-8", errors="replace")
@@ -654,6 +695,10 @@ def _scan_log(path):
                 scan["capSeenByEditor"] = line.strip()
             if scan["memoryTotalLine"] is None and "Memory total: Physical=" in line:
                 scan["memoryTotalLine"] = line.strip()
+            if scan["crashLine"] is None and any(s in line for s in _CRASH_MARKERS):
+                scan["crashLine"] = line.strip()
+            if "RequestExit(" in line:  # every platform's RequestExit logs its call site first
+                scan["exitRequestLine"] = line.strip()
             if _CEF_CATEGORY_RE.search(line):
                 last_cef = line
     if last is not None:
@@ -748,9 +793,22 @@ def is_cap_hit(cap_bytes, peak_bytes, violation_is_memory, oom_alloc=0, oom_back
             or (cap_bytes > 0 and peak_bytes > 0 and peak_bytes >= int(cap_bytes * 0.98)))
 
 
-def verdict_for(kind, timed_out, cap_hit, exit_code, cef_race=False):
+def killed_externally(exit_code, scan=None):
+    """The run was ended from outside, not by a crash, its own exit or this supervisor (callers
+    rule out TIMEOUT and MEMORY_CAP_HIT first). Linux: SIGKILL, the one signal UE cannot see; it
+    shuts down gracefully on SIGTERM/SIGINT/SIGHUP and logs a crash before re-raising its signal
+    (UnixPlatformCrashContext.cpp). Windows: TerminateProcess leaves an arbitrary code, so it is a
+    non-zero exit whose log has neither a crash banner nor a RequestExit line."""
+    if os.name != "nt":
+        return exit_code == -SIGKILL
+    return bool(scan and scan["exists"] and exit_code != 0
+                and not scan["crashLine"] and not scan["exitRequestLine"])
+
+
+def verdict_for(kind, timed_out, cap_hit, exit_code, cef_race=False, killed=False):
     """cef_race: the editor's log ends its CEF lines on the concurrent-initialization retry and
-    no test started, so a non-zero exit is a startup death in that retry (relaunch it)."""
+    no test started, so a non-zero exit is a startup death in that retry (relaunch it).
+    killed: killed_externally()."""
     prefix = "COMMAND" if kind == "command" else "EDITOR"
     if timed_out:
         return "TIMEOUT"
@@ -758,6 +816,8 @@ def verdict_for(kind, timed_out, cap_hit, exit_code, cef_race=False):
         return "MEMORY_CAP_HIT"
     if cef_race and exit_code != 0:
         return "EDITOR_STARTUP_CEF_RACE"
+    if killed:
+        return prefix + "_KILLED_EXTERNALLY"
     return prefix + ("_EXIT_NONZERO" if exit_code != 0 else "_EXITED")
 
 
@@ -772,7 +832,8 @@ def format_suite_result(verdict, cap_bytes, peak_bytes, priority, exit_code, sca
             "oom_alloc=%d oom_backup_pool=%d watermark_markers=%d capSeenByEditor=%s "
             "wall_min=%d log=%s" % (
                 verdict, _gb(cap_bytes), _gb(peak_bytes), priority, exit_code, scan["oomAlloc"],
-                scan["oomBackupPool"], scan["watermarkMarkers"], bool(scan["capSeenByEditor"]),
+                scan["oomBackupPool"], scan["watermarkMarkers"],
+                "n/a" if scan["capSeenByEditor"] == "n/a" else bool(scan["capSeenByEditor"]),
                 int(round(wall_seconds / 60.0)), log_path))
 
 
@@ -833,6 +894,9 @@ class _Child:
     def __init__(self, proc, job=None, scope=None, capped=False, mechanism=None, uncapped_reason=None):
         self.proc, self.job, self.scope = proc, job, scope
         self.capped, self.mechanism, self.uncapped_reason = capped, mechanism, uncapped_reason
+        # oom_kill of the scope's parent slice at start: the fallback when the scope is gone
+        # before its final read (supervise).
+        self.parent_oom_kills = linux_scope_usage(os.path.dirname(scope))[1] if scope else 0
 
     def kill(self):
         if os.name == "nt":
@@ -938,12 +1002,22 @@ def supervise(spec):
             _kernel32().CloseHandle(child.job)  # KILL_ON_JOB_CLOSE reaps stragglers
     else:
         if child.scope:
-            last_peak, oom_kills = linux_scope_usage(child.scope)
+            last_peak, last_kills = linux_scope_usage(child.scope)
             peak = max(peak, last_peak)
+            oom_kills = max(oom_kills, last_kills)  # never let a later, emptier read erase one
+            if not oom_kills and code == -SIGKILL and not os.path.isdir(child.scope):
+                # Measured on the Linux dev host: a child OOM-killed within one 2 s poll is gone,
+                # and so is its scope (systemd removes an empty one), before this read. The parent
+                # slice's hierarchical count still holds the kill; another scope's OOM kill in the
+                # same window would be misattributed, but only to a run that died of SIGKILL.
+                oom_kills = max(0, linux_scope_usage(os.path.dirname(child.scope))[1]
+                                - child.parent_oom_kills)
             violation_is_memory = oom_kills > 0
             violation_text = "oom_kill=%d" % oom_kills
         if spec["capped"]:
             child.kill_group()  # the Linux stand-in for KILL_ON_JOB_CLOSE
+        if child.scope and os.path.isdir(child.scope):
+            stop_scope(child.scope)
 
     wall = time.time() - started
     cap = spec["capBytes"] if child.capped else 0
@@ -952,9 +1026,20 @@ def supervise(spec):
     if spec["kind"] == "suite":
         scan = _scan_log(spec["logPath"])
         hit = is_cap_hit(cap, peak, violation_is_memory, scan["oomAlloc"], scan["oomBackupPool"])
-        verdict = verdict_for("suite", timed_out, hit, code, cef_race=bool(scan["cefRaceLine"]))
-        _say("cap seen by editor: %s" % (scan["capSeenByEditor"] or
-             "NOT LOGGED -- the editor did not report a job memory limit; the run may be uncapped"))
+        test_exit = code == 1 and _TEST_EXIT_CALL_SITE in (scan["exitRequestLine"] or "")
+        killed = not timed_out and not hit and killed_externally(code, scan)
+        verdict = verdict_for("suite", timed_out, hit, 0 if test_exit else code,
+                              cef_race=bool(scan["cefRaceLine"]), killed=killed)
+        if test_exit:
+            _say("exit code 1 is the forced -TestExit exit (%s), not a failure" % scan["exitRequestLine"])
+        if os.name != "nt":
+            scan["capSeenByEditor"] = "n/a"
+            _say("cap seen by editor: n/a on Linux (UE does not read cgroup limits); %s" % (
+                "kernel-enforced: %s/memory.max read back as the cap" % child.scope if child.scope
+                else "UNCAPPED: %s" % child.uncapped_reason))
+        else:
+            _say("cap seen by editor: %s" % (scan["capSeenByEditor"] or
+                 "NOT LOGGED -- the editor did not report a job memory limit; the run may be uncapped"))
         _say("editor memory total: %s" % (scan["memoryTotalLine"] or "<not logged>"))
         _say("oom_alloc=%d oom_backup_pool=%d watermark=%d last Test Started: %s" % (
             scan["oomAlloc"], scan["oomBackupPool"], scan["watermarkMarkers"], scan["lastTest"]))
@@ -962,12 +1047,26 @@ def supervise(spec):
             _say("startup death in the concurrent-CEF retry, relaunch: %s" % scan["cefRaceLine"])
         line = format_suite_result(verdict, cap, peak, spec["priority"], code, scan, wall, spec["logPath"])
     else:
-        verdict = verdict_for(spec["kind"], timed_out, is_cap_hit(cap, peak, violation_is_memory), code)
+        hit = is_cap_hit(cap, peak, violation_is_memory)
+        scan = _scan_log(spec["logPath"]) if spec.get("logPath") else None
+        killed = not timed_out and not hit and killed_externally(code, scan)
+        verdict = verdict_for(spec["kind"], timed_out, hit, code, killed=killed)
         line = format_job_result(verdict, code, spec["priority"], cap, peak, wall,
                                  spec["argv"][0], spec.get("outputPath"))
+    if killed:
+        _say("killed from outside the run (exit %d; not a crash, an exit request, a timeout or the cap); "
+             "log last written %s" % (code, _log_stopped_at(spec.get("logPath") or spec.get("outputPath"))))
     _say(line)
     _write_atomic(spec["resultPath"], line + "\n")
     return 0
+
+
+def _log_stopped_at(path):
+    """UTC ISO time a log was last written, or None."""
+    try:
+        return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(os.path.getmtime(path)))
+    except (OSError, TypeError):
+        return None
 
 
 # ------------------------------------------------------------------------------------------------

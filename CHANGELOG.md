@@ -2,6 +2,23 @@
 
 ## 1.0.0
 
+- Added: `editor_start`, `editor_restart`, `editor_run_tests` and `editor_build` refuse before
+  spawning when the machine is short of memory (`LAUNCH_MEMORY_LOW`: available physical memory, or
+  Windows available commit, below the launch's expected peak plus `$PINWRIGHT_LAUNCH_RESERVE_GB`,
+  default 3, negative disables) or already runs `$PINWRIGHT_MAX_EDITORS` PinWright-launched editors
+  (`EDITOR_LIMIT_REACHED`, unset = no cap); both name the running editors. A run killed from outside
+  (Linux SIGKILL; Windows a non-zero exit with no crash banner and no exit request in its log) gets
+  the supervisor verdict `EDITOR_KILLED_EXTERNALLY` / `COMMAND_KILLED_EXTERNALLY`, and
+  `editor_test_status` / `editor_build_status` report `killedExternally` and `logStoppedAt`.
+- Added: `EDITOR_ALREADY_RUNNING` names the editor holding the checkout's MCP port (`owner`: pid,
+  `launchedBy`, reason, mode, start time, log, command line), and `editor_start` /
+  `editor_run_tests` take `slot_wait` (seconds) to wait for that editor to exit instead of polling.
+- Fixed: Linux capped runs. A drained suite's forced `-TestExit` exit (`_exit(1)` on Unix) is no
+  longer `EDITOR_EXIT_NONZERO`; `capSeenByEditor` reads `n/a` (UE does not read cgroup limits)
+  instead of a misleading `False`; an OOM kill is still counted when systemd removed the scope
+  before the final read; and the supervisor stops transient scopes the systemd user manager left
+  `active` with no processes.
+
 - Fixed: class lookups by bare short name (`Object`, `Actor`, `PointLight`) no longer log
   `Failed to find object 'Class <Name>'` warnings before succeeding; the class resolvers no longer
   attempt a load for a bare name or a `/Script/` class.

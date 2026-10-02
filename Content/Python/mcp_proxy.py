@@ -266,6 +266,15 @@ EDITOR_START_TOOL = {
                     "and a modal there is unrecoverable."
                 ),
             },
+            "slot_wait": {
+                "type": "number",
+                "description": (
+                    "Seconds (0-3600, default 0) to wait for an editor already answering this "
+                    "checkout's MCP port to exit before refusing with EDITOR_ALREADY_RUNNING, "
+                    "whose owner field names that editor (pid, launchedBy, reason, mode, "
+                    "startTime, logPath, commandLine)."
+                ),
+            },
         },
         "required": ["mode", "reason"],
     },
@@ -394,6 +403,15 @@ EDITOR_RUN_TESTS_TOOL = {
                     "anything, so take a full-suite verdict in offscreen). offscreen and headless "
                     "use the -Cmd console binary on Windows and the plain UnrealEditor binary on "
                     "Linux. Every mode is modal-suppressed (-unattended -RunningUnattendedScript)."
+                ),
+            },
+            "slot_wait": {
+                "type": "number",
+                "description": (
+                    "Seconds (0-3600, default 0) to wait for an editor already answering this "
+                    "checkout's MCP port to exit before refusing with EDITOR_ALREADY_RUNNING, "
+                    "whose owner field names that editor (pid, launchedBy, reason, mode, "
+                    "startTime, logPath, commandLine)."
                 ),
             },
         },
@@ -2290,10 +2308,25 @@ def build_state(log_path):
         "exitCode": exit_code,
         "verdict": verdict,
         "supervisorResult": result_line,
+        **_external_kill_fields(verdict, log_path),
         "errorCount": scan["errorCount"],
         "errors": scan["errors"],
         "sourcesChangedDuringBuild": changed,
     }
+
+
+def _external_kill_fields(verdict, log_path):
+    """killedExternally (the supervisor's *_KILLED_EXTERNALLY verdict: no crash, no exit request,
+    no timeout or cap; e.g. an OOM watchdog's kill) and, when true, logStoppedAt (UTC ISO time
+    the log was last written)."""
+    killed = bool(verdict and verdict.endswith("_KILLED_EXTERNALLY"))
+    fields = {"killedExternally": killed}
+    if killed:
+        try:
+            fields["logStoppedAt"] = _utc_iso_from_ms(os.path.getmtime(log_path) * 1000)
+        except OSError:
+            fields["logStoppedAt"] = None
+    return fields
 
 
 def _build_lease_path(checkout_root):
@@ -2333,6 +2366,36 @@ _RUN_TESTS_MODE_HELP = (
 # on the development host is 395.1 s (docs/defect-backlog.md); 600 s is that plus half again, so a
 # healthy cold boot is never reported as a failure while a wedged one is still caught.
 TEST_START_TIMEOUT = 600.0
+
+
+# editor_list fields that name the editor holding a checkout's MCP slot (EDITOR_ALREADY_RUNNING).
+_OWNER_FIELDS = ("pid", "launchedBy", "reason", "mode", "startTime", "logPath", "commandLine")
+# Ceiling on slot_wait: an hour covers the longest full suite measured (about 50 min on Linux).
+SLOT_WAIT_MAX = 3600
+# Pre-launch memory check (_launch_capacity_guard). Expected peaks: a full suite 12-18 GB and an
+# editor 3.1-5.4 GB, both from F-memory-aware-editor-launch's watchdog log; a build is UBT plus
+# compilers, which UBT throttles to available memory itself. The 3 GiB default reserve is that
+# watchdog's kill floor (available memory below 3072 MB).
+LAUNCH_PEAK_GIB = {"editor": 6, "suite": 16, "build": 8}
+LAUNCH_RESERVE_ENV = "PINWRIGHT_LAUNCH_RESERVE_GB"
+MAX_EDITORS_ENV = "PINWRIGHT_MAX_EDITORS"
+_GIB = 1024 ** 3
+
+
+def _env_number(name, default):
+    try:
+        return float(os.environ.get(name, default))
+    except ValueError:
+        log("%s=%r is not a number; using %s" % (name, os.environ.get(name), default))
+        return default
+
+
+def _owner_text(owner):
+    if not owner:
+        return " (owner not identified; editor_list shows every editor of this checkout)"
+    return ", held by pid %s (launchedBy %s, mode %s, started %s, reason: %s)" % (
+        owner["pid"], owner["launchedBy"], owner["mode"], owner["startTime"],
+        owner["reason"] or "none recorded")
 
 
 class Proxy:
@@ -2625,6 +2688,119 @@ class Proxy:
         if detail:
             observation["detail"] = detail
         return observation
+    def _identity_pid(self, url):
+        """pid of the editor answering url, from its system.identity, or None."""
+        payload = {"jsonrpc": "2.0", "id": "_proxy_identity", "method": "tools/call",
+                   "params": {"name": "call",
+                              "arguments": {"method": "system.identity", "args": {}}}}
+        try:
+            response = self._post(payload, url, self.probe_timeout)
+        except Exception:
+            return None
+        result = response.get("result") if isinstance(response, dict) else None
+        structured = result.get("structuredContent") if isinstance(result, dict) else None
+        pid = structured.get("pid") if isinstance(structured, dict) else None
+        return int(pid) if isinstance(pid, (int, float)) and not isinstance(pid, bool) else None
+
+    def _slot_owner(self, observation):
+        """The editor holding this checkout's MCP slot, as an editor_list entry cut to
+        _OWNER_FIELDS, or None when it cannot be told apart: the pid its system.identity
+        reports (ready editors only), else the only editor in the census whose checkout
+        publishes the probed port."""
+        try:
+            rows = _editor_processes()
+        except Exception:
+            return None
+        entries = [describe_editor_process(row) for row in rows]
+        pid = (self._identity_pid(observation["url"])
+               if observation.get("state") == "alive" else None)
+        owner = next((entry for entry in entries if pid is not None and entry["pid"] == pid), None)
+        if owner is None:
+            on_port = [entry for entry in entries
+                       if entry["gatewayPort"] is not None
+                       and entry["gatewayPort"] == observation.get("port")]
+            owner = on_port[0] if len(on_port) == 1 else None
+        return {key: owner[key] for key in _OWNER_FIELDS} if owner else None
+
+    def _launch_capacity_guard(self, kind, rows=None):
+        """Machine-wide refusal before a launch of kind (editor | suite | build), or None
+        (F-memory-aware-editor-launch). EDITOR_LIMIT_REACHED: $PINWRIGHT_MAX_EDITORS (unset or 0
+        = no cap) PinWright-launched editors already run, any checkout; builds launch no editor.
+        LAUNCH_MEMORY_LOW: available physical memory, or on Windows available commit, is below the
+        launch's expected peak plus $PINWRIGHT_LAUNCH_RESERVE_GB (default 3; negative disables).
+        ponytail: a point-in-time check; two launches in the same minute both see the memory the
+        first has not allocated yet."""
+        if rows is None:
+            try:
+                rows = _editor_processes()
+            except Exception:
+                rows = []  # census failure: the memory half still applies
+        editors = [describe_editor_process(row) for row in rows]
+        ours = [entry for entry in editors if entry["launchedBy"] != "unknown"]
+
+        def running():
+            return [{key: entry[key] for key in ("pid", "projectName", "mode", "launchedBy",
+                                                  "reason", "startTime")} for entry in editors]
+
+        def listed():
+            return "; ".join("pid %s %s %s by %s" % (e["pid"], e["projectName"], e["mode"],
+                                                    e["launchedBy"]) for e in editors) or "none"
+
+        max_editors = int(_env_number(MAX_EDITORS_ENV, 0))
+        if kind != "build" and max_editors > 0 and len(ours) >= max_editors:
+            return self._start_result(
+                "EDITOR_LIMIT_REACHED: %d PinWright-launched editor(s) already run on this "
+                "machine, the %s=%d cap; nothing was started. Running: %s."
+                % (len(ours), MAX_EDITORS_ENV, max_editors, listed()),
+                {"error": "EDITOR_LIMIT_REACHED", "maxEditors": max_editors,
+                 "running": running()}, is_error=True)
+        reserve_gib = _env_number(LAUNCH_RESERVE_ENV, 3.0)
+        if reserve_gib < 0:
+            return None
+        try:
+            available, commit = pinwright_supervisor.available_memory_bytes()
+            total = pinwright_supervisor.total_physical_bytes()
+        except Exception as exc:
+            log("launch memory check skipped: %s" % exc)
+            return None
+        # A capped launch cannot exceed its cap (60% of RAM), so a small machine is not refused
+        # for a peak it could never reach.
+        peak = min(LAUNCH_PEAK_GIB[kind] * _GIB, int(total * 0.60))
+        need = peak + int(reserve_gib * _GIB)
+        short = [(name, value) for name, value in (("available physical memory", available),
+                                                   ("available commit", commit))
+                 if value is not None and value < need]
+        if not short:
+            return None
+        return self._start_result(
+            "LAUNCH_MEMORY_LOW: %s; this %s launch expects to peak near %.1f GiB and %s=%.1f GiB "
+            "must stay free, so %.1f GiB is needed. Nothing was started. Close an editor or wait "
+            "for a run to finish. Running editors: %s."
+            % (", ".join("%s is %.1f GiB" % (name, value / _GIB) for name, value in short), kind,
+               peak / _GIB, LAUNCH_RESERVE_ENV, reserve_gib, need / _GIB, listed()),
+            {"error": "LAUNCH_MEMORY_LOW", "kind": kind, "availableBytes": available,
+             "availableCommitBytes": commit, "expectedPeakBytes": peak, "neededBytes": need,
+             "reserveGiB": reserve_gib, "running": running()}, is_error=True)
+
+    def _wait_for_free_slot(self, args):
+        """Error result for a bad slot_wait, else None after waiting up to slot_wait seconds
+        (default 0) for this checkout's MCP slot to stop answering. The guard that follows
+        still decides; this only replaces the caller's own polling."""
+        seconds = args.get("slot_wait", 0) if isinstance(args, dict) else 0
+        if isinstance(seconds, bool) or not isinstance(seconds, (int, float)) \
+                or not 0 <= seconds <= SLOT_WAIT_MAX:
+            return self._start_result(
+                "INVALID_ARGUMENTS: slot_wait must be a number of seconds from 0 to %d, got %r."
+                % (SLOT_WAIT_MAX, seconds), {"error": "INVALID_ARGUMENTS", "param": "slot_wait"},
+                is_error=True)
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            if self._editor_process_observation()["state"] not in ("alive", "not_ready"):
+                return None
+            if self._shutdown_requested.wait(min(5.0, max(0.0, deadline - time.monotonic()))):
+                return None
+        return None
+
     def _editor_process_guard(self):
         """Reject a live or timed-out endpoint before either proxy-local process tool."""
         observation = self._editor_process_observation()
@@ -2652,12 +2828,14 @@ class Proxy:
                 " It is still starting; wait for editorReady before retrying."
                 if state == "not_ready" else ""
             )
+            owner = self._slot_owner(observation)
             return self._start_result(
                 "EDITOR_ALREADY_RUNNING: An Unreal editor is already answering PinWright MCP "
-                "at %s. Close that editor before running editor_start or editor_run_tests; "
-                "PinWright will not launch a second editor.%s" % (url, suffix),
+                "at %s%s. Close that editor before running editor_start or editor_run_tests, or "
+                "pass slot_wait to wait for it to exit; PinWright will not launch a second "
+                "editor.%s" % (url, _owner_text(owner), suffix),
                 {"error": "EDITOR_ALREADY_RUNNING", "url": url,
-                 "port": _loopback_port(url)},
+                 "port": _loopback_port(url), "owner": owner},
                 is_error=True,
             )
         if state == "unresponsive":
@@ -2762,7 +2940,8 @@ class Proxy:
         intent_error, mode, reason = self._launch_intent(args, _START_MODE_HELP)
         if intent_error is not None:
             return intent_error
-        guard_result = self._editor_process_guard()
+        guard_result = (self._wait_for_free_slot(args) or self._editor_process_guard()
+                        or self._launch_capacity_guard("editor"))
         if guard_result is not None:
             return guard_result
 
@@ -3015,7 +3194,7 @@ class Proxy:
     def _validate_test_filter(args):
         """None when acceptable, else (errorCode, message). Runs after _launch_intent, so args is
         an object carrying mode and reason."""
-        unknown = sorted(set(args) - {"filter", "reason", "mode"})
+        unknown = sorted(set(args) - {"filter", "reason", "mode", "slot_wait"})
         if unknown:
             return "INVALID_ARGUMENTS", "unknown argument field(s): %s" % ", ".join(unknown)
         if "filter" not in args:
@@ -3066,10 +3245,12 @@ class Proxy:
                 " It is still starting; wait for editorReady before retrying."
                 if state == "not_ready" else ""
             )
+            owner = self._slot_owner(observation)
             return observation, self._start_result(
                 "EDITOR_ALREADY_RUNNING: An Unreal editor is already answering PinWright MCP "
-                "at %s. Close that editor before running tests.%s" % (url, suffix),
-                {"error": "EDITOR_ALREADY_RUNNING", "editorGuard": observation},
+                "at %s%s. Close that editor before running tests, or pass slot_wait to wait for "
+                "it to exit.%s" % (url, _owner_text(owner), suffix),
+                {"error": "EDITOR_ALREADY_RUNNING", "editorGuard": observation, "owner": owner},
                 is_error=True,
             )
 
@@ -3097,9 +3278,15 @@ class Proxy:
                                       is_error=True)
         test_filter = args["filter"].strip()
 
+        slot_error = self._wait_for_free_slot(args)
+        if slot_error is not None:
+            return slot_error
         editor_guard, guard_result = self._run_tests_guard()
         if guard_result is not None:
             return guard_result
+        capacity_error = self._launch_capacity_guard("suite")
+        if capacity_error is not None:
+            return capacity_error
 
         uproject = resolve_uproject(
             self.uproject, self.port_file, __file__, os.path.exists
@@ -3322,6 +3509,8 @@ class Proxy:
                 structured["supervisorResult"] = fh.readline().strip() or None
         except OSError:
             structured["supervisorResult"] = None
+        structured.update(_external_kill_fields(
+            pinwright_supervisor.read_result(log_path + ".result.txt")[1], log_path))
         text = "%s (mode %s): %d started, %d succeeded, %d failed." % (
             status.upper(), structured["mode"] or "unknown", progress["started"],
             progress["succeeded"], progress["failed"])
@@ -3331,6 +3520,10 @@ class Proxy:
             structured["verdict"] = {"state": verdict["state"], "reason": verdict["reason"],
                                      "warnings": verdict["warnings"]}
             text += " Verdict: %s (%s)." % (verdict["state"], verdict["reason"])
+        if structured["killedExternally"]:
+            text += (" The editor was KILLED FROM OUTSIDE the run (log stopped %s): no crash, no "
+                     "exit request, no timeout or cap; check for an OOM watchdog or a manual kill."
+                     % structured["logStoppedAt"])
         return self._start_result(text, structured, is_error=False)
 
     def _editor_list(self, args):
@@ -3412,6 +3605,9 @@ class Proxy:
                 "replaces their DLLs. Close them first (editor.quit), then retry."
                 % (len(pids), ", ".join(str(pid) for pid in pids)),
                 pids=pids, editors=blockers)
+        capacity_error = self._launch_capacity_guard("build", rows)
+        if capacity_error is not None:
+            return capacity_error
 
         association = _read_engine_association(uproject)
         engine_root, editor_exe = resolve_editor(
