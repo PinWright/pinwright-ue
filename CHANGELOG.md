@@ -163,6 +163,9 @@
   reads as its unused default.
 - Fixed: `blueprint.graph.replace_node` moves a wired `self` pin (an external-owner accessor's
   target) to the replacement, and lists it in `connectionsDropped` when it cannot move.
+- Fixed: `geometry.sweep` and `geometry.extrude_along_spline` convert the spline frames into the
+  target's local space, so the tube follows the spline when the target actor is not at the
+  identity transform instead of landing offset by the target's own transform.
 - Fixed: BPIR `call_dispatcher` / `bind_dispatcher` / `unbind_dispatcher` / `clear_dispatcher`
   accept a `K2Node_ConvertAsset` (Resolve Soft Reference) output as `Target:`, the shape the
   decompiler prints, instead of failing with "Failed to create delegate node for dispatcher".

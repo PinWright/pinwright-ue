@@ -892,6 +892,11 @@ Reads as the whole boolean family - `boolean_union`, `boolean_subtract`, `boolea
 
 ### geometry.sweep
 
+- **The tube follows the spline in WORLD space wherever either actor stands.** The spline is sampled in world space and each
+  frame is converted into the target component's local space before it is appended, because the target's mesh is a local
+  buffer. It used to skip that conversion, so a target off the identity transform got its tube displaced (and rotated and
+  scaled) away from the spline by its own transform while the verb reported success. The cross-section is sized in the
+  target's local units, so a scaled target scales the section with it.
 - **The cross-section lands in each spline frame's local Y-Z plane and the sweep advances along its local +X.** A frame whose
   local +X is PERPENDICULAR to the direction of travel therefore slides the section along inside its own plane and sweeps no
   volume: the span comes back as a flat slab. Nothing in the engine reports it, and the result is indistinguishable from a
@@ -917,6 +922,8 @@ Reads as the whole boolean family - `boolean_union`, `boolean_subtract`, `boolea
   within 0.01 uu of the first, which is exactly what sampling a closed-loop `USplineComponent` produces.
 - **On a genuinely closed spline `cap`, `scaleStart` and `scaleEnd` still do nothing**, because a loop has no ends - and the verb
   says so in a `warnings` entry rather than leaving it to be discovered. The result is watertight without caps.
+- It samples the spline the way `geometry.sweep` does: the tube lands on the spline in world space whatever the target's and
+  the spline actor's transforms.
 - It shares `geometry.sweep`'s two `path` warnings: the same section-plane rule applies, and a spline whose frames do not turn
   with it sweeps flat.
 

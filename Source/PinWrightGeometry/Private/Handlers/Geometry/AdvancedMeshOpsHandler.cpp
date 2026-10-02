@@ -32,11 +32,15 @@
 // GeometryTarget.h.
 namespace
 {
-    // Uniform location+rotation samples along a spline, in world space: the data half of a
-    // USplineComponent, and the whole of what geometry.sweep and geometry.extrude_along_spline
-    // need off the level. Twist and scale are deliberately NOT applied - the ops apply those so
-    // the spline path and the linear fallback cannot drift apart.
-    TArray<FTransform> SampleSplineFrames(USplineComponent* SplineComp, int32 StepCount, float SplineLength)
+    // Uniform location+rotation samples along a spline, in the TARGET actor's local space: the
+    // data half of a USplineComponent, and the whole of what geometry.sweep and
+    // geometry.extrude_along_spline need off the level. The spline is read in world space and
+    // brought into the target's frame because the ops append to the target's UDynamicMesh, a
+    // local-space buffer; handing them world frames put the tube off the spline by the target's
+    // own transform. Twist and scale are deliberately NOT applied - the ops apply those so the
+    // spline path and the linear fallback cannot drift apart.
+    TArray<FTransform> SampleSplineFrames(USplineComponent* SplineComp, int32 StepCount, float SplineLength,
+                                          const FTransform& TargetToWorld)
     {
         TArray<FTransform> Samples;
         Samples.Reserve(StepCount + 1);
@@ -45,8 +49,10 @@ namespace
             const float Alpha = (float)i / StepCount;
             const float Dist = SplineLength * Alpha;
             Samples.Add(FTransform(
-                SplineComp->GetQuaternionAtDistanceAlongSpline(Dist, ESplineCoordinateSpace::World),
-                SplineComp->GetLocationAtDistanceAlongSpline(Dist, ESplineCoordinateSpace::World)));
+                TargetToWorld.InverseTransformRotation(
+                    SplineComp->GetQuaternionAtDistanceAlongSpline(Dist, ESplineCoordinateSpace::World)),
+                TargetToWorld.InverseTransformPosition(
+                    SplineComp->GetLocationAtDistanceAlongSpline(Dist, ESplineCoordinateSpace::World))));
         }
         return Samples;
     }
@@ -285,7 +291,8 @@ REGISTER_RPC_HANDLER("geometry.sweep", "geometry", "Sweep a cross-section profil
         {
             Path.SplineLength = SplineComp->GetSplineLength();
             Path.Samples = SampleSplineFrames(SplineComp,
-                GeometryOps::SplinePathStepCount(Params.Steps), Path.SplineLength);
+                GeometryOps::SplinePathStepCount(Params.Steps), Path.SplineLength,
+                Target.Component->GetComponentTransform());
         }
         else
         {
@@ -557,7 +564,7 @@ REGISTER_RPC_HANDLER("geometry.extrude_along_spline", "geometry", "Extrude a pro
 
     const float SplineLength = SplineComp->GetSplineLength();
     const TArray<FTransform> PathSamples = SampleSplineFrames(SplineComp,
-        GeometryOps::SplinePathStepCount(Params.Segments), SplineLength);
+        GeometryOps::SplinePathStepCount(Params.Segments), SplineLength, DMC->GetComponentTransform());
 
     const GeometryOps::FOpResult Op =
         GeometryOps::ExtrudeAlongSpline(DMC->GetDynamicMesh(), Params, PathSamples);
