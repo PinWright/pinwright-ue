@@ -24,11 +24,14 @@
 // arrive over the same X -> SDL -> engine route a human's mouse takes. It never touches
 // FSlateApplication, ICursor, or the inactive-input flag.
 //
-// LINUX/X11 ONLY. libX11 / libXtst are resolved lazily with dlopen/dlsym so the module
-// needs no new link dependency in PinWright.Build.cs; on every other platform each entry
-// point fails with a caller-facing reason. MOUSE ONLY: XTEST key events were observed not
-// to reach the editor's SDL window in this setup even with X focus on it, so keys stay on
-// the Slate path (FDriveInput::PressKey) and drive.key has no OS variant.
+// LINUX/X11 AND WINDOWS. libX11 / libXtst are resolved lazily with dlopen/dlsym so the module
+// needs no new link dependency in PinWright.Build.cs. On Windows the entry points delegate to
+// the SendInput backend in DriveOsInputWindows.cpp (input_path "os_win32"; written on Linux,
+// not yet compiled or run on Windows). On every other platform each entry point fails with a
+// caller-facing reason. MOUSE ONLY: drive.key has no OS variant and keys
+// stay on the Slate path (FDriveInput::PressKey). XTEST key events DO reach the editor's SDL
+// window (xdotool Ctrl+Z/Y/C/V, held across engine ticks with X focus on the editor, fired a
+// PIE game's hotkeys), so this is an unimplemented path, not an impossible one.
 //
 // Every entry point BLOCKS the calling thread: the motion path and the button hold are
 // paced with real sleeps, so a click costs roughly half a second.
@@ -144,4 +147,12 @@ public:
     // a pid) and returns whether it is SelfPid; an unnamed point is never ours, because
     // SDL stamps _NET_WM_PID on every window it creates.
     static bool IsPointOwnedBy(const TArray<uint32>& PathPids, uint32 SelfPid, int32& OutOwnerIndex);
+
+    // "wayland" when WAYLAND_DISPLAY is set or XDG_SESSION_TYPE is "wayland", else "x11". On a
+    // Wayland desktop the editor's X display is XWayland, which passes IsAvailable, but whether
+    // XTEST events, pointer grabs and confinement behave there is unverified (compositor-mediated).
+    static FString SessionTypeFor(const FString& WaylandDisplay, const FString& XdgSessionType);
+
+    // SessionTypeFor this editor's own environment.
+    static FString SessionType();
 };

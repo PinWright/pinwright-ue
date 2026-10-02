@@ -225,6 +225,21 @@ EDITOR_START_TOOL = {
                     "unattended_script cannot turn that off; use mode visible if you want dialogs."
                 ),
             },
+            "display": {
+                "type": "string",
+                "enum": ["desktop", "xvfb", "xephyr"],
+                "description": (
+                    "Linux, mode visible only; default desktop (the session's display). xvfb / "
+                    "xephyr start a private X server for this editor (Xvfb: invisible; Xephyr: a "
+                    "window on the desktop you can watch), so drive os_input owns its pointer, "
+                    "stacking order and focus instead of sharing :0 with other editors. The server "
+                    "exits when the editor disconnects. Refuses PRIVATE_DISPLAY_UNAVAILABLE when "
+                    "the binary is missing, and PRIVATE_DISPLAY_SOFTWARE_RHI (editor stopped) "
+                    "when the RHI picked a CPU Vulkan device there. The result's display (':N') "
+                    "is what raw xdotool needs as DISPLAY. Opt-in: GPU rendering on a private X "
+                    "server is driver-dependent and unverified."
+                ),
+            },
             "reason": {
                 "type": "string",
                 "description": (
@@ -909,6 +924,133 @@ def _visible_launch_env():
     if not sys.platform.startswith("linux") or os.environ.get("DISPLAY"):
         return {}
     return _borrow_session_display()
+
+
+# editor_start display: a private X server per visible Linux editor, so os_input never shares a
+# pointer, stacking order or focus with peers on :0 (board F-os-input-private-display). Opt-in only:
+# a GPU driver may render on it only in software, or not at all.
+# kind -> (binary, distro package that ships it, extra server args).
+PRIVATE_DISPLAYS = {
+    "xvfb": ("Xvfb", "xvfb", ["-screen", "0", "1920x1080x24"]),
+    "xephyr": ("Xephyr", "xserver-xephyr", ["-screen", "1920x1080"]),
+}
+_PRIVATE_DISPLAY_START_TIMEOUT = 10.0
+_PRIVATE_DISPLAY_IDLE_EXIT = 10  # -terminate <delay>: X.Org 21.1+ servers
+
+
+def start_private_display(kind, env=None, which=None, timeout=_PRIVATE_DISPLAY_START_TIMEOUT):
+    """(proc, ':N', None) for a fresh X server of kind, or (None, None, error text). -displayfd
+    lets the server pick a free display number; -terminate makes it exit once it has had no client
+    for _PRIVATE_DISPLAY_IDLE_EXIT seconds, so it dies with the editor even after this proxy is
+    gone, while an X connection the editor opens and closes during startup does not end it.
+    Xephyr needs a host display in env (it is a window on it); Xvfb needs none."""
+    import select
+    import shutil
+    binary, package, server_args = PRIVATE_DISPLAYS[kind]
+    path = (which or shutil.which)(binary)
+    if not path:
+        return None, None, ("PRIVATE_DISPLAY_UNAVAILABLE: display %r needs %s on PATH; install the "
+                            "%s package, or omit display to use the desktop." % (kind, binary, package))
+    read_fd, write_fd = os.pipe()
+    try:
+        proc = subprocess.Popen(
+            [path, "-displayfd", str(write_fd), "-terminate", str(_PRIVATE_DISPLAY_IDLE_EXIT),
+             "-nolisten", "tcp"] + server_args,
+            pass_fds=(write_fd,), env=env, start_new_session=True, stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError as exc:
+        os.close(read_fd)
+        return None, None, "PRIVATE_DISPLAY_FAILED: could not spawn %s (%s)." % (path, exc)
+    finally:
+        os.close(write_fd)
+    try:
+        ready = select.select([read_fd], [], [], timeout)[0]
+        number = os.read(read_fd, 32).strip() if ready else b""
+    finally:
+        os.close(read_fd)
+    if not number.isdigit():
+        stop_private_display(proc)
+        return None, None, ("PRIVATE_DISPLAY_FAILED: %s did not report a display number within "
+                            "%.0fs (exit code %s)." % (path, timeout, proc.poll()))
+    _reap_on_exit(proc)
+    return proc, ":" + number.decode(), None
+
+
+def stop_private_display(proc):
+    """Stop an X server the editor never connected to (-terminate only fires on a disconnect)."""
+    if proc is not None and proc.poll() is None:
+        proc.terminate()
+        try:
+            proc.wait(5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+
+def private_display_env(base, display):
+    """The editor's environment on a private display: DISPLAY points at it and the Wayland hints
+    are cleared, so SDL picks X11 and os_input reports session x11 there."""
+    env = dict(base, DISPLAY=display, XDG_SESSION_TYPE="x11", SDL_VIDEODRIVER="x11")
+    env.pop("WAYLAND_DISPLAY", None)
+    return env
+
+
+_VULKAN_DEVICE_NAME_RE = re.compile(r"LogVulkanRHI: Display: - DeviceName: (.+?)\s*$")
+_VULKAN_DEVICE_TYPE_RE = re.compile(r"LogVulkanRHI: Display: - DeviceID=\S+ Type=(\S+)")
+_SOFTWARE_VULKAN_NAMES = ("llvmpipe", "lavapipe", "softpipe", "swiftshader")
+
+
+def vulkan_device(lines):
+    """(name, VkPhysicalDeviceType) of the Vulkan device the RHI created, from the editor log's
+    FVulkanDevice lines; the last device wins. (None, None) when the log names none."""
+    name = device_type = None
+    for line in lines:
+        match = _VULKAN_DEVICE_NAME_RE.search(line)
+        if match:
+            name = match.group(1)
+            continue
+        match = _VULKAN_DEVICE_TYPE_RE.search(line)
+        if match:
+            device_type = match.group(1)
+    return name, device_type
+
+
+def is_software_vulkan(name, device_type):
+    """A CPU rasterizer (Mesa lavapipe/llvmpipe, SwiftShader) rather than a GPU."""
+    return (device_type == "VK_PHYSICAL_DEVICE_TYPE_CPU"
+            or any(word in (name or "").lower() for word in _SOFTWARE_VULKAN_NAMES))
+
+
+def _check_private_display(result, proc, xserver, display, kind, log_path):
+    """editor_start's result for an editor on a private display: names the display, stops an X
+    server the editor left behind, and refuses (stopping the editor) when the RHI rendered there
+    on a CPU device instead of handing back a software-rendered editor."""
+    structured = result.get("structuredContent")
+    if isinstance(structured, dict):
+        structured.update({"display": display, "displayServer": kind})
+    if proc.poll() is not None:
+        stop_private_display(xserver)
+        return result
+    if result.get("isError"):
+        return result  # still starting; -terminate takes the server down with the editor
+    name, device_type = vulkan_device(pinwright_supervisor.read_lines(log_path))
+    if isinstance(structured, dict):
+        structured.update({"rhiDevice": name, "rhiDeviceType": device_type})
+    if not is_software_vulkan(name, device_type):
+        return result
+    proc.terminate()
+    try:
+        proc.wait(30)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+    stop_private_display(xserver)
+    return Proxy._start_result(
+        "PRIVATE_DISPLAY_SOFTWARE_RHI: on private %s display %s the RHI picked the CPU Vulkan "
+        "device '%s' (%s), so the editor (pid %d) was stopped rather than handed back "
+        "software-rendered. This GPU driver does not render on that X server; use display "
+        "desktop. Log: %s" % (kind, display, name, device_type, proc.pid, log_path),
+        {"error": "PRIVATE_DISPLAY_SOFTWARE_RHI", "display": display, "displayServer": kind,
+         "rhiDevice": name, "rhiDeviceType": device_type, "pid": proc.pid,
+         "logPath": log_path}, is_error=True)
 
 
 def _reap_on_exit(proc):
@@ -2082,8 +2224,24 @@ def _linux_editor_processes(proc_root="/proc", clk_tck=None):
             "argv": argv,
             "startMs": pinwright_supervisor.proc_start_ms(int(name), proc_root, clk_tck),
             "cwd": _readlink(os.path.join(base, "cwd")),
+            "display": _process_env_value(base, b"DISPLAY"),
         })
     return processes
+
+
+def _process_env_value(base, key):
+    """One variable of /proc/<pid>/environ (the process's start environment), or None when unset
+    or unreadable (another user's process)."""
+    try:
+        with open(os.path.join(base, "environ"), "rb") as fh:
+            entries = fh.read().split(b"\0")
+    except OSError:
+        return None
+    prefix = key + b"="
+    for entry in entries:
+        if entry.startswith(prefix):
+            return entry[len(prefix):].decode("utf-8", "replace")
+    return None
 
 
 def _editor_processes():
@@ -2180,6 +2338,8 @@ def describe_editor_process(row, this_project=None):
         "mode": pinwright_supervisor.infer_mode(argv[1:]),
         "map": map_name,
         "logPath": _abslog_path(argv[1:]),
+        # X display the editor renders to (Linux): a private editor_start display shows as its own ':N'.
+        "display": row.get("display"),
         "isThisProject": _same_path(project, this_project),
         "gatewayPort": _read_gateway_port(checkout_root) if checkout_root else None,
         "reason": reason,
@@ -2969,6 +3129,15 @@ class Proxy:
         # window: default it on for map launches, off otherwise.
         unattended_script = bool(args.get("unattended_script", start_map is not None))
 
+        display_kind = args.get("display", "desktop")
+        if display_kind != "desktop" and (display_kind not in PRIVATE_DISPLAYS or mode != "visible"
+                                          or not sys.platform.startswith("linux")):
+            return self._start_result(
+                "INVALID_DISPLAY: display must be 'desktop', 'xvfb' or 'xephyr', got %r; a private "
+                "display needs mode visible on Linux (offscreen and headless have no window, and "
+                "Windows has one input desktop per session)." % display_kind,
+                {"error": "INVALID_DISPLAY", "param": "display"}, is_error=True)
+
         uproject = resolve_uproject(
             self.uproject, self.port_file, __file__, os.path.exists
         )
@@ -2989,6 +3158,12 @@ class Proxy:
             return self._engine_unresolved_result(uproject, assoc)
 
         visible = mode == "visible"
+        if display_kind != "desktop" and _abslog_path(extra_args) is None:
+            # A log of its own, so the RHI device check below reads this editor's log and never
+            # a peer's <Project>.log.
+            extra_args = list(extra_args) + ["-Abslog=%s" % os.path.join(
+                os.path.dirname(uproject), "Saved", "Logs", "%s-%s-%d.log" % (
+                    os.path.splitext(os.path.basename(uproject))[0], display_kind, time.time()))]
         cmd = build_editor_command(
             exe, uproject, mode, extra_args, unattended_script, map_name=start_map,
             identity_args=pinwright_supervisor.launch_identity_args(reason, launched_by))
@@ -2998,9 +3173,11 @@ class Proxy:
         if lock_error is not None:
             return lock_error
         try:
+            xserver = private_display = None
             if not supervised:
                 spawn_kwargs = _spawn_kwargs(True)
-                display_env = _visible_launch_env()
+                # Xvfb needs no host display, so it also serves a proxy with no desktop session.
+                display_env = {} if display_kind == "xvfb" else _visible_launch_env()
                 if display_env is None:
                     return self._start_result(
                         "EDITOR_NO_DISPLAY: a visible editor needs an X display, but this proxy "
@@ -3012,9 +3189,20 @@ class Proxy:
                     log("visible launch borrows %s from the desktop session"
                         % ", ".join("%s=%s" % item for item in sorted(display_env.items())))
                     spawn_kwargs["env"] = dict(os.environ, **display_env)
+                if display_kind != "desktop":
+                    xserver, private_display, display_error = start_private_display(
+                        display_kind, spawn_kwargs.get("env"))
+                    if display_error is not None:
+                        return self._start_result(display_error, {
+                            "error": display_error.split(":", 1)[0], "display": display_kind,
+                            "commandLine": cmdline}, is_error=True)
+                    log("visible launch on private %s display %s" % (display_kind, private_display))
+                    spawn_kwargs["env"] = private_display_env(
+                        spawn_kwargs.get("env") or os.environ, private_display)
                 try:
                     proc = subprocess.Popen(cmd, **spawn_kwargs)
                 except Exception as exc:
+                    stop_private_display(xserver)
                     return self._start_result(
                         "EDITOR_START_FAILED: could not spawn %s (%s)" % (exe, exc),
                         {"error": "CREATEPROC_FAILED", "commandLine": cmdline}, is_error=True)
@@ -3050,6 +3238,9 @@ class Proxy:
                 _stamp_detach(result, proc)
             else:
                 _reap_on_exit(proc)
+            if xserver is not None:
+                result = _check_private_display(result, proc, xserver, private_display,
+                                                display_kind, _abslog_path(extra_args))
             structured = result.get("structuredContent")
             if isinstance(structured, dict):
                 structured.update({

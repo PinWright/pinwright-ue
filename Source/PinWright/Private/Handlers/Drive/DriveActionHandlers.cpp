@@ -58,9 +58,9 @@
     RPC_PARAM_DEF("mark_cap", "number", "Max interactables given a visible mark in the observation screenshot (default 50).", "50"), \
     RPC_PARAM_DEF("journal_since", "number", "Cursor to read journal from when include_journal is set (default 0).", "0")
 
-// The os_input opt-in, declared only on the two MOUSE verbs that implement it (drive.click,
-// drive.hover) so the dispatcher's allowlist refuses it everywhere else — notably drive.key,
-// whose XTEST key events were observed not to reach the editor's SDL window.
+// The os_input opt-in, declared only on the MOUSE verbs that implement it (drive.click,
+// drive.hover, drive.drag) so the dispatcher's allowlist refuses it everywhere else — notably drive.key,
+// whose OS path is not implemented (XTEST keys do reach the editor; see FDriveOsInput).
 #define DRIVE_OS_INPUT_PARAM \
     RPC_PARAM_DEF("os_input", "boolean", \
         "Inject through the OS instead of Slate: real X11/XTEST pointer events, so the input " \
@@ -79,7 +79,9 @@
         "POINTER_GRABBED (held_by_this_editor), with nothing injected, while any X client " \
         "holds a pointer grab (drive.input_state os_grab shows it). " \
         "Mouse only; drive.key has no os_input. Blocks the editor for ~0.5s while the motion " \
-        "path and button hold are paced. The response's input_path reports which path ran.", \
+        "path and button hold are paced. The response's input_path reports which path ran; " \
+        "os_input results carry session (x11 | wayland), and on wayland (XWayland, delivery " \
+        "unverified) a warning.", \
         "false")
 
 namespace DriveActionHandlersLocal

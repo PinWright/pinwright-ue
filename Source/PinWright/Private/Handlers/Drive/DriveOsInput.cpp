@@ -363,6 +363,19 @@ bool FDriveOsInput::IsPointOwnedBy(const TArray<uint32>& PathPids, uint32 SelfPi
     return OutOwnerIndex != INDEX_NONE && PathPids[OutOwnerIndex] == SelfPid;
 }
 
+FString FDriveOsInput::SessionTypeFor(const FString& WaylandDisplay, const FString& XdgSessionType)
+{
+    return !WaylandDisplay.IsEmpty() || XdgSessionType.Equals(TEXT("wayland"), ESearchCase::IgnoreCase)
+        ? TEXT("wayland")
+        : TEXT("x11");
+}
+
+FString FDriveOsInput::SessionType()
+{
+    return SessionTypeFor(FPlatformMisc::GetEnvironmentVariable(TEXT("WAYLAND_DISPLAY")),
+        FPlatformMisc::GetEnvironmentVariable(TEXT("XDG_SESSION_TYPE")));
+}
+
 FString FDriveOsInput::LockPathFor(const FString& Display, uint32 Uid)
 {
     // "host:display.screen": everything after the last ':' up to the '.' names the display.

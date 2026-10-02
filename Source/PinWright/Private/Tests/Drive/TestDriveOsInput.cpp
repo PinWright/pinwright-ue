@@ -339,3 +339,26 @@ bool FDriveOsInputPointerGrabRefusesTest::RunTest(const FString& Parameters)
 }
 
 #endif // PLATFORM_LINUX
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveOsInputWaylandSessionTest,
+    "PinWright.drive.os_input.WaylandSessionDetected",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FDriveOsInputWaylandSessionTest::RunTest(const FString& Parameters)
+{
+    // XWayland sets DISPLAY, so IsAvailable passes there; this is what flags the session so
+    // os_input results can say delivery is unverified (board E-os-input-wayland-unverified).
+    TestEqual(TEXT("WAYLAND_DISPLAY alone marks a Wayland session"),
+        FDriveOsInput::SessionTypeFor(TEXT("wayland-0"), TEXT("")), FString(TEXT("wayland")));
+    TestEqual(TEXT("XDG_SESSION_TYPE=wayland alone marks a Wayland session"),
+        FDriveOsInput::SessionTypeFor(TEXT(""), TEXT("wayland")), FString(TEXT("wayland")));
+    TestEqual(TEXT("an x11 session type is X11"),
+        FDriveOsInput::SessionTypeFor(TEXT(""), TEXT("x11")), FString(TEXT("x11")));
+    TestEqual(TEXT("no session hints (a private Xvfb, an ssh shell) is X11"),
+        FDriveOsInput::SessionTypeFor(TEXT(""), TEXT("")), FString(TEXT("x11")));
+    TestEqual(TEXT("SessionType reads this editor's own environment"),
+        FDriveOsInput::SessionType(),
+        FDriveOsInput::SessionTypeFor(FPlatformMisc::GetEnvironmentVariable(TEXT("WAYLAND_DISPLAY")),
+            FPlatformMisc::GetEnvironmentVariable(TEXT("XDG_SESSION_TYPE"))));
+    return true;
+}

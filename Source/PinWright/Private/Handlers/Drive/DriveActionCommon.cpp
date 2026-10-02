@@ -407,6 +407,18 @@ void FDriveActionCommon::RunAction(FHandlerContext& Ctx, const FString& Handle, 
                         Resp->SetField(Field.Key, Field.Value);
                     }
                 }
+                // XWayland passes IsAvailable, but real-input delivery there is unverified, so a
+                // no_change outcome on Wayland may mean the events never arrived.
+                if (InputPathLabel == TEXT("os_x11"))
+                {
+                    const FString Session = FDriveOsInput::SessionType();
+                    Resp->SetStringField(TEXT("session"), Session);
+                    if (Session == TEXT("wayland"))
+                    {
+                        Resp->SetStringField(TEXT("warning"),
+                            TEXT("Wayland session: this editor's X display is XWayland, where XTEST delivery, pointer grabs and confinement are compositor-mediated and unverified, so the input may not have reached the editor. Log in to an X11 session, or start the editor on a private X display (editor_start display:\"xvfb\"/\"xephyr\")."));
+                    }
+                }
 
                 if (TSharedPtr<FJsonObject> Observation =
                         BuildObservationField(Surface, Selector, ObserveMode, MarkCap, WindowSelector))
