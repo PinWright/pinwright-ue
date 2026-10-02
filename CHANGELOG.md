@@ -62,6 +62,12 @@
   permutations, and on request the generated HLSL / VM assembly. Supports `maxChars` truncation and
   reports text the engine did not retain as `<field>Missing`. `forceCompile` restores the package
   dirty flag.
+- Added: `sequencer.set_control_keys` / `sequencer.get_control_values` key and read many Control
+  Rig controls x frames per call, in `local` (channel values) or `world` space (computed headless,
+  no open Sequencer). Every key is read back; a mismatch undoes the whole call
+  (`CONTROL_KEY_READBACK_MISMATCH`). `sequencer.pin_controls` holds controls at a world transform
+  over a frame range with smoothstep blends, undone on `CONTACT_TOLERANCE_EXCEEDED`. Wiki topic
+  `sequencer.controlrig-clip-edit` documents the AnimSequence -> Control Rig -> new clip chain.
 - Added: `material.audit` validates material graphs (`assets` or `folder`): `island`, `null_texture`,
   `null_function`, `unused_param`, `duplicate_param`, `blend_output_mismatch`, `uv_width`,
   `expression_budget`, plus opt-in `shader_compile` (`includeShaderCompile`). Findings carry the

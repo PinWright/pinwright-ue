@@ -19,6 +19,7 @@
 #include "Handlers/HandlerRegistration.h"
 #include "Handlers/ParamSpec.h"
 #include "Handlers/HandlerContext.h"
+#include "Handlers/ErrorCodes.h"
 #include "Utils/AssetUtils.h"
 #include "Utils/ClassUtils.h"
 #include "Compat/EngineVersionCompat.h"
@@ -47,6 +48,11 @@
 #include "Rigs/RigHierarchyElements.h"
 #include "Sequencer/MovieSceneControlRigParameterTrack.h"
 #include "Sequencer/MovieSceneControlRigParameterSection.h"
+#include "Tracks/MovieScene3DAttachTrack.h"
+#include "Tracks/MovieScene3DTransformTrack.h"
+#include "Components/SceneComponent.h"
+#include "Handlers/ParamAliasUtils.h"
+#include "Handlers/Sequencer/ControlRigKeyTestHooks.h"
 
 namespace PinWrightControlRigSequencer
 {
@@ -405,7 +411,7 @@ namespace PinWrightControlRigSequencer
         ULevelSequence* Sequence = ResolveLevelSequence(Payload, OutSeqPath);
         if (!Sequence || !Sequence->GetMovieScene())
         {
-            Ctx.SendError(TEXT("SEQUENCE_NOT_FOUND"),
+            Ctx.SendError(ErrorCodes::ERR_SEQUENCE_NOT_FOUND,
                 FString::Printf(TEXT("Level sequence not found for path '%s'."), *OutSeqPath));
             return false;
         }
@@ -425,7 +431,7 @@ namespace PinWrightControlRigSequencer
         }
         if (!OutTrack || !OutSection)
         {
-            Ctx.SendError(TEXT("CONTROLRIG_TRACK_NOT_FOUND"),
+            Ctx.SendError(ErrorCodes::ERR_CONTROLRIG_TRACK_NOT_FOUND,
                 TEXT("No Control Rig track/section on this binding. Call sequencer.add_controlrig_track first."));
             return false;
         }
@@ -456,21 +462,21 @@ REGISTER_RPC_HANDLER("sequencer.add_controlrig_track", "sequencer",
     ULevelSequence* Sequence = ResolveLevelSequence(Payload, SeqPath);
     if (!Sequence)
     {
-        Ctx.SendError(TEXT("SEQUENCE_NOT_FOUND"),
+        Ctx.SendError(ErrorCodes::ERR_SEQUENCE_NOT_FOUND,
             FString::Printf(TEXT("Level sequence not found for path '%s'."), *SeqPath));
         return true;
     }
     UMovieScene* MovieScene = Sequence->GetMovieScene();
     if (!MovieScene)
     {
-        Ctx.SendError(TEXT("SEQUENCE_INVALID"), TEXT("Level sequence has no MovieScene."));
+        Ctx.SendError(ErrorCodes::ERR_SEQUENCE_INVALID, TEXT("Level sequence has no MovieScene."));
         return true;
     }
 
     const FGuid BindingGuid = ResolveBindingGuid(Payload);
     if (!BindingGuid.IsValid() || !MovieScene->FindBinding(BindingGuid))
     {
-        Ctx.SendError(TEXT("BINDING_NOT_FOUND"),
+        Ctx.SendError(ErrorCodes::ERR_BINDING_NOT_FOUND,
             TEXT("Binding GUID missing or not present in the sequence. Pass 'binding' as the possessable GUID (Digits)."));
         return true;
     }
@@ -483,7 +489,7 @@ REGISTER_RPC_HANDLER("sequencer.add_controlrig_track", "sequencer",
         RigClass = ResolveUClass(RigClassStr);
         if (!RigClass || !RigClass->IsChildOf(UControlRig::StaticClass()))
         {
-            Ctx.SendError(TEXT("RIG_CLASS_NOT_FOUND"),
+            Ctx.SendError(ErrorCodes::ERR_RIG_CLASS_NOT_FOUND,
                 FString::Printf(TEXT("Could not resolve rigClass '%s' to a UControlRig subclass."), *RigClassStr));
             return true;
         }
@@ -534,7 +540,7 @@ REGISTER_RPC_HANDLER("sequencer.add_controlrig_track", "sequencer",
     USkeletalMeshComponent* SkelMeshComp = ResolveBoundSkeletalMeshComponent(Sequence, BindingGuid);
     if (!SkelMeshComp && RigClass == UFKControlRig::StaticClass())
     {
-        Ctx.SendError(TEXT("BINDING_NOT_SKELETAL"),
+        Ctx.SendError(ErrorCodes::ERR_BINDING_NOT_SKELETAL,
             TEXT("FK Control Rig requires the binding to resolve to a skeletal-mesh actor in the editor world; "
                  "none was found. Bind the possessable to a spawned skeletal-mesh actor, or pass an explicit rigClass."));
         return true;
@@ -548,7 +554,7 @@ REGISTER_RPC_HANDLER("sequencer.add_controlrig_track", "sequencer",
         Cast<UMovieSceneControlRigParameterTrack>(MovieScene->AddTrack(UMovieSceneControlRigParameterTrack::StaticClass(), BindingGuid));
     if (!Track)
     {
-        Ctx.SendError(TEXT("TRACK_CREATE_FAILED"), TEXT("Failed to add a Control Rig parameter track to the binding."));
+        Ctx.SendError(ErrorCodes::ERR_TRACK_CREATE_FAILED, TEXT("Failed to add a Control Rig parameter track to the binding."));
         return true;
     }
 
@@ -640,7 +646,7 @@ REGISTER_RPC_HANDLER("sequencer.list_controls", "sequencer",
     }
     if (!Track->GetControlRig())
     {
-        Ctx.SendError(TEXT("CONTROLRIG_TRACK_NOT_FOUND"),
+        Ctx.SendError(ErrorCodes::ERR_CONTROLRIG_TRACK_NOT_FOUND,
             TEXT("No Control Rig track/section on this binding. Call sequencer.add_controlrig_track first."));
         return true;
     }
@@ -706,13 +712,13 @@ REGISTER_RPC_HANDLER("sequencer.key_controls", "sequencer",
     double FrameNum = 0.0;
     if (!Payload.IsValid() || !Payload->TryGetNumberField(TEXT("frame"), FrameNum))
     {
-        Ctx.SendError(TEXT("MISSING_FRAME"), TEXT("A numeric 'frame' is required."));
+        Ctx.SendError(ErrorCodes::ERR_MISSING_FRAME, TEXT("A numeric 'frame' is required."));
         return true;
     }
     const TSharedPtr<FJsonObject>* ControlsObj = nullptr;
     if (!Payload->TryGetObjectField(TEXT("controls"), ControlsObj) || !ControlsObj || !(*ControlsObj).IsValid())
     {
-        Ctx.SendError(TEXT("MISSING_CONTROLS"), TEXT("A 'controls' object mapping control name -> value is required."));
+        Ctx.SendError(ErrorCodes::ERR_MISSING_CONTROLS, TEXT("A 'controls' object mapping control name -> value is required."));
         return true;
     }
 
@@ -796,7 +802,7 @@ REGISTER_RPC_HANDLER("sequencer.key_controls", "sequencer",
             RejectedArr.Add(MakeShared<FJsonValueString>(R));
         }
         ErrResult->SetArrayField(TEXT("rejectedValues"), RejectedArr);
-        Ctx.SendError(TEXT("NO_CONTROLS_KEYED"),
+        Ctx.SendError(ErrorCodes::ERR_NO_CONTROLS_KEYED,
             TEXT("No controls were keyed: the named controls were either absent from this rig "
                  "(unknownControls) or supplied a non-numeric value (rejectedValues)."), ErrResult);
         return true;
@@ -866,20 +872,20 @@ REGISTER_RPC_HANDLER("sequencer.get_control_value", "sequencer",
     FString ControlName;
     if (!Payload.IsValid() || !Payload->TryGetStringField(TEXT("control"), ControlName) || ControlName.IsEmpty())
     {
-        Ctx.SendError(TEXT("MISSING_CONTROL"), TEXT("A 'control' name is required."));
+        Ctx.SendError(ErrorCodes::ERR_MISSING_CONTROL, TEXT("A 'control' name is required."));
         return true;
     }
     double FrameNum = 0.0;
     if (!Payload->TryGetNumberField(TEXT("frame"), FrameNum))
     {
-        Ctx.SendError(TEXT("MISSING_FRAME"), TEXT("A numeric 'frame' is required."));
+        Ctx.SendError(ErrorCodes::ERR_MISSING_FRAME, TEXT("A numeric 'frame' is required."));
         return true;
     }
 
     TArray<FMovieSceneFloatChannel*> Channels = ChannelsForControl(Section, FName(*ControlName));
     if (Channels.Num() == 0)
     {
-        Ctx.SendError(TEXT("CONTROL_NOT_FOUND"),
+        Ctx.SendError(ErrorCodes::ERR_CONTROL_NOT_FOUND,
             FString::Printf(TEXT("Control '%s' has no keyable float channel on this rig."), *ControlName));
         return true;
     }
@@ -916,3 +922,1158 @@ REGISTER_RPC_HANDLER("sequencer.get_control_value", "sequencer",
     Ctx.SendSuccess(Result);
     return true;
 }
+
+// ============================================================================
+// Batch keying, batch readback and world space (F-sequencer-control-keys-batch), and the contact
+// pin built on them (F-sequencer-pin-controls).
+//
+// WORLD SPACE IS COMPUTED HEADLESS, NOT THROUGH THE ENGINE'S OPEN-SEQUENCER API.
+// UControlRigSequencerEditorLibrary::Get/SetControlRigWorldTransforms evaluate through an open,
+// focused Sequencer (GetSequencerFromAsset) and do nothing without one. Here the rig is posed from
+// the section's own channels at the frame (every control with float channels), the rig's forward
+// solve runs when the control hangs off a bone (an FK rig places bones from its controls), and
+// world = control global (component space) * the bound component's world transform. The rig pose
+// is restored afterwards. Where that model is wrong the verbs refuse with
+// CONTROL_WORLD_SPACE_UNAVAILABLE instead of answering: an additive rig (channels are deltas), and
+// a binding moved by a transform or attach track (the component's editor placement is then not
+// its per-frame placement).
+// ponytail: posing skips Vector2D/bool/integer/enum controls and ignores a control's preferred
+// euler rotation order; add both when a rig's transforms are seen to depend on them.
+//
+// EVERY WRITE IS READ BACK, AND A MISMATCH UNDOES THE WHOLE CALL. The touched channels are
+// snapshotted before the first key, the call runs in one FScopedTransaction, and every written key
+// is read back (local: the channel value; world: re-posed through the rig). Any key outside
+// tolerance restores every snapshotted channel, cancels the transaction, verifies the restore and
+// only then restores the package's dirty flag.
+// ============================================================================
+namespace PinWrightControlRigSequencer
+{
+    // Which transform parts a control type owns, in the section's channel order T, R, S.
+    struct FControlTransformParts
+    {
+        bool bT = false;
+        bool bR = false;
+        bool bS = false;
+        bool Any() const { return bT || bR || bS; }
+        int32 NumChannels() const { return 3 * ((bT ? 1 : 0) + (bR ? 1 : 0) + (bS ? 1 : 0)); }
+    };
+
+    static FControlTransformParts TransformPartsForType(ERigControlType Type)
+    {
+        FControlTransformParts Parts;
+        switch (Type)
+        {
+        case ERigControlType::Position:         Parts.bT = true; break;
+        case ERigControlType::Rotator:          Parts.bR = true; break;
+        case ERigControlType::Scale:            Parts.bS = true; break;
+        case ERigControlType::TransformNoScale: Parts.bT = true; Parts.bR = true; break;
+        case ERigControlType::Transform:
+        case ERigControlType::EulerTransform:   Parts.bT = true; Parts.bR = true; Parts.bS = true; break;
+        default: break;
+        }
+        return Parts;
+    }
+
+    static FControlTransformParts WireTransformParts()
+    {
+        FControlTransformParts Parts;
+        Parts.bT = true;
+        Parts.bR = true;
+        Parts.bS = true;
+        return Parts;
+    }
+
+    // Float-channel values (index order) -> transform. Rotation channels are [Roll, Pitch, Yaw],
+    // the section's own layout; parts the type does not own stay identity.
+    static FTransform ChannelValuesToTransform(const FControlTransformParts& Parts, TArrayView<const double> V)
+    {
+        FVector T = FVector::ZeroVector;
+        FRotator R = FRotator::ZeroRotator;
+        FVector S = FVector::OneVector;
+        int32 I = 0;
+        if (Parts.bT) { T = FVector(V[I], V[I + 1], V[I + 2]); I += 3; }
+        if (Parts.bR) { R = FRotator(V[I + 1], V[I + 2], V[I]); I += 3; }
+        if (Parts.bS) { S = FVector(V[I], V[I + 1], V[I + 2]); }
+        return FTransform(R, T, S);
+    }
+
+    static TArray<double> TransformToChannelValues(const FControlTransformParts& Parts, const FTransform& X)
+    {
+        TArray<double> V;
+        if (Parts.bT) { const FVector T = X.GetLocation(); V.Append({T.X, T.Y, T.Z}); }
+        if (Parts.bR) { const FRotator R = X.Rotator(); V.Append({R.Roll, R.Pitch, R.Yaw}); }
+        if (Parts.bS) { const FVector S = X.GetScale3D(); V.Append({S.X, S.Y, S.Z}); }
+        return V;
+    }
+
+    static TArray<TSharedPtr<FJsonValue>> NumbersToJson(TArrayView<const double> V)
+    {
+        TArray<TSharedPtr<FJsonValue>> Out;
+        for (const double D : V)
+        {
+            Out.Add(MakeShared<FJsonValueNumber>(D));
+        }
+        return Out;
+    }
+
+    // Strict: every element must be a JSON number (TryGetNumber would also take bools and strings).
+    static bool ParseNumberArray(const TSharedPtr<FJsonValue>& Value, TArray<double>& Out)
+    {
+        Out.Reset();
+        if (!Value.IsValid() || Value->Type != EJson::Array)
+        {
+            return false;
+        }
+        for (const TSharedPtr<FJsonValue>& Element : Value->AsArray())
+        {
+            if (!Element.IsValid() || Element->Type != EJson::Number)
+            {
+                return false;
+            }
+            Out.Add(Element->AsNumber());
+        }
+        return true;
+    }
+
+    // A non-empty array of whole display frames.
+    static bool ParseFrameArray(const TSharedPtr<FJsonValue>& Value, TArray<int32>& Out)
+    {
+        TArray<double> Numbers;
+        Out.Reset();
+        if (!ParseNumberArray(Value, Numbers) || Numbers.Num() == 0)
+        {
+            return false;
+        }
+        for (const double Frame : Numbers)
+        {
+            if (Frame != FMath::RoundToDouble(Frame) || FMath::Abs(Frame) > 1.0e8)
+            {
+                return false;
+            }
+            Out.Add(static_cast<int32>(Frame));
+        }
+        return true;
+    }
+
+    // [TX,TY,TZ,Roll,Pitch,Yaw] or [...,SX,SY,SZ] -> transform (scale 1 when omitted).
+    static bool ParseWireTransform(const TSharedPtr<FJsonValue>& Value, FTransform& Out)
+    {
+        TArray<double> V;
+        if (!ParseNumberArray(Value, V) || (V.Num() != 6 && V.Num() != 9))
+        {
+            return false;
+        }
+        if (V.Num() == 6)
+        {
+            V.Append({1.0, 1.0, 1.0});
+        }
+        Out = ChannelValuesToTransform(WireTransformParts(), V);
+        return true;
+    }
+
+    static void WriteChannelKey(FMovieSceneFloatChannel* Channel, FFrameNumber Tick, double Value)
+    {
+        FMovieSceneFloatValue KeyValue(static_cast<float>(Value));
+        KeyValue.InterpMode = ERichCurveInterpMode::RCIM_Cubic;
+        Channel->GetData().UpdateOrAddKey(Tick, KeyValue);
+    }
+
+    struct FChannelSnapshot
+    {
+        FMovieSceneFloatChannel* Channel = nullptr;
+        TArray<FFrameNumber> Times;
+        TArray<FMovieSceneFloatValue> Values;
+    };
+
+    static FChannelSnapshot CaptureChannel(FMovieSceneFloatChannel* Channel)
+    {
+        FChannelSnapshot Snap;
+        Snap.Channel = Channel;
+        const auto Data = static_cast<const FMovieSceneFloatChannel*>(Channel)->GetData();
+        Snap.Times.Append(Data.GetTimes().GetData(), Data.GetTimes().Num());
+        Snap.Values.Append(Data.GetValues().GetData(), Data.GetValues().Num());
+        return Snap;
+    }
+
+    static void SnapshotChannels(TArrayView<FMovieSceneFloatChannel* const> Channels, TArray<FChannelSnapshot>& InOut)
+    {
+        for (FMovieSceneFloatChannel* Channel : Channels)
+        {
+            if (Channel && !InOut.ContainsByPredicate([Channel](const FChannelSnapshot& S) { return S.Channel == Channel; }))
+            {
+                InOut.Add(CaptureChannel(Channel));
+            }
+        }
+    }
+
+    // Restores every snapshotted channel, drops the open transaction without applying it, verifies
+    // the restore key for key, and only then puts the package's dirty flag back.
+    static bool RollbackChannels(FScopedTransaction& Transaction, UPackage* Package, bool bPackageWasDirty,
+        const TArray<FChannelSnapshot>& Snapshots)
+    {
+        for (const FChannelSnapshot& Snap : Snapshots)
+        {
+            Snap.Channel->Set(Snap.Times, Snap.Values);
+        }
+        Transaction.Cancel();
+        for (const FChannelSnapshot& Snap : Snapshots)
+        {
+            const FChannelSnapshot Now = CaptureChannel(Snap.Channel);
+            if (Now.Times != Snap.Times || Now.Values != Snap.Values)
+            {
+                return false;
+            }
+        }
+        if (Package)
+        {
+            Package->SetDirtyFlag(bPackageWasDirty);
+        }
+        return true;
+    }
+
+    // What world-space evaluation needs, resolved once per call.
+    struct FWorldSpaceContext
+    {
+        UControlRig* Rig = nullptr;
+        FTransform ComponentWorld = FTransform::Identity;
+    };
+
+    // Refuses (and returns false) where headless world space would answer wrongly; see the
+    // block comment above.
+    static bool ResolveWorldSpaceContext(FHandlerContext& Ctx, UMovieScene* MovieScene, const FGuid& BindingGuid,
+        UMovieSceneControlRigParameterSection* Section, FWorldSpaceContext& Out)
+    {
+        UControlRig* Rig = Section ? Section->GetControlRig() : nullptr;
+        if (!Rig || !Rig->GetHierarchy())
+        {
+            Ctx.SendError(ErrorCodes::ERR_RIG_STATE_INVALID,
+                TEXT("The Control Rig section has no current rig or hierarchy."));
+            return false;
+        }
+        if (IsRigAdditive(Rig))
+        {
+            Ctx.SendError(ErrorCodes::ERR_CONTROL_WORLD_SPACE_UNAVAILABLE,
+                TEXT("The rig is additive (layered): its channels are deltas over the base pose, so a world "
+                     "transform cannot be keyed or read from them. Use space 'local'."));
+            return false;
+        }
+        // The binding and every parent binding: a transform or attach track moves the component per
+        // frame, which this headless evaluation does not replay.
+        FGuid Guid = BindingGuid;
+        for (int32 Depth = 0; Guid.IsValid() && Depth < 16; ++Depth)
+        {
+            if (MovieScene->FindTracks(UMovieScene3DTransformTrack::StaticClass(), Guid, NAME_None).Num() > 0 ||
+                MovieScene->FindTracks(UMovieScene3DAttachTrack::StaticClass(), Guid, NAME_None).Num() > 0)
+            {
+                Ctx.SendError(ErrorCodes::ERR_CONTROL_WORLD_SPACE_UNAVAILABLE,
+                    FString::Printf(TEXT("Binding '%s' has a transform or attach track, so the rig's component moves per "
+                                         "frame and its editor placement is not the world parent of the controls. "
+                                         "Use space 'local'."), *Guid.ToString(EGuidFormats::Digits)));
+                return false;
+            }
+            const FMovieScenePossessable* Possessable = MovieScene->FindPossessable(Guid);
+            Guid = Possessable ? Possessable->GetParent() : FGuid();
+        }
+        USceneComponent* Component = nullptr;
+        if (const TSharedPtr<IControlRigObjectBinding> Binding = Rig->GetObjectBinding())
+        {
+            Component = Cast<USceneComponent>(Binding->GetBoundObject());
+        }
+        if (!Component)
+        {
+            Component = ResolveBoundSkeletalMeshComponent(MovieScene->GetTypedOuter<ULevelSequence>(), BindingGuid);
+        }
+        if (!Component)
+        {
+            Ctx.SendError(ErrorCodes::ERR_CONTROL_WORLD_SPACE_UNAVAILABLE,
+                TEXT("The rig is not bound to a scene component in the editor world, so there is no world parent for "
+                     "its controls. Bind the possessable to a live actor, or use space 'local'."));
+            return false;
+        }
+        Out.Rig = Rig;
+        Out.ComponentWorld = Component->GetComponentTransform();
+        return true;
+    }
+
+    // An FK rig parents each control to its bone's parent bone, and bones are placed by the rig's
+    // forward solve, so such a control needs the rig run after posing.
+    static bool ControlHangsOffBone(URigHierarchy* Hierarchy, const FRigElementKey& Key)
+    {
+        for (const FRigElementKey& Parent : Hierarchy->GetParents(Key, /*bRecursive=*/true))
+        {
+            if (Parent.Type == ERigElementType::Bone)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Write every float-channel control's value at Tick into the rig (a control whose channels have
+    // nothing to evaluate keeps its current value).
+    static void PoseRigFromSection(UMovieSceneControlRigParameterSection* Section, UControlRig* Rig,
+        FFrameNumber Tick, bool bRunForwardSolve)
+    {
+        URigHierarchy* Hierarchy = Rig->GetHierarchy();
+        for (const FName& Name : ControlsWithFloatChannels(Section))
+        {
+            FRigControlElement* Element = Rig->FindControl(Name);
+            if (!Element)
+            {
+                continue;
+            }
+            TArray<double> V;
+            bool bEvaluated = true;
+            for (FMovieSceneFloatChannel* Channel : ChannelsForControl(Section, Name))
+            {
+                float F = 0.0f;
+                bEvaluated &= Channel->Evaluate(FFrameTime(Tick), F);
+                V.Add(F);
+            }
+            const ERigControlType Type = Element->Settings.ControlType;
+            const FControlTransformParts Parts = TransformPartsForType(Type);
+            FRigControlValue Value = Hierarchy->GetControlValue(Element, ERigControlValueType::Current);
+            if (!bEvaluated)
+            {
+                continue;
+            }
+            if (Parts.Any() && V.Num() >= Parts.NumChannels())
+            {
+                Value.SetFromTransform(ChannelValuesToTransform(Parts, V), Type, Element->Settings.PrimaryAxis);
+            }
+#if UE_VERSION_NEWER_THAN_OR_EQUAL(5, 4, 0)
+            else if ((Type == ERigControlType::Float || Type == ERigControlType::ScaleFloat) && V.Num() >= 1)
+#else
+            else if (Type == ERigControlType::Float && V.Num() >= 1)
+#endif
+            {
+                Value = FRigControlValue::Make<float>(static_cast<float>(V[0]));
+            }
+            else
+            {
+                continue;
+            }
+            Hierarchy->SetControlValue(Element, Value, ERigControlValueType::Current);
+        }
+        if (bRunForwardSolve)
+        {
+            Rig->Evaluate_AnyThread();
+        }
+    }
+
+    static FTransform ControlWorldAt(UMovieSceneControlRigParameterSection* Section, const FWorldSpaceContext& World,
+        FName Control, FFrameNumber Tick)
+    {
+        PoseRigFromSection(Section, World.Rig, Tick,
+            ControlHangsOffBone(World.Rig->GetHierarchy(), FRigElementKey(Control, ERigElementType::Control)));
+        return World.Rig->GetControlGlobalTransform(Control) * World.ComponentWorld;
+    }
+
+    // The control's channel values that place it at WorldTarget at Tick, given every other
+    // channel as currently keyed.
+    static TArray<double> ChannelValuesForWorld(UMovieSceneControlRigParameterSection* Section,
+        const FWorldSpaceContext& World, FName Control, FFrameNumber Tick, const FTransform& WorldTarget)
+    {
+        PoseRigFromSection(Section, World.Rig, Tick,
+            ControlHangsOffBone(World.Rig->GetHierarchy(), FRigElementKey(Control, ERigElementType::Control)));
+        const FRigControlElement* Element = World.Rig->FindControl(Control);
+        const ERigControlType Type = Element->Settings.ControlType;
+        const FRigControlValue Value = World.Rig->GetControlValueFromGlobalTransform(
+            Control, WorldTarget.GetRelativeTransform(World.ComponentWorld), ERigTransformType::CurrentGlobal);
+        return TransformToChannelValues(TransformPartsForType(Type),
+            Value.GetAsTransform(Type, Element->Settings.PrimaryAxis));
+    }
+
+    struct FWorldKey
+    {
+        FName Control;
+        int32 Frame = 0;
+        FFrameNumber Tick;
+        FTransform World;
+    };
+
+    struct FWorldKeyError
+    {
+        double Cm = 0.0;
+        double Deg = 0.0;
+        double Scale = 0.0;
+    };
+
+    // Writes world keys in order, each solved against everything keyed before it (so list a
+    // parent control before its children), then reads every key back through the rig. The rig
+    // pose is restored after each phase.
+    static TArray<FWorldKeyError> WriteAndMeasureWorldKeys(UMovieSceneControlRigParameterSection* Section,
+        const FWorldSpaceContext& World, const TArray<FWorldKey>& Keys)
+    {
+        URigHierarchy* Hierarchy = World.Rig->GetHierarchy();
+        const FRigPose SavedPose = Hierarchy->GetPose();
+        for (const FWorldKey& Key : Keys)
+        {
+            const TArray<double> V = ChannelValuesForWorld(Section, World, Key.Control, Key.Tick, Key.World);
+            const TArray<FMovieSceneFloatChannel*> Channels = ChannelsForControl(Section, Key.Control);
+            for (int32 Index = 0; Index < FMath::Min(V.Num(), Channels.Num()); ++Index)
+            {
+                WriteChannelKey(Channels[Index], Key.Tick, V[Index]);
+                Channels[Index]->AutoSetTangents();
+            }
+        }
+        Hierarchy->SetPose(SavedPose);
+
+#if WITH_DEV_AUTOMATION_TESTS
+        if (PinWrightControlRigKeyTestHooks::PostWriteHook())
+        {
+            PinWrightControlRigKeyTestHooks::PostWriteHook()(Section);
+        }
+#endif
+
+        TArray<FWorldKeyError> Errors;
+        for (const FWorldKey& Key : Keys)
+        {
+            const FTransform Got = ControlWorldAt(Section, World, Key.Control, Key.Tick);
+            const FControlTransformParts Parts =
+                TransformPartsForType(World.Rig->FindControl(Key.Control)->Settings.ControlType);
+            FWorldKeyError& Error = Errors.AddDefaulted_GetRef();
+            if (Parts.bT)
+            {
+                Error.Cm = FVector::Distance(Got.GetLocation(), Key.World.GetLocation());
+            }
+            if (Parts.bR)
+            {
+                Error.Deg = FMath::RadiansToDegrees(Got.GetRotation().AngularDistance(Key.World.GetRotation()));
+            }
+            if (Parts.bS)
+            {
+                Error.Scale = (Got.GetScale3D() - Key.World.GetScale3D()).GetAbsMax();
+            }
+        }
+        Hierarchy->SetPose(SavedPose);
+        return Errors;
+    }
+
+    static constexpr double WorldScaleTolerance = 1.0e-3;
+
+    static bool ReadTolerance(FHandlerContext& Ctx, const TCHAR* Key, double& Out)
+    {
+        Out = Ctx.GetNumber(Key, 0.01);
+        if (!(Out >= 0.0))
+        {
+            Ctx.SendError(ErrorCodes::ERR_INVALID_ARGUMENT,
+                FString::Printf(TEXT("'%s' must be a non-negative number."), Key));
+            return false;
+        }
+        return true;
+    }
+
+    // A named control that exists on the rig and has float channels on this section.
+    static bool ResolveKeyableControl(FHandlerContext& Ctx, UMovieSceneControlRigParameterSection* Section,
+        const FString& Name, FRigControlElement*& OutElement, TArray<FMovieSceneFloatChannel*>& OutChannels)
+    {
+        UControlRig* Rig = Section->GetControlRig();
+        OutElement = Rig ? Rig->FindControl(FName(*Name)) : nullptr;
+        OutChannels = ChannelsForControl(Section, FName(*Name));
+        if (!OutElement || OutChannels.Num() == 0)
+        {
+            Ctx.SendError(ErrorCodes::ERR_CONTROL_NOT_FOUND,
+                FString::Printf(TEXT("Control '%s' has no keyable float channel on this rig; "
+                                     "sequencer.list_controls lists the keyable ones."), *Name));
+            return false;
+        }
+        return true;
+    }
+
+    static bool ParseSpace(FHandlerContext& Ctx, bool& bOutWorld)
+    {
+        const FString Space = Ctx.GetString(TEXT("space"));
+        if (Space.Equals(TEXT("local"), ESearchCase::IgnoreCase))
+        {
+            bOutWorld = false;
+            return true;
+        }
+        if (Space.Equals(TEXT("world"), ESearchCase::IgnoreCase))
+        {
+            bOutWorld = true;
+            return true;
+        }
+        Ctx.SendError(ErrorCodes::ERR_INVALID_ARGUMENT,
+            FString::Printf(TEXT("Unknown space '%s'; expected local or world."), *Space));
+        return false;
+    }
+}
+
+#define PINWRIGHT_CR_BATCH_TARGET_PARAMS \
+    RPC_PARAM_REQ_ALIAS("sequence", "path", "Level sequence asset path", "path"), \
+    ParamAliasUtils::MakeAliasParamSpec(TEXT("binding"), TEXT("string"), \
+        TEXT("Binding GUID (Digits) that owns the Control Rig track"), /*bRequired=*/true, \
+        TArray<FString>({TEXT("binding"), TEXT("bindingGuid"), TEXT("bindingId")}))
+
+// sequencer.set_control_keys — many controls x many frames in one transaction, read back, and
+// undone entirely on any mismatch.
+REGISTER_RPC_HANDLER("sequencer.set_control_keys", "sequencer",
+    "Key many Control Rig controls at many display frames in one undoable call, in local (channel values) or "
+    "world space. Every key is read back; any mismatch undoes every key and fails CONTROL_KEY_READBACK_MISMATCH.",
+    RPC_PARAMS(
+        PINWRIGHT_CR_BATCH_TARGET_PARAMS,
+        RPC_PARAM_REQ("space", "string", "local: values are the control's float-channel values in index order, as key_controls ([TX,TY,TZ,Roll,Pitch,Yaw,SX,SY,SZ] for a transform; a shorter array keys the leading channels). world: values are world transforms [TX,TY,TZ,Roll,Pitch,Yaw] or [TX,TY,TZ,Roll,Pitch,Yaw,SX,SY,SZ]"),
+        RPC_PARAM_REQ_NESTED("keys", "array", "Entries {control, frames, values}: control name, display frames (whole numbers, no repeats per control), and one value array per frame. These keys are the whole entry schema and any other key inside an entry is refused with UNKNOWN_NESTED_PARAMS. Entries are written in order; in world space list a parent control before its children.",
+            TEXT("control"), TEXT("frames"), TEXT("values")),
+        RPC_PARAM_DEF("positionToleranceCm", "number", "World space only: readback position tolerance in cm", "0.01"),
+        RPC_PARAM_DEF("rotationToleranceDeg", "number", "World space only: readback rotation tolerance in degrees", "0.01")
+    ))
+{
+    using namespace PinWrightControlRigSequencer;
+    const TSharedPtr<FJsonObject>& Payload = Ctx.GetRawPayload();
+
+    bool bWorld = false;
+    if (!ParseSpace(Ctx, bWorld))
+    {
+        return true;
+    }
+    if (!bWorld && (Payload->HasField(TEXT("positionToleranceCm")) || Payload->HasField(TEXT("rotationToleranceDeg"))))
+    {
+        Ctx.SendError(ErrorCodes::ERR_INVALID_ARGUMENT,
+            TEXT("positionToleranceCm / rotationToleranceDeg apply to space 'world' only; local keys are compared "
+                 "to float precision."));
+        return true;
+    }
+    double PositionTolerance = 0.0;
+    double RotationTolerance = 0.0;
+    if (!ReadTolerance(Ctx, TEXT("positionToleranceCm"), PositionTolerance) ||
+        !ReadTolerance(Ctx, TEXT("rotationToleranceDeg"), RotationTolerance))
+    {
+        return true;
+    }
+
+    FString SeqPath;
+    UMovieScene* MovieScene = nullptr;
+    FGuid BindingGuid;
+    UMovieSceneControlRigParameterTrack* Track = nullptr;
+    UMovieSceneControlRigParameterSection* Section = nullptr;
+    if (!ResolveControlRigSection(Ctx, Payload, /*bPreferSectionToKey*/ true,
+            SeqPath, MovieScene, BindingGuid, Track, Section))
+    {
+        return true;
+    }
+    FWorldSpaceContext World;
+    if (bWorld && !ResolveWorldSpaceContext(Ctx, MovieScene, BindingGuid, Section, World))
+    {
+        return true;
+    }
+
+    // Parse and validate everything before the first write.
+    struct FEntry
+    {
+        FString Control;
+        FControlTransformParts Parts;
+        TArray<FMovieSceneFloatChannel*> Channels;
+        TArray<int32> Frames;
+        TArray<TArray<double>> Values;     // local
+        TArray<FTransform> Transforms;     // world
+    };
+    TArray<FEntry> Entries;
+    const TArray<TSharedPtr<FJsonValue>>* KeysArr = Ctx.GetArray(TEXT("keys"));
+    if (!KeysArr || KeysArr->Num() == 0)
+    {
+        Ctx.SendError(ErrorCodes::ERR_INVALID_ARGUMENT, TEXT("'keys' must be a non-empty array of {control, frames, values}."));
+        return true;
+    }
+    TSet<TPair<FString, int32>> SeenControlFrames;
+    for (int32 EntryIndex = 0; EntryIndex < KeysArr->Num(); ++EntryIndex)
+    {
+        const TSharedPtr<FJsonObject>* EntryObj = nullptr;
+        FEntry Entry;
+        if (!(*KeysArr)[EntryIndex].IsValid() || !(*KeysArr)[EntryIndex]->TryGetObject(EntryObj) ||
+            !(*EntryObj)->TryGetStringField(TEXT("control"), Entry.Control) || Entry.Control.IsEmpty() ||
+            !ParseFrameArray((*EntryObj)->TryGetField(TEXT("frames")), Entry.Frames))
+        {
+            Ctx.SendError(ErrorCodes::ERR_INVALID_ARGUMENT, FString::Printf(
+                TEXT("keys[%d] needs a 'control' name and a non-empty 'frames' array of whole display frames."), EntryIndex));
+            return true;
+        }
+        FRigControlElement* Element = nullptr;
+        if (!ResolveKeyableControl(Ctx, Section, Entry.Control, Element, Entry.Channels))
+        {
+            return true;
+        }
+        Entry.Parts = TransformPartsForType(Element->Settings.ControlType);
+        if (bWorld && !Entry.Parts.Any())
+        {
+            Ctx.SendError(ErrorCodes::ERR_UNSUPPORTED_TYPE, FString::Printf(
+                TEXT("Control '%s' is a %s control with no transform; key it in space 'local'."),
+                *Entry.Control, *ControlTypeToString(Element->Settings.ControlType)));
+            return true;
+        }
+        const TArray<TSharedPtr<FJsonValue>>* ValuesArr = nullptr;
+        if (!(*EntryObj)->TryGetArrayField(TEXT("values"), ValuesArr) || ValuesArr->Num() != Entry.Frames.Num())
+        {
+            Ctx.SendError(ErrorCodes::ERR_INVALID_ARGUMENT, FString::Printf(
+                TEXT("keys[%d].values must hold exactly one value array per frame (%d)."), EntryIndex, Entry.Frames.Num()));
+            return true;
+        }
+        for (int32 FrameIndex = 0; FrameIndex < Entry.Frames.Num(); ++FrameIndex)
+        {
+            bool bValid = false;
+            if (bWorld)
+            {
+                FTransform Transform;
+                bValid = ParseWireTransform((*ValuesArr)[FrameIndex], Transform);
+                Entry.Transforms.Add(Transform);
+            }
+            else
+            {
+                TArray<double> V;
+                bValid = ParseNumberArray((*ValuesArr)[FrameIndex], V) && V.Num() >= 1 && V.Num() <= Entry.Channels.Num();
+                Entry.Values.Add(V);
+            }
+            if (!bValid)
+            {
+                Ctx.SendError(ErrorCodes::ERR_INVALID_ARGUMENT, bWorld
+                    ? FString::Printf(TEXT("keys[%d].values[%d] must be [TX,TY,TZ,Roll,Pitch,Yaw] or 9 numbers with scale."), EntryIndex, FrameIndex)
+                    : FString::Printf(TEXT("keys[%d].values[%d] must be an array of 1..%d numbers (the control's channels in index order)."),
+                        EntryIndex, FrameIndex, Entry.Channels.Num()));
+                return true;
+            }
+            bool bAlreadySeen = false;
+            SeenControlFrames.Add(TPair<FString, int32>(Entry.Control, Entry.Frames[FrameIndex]), &bAlreadySeen);
+            if (bAlreadySeen)
+            {
+                Ctx.SendError(ErrorCodes::ERR_INVALID_ARGUMENT, FString::Printf(
+                    TEXT("Control '%s' is keyed twice at frame %d; one key per control per frame."),
+                    *Entry.Control, Entry.Frames[FrameIndex]));
+                return true;
+            }
+        }
+        Entries.Add(MoveTemp(Entry));
+    }
+
+    TArray<FChannelSnapshot> Snapshots;
+    for (const FEntry& Entry : Entries)
+    {
+        SnapshotChannels(Entry.Channels, Snapshots);
+    }
+    UPackage* Package = MovieScene->GetOutermost();
+    const bool bPackageWasDirty = Package && Package->IsDirty();
+    FScopedTransaction Transaction(NSLOCTEXT("PinWright", "SetControlRigKeys", "Set Control Rig Keys"));
+    Section->Modify();
+
+    // Write, then read back. Stats are per control, in request order.
+    TArray<TSharedPtr<FJsonValue>> Mismatches;
+    TArray<TSharedPtr<FJsonValue>> ControlsOut;
+    int32 KeysWritten = 0;
+    auto AddMismatch = [&Mismatches](const FString& Control, int32 Frame, const TSharedPtr<FJsonObject>& Detail)
+    {
+        Detail->SetStringField(TEXT("control"), Control);
+        Detail->SetNumberField(TEXT("frame"), Frame);
+        Mismatches.Add(MakeShared<FJsonValueObject>(Detail));
+    };
+
+    if (bWorld)
+    {
+        TArray<FWorldKey> WorldKeys;
+        for (const FEntry& Entry : Entries)
+        {
+            for (int32 FrameIndex = 0; FrameIndex < Entry.Frames.Num(); ++FrameIndex)
+            {
+                FWorldKey& Key = WorldKeys.AddDefaulted_GetRef();
+                Key.Control = FName(*Entry.Control);
+                Key.Frame = Entry.Frames[FrameIndex];
+                Key.Tick = DisplayFrameToTick(MovieScene, Key.Frame);
+                Key.World = Entry.Transforms[FrameIndex];
+            }
+        }
+        const TArray<FWorldKeyError> Errors = WriteAndMeasureWorldKeys(Section, World, WorldKeys);
+        int32 KeyIndex = 0;
+        for (const FEntry& Entry : Entries)
+        {
+            double MaxCm = 0.0, MaxDeg = 0.0, MaxScale = 0.0;
+            for (int32 FrameIndex = 0; FrameIndex < Entry.Frames.Num(); ++FrameIndex, ++KeyIndex)
+            {
+                const FWorldKeyError& Error = Errors[KeyIndex];
+                MaxCm = FMath::Max(MaxCm, Error.Cm);
+                MaxDeg = FMath::Max(MaxDeg, Error.Deg);
+                MaxScale = FMath::Max(MaxScale, Error.Scale);
+                if (Error.Cm > PositionTolerance || Error.Deg > RotationTolerance || Error.Scale > WorldScaleTolerance)
+                {
+                    TSharedPtr<FJsonObject> Detail = MakeShared<FJsonObject>();
+                    Detail->SetNumberField(TEXT("errorCm"), Error.Cm);
+                    Detail->SetNumberField(TEXT("errorDeg"), Error.Deg);
+                    Detail->SetNumberField(TEXT("scaleError"), Error.Scale);
+                    AddMismatch(Entry.Control, Entry.Frames[FrameIndex], Detail);
+                }
+            }
+            TSharedPtr<FJsonObject> Stats = MakeShared<FJsonObject>();
+            Stats->SetStringField(TEXT("control"), Entry.Control);
+            Stats->SetNumberField(TEXT("keysWritten"), Entry.Frames.Num());
+            Stats->SetNumberField(TEXT("channelsWritten"), Entry.Parts.NumChannels());
+            if (Entry.Parts.bT) { Stats->SetNumberField(TEXT("maxErrorCm"), MaxCm); }
+            if (Entry.Parts.bR) { Stats->SetNumberField(TEXT("maxErrorDeg"), MaxDeg); }
+            if (Entry.Parts.bS) { Stats->SetNumberField(TEXT("maxScaleError"), MaxScale); }
+            ControlsOut.Add(MakeShared<FJsonValueObject>(Stats));
+            KeysWritten += Entry.Frames.Num();
+        }
+    }
+    else
+    {
+        for (const FEntry& Entry : Entries)
+        {
+            for (int32 FrameIndex = 0; FrameIndex < Entry.Frames.Num(); ++FrameIndex)
+            {
+                const FFrameNumber Tick = DisplayFrameToTick(MovieScene, Entry.Frames[FrameIndex]);
+                for (int32 Channel = 0; Channel < Entry.Values[FrameIndex].Num(); ++Channel)
+                {
+                    WriteChannelKey(Entry.Channels[Channel], Tick, Entry.Values[FrameIndex][Channel]);
+                }
+            }
+            for (FMovieSceneFloatChannel* Channel : Entry.Channels)
+            {
+                Channel->AutoSetTangents();
+            }
+        }
+#if WITH_DEV_AUTOMATION_TESTS
+        if (PinWrightControlRigKeyTestHooks::PostWriteHook())
+        {
+            PinWrightControlRigKeyTestHooks::PostWriteHook()(Section);
+        }
+#endif
+        for (const FEntry& Entry : Entries)
+        {
+            double MaxError = 0.0;
+            int32 ChannelsWritten = 0;
+            for (int32 FrameIndex = 0; FrameIndex < Entry.Frames.Num(); ++FrameIndex)
+            {
+                const FFrameNumber Tick = DisplayFrameToTick(MovieScene, Entry.Frames[FrameIndex]);
+                const TArray<double>& Want = Entry.Values[FrameIndex];
+                ChannelsWritten = FMath::Max(ChannelsWritten, Want.Num());
+                for (int32 Channel = 0; Channel < Want.Num(); ++Channel)
+                {
+                    float Got = 0.0f;
+                    const bool bEvaluated = Entry.Channels[Channel]->Evaluate(FFrameTime(Tick), Got);
+                    const double Error = FMath::Abs(static_cast<double>(Got) - Want[Channel]);
+                    MaxError = FMath::Max(MaxError, Error);
+                    // Channels store float: allow float rounding of the requested double, nothing more.
+                    if (!bEvaluated || Error > 1.0e-4 * FMath::Max(1.0, FMath::Abs(Want[Channel])))
+                    {
+                        TSharedPtr<FJsonObject> Detail = MakeShared<FJsonObject>();
+                        Detail->SetNumberField(TEXT("channel"), Channel);
+                        Detail->SetNumberField(TEXT("requested"), Want[Channel]);
+                        Detail->SetNumberField(TEXT("readBack"), Got);
+                        AddMismatch(Entry.Control, Entry.Frames[FrameIndex], Detail);
+                    }
+                }
+            }
+            TSharedPtr<FJsonObject> Stats = MakeShared<FJsonObject>();
+            Stats->SetStringField(TEXT("control"), Entry.Control);
+            Stats->SetNumberField(TEXT("keysWritten"), Entry.Frames.Num());
+            Stats->SetNumberField(TEXT("channelsWritten"), ChannelsWritten);
+            Stats->SetNumberField(TEXT("maxReadbackError"), MaxError);
+            ControlsOut.Add(MakeShared<FJsonValueObject>(Stats));
+            KeysWritten += Entry.Frames.Num();
+        }
+    }
+
+    TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+    Result->SetStringField(TEXT("sequence"), SeqPath);
+    Result->SetStringField(TEXT("binding"), BindingGuid.ToString(EGuidFormats::Digits));
+    Result->SetStringField(TEXT("space"), bWorld ? TEXT("world") : TEXT("local"));
+    Result->SetBoolField(TEXT("additive"), IsRigAdditive(Section->GetControlRig()));
+    Result->SetArrayField(TEXT("controls"), ControlsOut);
+    if (bWorld)
+    {
+        Result->SetNumberField(TEXT("positionToleranceCm"), PositionTolerance);
+        Result->SetNumberField(TEXT("rotationToleranceDeg"), RotationTolerance);
+    }
+
+    if (Mismatches.Num() > 0)
+    {
+        const bool bRolledBack = RollbackChannels(Transaction, Package, bPackageWasDirty, Snapshots);
+        Result->SetNumberField(TEXT("keysWritten"), 0);
+        Result->SetNumberField(TEXT("mismatchCount"), Mismatches.Num());
+        Mismatches.SetNum(FMath::Min(Mismatches.Num(), 20));
+        Result->SetArrayField(TEXT("mismatches"), Mismatches);
+        Result->SetBoolField(TEXT("rolledBack"), bRolledBack);
+        Ctx.SendError(ErrorCodes::ERR_CONTROL_KEY_READBACK_MISMATCH, bRolledBack
+            ? TEXT("A written key did not read back as requested; every key this call wrote was undone (see mismatches).")
+            : TEXT("A written key did not read back as requested, and restoring the touched channels could not be verified; "
+                   "the package is left dirty (see mismatches)."),
+            Result);
+        return true;
+    }
+
+    Result->SetNumberField(TEXT("keysWritten"), KeysWritten);
+    Ctx.SendSuccess(Result);
+    return true;
+}
+
+// sequencer.get_control_values — many controls x many frames, local channel values or world transforms.
+REGISTER_RPC_HANDLER("sequencer.get_control_values", "sequencer",
+    "Read many Control Rig controls at many display frames: local channel values (as get_control_value) or "
+    "world transforms [TX,TY,TZ,Roll,Pitch,Yaw,SX,SY,SZ].",
+    RPC_PARAMS(
+        PINWRIGHT_CR_BATCH_TARGET_PARAMS,
+        RPC_PARAM_REQ("controls", "array", "Control names"),
+        RPC_PARAM_REQ("frames", "array", "Display frames (whole numbers)"),
+        RPC_PARAM_REQ("space", "string", "local (float-channel values in index order; additive rigs report deltas) or world")
+    ))
+{
+    using namespace PinWrightControlRigSequencer;
+    const TSharedPtr<FJsonObject>& Payload = Ctx.GetRawPayload();
+
+    bool bWorld = false;
+    if (!ParseSpace(Ctx, bWorld))
+    {
+        return true;
+    }
+    TArray<int32> Frames;
+    if (!ParseFrameArray(Payload->TryGetField(TEXT("frames")), Frames))
+    {
+        Ctx.SendError(ErrorCodes::ERR_INVALID_ARGUMENT, TEXT("'frames' must be a non-empty array of whole display frames."));
+        return true;
+    }
+    TArray<FString> Controls;
+    const TArray<TSharedPtr<FJsonValue>>* ControlsArr = Ctx.GetArray(TEXT("controls"));
+    for (int32 Index = 0; ControlsArr && Index < ControlsArr->Num(); ++Index)
+    {
+        FString Name;
+        if (!(*ControlsArr)[Index].IsValid() || !(*ControlsArr)[Index]->TryGetString(Name) || Name.IsEmpty())
+        {
+            Ctx.SendError(ErrorCodes::ERR_INVALID_ARGUMENT, FString::Printf(TEXT("controls[%d] must be a control name."), Index));
+            return true;
+        }
+        Controls.Add(Name);
+    }
+    if (Controls.Num() == 0)
+    {
+        Ctx.SendError(ErrorCodes::ERR_INVALID_ARGUMENT, TEXT("'controls' must name at least one control."));
+        return true;
+    }
+
+    FString SeqPath;
+    UMovieScene* MovieScene = nullptr;
+    FGuid BindingGuid;
+    UMovieSceneControlRigParameterTrack* Track = nullptr;
+    UMovieSceneControlRigParameterSection* Section = nullptr;
+    if (!ResolveControlRigSection(Ctx, Payload, /*bPreferSectionToKey*/ false,
+            SeqPath, MovieScene, BindingGuid, Track, Section))
+    {
+        return true;
+    }
+    FWorldSpaceContext World;
+    if (bWorld && !ResolveWorldSpaceContext(Ctx, MovieScene, BindingGuid, Section, World))
+    {
+        return true;
+    }
+
+    TArray<TSharedPtr<FJsonValue>> ControlsOut;
+    TOptional<FRigPose> SavedPose;
+    if (bWorld)
+    {
+        SavedPose = World.Rig->GetHierarchy()->GetPose();
+    }
+    for (const FString& Name : Controls)
+    {
+        FRigControlElement* Element = nullptr;
+        TArray<FMovieSceneFloatChannel*> Channels;
+        if (!ResolveKeyableControl(Ctx, Section, Name, Element, Channels))
+        {
+            if (SavedPose.IsSet())
+            {
+                World.Rig->GetHierarchy()->SetPose(SavedPose.GetValue());
+            }
+            return true;
+        }
+        if (bWorld && !TransformPartsForType(Element->Settings.ControlType).Any())
+        {
+            World.Rig->GetHierarchy()->SetPose(SavedPose.GetValue());
+            Ctx.SendError(ErrorCodes::ERR_UNSUPPORTED_TYPE, FString::Printf(
+                TEXT("Control '%s' is a %s control with no transform; read it in space 'local'."),
+                *Name, *ControlTypeToString(Element->Settings.ControlType)));
+            return true;
+        }
+        TArray<TSharedPtr<FJsonValue>> PerFrame;
+        for (const int32 Frame : Frames)
+        {
+            const FFrameNumber Tick = DisplayFrameToTick(MovieScene, Frame);
+            if (bWorld)
+            {
+                const FTransform W = ControlWorldAt(Section, World, FName(*Name), Tick);
+                PerFrame.Add(MakeShared<FJsonValueArray>(NumbersToJson(TransformToChannelValues(WireTransformParts(), W))));
+                continue;
+            }
+            TArray<TSharedPtr<FJsonValue>> Values;
+            for (FMovieSceneFloatChannel* Channel : Channels)
+            {
+                float F = 0.0f;
+                // A channel with no keys and no default has nothing to evaluate: null, not 0.
+                if (Channel->Evaluate(FFrameTime(Tick), F))
+                {
+                    Values.Add(MakeShared<FJsonValueNumber>(F));
+                }
+                else
+                {
+                    Values.Add(MakeShared<FJsonValueNull>());
+                }
+            }
+            PerFrame.Add(MakeShared<FJsonValueArray>(Values));
+        }
+        TSharedPtr<FJsonObject> Entry = MakeShared<FJsonObject>();
+        Entry->SetStringField(TEXT("control"), Name);
+        Entry->SetStringField(TEXT("type"), ControlTypeToString(Element->Settings.ControlType));
+        Entry->SetNumberField(TEXT("channelCount"), Channels.Num());
+        Entry->SetArrayField(TEXT("values"), PerFrame);
+        ControlsOut.Add(MakeShared<FJsonValueObject>(Entry));
+    }
+    if (SavedPose.IsSet())
+    {
+        World.Rig->GetHierarchy()->SetPose(SavedPose.GetValue());
+    }
+
+    TArray<TSharedPtr<FJsonValue>> FramesOut;
+    for (const int32 Frame : Frames)
+    {
+        FramesOut.Add(MakeShared<FJsonValueNumber>(Frame));
+    }
+    TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+    Result->SetStringField(TEXT("sequence"), SeqPath);
+    Result->SetStringField(TEXT("binding"), BindingGuid.ToString(EGuidFormats::Digits));
+    Result->SetStringField(TEXT("space"), bWorld ? TEXT("world") : TEXT("local"));
+    Result->SetBoolField(TEXT("additive"), IsRigAdditive(Section->GetControlRig()));
+    Result->SetArrayField(TEXT("frames"), FramesOut);
+    Result->SetArrayField(TEXT("controls"), ControlsOut);
+    Ctx.SendSuccess(Result);
+    return true;
+}
+
+// sequencer.pin_controls — hold controls at a world transform over a frame range (contact lock),
+// with smoothstep blends outside the range, in one transaction with readback and rollback.
+REGISTER_RPC_HANDLER("sequencer.pin_controls", "sequencer",
+    "Pin Control Rig controls (a planted foot, a hand on a rail) at a world transform over a display-frame range, with "
+    "optional smoothstep blend-in/out frames outside it. Moves only the pinned controls (right for IK/effector controls, "
+    "not for FK chains). Read back; any key outside tolerance undoes everything and fails CONTACT_TOLERANCE_EXCEEDED.",
+    RPC_PARAMS(
+        PINWRIGHT_CR_BATCH_TARGET_PARAMS,
+        RPC_PARAM_REQ("controls", "array", "Control names to pin, parents before children"),
+        RPC_PARAM_REQ("startFrame", "integer", "First display frame of the hold (inclusive)"),
+        RPC_PARAM_REQ("endFrame", "integer", "Last display frame of the hold (inclusive, >= startFrame)"),
+        RPC_PARAM_REQ("target", "string|object", "\"anchorFrame\" (hold each control where it is at anchorFrame) or an object mapping every pinned control to a world transform [TX,TY,TZ,Roll,Pitch,Yaw] or 9 numbers with scale"),
+        RPC_PARAM_OPT("anchorFrame", "integer", "Display frame to sample when target is \"anchorFrame\" (required then, refused otherwise)"),
+        RPC_PARAM_DEF("blendInFrames", "integer", "Frames before startFrame that ease from the original motion into the pin", "0"),
+        RPC_PARAM_DEF("blendOutFrames", "integer", "Frames after endFrame that ease from the pin back to the original motion", "0"),
+        RPC_PARAM_DEF("positionToleranceCm", "number", "Readback position tolerance in cm", "0.01"),
+        RPC_PARAM_DEF("rotationToleranceDeg", "number", "Readback rotation tolerance in degrees", "0.01")
+    ))
+{
+    using namespace PinWrightControlRigSequencer;
+    const TSharedPtr<FJsonObject>& Payload = Ctx.GetRawPayload();
+
+    const int32 StartFrame = Ctx.GetInt(TEXT("startFrame"));
+    const int32 EndFrame = Ctx.GetInt(TEXT("endFrame"));
+    const int32 BlendIn = Ctx.GetInt(TEXT("blendInFrames"), 0);
+    const int32 BlendOut = Ctx.GetInt(TEXT("blendOutFrames"), 0);
+    if (EndFrame < StartFrame || BlendIn < 0 || BlendOut < 0)
+    {
+        Ctx.SendError(ErrorCodes::ERR_INVALID_ARGUMENT,
+            TEXT("endFrame must be >= startFrame, and blendInFrames / blendOutFrames must be >= 0."));
+        return true;
+    }
+    double PositionTolerance = 0.0;
+    double RotationTolerance = 0.0;
+    if (!ReadTolerance(Ctx, TEXT("positionToleranceCm"), PositionTolerance) ||
+        !ReadTolerance(Ctx, TEXT("rotationToleranceDeg"), RotationTolerance))
+    {
+        return true;
+    }
+
+    TArray<FString> Controls;
+    const TArray<TSharedPtr<FJsonValue>>* ControlsArr = Ctx.GetArray(TEXT("controls"));
+    for (int32 Index = 0; ControlsArr && Index < ControlsArr->Num(); ++Index)
+    {
+        FString Name;
+        if (!(*ControlsArr)[Index].IsValid() || !(*ControlsArr)[Index]->TryGetString(Name) || Name.IsEmpty() ||
+            Controls.Contains(Name))
+        {
+            Ctx.SendError(ErrorCodes::ERR_INVALID_ARGUMENT,
+                FString::Printf(TEXT("controls[%d] must be a control name, each named once."), Index));
+            return true;
+        }
+        Controls.Add(Name);
+    }
+    if (Controls.Num() == 0)
+    {
+        Ctx.SendError(ErrorCodes::ERR_INVALID_ARGUMENT, TEXT("'controls' must name at least one control."));
+        return true;
+    }
+
+    // target: "anchorFrame" | {control: transform}
+    const TSharedPtr<FJsonValue> TargetValue = Payload->TryGetField(TEXT("target"));
+    const bool bAnchor = TargetValue.IsValid() && TargetValue->Type == EJson::String &&
+        TargetValue->AsString().Equals(TEXT("anchorFrame"), ESearchCase::IgnoreCase);
+    const bool bHasAnchorFrame = Payload->HasField(TEXT("anchorFrame"));
+    TMap<FString, FTransform> ExplicitTargets;
+    if (bAnchor != bHasAnchorFrame)
+    {
+        Ctx.SendError(ErrorCodes::ERR_INVALID_ARGUMENT,
+            TEXT("anchorFrame is required when target is \"anchorFrame\" and refused otherwise."));
+        return true;
+    }
+    if (!bAnchor)
+    {
+        const TSharedPtr<FJsonObject>* TargetObj = nullptr;
+        if (!TargetValue.IsValid() || !TargetValue->TryGetObject(TargetObj) || (*TargetObj)->Values.Num() != Controls.Num())
+        {
+            Ctx.SendError(ErrorCodes::ERR_INVALID_ARGUMENT,
+                TEXT("target must be \"anchorFrame\" or an object with one world transform per pinned control."));
+            return true;
+        }
+        for (const FString& Name : Controls)
+        {
+            FTransform Transform;
+            if (!ParseWireTransform((*TargetObj)->TryGetField(Name), Transform))
+            {
+                Ctx.SendError(ErrorCodes::ERR_INVALID_ARGUMENT, FString::Printf(
+                    TEXT("target.%s must be [TX,TY,TZ,Roll,Pitch,Yaw] or 9 numbers with scale."), *Name));
+                return true;
+            }
+            ExplicitTargets.Add(Name, Transform);
+        }
+    }
+
+    FString SeqPath;
+    UMovieScene* MovieScene = nullptr;
+    FGuid BindingGuid;
+    UMovieSceneControlRigParameterTrack* Track = nullptr;
+    UMovieSceneControlRigParameterSection* Section = nullptr;
+    if (!ResolveControlRigSection(Ctx, Payload, /*bPreferSectionToKey*/ true,
+            SeqPath, MovieScene, BindingGuid, Track, Section))
+    {
+        return true;
+    }
+    FWorldSpaceContext World;
+    if (!ResolveWorldSpaceContext(Ctx, MovieScene, BindingGuid, Section, World))
+    {
+        return true;
+    }
+
+    TArray<FMovieSceneFloatChannel*> AllChannels;
+    for (const FString& Name : Controls)
+    {
+        FRigControlElement* Element = nullptr;
+        TArray<FMovieSceneFloatChannel*> Channels;
+        if (!ResolveKeyableControl(Ctx, Section, Name, Element, Channels))
+        {
+            return true;
+        }
+        const FControlTransformParts Parts = TransformPartsForType(Element->Settings.ControlType);
+        if (!Parts.bT && !Parts.bR)
+        {
+            Ctx.SendError(ErrorCodes::ERR_UNSUPPORTED_TYPE, FString::Printf(
+                TEXT("Control '%s' is a %s control with no position or rotation to pin."),
+                *Name, *ControlTypeToString(Element->Settings.ControlType)));
+            return true;
+        }
+        AllChannels.Append(Channels);
+    }
+
+    // Read the original motion (and the anchor) before any write.
+    const int32 FirstFrame = StartFrame - BlendIn;
+    const int32 LastFrame = EndFrame + BlendOut;
+    const FRigPose SavedPose = World.Rig->GetHierarchy()->GetPose();
+    TArray<FWorldKey> Keys;
+    TArray<FTransform> Targets;
+    for (const FString& Name : Controls)
+    {
+        const FName Control(*Name);
+        const FTransform Target = bAnchor
+            ? ControlWorldAt(Section, World, Control, DisplayFrameToTick(MovieScene, Ctx.GetInt(TEXT("anchorFrame"))))
+            : ExplicitTargets[Name];
+        Targets.Add(Target);
+        for (int32 Frame = FirstFrame; Frame <= LastFrame; ++Frame)
+        {
+            // Smoothstep weight: 0 at the outer edge of a blend, 1 across the hold.
+            double Weight = 1.0;
+            if (Frame < StartFrame)
+            {
+                const double T = static_cast<double>(Frame - FirstFrame) / BlendIn;
+                Weight = T * T * (3.0 - 2.0 * T);
+            }
+            else if (Frame > EndFrame)
+            {
+                const double T = static_cast<double>(LastFrame - Frame) / BlendOut;
+                Weight = T * T * (3.0 - 2.0 * T);
+            }
+            FWorldKey& Key = Keys.AddDefaulted_GetRef();
+            Key.Control = Control;
+            Key.Frame = Frame;
+            Key.Tick = DisplayFrameToTick(MovieScene, Frame);
+            Key.World = Target;
+            if (Weight < 1.0)
+            {
+                Key.World.Blend(ControlWorldAt(Section, World, Control, Key.Tick), Target, static_cast<float>(Weight));
+            }
+        }
+    }
+    World.Rig->GetHierarchy()->SetPose(SavedPose);
+
+    TArray<FChannelSnapshot> Snapshots;
+    SnapshotChannels(AllChannels, Snapshots);
+    UPackage* Package = MovieScene->GetOutermost();
+    const bool bPackageWasDirty = Package && Package->IsDirty();
+    FScopedTransaction Transaction(NSLOCTEXT("PinWright", "PinControlRigControls", "Pin Control Rig Controls"));
+    Section->Modify();
+    const TArray<FWorldKeyError> Errors = WriteAndMeasureWorldKeys(Section, World, Keys);
+
+    const int32 FramesPerControl = LastFrame - FirstFrame + 1;
+    bool bExceeded = false;
+    TArray<TSharedPtr<FJsonValue>> ControlsOut;
+    for (int32 ControlIndex = 0; ControlIndex < Controls.Num(); ++ControlIndex)
+    {
+        const FControlTransformParts Parts =
+            TransformPartsForType(World.Rig->FindControl(FName(*Controls[ControlIndex]))->Settings.ControlType);
+        double MaxCm = 0.0, MaxDeg = 0.0;
+        for (int32 Index = ControlIndex * FramesPerControl; Index < (ControlIndex + 1) * FramesPerControl; ++Index)
+        {
+            MaxCm = FMath::Max(MaxCm, Errors[Index].Cm);
+            MaxDeg = FMath::Max(MaxDeg, Errors[Index].Deg);
+        }
+        bExceeded |= MaxCm > PositionTolerance || MaxDeg > RotationTolerance;
+        TSharedPtr<FJsonObject> Stats = MakeShared<FJsonObject>();
+        Stats->SetStringField(TEXT("control"), Controls[ControlIndex]);
+        Stats->SetNumberField(TEXT("framesKeyed"), FramesPerControl);
+        if (Parts.bT) { Stats->SetNumberField(TEXT("maxErrorCm"), MaxCm); }
+        if (Parts.bR) { Stats->SetNumberField(TEXT("maxErrorDeg"), MaxDeg); }
+        Stats->SetArrayField(TEXT("target"), NumbersToJson(TransformToChannelValues(WireTransformParts(), Targets[ControlIndex])));
+        ControlsOut.Add(MakeShared<FJsonValueObject>(Stats));
+    }
+
+    auto MakeRange = [](int32 First, int32 Last)
+    {
+        TSharedPtr<FJsonObject> Range = MakeShared<FJsonObject>();
+        Range->SetNumberField(TEXT("startFrame"), First);
+        Range->SetNumberField(TEXT("endFrame"), Last);
+        return Range;
+    };
+    TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+    Result->SetStringField(TEXT("sequence"), SeqPath);
+    Result->SetStringField(TEXT("binding"), BindingGuid.ToString(EGuidFormats::Digits));
+    Result->SetObjectField(TEXT("holdRange"), MakeRange(StartFrame, EndFrame));
+    Result->SetObjectField(TEXT("keyedRange"), MakeRange(FirstFrame, LastFrame));
+    Result->SetNumberField(TEXT("positionToleranceCm"), PositionTolerance);
+    Result->SetNumberField(TEXT("rotationToleranceDeg"), RotationTolerance);
+    Result->SetArrayField(TEXT("controls"), ControlsOut);
+
+    if (bExceeded)
+    {
+        const bool bRolledBack = RollbackChannels(Transaction, Package, bPackageWasDirty, Snapshots);
+        Result->SetNumberField(TEXT("keysWritten"), 0);
+        Result->SetBoolField(TEXT("rolledBack"), bRolledBack);
+        Ctx.SendError(ErrorCodes::ERR_CONTACT_TOLERANCE_EXCEEDED, bRolledBack
+            ? TEXT("A pinned control missed the position/rotation tolerance on readback; every key this call wrote was undone.")
+            : TEXT("A pinned control missed the tolerance on readback, and restoring the touched channels could not be "
+                   "verified; the package is left dirty."),
+            Result);
+        return true;
+    }
+    Result->SetNumberField(TEXT("keysWritten"), Keys.Num());
+    Ctx.SendSuccess(Result);
+    return true;
+}
+
+#undef PINWRIGHT_CR_BATCH_TARGET_PARAMS

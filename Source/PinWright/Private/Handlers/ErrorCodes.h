@@ -353,9 +353,18 @@ namespace ErrorCodes
     inline constexpr TCHAR ERR_CONNECT_FAILED[]                             = TEXT("CONNECT_FAILED");
     inline constexpr TCHAR ERR_CONSTRAINT_NOT_FOUND[]                       = TEXT("CONSTRAINT_NOT_FOUND");
     inline constexpr TCHAR ERR_CONSTRUCTION_FAILED[]                        = TEXT("CONSTRUCTION_FAILED");
+    // sequencer.pin_controls: a pinned control's world readback missed the requested position or
+    // rotation tolerance; every key the call wrote was rolled back.
+    inline constexpr TCHAR ERR_CONTACT_TOLERANCE_EXCEEDED[]                 = TEXT("CONTACT_TOLERANCE_EXCEEDED");
     inline constexpr TCHAR ERR_CONTROLLER_UNAVAILABLE[]                     = TEXT("CONTROLLER_UNAVAILABLE");
     inline constexpr TCHAR ERR_CONTROLRIG_TRACK_NOT_FOUND[]                 = TEXT("CONTROLRIG_TRACK_NOT_FOUND");
+    // sequencer.set_control_keys: a written Control Rig key did not read back as requested; every
+    // key the call wrote was rolled back.
+    inline constexpr TCHAR ERR_CONTROL_KEY_READBACK_MISMATCH[]              = TEXT("CONTROL_KEY_READBACK_MISMATCH");
     inline constexpr TCHAR ERR_CONTROL_NOT_FOUND[]                          = TEXT("CONTROL_NOT_FOUND");
+    // sequencer Control Rig world-space verbs: world transforms cannot be computed headless for this
+    // rig/binding (additive rig, binding moved by a transform/attach track, or no bound scene component).
+    inline constexpr TCHAR ERR_CONTROL_WORLD_SPACE_UNAVAILABLE[]            = TEXT("CONTROL_WORLD_SPACE_UNAVAILABLE");
     inline constexpr TCHAR ERR_CONVERSION_FAILED[]                          = TEXT("CONVERSION_FAILED");
     inline constexpr TCHAR ERR_CREATE_ASSET_FAILED[]                        = TEXT("CREATE_ASSET_FAILED");
     inline constexpr TCHAR ERR_CREATE_COMPONENT_FAILED[]                    = TEXT("CREATE_COMPONENT_FAILED");
