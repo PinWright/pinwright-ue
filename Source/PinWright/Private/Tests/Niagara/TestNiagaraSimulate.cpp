@@ -60,6 +60,34 @@ namespace PinWrightNiagaraSimulateTest
         return Payload;
     }
 
+    // A system duplicated in memory is not runnable until it has been compiled itself. While the
+    // source still carried an on-load deferred compile request the duplicate inherited it and the
+    // verb's gate compiled it; once the source has been compiled in this session (any earlier test
+    // that instanced the stock SimpleExplosion does that), the duplicate reports ready, and its
+    // instance fails FNiagaraSystemInstance::InitDataInterfaces and completes before the first
+    // tick. So a duplicate is always compiled here, the way the editor's own Duplicate is followed
+    // by one. Returns false when the compile did not land within the bounded wait.
+    bool CompileDuplicate(UNiagaraSystem& System)
+    {
+        System.RequestCompile(/*bForce=*/true);
+        const PinWrightNiagara::FCompileWaitOutcome Wait =
+            PinWrightNiagara::WaitForSystemCompile(System, /*bMayFlushRequestCompile=*/true);
+        return !Wait.bTimedOut && !Wait.bOutstanding;
+    }
+
+    // Everything a failed or stalled run says about itself, for assertion messages.
+    FString DescribeRun(const FTestResponseCapture& Capture)
+    {
+        FString StallReason;
+        const TSharedPtr<FJsonObject>* SystemObj = nullptr;
+        if (Capture.Result.IsValid() && Capture.Result->TryGetObjectField(TEXT("system"), SystemObj))
+        {
+            (*SystemObj)->TryGetStringField(TEXT("stallReason"), StallReason);
+        }
+        return FString::Printf(TEXT("success=%d code='%s' message='%s' stallReason='%s'"),
+            Capture.bSuccess ? 1 : 0, *Capture.ErrorCode, *Capture.Message, *StallReason);
+    }
+
     int32 EditorLevelActorCount()
     {
         UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
@@ -70,15 +98,6 @@ namespace PinWrightNiagaraSimulateTest
     {
         const TArray<TSharedPtr<FJsonValue>>* Out = nullptr;
         return Capture.Result.IsValid() && Capture.Result->TryGetArrayField(TEXT("emitters"), Out) ? Out : nullptr;
-    }
-
-    // On 5.8 a freshly duplicated fixture that has not compiled in this session fails Niagara's
-    // data-interface init on its first instance ("Error initializing data interfaces. Completing
-    // system."), so nothing simulates. Compile it first, as an opened-in-editor asset would be.
-    bool CompileDuplicatedFixture(UNiagaraSystem& System)
-    {
-        System.RequestCompile(/*bForce=*/true);
-        return !PinWrightNiagara::WaitForSystemCompile(System, /*bMayFlushRequestCompile=*/true).bTimedOut;
     }
 
     // Zero every "SpawnBurst_Instantaneous.Spawn Count" rapid-iteration constant the system owns,
@@ -485,7 +504,7 @@ bool FNiagaraSimulateDirtyPackageStaysDirtyTest::RunTest(const FString& Paramete
             FString::Printf(TEXT("could not duplicate '%s'"), NiagaraEditTestUtils::FixtureSystemAssetPath));
         return true;
     }
-    if (!TestTrue(TEXT("premise: the fixture compiled within the wait budget"), CompileDuplicatedFixture(*Owner)))
+    if (!TestTrue(TEXT("premise: the fixture compiled within the wait budget"), CompileDuplicate(*Owner)))
     {
         return true;
     }
@@ -499,8 +518,7 @@ bool FNiagaraSimulateDirtyPackageStaysDirtyTest::RunTest(const FString& Paramete
 
     FTestResponseCapture Capture;
     InvokeHandlerWithCapture(TEXT("niagara.simulate"), MakePayload(SystemPath, 0.5), Capture);
-    TestTrue(FString::Printf(TEXT("simulate succeeds (code='%s', message='%s')"),
-        *Capture.ErrorCode, *Capture.Message), Capture.bSuccess);
+    TestTrue(FString::Printf(TEXT("simulate succeeds (%s)"), *DescribeRun(Capture)), Capture.bSuccess);
     TestTrue(TEXT("a package that was dirty before the read is still dirty after it"), Package->IsDirty());
     return true;
 }
@@ -667,14 +685,14 @@ bool FNiagaraSimulateGpuMatchesCpuTwinTest::RunTest(const FString& Parameters)
         FNiagaraTypeDefinition::GetFloatDef(), &SpawnProbability, sizeof(SpawnProbability));
     const bool bPeakIsExact = SpawnProbability >= 1.0f;
 
-    if (!TestTrue(TEXT("premise: the CPU fixture compiled within the wait budget"), CompileDuplicatedFixture(*System)))
+    if (!TestTrue(TEXT("premise: the CPU fixture compiled within the wait budget"), CompileDuplicate(*System)))
     {
         return true;
     }
     FTestResponseCapture Cpu;
     InvokeHandlerWithCapture(TEXT("niagara.simulate"), MakePayload(SystemPath, 0.5), Cpu);
     const TSharedPtr<FJsonObject> CpuEmitter = FindEmitter(Cpu, EmitterName);
-    if (!TestTrue(FString::Printf(TEXT("CPU run succeeds (code='%s', message='%s')"), *Cpu.ErrorCode, *Cpu.Message),
+    if (!TestTrue(FString::Printf(TEXT("CPU run measured the emitter (%s)"), *DescribeRun(Cpu)),
             Cpu.bSuccess && CpuEmitter.IsValid() && CpuEmitter->HasField(TEXT("maxCount"))))
     {
         return true;
@@ -701,7 +719,7 @@ bool FNiagaraSimulateGpuMatchesCpuTwinTest::RunTest(const FString& Parameters)
     FTestResponseCapture Gpu;
     InvokeHandlerWithCapture(TEXT("niagara.simulate"), MakePayload(SystemPath, 0.5), Gpu);
     const TSharedPtr<FJsonObject> GpuEmitter = FindEmitter(Gpu, EmitterName);
-    if (!TestTrue(FString::Printf(TEXT("GPU run succeeds (code='%s', message='%s')"), *Gpu.ErrorCode, *Gpu.Message),
+    if (!TestTrue(FString::Printf(TEXT("GPU run succeeds (%s)"), *DescribeRun(Gpu)),
             Gpu.bSuccess && GpuEmitter.IsValid()))
     {
         return true;

@@ -254,6 +254,12 @@ REGISTER_RPC_HANDLER("niagara.simulate", "niagara",
 
     const NS::FDeterminismReport Determinism = NS::ReadDeterminism(*System, Component);
     const bool bInstanceLive = NS::EnsureSystemInstance(*Component);
+    // Read before any step: an instance that is already Complete here was completed by its own
+    // initialisation, not by the run - FNiagaraSystemInstance::InitDataInterfaces calls
+    // Complete(true) when a data interface or its function table fails to bind.
+    FNiagaraSystemInstanceControllerConstPtr InitController = Component->GetSystemInstanceController();
+    const bool bCompletedAtInit = bInstanceLive && InitController.IsValid() && InitController->IsValid()
+        && InitController->IsComplete();
     double StartAge = 0.0;
     const bool bStartAgeMeasured = NS::TryReadSimulatedAge(*Component, StartAge);
 
@@ -374,7 +380,13 @@ REGISTER_RPC_HANDLER("niagara.simulate", "niagara",
     }
     if (!bAdvanced)
     {
-        SystemObj->SetStringField(TEXT("stallReason"), NS::DescribeAdvanceStall(*Component, Dt));
+        SystemObj->SetStringField(TEXT("stallReason"), bCompletedAtInit
+            ? FString(TEXT("The system instance completed during initialisation, before the first step: ")
+                TEXT("FNiagaraSystemInstance::InitDataInterfaces completes an instance whose data interfaces ")
+                TEXT("or their function bindings fail to initialise (LogNiagara: 'Error initializing data ")
+                TEXT("interfaces. Completing system.'). A system duplicated in memory and not compiled since ")
+                TEXT("has been seen to land here; run niagara.compile on it and simulate again."))
+            : NS::DescribeAdvanceStall(*Component, Dt));
     }
     SystemObj->SetBoolField(TEXT("gpuCountsFlushed"), GpuDispatch != nullptr);
     // Authored flags only: all three determinism scopes on, and no GPU emitter (no knob covers one).

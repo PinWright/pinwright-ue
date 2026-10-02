@@ -617,7 +617,7 @@ Response:
 | `emitters[].samples[]` | `{t, count, state}` per published step. `t` is the age read off the instance; `state` is the emitter's execution state (`active`, `inactive`, `inactiveClear`, `complete`, `disabled`), so a 0 after `complete` is not read as "never emitted" |
 | `emitters[].simTarget` / `countExact` | `cpu` or `gpu`; `countExact` is false when any GPU reading was taken before the engine's particle-count fence passed (that reading is `TotalSpawnedParticles`, which ignores deaths, and is excluded from `maxCount`; such a sample carries `countExact: false`) |
 | `system.startAgeSeconds` / `achievedAgeSeconds` | the simulation age before and after the run, measured |
-| `system.stallReason` | present when the age did not move; the run then carries **no** `emitted` verdict anywhere |
+| `system.stallReason` | present when the age did not move; the run then carries **no** `emitted` verdict anywhere. An instance that was already complete before the first step gets its own reason: data interfaces failed to initialise (the engine logs `Error initializing data interfaces. Completing system.`). This has been seen on a system duplicated in memory and not compiled since; run `niagara.compile` and simulate again |
 | `system.executionState`, `stepsRequested`, `stepsRun`, `deltaTime`, `sampleEvery` | what was actually run |
 | `system.gpuCountsFlushed` | GPU work was flushed (end-of-frame updates, pending GPU ticks, render commands) before every reading |
 | `system.deterministic` | the system's and every emitter's authored determinism flags are on and no emitter is GPU. A report of authored flags, not a promise the run reproduces |
