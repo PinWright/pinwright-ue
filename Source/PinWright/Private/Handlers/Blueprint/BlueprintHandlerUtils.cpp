@@ -17,6 +17,7 @@
 #include "Handlers/HandlerContext.h"
 #include "Handlers/UI/WidgetAuthoringUtils.h"
 #include "Utils/JsonUtils.h"
+#include "Misc/UObjectToken.h"
 
 // K2Node_FunctionEntry and K2Node_FunctionResult are not already included by the header
 #if defined(__has_include)
@@ -462,7 +463,33 @@ FString RepairUnableToSetReadOnlyMessage(const FString& In)
     return Identifier + In.Mid(PlaceholderToken.Len());
 }
 
-FBlueprintCompileDiagnostics CompileBlueprintWithDiagnostics(UBlueprint* Blueprint)
+// The engine links every node-level compiler message to its SOURCE node through an
+// FUObjectToken message link (FEdGraphToken::CreateInternal), so the GUID matches the node the
+// caller sees in the graph, not a transient intermediate. Class-level messages have no link.
+static FCompileErrorLocation ReadCompileMessageLocation(const FTokenizedMessage& Message)
+{
+    FCompileErrorLocation Location;
+    const TSharedPtr<IMessageToken> Link = Message.GetMessageLink();
+    if (!Link.IsValid() || Link->GetType() != EMessageToken::Object)
+    {
+        return Location;
+    }
+    const UEdGraphNode* Node =
+        Cast<UEdGraphNode>(StaticCastSharedPtr<FUObjectToken>(Link)->GetObject().Get());
+    if (Node)
+    {
+        Location.NodeGuid = Node->NodeGuid.ToString();
+        if (const UEdGraph* Graph = Node->GetGraph())
+        {
+            Location.Graph = Graph->GetName();
+        }
+    }
+    return Location;
+}
+
+FBlueprintCompileDiagnostics CompileBlueprintWithDiagnostics(
+    UBlueprint* Blueprint,
+    const FCompileDiagnosticsOptions& Options)
 {
     FBlueprintCompileDiagnostics Diagnostics;
     Diagnostics.Status = TEXT("Unknown");
@@ -489,10 +516,14 @@ FBlueprintCompileDiagnostics CompileBlueprintWithDiagnostics(UBlueprint* Bluepri
     FCompilerResultsLog ResultsLog;
     ResultsLog.bSilentMode = true;
     ResultsLog.bLogDetailedResults = true;
+    // SkipGarbageCollection stays spelled at the call: PinWright.infra.tick_safety.
+    // HandlerHazardsStayGated reads this call site for it.
+    const EBlueprintCompileOptions SaveOption = Options.bSkipSaveOnCompile
+        ? EBlueprintCompileOptions::SkipSave : EBlueprintCompileOptions::None;
     FKismetEditorUtilities::CompileBlueprint(
-        Blueprint, EBlueprintCompileOptions::SkipGarbageCollection, &ResultsLog);
+        Blueprint, SaveOption | EBlueprintCompileOptions::SkipGarbageCollection, &ResultsLog);
     // Avoid GC on the compile stack, then restore cleanup at the next engine GC opportunity.
-    if (GEngine)
+    if (GEngine && Options.bScheduleGarbageCollection)
     {
         GEngine->ForceGarbageCollection(true);
     }
@@ -523,10 +554,22 @@ FBlueprintCompileDiagnostics CompileBlueprintWithDiagnostics(UBlueprint* Bluepri
             // Repair applies only to error-severity engine messages (see comment
             // on RepairUnableToSetReadOnlyMessage).
             Diagnostics.Errors.Add(RepairUnableToSetReadOnlyMessage(Message->ToText().ToString()));
+            Diagnostics.ErrorLocations.Add(ReadCompileMessageLocation(*Message));
             break;
         case EMessageSeverity::Warning:
         case EMessageSeverity::PerformanceWarning:
-            Diagnostics.Warnings.Add(Message->ToText().ToString());
+            // Epic's toolset compile_blueprint(warnings_as_errors=True) contract: a warning
+            // fails the compile. Status stays the engine's own; only the verdict moves.
+            if (Options.bWarningsAsErrors)
+            {
+                Diagnostics.Errors.Add(Message->ToText().ToString());
+                Diagnostics.ErrorLocations.Add(ReadCompileMessageLocation(*Message));
+                Diagnostics.bCompiled = false;
+            }
+            else
+            {
+                Diagnostics.Warnings.Add(Message->ToText().ToString());
+            }
             break;
         default:
             break;
@@ -580,10 +623,17 @@ void AddCompileDiagnosticsToJson(
     Out->SetStringField(TEXT("status"), Diagnostics.Status);
 
     TArray<TSharedPtr<FJsonValue>> ErrorsArray;
-    for (const FString& Error : Diagnostics.Errors)
+    for (int32 Index = 0; Index < Diagnostics.Errors.Num(); ++Index)
     {
         TSharedPtr<FJsonObject> Entry = MakeShared<FJsonObject>();
-        Entry->SetStringField(TEXT("message"), Error);
+        Entry->SetStringField(TEXT("message"), Diagnostics.Errors[Index]);
+        // Present only when the engine linked the message to a graph node.
+        if (Diagnostics.ErrorLocations.IsValidIndex(Index)
+            && !Diagnostics.ErrorLocations[Index].NodeGuid.IsEmpty())
+        {
+            Entry->SetStringField(TEXT("nodeGuid"), Diagnostics.ErrorLocations[Index].NodeGuid);
+            Entry->SetStringField(TEXT("graph"), Diagnostics.ErrorLocations[Index].Graph);
+        }
         ErrorsArray.Add(MakeShared<FJsonValueObject>(Entry));
     }
     Out->SetArrayField(ErrorsFieldName, ErrorsArray);

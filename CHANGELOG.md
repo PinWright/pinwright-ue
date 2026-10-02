@@ -43,6 +43,13 @@
   session-wide named-mutex lock, `WindowFromPoint` ownership gate, a foreground step before the
   press (`FOREGROUND_LOCKED` when Windows refuses), and a typed refusal in offscreen / nullrhi /
   commandlet editors. Written on Linux; not yet compiled or run on Windows.
+- Added: `blueprint.compile_batch` compiles an `assets` list or a `folder` in one job and returns
+  one row per Blueprint (`statusBefore`, `outcome` compiled | failed | refused | unloadable, errors,
+  warnings, `reinstanced`) with totals that sum. A live-instance refusal is a row, not a call
+  error; `onlyStatus: "error"` recompiles the loaded Blueprints in the Error state. Progress per
+  Blueprint, nothing saved, one deferred GC. `blueprint.compile` errors gain `nodeGuid` / `graph`
+  for node-level messages, and both verbs take `warningsAsErrors`.
+
 - Fixed: `widget.screenshot_designer` `target:"preview"` (and `asset.dump`'s `preview.png`) waits,
   up to 20 s, for the textures and materials the preview references before drawing, so a cold
   widget no longer comes back missing images or font-material text; the response adds

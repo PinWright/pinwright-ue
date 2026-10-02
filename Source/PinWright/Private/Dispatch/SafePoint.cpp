@@ -590,6 +590,7 @@ namespace
         TEXT("blueprint.add_macro"),
         TEXT("blueprint.add_variable"),
         TEXT("blueprint.compile"),
+        TEXT("blueprint.compile_batch"),
         TEXT("blueprint.compile_bpir"),
         TEXT("blueprint.delete_unused_variables"),
         TEXT("blueprint.graph.connect_pins_batch"),

@@ -358,7 +358,8 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBlueprintCompileVerbsCarryReinstancingContract
 
 bool FBlueprintCompileVerbsCarryReinstancingContractTest::RunTest(const FString& Parameters)
 {
-    const TCHAR* const Verbs[] = { TEXT("blueprint.compile"), TEXT("blueprint.set_default") };
+    const TCHAR* const Verbs[] = {
+        TEXT("blueprint.compile"), TEXT("blueprint.compile_batch"), TEXT("blueprint.set_default") };
 
     const TArray<FString>& TickUnsafe = PinWrightSafePoint::GetTickUnsafeMethods();
     for (const TCHAR* Verb : Verbs)

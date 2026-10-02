@@ -25,7 +25,7 @@ Wire-level aliases must be present in `FParamSpec`, not only in handler-side res
 
 ## Compiling rebuilds live instances — and can refuse
 
-A Blueprint compile flushes UE's reinstancing queue: every live instance of the class in every loaded world is **destroyed and re-created**, and the level that owns it is marked dirty. That includes placed actors in a map someone else has open. `blueprint.compile`, `blueprint.set_default`, `blueprint.reparent`, `blueprint.modify_scs`, and all six compiling `blueprint.scs.*` mutators therefore refuse with `LIVE_INSTANCES_WOULD_BE_REINSTANCED` when loaded worlds hold live instances, naming the count and each owning world in the error payload's `reinstanced` block. Pass `allowReinstancing: true` to accept the rebuild, or stop PIE / close the map first. `blueprint.modify_scs` applies this check only when `compile:true` or an `add_component` operation takes its implicit compile path.
+A Blueprint compile flushes UE's reinstancing queue: every live instance of the class in every loaded world is **destroyed and re-created**, and the level that owns it is marked dirty. That includes placed actors in a map someone else has open. `blueprint.compile`, `blueprint.compile_batch` (as a per-row `refused` outcome), `blueprint.set_default`, `blueprint.reparent`, `blueprint.modify_scs`, and all six compiling `blueprint.scs.*` mutators therefore refuse with `LIVE_INSTANCES_WOULD_BE_REINSTANCED` when loaded worlds hold live instances, naming the count and each owning world in the error payload's `reinstanced` block. Pass `allowReinstancing: true` to accept the rebuild, or stop PIE / close the map first. `blueprint.modify_scs` applies this check only when `compile:true` or an `add_component` operation takes its implicit compile path.
 
 For `blueprint.compile_bpir` and the `insert_bpir_*` verbs, an active PIE session is an additional preflight refusal before the Blueprint is loaded; they return `PIE_ACTIVE`, and `allowReinstancing:true` cannot bypass that refusal.
 
@@ -441,8 +441,8 @@ Response fields:
 |---|---|
 | `compiled` | `true` only when `UBlueprint::Status` is `BS_UpToDate` or `BS_UpToDateWithWarnings`. Any other status (including `BS_Error` and `BS_Unknown`) yields `false`. |
 | `status` | One of `"UpToDate"`, `"UpToDateWithWarnings"`, `"Error"`, `"Unknown"`. |
-| `errors` | Array of `{message}` objects from `FCompilerResultsLog` errors. |
-| `warnings` | Array of `{message}` objects from `FCompilerResultsLog` warnings. |
+| `errors` | Array of `{message, nodeGuid?, graph?}` objects from `FCompilerResultsLog` errors. `nodeGuid` / `graph` name the source graph node the engine linked the message to; they are absent for a class-level error. |
+| `warnings` | Array of `{message}` objects from `FCompilerResultsLog` warnings. With `warningsAsErrors: true` warnings are reported in `errors` instead and `compiled` is `false`; `status` stays the engine's own. |
 
 **Compiling a Widget Blueprint whose UMG Designer is open is safe as of 2026-09-03, and it was not
 before.** Every PinWright compile route reaches `FKismetEditorUtilities::CompileBlueprint` directly,
@@ -457,6 +457,25 @@ is no `EDITOR_OPEN` refusal: the visible effect is the Designer preview rebuildi
 does when a human presses Compile.
 
 `blueprint.compile` is compile-only — it validates the graph in memory and never writes to disk. To persist a successfully compiled Blueprint, call [`asset.save`](asset.md) afterward; it runs the same Blueprint integrity gate at the save choke point and refuses to write a corrupt graph. (The former `saveAfterCompile` flag was removed; persistence and its integrity gate now live on the universal save path.) Callers must check `status` (or the `errors` array), not just `compiled`, to detect genuine failures — earlier behavior reported `compiled: true` unconditionally and masked BP compilation errors.
+
+### blueprint.compile_batch
+
+The batched form of `blueprint.compile`: one call compiles an explicit `assets` list or a `folder` (exactly one) and returns a job ticket whose result holds one row per Blueprint. Use it for a post-refactor sweep instead of looping `blueprint.compile`.
+
+Each row in `blueprints[]` carries `path`, `statusBefore` (`Unloaded` when the Blueprint was not in memory), `outcome`, and then the same fields `blueprint.compile` reports (`compiled`, `status`, `errors[{message, nodeGuid?, graph?}]`, `warnings`, `reinstanced`). `outcome` is one of:
+
+| outcome | meaning |
+|---|---|
+| `compiled` | the compile ran and the Blueprint is up to date (with warnings unless `warningsAsErrors`) |
+| `failed` | the compile ran and reported errors |
+| `refused` | not compiled: live instances would be reinstanced. `code` is `LIVE_INSTANCES_WOULD_BE_REINSTANCED` and the row carries the `reinstanced` block. This is a row, not a call error; pass `allowReinstancing: true` to compile it |
+| `unloadable` | not compiled: `code` is `ASSET_NOT_FOUND` (an explicit path with nothing behind it) or `ASSET_LOAD_FAILED` |
+
+`summary.compiled + failed + refused + unloadable == summary.examined`, which equals `summary.matched` unless `summary.truncated` (page with `limit` 1-200, default 50, and `offset`, ordered by object path).
+
+`onlyStatus: "error"` keeps only Blueprints already **loaded** in the Error state (the set `editor.play` lists as `blueprintsWithErrors`, scoped to the request) and recompiles them; `"dirty"` does the same for Dirty. An unloaded Blueprint has no status and never matches those filters. An empty match set returns `NO_ASSETS_MATCHED`.
+
+Not-yet-loaded Blueprints load with compile-on-load disabled, since the batch compiles them anyway. Nothing is saved, including under the editor's Save-on-Compile preference; call `asset.save` afterwards. The batch requests one deferred garbage collection after the loop, not one per Blueprint. One progress event per Blueprint is emitted before its compile starts (`currentAsset`, `progress`, `total`). A running batch cannot be cancelled because each compile is one synchronous engine call, so `limit` is the bound.
 
 ### blueprint.search
 

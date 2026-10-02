@@ -53,11 +53,22 @@ class UK2Node_Tunnel;
 namespace BlueprintHandlerUtils
 {
 
+// Where an error-severity compiler message points, read from the message link the engine
+// attaches (FEdGraphToken::CreateInternal sets it to an FUObjectToken on the SOURCE node, not
+// the intermediate expansion). Both fields are empty for a class-level message with no node.
+struct FCompileErrorLocation
+{
+    FString NodeGuid;
+    FString Graph;
+};
+
 struct FBlueprintCompileDiagnostics
 {
     bool bCompiled = false;
     FString Status;
     TArray<FString> Errors;
+    // Parallel to Errors (same index), so the string-only Errors consumers are unchanged.
+    TArray<FCompileErrorLocation> ErrorLocations;
     TArray<FString> Warnings;
     // The live instances this compile destroyed and re-created, measured BEFORE the
     // compile ran (afterwards the old objects are gone and the count reads zero).
@@ -365,7 +376,20 @@ PINWRIGHT_API bool TryApplyEnumPinDefaultValue(
     FString& OutAppliedLiteral,
     FString& OutErrorCode,
     FString& OutErrorMessage);
-PINWRIGHT_API FBlueprintCompileDiagnostics CompileBlueprintWithDiagnostics(UBlueprint* Blueprint);
+struct FCompileDiagnosticsOptions
+{
+    // A compile that produced warnings is reported as failed: the warnings move into Errors
+    // and bCompiled is false. Status still reports the engine's own UBlueprint::Status.
+    bool bWarningsAsErrors = false;
+    // False for a batch caller that requests ONE deferred GC after its whole loop.
+    bool bScheduleGarbageCollection = true;
+    // Pass EBlueprintCompileOptions::SkipSave so the user's Save-on-Compile preference
+    // cannot write the package from inside a compile-only verb.
+    bool bSkipSaveOnCompile = false;
+};
+PINWRIGHT_API FBlueprintCompileDiagnostics CompileBlueprintWithDiagnostics(
+    UBlueprint* Blueprint,
+    const FCompileDiagnosticsOptions& Options = FCompileDiagnosticsOptions());
 // True iff PostErrors holds a compile-error occurrence beyond what BaselineErrors
 // already carried — i.e. THIS mutation introduced a NEW error rather than merely
 // leaving pre-existing errors (from graphs it never touched) in place. Powers
