@@ -67,7 +67,7 @@
     "Examples/mgir"
   ],
   "descriptor": {
-    "isBetaVersion": true,
-    "isExperimentalVersion": true
+    "isBetaVersion": false,
+    "isExperimentalVersion": false
   }
 }

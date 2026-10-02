@@ -12,8 +12,8 @@
   "FabURL": "com.epicgames.launcher://ue/Fab/product/2ec45f7a-6c3d-4735-93ea-be841d903843",
   "SupportURL": "https://github.com/PinWright/pinwright-ue/issues",
   "CanContainContent": true,
-  "IsBetaVersion": true,
-  "IsExperimentalVersion": true,
+  "IsBetaVersion": false,
+  "IsExperimentalVersion": false,
   "EnabledByDefault": true,
   "SupportsUEBuildSystem": true,
   "Modules": [
