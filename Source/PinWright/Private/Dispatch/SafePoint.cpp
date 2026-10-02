@@ -101,6 +101,9 @@ namespace
         // Builds and destroys a private FPreviewScene world and flushes rendering per GPU step
         // (NiagaraSimulateHandler.cpp).
         TEXT("niagara.simulate"),
+        // Same private FPreviewScene build/destroy, plus actor construction in it
+        // (BlueprintPreviewHandler.cpp).
+        TEXT("blueprint.preview_construction"),
         TEXT("render.capture_open_level"),
         // Ownerless USceneCaptureComponent2D capture plus synchronous render-thread flush and
         // readback in a private preview world (MeshPreviewCaptureUtils.cpp).

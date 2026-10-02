@@ -55,6 +55,11 @@
   widget no longer comes back missing images or font-material text; the response adds
   `previewComplete` and `readiness` (`notReady` names anything still compiling). The Designer's
   dashed outlines are no longer drawn into the preview (`designerOutlinesHidden`).
+- Added: `blueprint.preview_construction` runs an Actor Blueprint's construction scripts on a
+  throwaway transient instance (`world: preview` by default, or `editor`), with optional
+  `variables` applied first, and reports every component built (`creationMethod`, attach parent,
+  relative and world transform, sparse property diff), child actors and bounds. Nothing is placed
+  or dirtied. A Blueprint in compile error is refused with `BLUEPRINT_COMPILE_FAILED`.
 - Changed: game-surface `drive.*` with no `instance_name` / `root_index` walks every live UMG root
   on the viewport (z-order, bottom-most first) instead of failing `AMBIGUOUS_LIVE_ROOT`; each
   element carries `root`, handles are unique across roots, and `root_name` lists the walked roots.

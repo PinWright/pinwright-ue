@@ -1,0 +1,319 @@
+// Copyright (c) 2026 Alexander Penkin. MIT License.
+
+// blueprint.preview_construction: runs a Blueprint's construction scripts on a throwaway instance.
+// The fixture is an Actor Blueprint with one SCS scene component and a UserConstructionScript that
+// adds `Count` scene components in a ForLoop (Count is an int member variable, default 3), so the
+// UCS row count is a function of a variable the caller can override.
+
+#include "Misc/AutomationTest.h"
+
+#include "Components/SceneComponent.h"
+#include "Dom/JsonObject.h"
+#include "Dom/JsonValue.h"
+#include "EdGraphSchema_K2.h"
+#include "Editor.h"
+#include "Engine/Blueprint.h"
+#include "Engine/BlueprintGeneratedClass.h"
+#include "Engine/Engine.h"
+#include "Engine/SCS_Node.h"
+#include "Engine/SimpleConstructionScript.h"
+#include "Engine/World.h"
+#include "EngineUtils.h"
+#include "K2Node_AddComponentByClass.h"
+#include "K2Node_FunctionEntry.h"
+#include "K2Node_MacroInstance.h"
+#include "K2Node_VariableGet.h"
+#include "Kismet2/BlueprintEditorUtils.h"
+#include "Kismet2/KismetEditorUtilities.h"
+#include "UObject/Package.h"
+#include "Tests/Bpir/CompilerTestUtils.h"
+#include "Tests/TestUtils.h"
+
+namespace BlueprintPreviewConstructionTest
+{
+    const FName CountVar(TEXT("Count"));
+    const FName ScsNodeName(TEXT("ScsRoot"));
+
+    template <typename TNode>
+    TNode* PlaceNode(UEdGraph* Graph, TFunctionRef<void(TNode*)> BeforePins)
+    {
+        TNode* Node = NewObject<TNode>(Graph);
+        BeforePins(Node);
+        Node->CreateNewGuid();
+        Node->AllocateDefaultPins();
+        Node->PostPlacedNewNode();
+        Graph->AddNode(Node, /*bFromUI=*/false, /*bSelectNewNode=*/false);
+        return Node;
+    }
+
+    UEdGraphPin* FindPinWhere(UEdGraphNode* Node, TFunctionRef<bool(const UEdGraphPin*)> Predicate)
+    {
+        for (UEdGraphPin* Pin : Node->Pins)
+        {
+            if (Pin && Predicate(Pin))
+            {
+                return Pin;
+            }
+        }
+        return nullptr;
+    }
+
+    // Entry -> ForLoop(1..Count) -> LoopBody -> AddComponentByClass(SceneComponent).
+    UBlueprint* CreateCountingBlueprint(FAutomationTestBase& Test)
+    {
+        UBlueprint* BP = CompilerTestUtils::CreateTransientTestBP(TEXT("PreviewConstructionBP"));
+        if (!Test.TestNotNull(TEXT("fixture Blueprint created"), BP)
+            || !Test.TestNotNull(TEXT("fixture Blueprint has an SCS"), BP->SimpleConstructionScript.Get()))
+        {
+            return nullptr;
+        }
+
+        USCS_Node* ScsNode = BP->SimpleConstructionScript->CreateNode(USceneComponent::StaticClass(), ScsNodeName);
+        BP->SimpleConstructionScript->AddNode(ScsNode);
+
+        FEdGraphPinType IntType;
+        IntType.PinCategory = UEdGraphSchema_K2::PC_Int;
+        Test.TestTrue(TEXT("Count variable added"),
+            FBlueprintEditorUtils::AddMemberVariable(BP, CountVar, IntType, TEXT("3")));
+
+        UEdGraph* Ucs = FBlueprintEditorUtils::FindUserConstructionScript(BP);
+        UBlueprint* Macros = LoadObject<UBlueprint>(nullptr,
+            TEXT("/Engine/EditorBlueprintResources/StandardMacros.StandardMacros"));
+        UEdGraph* ForLoopGraph = nullptr;
+        if (Macros)
+        {
+            for (UEdGraph* Graph : Macros->MacroGraphs)
+            {
+                if (Graph && Graph->GetFName() == TEXT("ForLoop"))
+                {
+                    ForLoopGraph = Graph;
+                }
+            }
+        }
+        if (!Test.TestNotNull(TEXT("UserConstructionScript graph"), Ucs)
+            || !Test.TestNotNull(TEXT("StandardMacros ForLoop graph"), ForLoopGraph))
+        {
+            return nullptr;
+        }
+
+        UK2Node_FunctionEntry* Entry = nullptr;
+        for (UEdGraphNode* Node : Ucs->Nodes)
+        {
+            Entry = Entry ? Entry : Cast<UK2Node_FunctionEntry>(Node);
+        }
+
+        UK2Node_MacroInstance* Loop = PlaceNode<UK2Node_MacroInstance>(Ucs,
+            [ForLoopGraph](UK2Node_MacroInstance* N) { N->SetMacroGraph(ForLoopGraph); });
+        UK2Node_VariableGet* GetCount = PlaceNode<UK2Node_VariableGet>(Ucs,
+            [](UK2Node_VariableGet* N) { N->VariableReference.SetSelfMember(CountVar); });
+        UK2Node_AddComponentByClass* AddComp = PlaceNode<UK2Node_AddComponentByClass>(Ucs,
+            [](UK2Node_AddComponentByClass*) {});
+
+        const UEdGraphSchema_K2* K2 = GetDefault<UEdGraphSchema_K2>();
+        UEdGraphPin* ClassPin = AddComp->FindPin(TEXT("Class"));
+        if (!Test.TestNotNull(TEXT("AddComponentByClass class pin"), ClassPin))
+        {
+            return nullptr;
+        }
+        ClassPin->DefaultObject = USceneComponent::StaticClass();
+        AddComp->PinDefaultValueChanged(ClassPin);
+        if (UEdGraphPin* Manual = AddComp->FindPin(TEXT("bManualAttachment")))
+        {
+            Manual->DefaultValue = TEXT("false");
+        }
+        if (UEdGraphPin* RelTransform = AddComp->FindPin(TEXT("RelativeTransform")))
+        {
+            K2->SetPinAutogeneratedDefaultValueBasedOnType(RelTransform);
+        }
+
+        auto IsExec = [](const UEdGraphPin* P) { return P->PinType.PinCategory == UEdGraphSchema_K2::PC_Exec; };
+        UEdGraphPin* EntryThen = Entry ? FindPinWhere(Entry, [&](const UEdGraphPin* P) { return IsExec(P) && P->Direction == EGPD_Output; }) : nullptr;
+        UEdGraphPin* LoopExec = FindPinWhere(Loop, [&](const UEdGraphPin* P) { return IsExec(P) && P->Direction == EGPD_Input; });
+        UEdGraphPin* LoopBody = FindPinWhere(Loop, [&](const UEdGraphPin* P)
+            { return IsExec(P) && P->Direction == EGPD_Output && P->PinName.ToString().Contains(TEXT("Body")); });
+        UEdGraphPin* FirstIndex = Loop->FindPin(TEXT("FirstIndex"));
+        UEdGraphPin* LastIndex = Loop->FindPin(TEXT("LastIndex"));
+        UEdGraphPin* CountOut = GetCount->FindPin(CountVar);
+        UEdGraphPin* AddExec = AddComp->FindPin(UEdGraphSchema_K2::PN_Execute);
+        if (!EntryThen || !LoopExec || !LoopBody || !FirstIndex || !LastIndex || !CountOut || !AddExec)
+        {
+            Test.AddError(TEXT("fixture graph is missing an expected pin"));
+            return nullptr;
+        }
+        FirstIndex->DefaultValue = TEXT("1");
+        Test.TestTrue(TEXT("entry -> loop"), K2->TryCreateConnection(EntryThen, LoopExec));
+        Test.TestTrue(TEXT("Count -> LastIndex"), K2->TryCreateConnection(CountOut, LastIndex));
+        Test.TestTrue(TEXT("loop body -> add component"), K2->TryCreateConnection(LoopBody, AddExec));
+
+        FKismetEditorUtilities::CompileBlueprint(BP);
+        if (!Test.TestTrue(TEXT("fixture Blueprint compiles"), BP->Status != BS_Error && BP->GeneratedClass != nullptr))
+        {
+            return nullptr;
+        }
+        return BP;
+    }
+
+    FTestResponseCapture Preview(FAutomationTestBase& Test, UBlueprint* BP, const TCHAR* World,
+        const TSharedPtr<FJsonObject>& Variables = nullptr)
+    {
+        TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+        Payload->SetStringField(TEXT("path"), BP->GetPathName());
+        Payload->SetStringField(TEXT("world"), World);
+        if (Variables.IsValid())
+        {
+            Payload->SetObjectField(TEXT("variables"), Variables);
+        }
+        FTestResponseCapture Capture;
+        Test.TestTrue(TEXT("blueprint.preview_construction handler found"),
+            InvokeHandlerWithCapture(TEXT("blueprint.preview_construction"), Payload, Capture));
+        return Capture;
+    }
+
+    TArray<FString> ComponentNamesWithMethod(const FTestResponseCapture& Capture, const TCHAR* Method)
+    {
+        TArray<FString> Names;
+        const TArray<TSharedPtr<FJsonValue>>* Components = nullptr;
+        if (!Capture.Result.IsValid() || !Capture.Result->TryGetArrayField(TEXT("components"), Components))
+        {
+            return Names;
+        }
+        for (const TSharedPtr<FJsonValue>& Value : *Components)
+        {
+            const TSharedPtr<FJsonObject> Row = Value->AsObject();
+            if (Row.IsValid() && Row->GetStringField(TEXT("creationMethod")) == Method)
+            {
+                Names.Add(Row->GetStringField(TEXT("name")));
+            }
+        }
+        return Names;
+    }
+
+    int32 LiveInstances(UWorld* World, UClass* Class)
+    {
+        int32 Count = 0;
+        for (TActorIterator<AActor> It(World, Class); It; ++It)
+        {
+            Count += IsValid(*It) ? 1 : 0;
+        }
+        return Count;
+    }
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBlueprintPreviewConstructionUcsFollowsVariableTest,
+    "PinWright.blueprint.preview_construction.UcsRowsFollowTheCountVariable",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FBlueprintPreviewConstructionUcsFollowsVariableTest::RunTest(const FString& Parameters)
+{
+    using namespace BlueprintPreviewConstructionTest;
+    UBlueprint* BP = CreateCountingBlueprint(*this);
+    if (!BP)
+    {
+        return false;
+    }
+    const int32 ContextsBefore = GEngine->GetWorldContexts().Num();
+
+    const FTestResponseCapture Default = Preview(*this, BP, TEXT("preview"));
+    TestTrue(FString::Printf(TEXT("default preview succeeds (%s %s)"), *Default.ErrorCode, *Default.Message), Default.bSuccess);
+    TestEqual(TEXT("world echoed"), Default.Result.IsValid() ? Default.Result->GetStringField(TEXT("world")) : FString(), FString(TEXT("preview")));
+    TestEqual(TEXT("default Count=3 builds three UCS components"),
+        ComponentNamesWithMethod(Default, TEXT("UserConstructionScript")).Num(), 3);
+
+    // SCS rows are exactly the Blueprint's SCS nodes (what blueprint.scs.get reads).
+    TArray<FString> ScsRows = ComponentNamesWithMethod(Default, TEXT("SimpleConstructionScript"));
+    TArray<FString> ScsNodes;
+    for (const USCS_Node* Node : BP->SimpleConstructionScript->GetAllNodes())
+    {
+        ScsNodes.Add(Node->GetVariableName().ToString());
+    }
+    ScsRows.Sort();
+    ScsNodes.Sort();
+    TestEqual(TEXT("SCS rows match the SCS nodes"), ScsRows, ScsNodes);
+    TestTrue(TEXT("the SCS fixture node is among them"), ScsRows.Contains(ScsNodeName.ToString()));
+
+    TSharedPtr<FJsonObject> Variables = MakeShared<FJsonObject>();
+    Variables->SetNumberField(CountVar.ToString(), 5);
+    const FTestResponseCapture Overridden = Preview(*this, BP, TEXT("preview"), Variables);
+    TestTrue(FString::Printf(TEXT("override preview succeeds (%s %s)"), *Overridden.ErrorCode, *Overridden.Message), Overridden.bSuccess);
+    TestEqual(TEXT("variables{Count:5} builds five UCS components"),
+        ComponentNamesWithMethod(Overridden, TEXT("UserConstructionScript")).Num(), 5);
+
+    // The Blueprint itself is untouched: the override lived on the throwaway instance only.
+    const FTestResponseCapture Again = Preview(*this, BP, TEXT("preview"));
+    TestEqual(TEXT("the class default is still 3 afterwards"),
+        ComponentNamesWithMethod(Again, TEXT("UserConstructionScript")).Num(), 3);
+
+    TestEqual(TEXT("no preview world context is left behind"), GEngine->GetWorldContexts().Num(), ContextsBefore);
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBlueprintPreviewConstructionEditorWorldCleanTest,
+    "PinWright.blueprint.preview_construction.EditorWorldLeavesNoActorAndNoDirtyMap",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FBlueprintPreviewConstructionEditorWorldCleanTest::RunTest(const FString& Parameters)
+{
+    using namespace BlueprintPreviewConstructionTest;
+    UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+    if (!TestNotNull(TEXT("editor world"), World))
+    {
+        return false;
+    }
+    UBlueprint* BP = CreateCountingBlueprint(*this);
+    if (!BP)
+    {
+        return false;
+    }
+
+    UPackage* MapPackage = World->GetOutermost();
+    const bool bWasDirty = MapPackage->IsDirty();
+    MapPackage->SetDirtyFlag(false);
+
+    const FTestResponseCapture Capture = Preview(*this, BP, TEXT("editor"));
+    TestTrue(FString::Printf(TEXT("editor-world preview succeeds (%s %s)"), *Capture.ErrorCode, *Capture.Message), Capture.bSuccess);
+    TestEqual(TEXT("world echoed"), Capture.Result.IsValid() ? Capture.Result->GetStringField(TEXT("world")) : FString(), FString(TEXT("editor")));
+    TestEqual(TEXT("three UCS components in the editor world too"),
+        ComponentNamesWithMethod(Capture, TEXT("UserConstructionScript")).Num(), 3);
+    TestFalse(TEXT("the map package stays clean"), MapPackage->IsDirty());
+    TestEqual(TEXT("no instance is left in the level"), LiveInstances(World, BP->GeneratedClass), 0);
+
+    // Failure exit after the spawn must also destroy the instance.
+    TSharedPtr<FJsonObject> BadValue = MakeShared<FJsonObject>();
+    BadValue->SetNumberField(CountVar.ToString(), 2.5);
+    const FTestResponseCapture Rejected = Preview(*this, BP, TEXT("editor"), BadValue);
+    TestFalse(TEXT("a fractional int is refused"), Rejected.bSuccess);
+    TestEqual(TEXT("refusal code"), Rejected.ErrorCode, FString(TEXT("TYPE_MISMATCH")));
+    TestEqual(TEXT("no instance is left after the refusal"), LiveInstances(World, BP->GeneratedClass), 0);
+    TestFalse(TEXT("the map package stays clean after the refusal"), MapPackage->IsDirty());
+
+    MapPackage->SetDirtyFlag(bWasDirty);
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBlueprintPreviewConstructionRefusalsTest,
+    "PinWright.blueprint.preview_construction.RefusesErrorBlueprintAndUnknownVariable",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FBlueprintPreviewConstructionRefusalsTest::RunTest(const FString& Parameters)
+{
+    using namespace BlueprintPreviewConstructionTest;
+    UBlueprint* BP = CreateCountingBlueprint(*this);
+    if (!BP)
+    {
+        return false;
+    }
+
+    TSharedPtr<FJsonObject> Unknown = MakeShared<FJsonObject>();
+    Unknown->SetNumberField(TEXT("NoSuchVariable"), 1);
+    const FTestResponseCapture UnknownVar = Preview(*this, BP, TEXT("preview"), Unknown);
+    TestFalse(TEXT("unknown variable is refused"), UnknownVar.bSuccess);
+    TestEqual(TEXT("unknown variable code"), UnknownVar.ErrorCode, FString(TEXT("PROPERTY_NOT_FOUND")));
+
+    const TEnumAsByte<EBlueprintStatus> Saved = BP->Status;
+    BP->Status = BS_Error;
+    const FTestResponseCapture Errored = Preview(*this, BP, TEXT("preview"));
+    BP->Status = Saved;
+    TestFalse(TEXT("a BS_Error Blueprint is refused"), Errored.bSuccess);
+    TestEqual(TEXT("compile-error code"), Errored.ErrorCode, FString(TEXT("BLUEPRINT_COMPILE_FAILED")));
+    return true;
+}

@@ -548,3 +548,46 @@ a filtered answer, which is the failure the echo exists to make visible.
 These are not [`actor.list`](actor.list.md)'s `matchMode` knobs: this verb carries two independent
 patterns under one shared case modifier plus its own `exactTarget` switch, so it keeps its own
 wire shape while sharing the matcher underneath.
+
+### blueprint.preview_construction
+
+Runs an Actor Blueprint's construction scripts (SCS, then `UserConstructionScript`) on a
+throwaway instance and reports what they built. Use it to check a construction script without
+placing an actor: the instance is spawned deferred, `RF_Transient`, hidden from the outliner and
+not transactional, and it is destroyed before the call returns. No package is dirtied and nothing
+enters the undo history.
+
+**Parameters.** `path` (required). `world` is `preview` (default: a private empty world that is
+torn down after the call) or `editor` (the open level, so a script that traces or queries actors
+sees the level). The response echoes it. A script that reads the world builds different
+components in the two modes, and `world` is how the response says which one ran. `variables` sets
+properties on the instance **before** construction runs, the same moment Expose-on-Spawn values
+land; the Blueprint and its class defaults are not touched. `location` / `rotation` / `scale` set
+the spawn transform, with the same shapes as `actor.spawn`.
+
+**Response.**
+
+| Field | Description |
+|---|---|
+| `world` | `preview` or `editor`, echoed. |
+| `compileStatus` | The Blueprint's `Status` (`UpToDate`, `UpToDateWithWarnings`, `Dirty`, ...). `Dirty` means the preview ran the **last compiled** class, not the unsaved graph edits: call `blueprint.compile` first. |
+| `userConstructionScriptEnabled` | `false` when `[Kismet] bTurnOffEditorConstructionScript` is set, in which case the engine skips every UCS and only SCS rows appear. |
+| `variablesApplied` | Names applied from `variables`. |
+| `components[]` | One row per component: `name`, `class`, `creationMethod` (`Native`, `SimpleConstructionScript`, `UserConstructionScript`, `Instance`), `attachParent` / `attachParentName`, `relativeTransform`, `worldTransform`, `tags`, `properties` (a sparse diff against the component's template). These are the same row shape and vocabulary as `actor.describe`. |
+| `componentCount` | `components.length`. |
+| `childActors[]` | One row per `ChildActorComponent`: `component`, `class`, `spawned`, and when spawned `actorName` plus that child's `components`. |
+| `bounds` | `{valid, min, max}` over every component, including non-colliding ones and child actors. `valid:false` means no component has bounds. |
+
+The SCS rows are the Blueprint's SCS nodes (`blueprint.scs.get`), instanced. The UCS rows exist
+only after construction runs, so they appear in no read of the asset itself.
+
+**Errors.** `BLUEPRINT_NOT_FOUND`. `CLASS_NOT_INSTANTIABLE` is returned when the Blueprint is not
+a compiled, non-abstract Actor class. `BLUEPRINT_COMPILE_FAILED` is returned when the Blueprint or
+a Blueprint parent is in compile error; the engine would skip SCS and UCS and build a placeholder
+billboard instead. `PROPERTY_NOT_FOUND` is returned for a `variables` key the class lacks, and it
+is checked before anything is spawned. `TYPE_MISMATCH` is returned for a value the property
+rejects; the instance is destroyed before the refusal returns. `ACTOR_SPAWN_FAILED` is returned
+when the spawn itself fails.
+
+Not covered: rendering the result. Capture the built actor by placing it with `actor.spawn` and
+using a level capture; `render.capture_asset_preview` does not take a Blueprint subject.
