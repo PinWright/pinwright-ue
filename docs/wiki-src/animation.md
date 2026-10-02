@@ -38,6 +38,14 @@ The `footBones` response is conditional on both track resolution and stance meas
 
 If `footBones` is omitted, no `locomotion` check is emitted even when `expectedGroundSpeed` is supplied. A failed or unmeasured check makes the top-level `pass` false; a `reported` check is a measurement without that optional threshold verdict.
 
+## Will these curves move the morphs?
+
+`animation.check_morph_curves` answers it per curve for one `skeletalMeshPath`. A curve drives a morph only when its name matches a morph on the mesh **and** its curve metadata carries the MorphTarget flag; the mesh's own curve metadata overrides the Skeleton's for any curve it flags, exactly as the engine's bone container merges them. A name match alone is the common false positive: it reads `drives: false`, `flagSource: "none"` and an `unflagged_morph_curve` error. Each asset row also lists `morphsWithoutCurve`. It is an audit (`pass`, `passRule`, `failOn`), so a missing or wrong-type asset is an `unrunnable` row, never a silent skip.
+
+## Read a live pose
+
+`animation.get_live_pose` reads the pose a placed skeletal mesh component currently shows (PIE or editor world) in a required `space` (`world`, `component`, `local`), plus optional AnimInstance state through `include` (`stateMachines`, `montage`, `curves`). It never ticks the component, so check `poseBuffer`: `tickedThisFrame` false or an unchanged `revision` across two calls means the pose has not updated. `skeleton.get_bone_transform` reads the reference pose instead.
+
 ## `setup_retargeting` is a skeleton-swap copier
 
 `animation.setup_retargeting` duplicates `UAnimSequence` assets and assigns the requested target `USkeleton` to each duplicate. It does not run IK Retargeter evaluation or remap bone tracks. Every successful response reports `retargeted: false`; when at least one output is produced, `duplicatedWithSkeletonSwap` is true and the paths are under `duplicatedAssets`. The verb never returns `retargetedAssets`.
@@ -73,3 +81,11 @@ For adjacent visual content use `call("niagara")`; for cinematics that drive ani
 Each `states[]` element has the closed shape `{name, isEntry}`. The convenience verb creates and names state graph shells and chooses the entry state; it does not bind an animation asset or mark an exit state. `animation` and `isExit` are rejected with `UNKNOWN_NESTED_PARAMS` instead of being accepted and discarded. Populate each state graph afterward with the fine-grained `animation.authoring` graph verbs.
 
 The request is atomic: transition endpoints are validated before graph creation. If the verb reports a state/transition construction or postcondition error after mutation begins, it restores the pre-request graph topology and package dirty state. Entry-node wiring remains best-effort for compatibility and does not turn an otherwise-created machine into an error.
+
+### animation.check_morph_curves
+
+AnimMontage curves include the curves of every segment's sequence, because the slot node evaluates them. PoseAsset curves are its stored curve names. `maxLod` is the Skeleton metadata MaxLOD (255 = every LOD; above it the curve is filtered out), or null when the Skeleton has no metadata for the curve. `flagged_curve_without_morph` is a warning, since a Skeleton shared by several meshes legitimately flags morphs only some meshes carry.
+
+### animation.get_live_pose
+
+Bones come from the component-space read buffer, the same one `GetSocketTransform` resolves bone names through; `local` is relative to the parent bone (the root is component-relative). Omitting `bones` returns every bone up to 1000 (`truncated`, `totalBones`). An actor with several SkeletalMeshComponents needs `component` (`TARGET_AMBIGUOUS` lists them); a leader-pose follower has no pose of its own and is refused with `INVALID_STATE`. `include` sections are null when the component has no AnimInstance; `stateMachines` covers the main instance only, not linked or post-process instances. `world: "pie"` with no session returns `PIE_NOT_ACTIVE`.
