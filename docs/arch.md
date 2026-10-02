@@ -629,8 +629,8 @@ Tests in `Source/PinWright/Private/Tests/` — compiled into the main module DLL
 `Utils/ClassUtils.h` exposes `UClass* ResolveUClass(const FString& Input)` — a robust UClass lookup used by handlers that accept either a full class path (`/Script/UMGEditor.WidgetBlueprint`) or a short class name (`WidgetBlueprint`). The resolution chain is:
 
 1. `FindObject<UClass>`
-2. `LoadObject<UClass>`
-3. Script-package prefix scan (`/Script/Engine`, `/Script/UMG`, `/Script/UMGEditor`, …)
+2. `LoadObject<UClass>` — only for an input containing `/` or `.`; a bare name has no package to load and would only log `Failed to find object 'Class <Name>'`
+3. Script-package prefix scan (`/Script/Engine`, `/Script/UMG`, `/Script/UMGEditor`, …) — `FindObject` only, since `/Script/` packages are compiled in and a load cannot find more
 4. `TObjectIterator<UClass>` fallback
 5. Retry with `U`/`A` prefix stripped / added
 

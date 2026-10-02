@@ -6,6 +6,8 @@
 #include "GameFramework/Actor.h"
 #include "Components/StaticMeshComponent.h"
 #include "Camera/CameraActor.h"
+#include "Misc/OutputDevice.h"
+#include "Misc/OutputDeviceRedirector.h"
 
 
 // ============================================================================
@@ -170,5 +172,79 @@ bool FResolveUClassNonExistentContentPathTest::RunTest(const FString& Parameters
     // whose name happens to be the package leaf).
     UClass* Found = ResolveUClass(TEXT("/Game/PinWrightTests/_Test/DoesNotExist_XYZ"));
     TestNull(TEXT("Non-existent content-mount path returns null"), Found);
+    return true;
+}
+
+// ============================================================================
+// ResolveUClass / ResolveClassByName — B-resolve-uclass-short-name-load-warns.
+// A bare short name used to reach LoadObject<UClass> (ResolveUClass step 2 on the raw name, and
+// both resolvers on /Script/<Pkg>.<Name>), which can never load and logged
+// "LogUObjectGlobals: Warning: Failed to find object 'Class Object'" on every successful lookup.
+// A log watch counts the line because a Warning only fails a test on hosts that elevate it.
+// Discrimination: the step-2 load has a null outer, so it warns on EVERY call and a revert goes red
+// here every run. The /Script/ loads mark their package known-missing after the first miss
+// (UObjectGlobals.cpp StaticLoadObject), so a revert of only those is red only on the session's
+// first such miss.
+// ============================================================================
+namespace ResolveUClassNoLoadWarnTest
+{
+    class FNeedleLogWatch : public FOutputDevice
+    {
+    public:
+        explicit FNeedleLogWatch(const TCHAR* InNeedle) : Needle(InNeedle)
+        {
+            GLog->AddOutputDevice(this);
+        }
+        virtual ~FNeedleLogWatch() override
+        {
+            GLog->RemoveOutputDevice(this);
+        }
+        virtual void Serialize(const TCHAR* Message, ELogVerbosity::Type Verbosity,
+            const FName& Category) override
+        {
+            if (FCString::Strstr(Message, *Needle))
+            {
+                FPlatformAtomics::InterlockedIncrement(&Hits);
+            }
+        }
+        virtual bool CanBeUsedOnAnyThread() const override { return true; }
+        virtual bool CanBeUsedOnMultipleThreads() const override { return true; }
+        int32 GetHits() const { return Hits; }
+
+    private:
+        FString Needle;
+        volatile int32 Hits = 0;
+    };
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FResolveUClassBareNamesNoLoadWarningTest,
+    "PinWright.core.class.resolve_uclass.BareNamesLogNoLoadWarning",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FResolveUClassBareNamesNoLoadWarningTest::RunTest(const FString& Parameters)
+{
+    const TCHAR* Names[] = {TEXT("Object"), TEXT("Actor"), TEXT("PointLight")};
+    int32 Hits = 0;
+    {
+        ResolveUClassNoLoadWarnTest::FNeedleLogWatch Watch(TEXT("Failed to find object"));
+        for (const TCHAR* Name : Names)
+        {
+            UClass* ByUClass = ResolveUClass(Name);
+            TestNotNull(FString::Printf(TEXT("ResolveUClass resolves '%s'"), Name), ByUClass);
+            if (ByUClass)
+            {
+                TestEqual(TEXT("ResolveUClass short name matches"), ByUClass->GetName(), FString(Name));
+            }
+            UClass* ByName = ResolveClassByName(Name);
+            TestNotNull(FString::Printf(TEXT("ResolveClassByName resolves '%s'"), Name), ByName);
+            if (ByName)
+            {
+                TestEqual(TEXT("ResolveClassByName short name matches"), ByName->GetName(), FString(Name));
+            }
+        }
+        GLog->Flush();
+        Hits = Watch.GetHits();
+    }
+    TestEqual(TEXT("no 'Failed to find object' load warning while resolving bare short names"),
+        Hits, 0);
     return true;
 }

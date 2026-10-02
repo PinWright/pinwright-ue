@@ -2,6 +2,9 @@
 
 ## 1.0.0
 
+- Fixed: class lookups by bare short name (`Object`, `Actor`, `PointLight`) no longer log
+  `Failed to find object 'Class <Name>'` warnings before succeeding; the class resolvers no longer
+  attempt a load for a bare name or a `/Script/` class.
 - Changed: graph auto-layout is PinWright's own layered formatter (`PwGraphLayout`) for BPIR
   compile/insert, `material.compile_mgir` / `material.authoring.auto_layout`, AGIR and CRIR
   compiles. It sizes every node (estimated from its title and pins), so laid-out nodes never

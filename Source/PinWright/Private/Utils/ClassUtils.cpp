@@ -24,8 +24,8 @@ UClass* ResolveClassByName(const FString& ClassNameOrPath)
     // A "//" anywhere in the input can reach CreatePackage's Fatal through any load below, which
     // ends the editor PROCESS rather than returning an error. Nothing in this function loads on the
     // raw input TODAY - UEditorAssetLibrary::LoadAsset collapses "//" via
-    // EditorScriptingHelpers.cpp:71 before it resolves anything, and the LoadObject below is
-    // reached only for an input containing no '/' at all - but that safety is an engine-internal
+    // EditorScriptingHelpers.cpp:71 before it resolves anything, and everything else here is a
+    // FindObject or a loaded-class walk - but that safety is an engine-internal
     // routing detail of a third-party helper, not a property of this function. Two lines here make
     // it a property of this function; the shapes this refuses were unresolvable anyway.
     if (ClassNameOrPath.IsEmpty() || CanReachCreatePackageFatal(ClassNameOrPath))
@@ -86,11 +86,10 @@ UClass* ResolveClassByName(const FString& ClassNameOrPath)
     {
         FString EnginePath =
             FString::Printf(TEXT("/Script/Engine.%s"), *ClassNameOrPath);
+        // FindObject only: /Script/ is compiled-in, so a LoadObject here could never find more -
+        // it only logged "Failed to find object" for every non-Engine short name (ResolveUClass).
         if (UClass* EngineClass = FindObject<UClass>(nullptr, *EnginePath))
             return EngineClass;
-
-        if (UClass* EngineClassLoaded = LoadObject<UClass>(nullptr, *EnginePath))
-            return EngineClassLoaded;
 
         FString UMGPath = FString::Printf(TEXT("/Script/UMG.%s"), *ClassNameOrPath);
         if (UClass* UMGClass = FindObject<UClass>(nullptr, *UMGPath))
@@ -141,9 +140,9 @@ UClass* ResolveClassByName(const FString& ClassNameOrPath)
 UClass* ResolveUClass(const FString& Input)
 {
     // THE HIGHEST-LEVERAGE GUARD IN THE PLUGIN: ~56 call sites across >=45 verbs funnel their
-    // caller-supplied class reference through here. Seven LoadObject calls below (the direct load,
-    // the "_C" retry - which PRESERVES a "//" from the input - the UBlueprint retry, and the four
-    // short-name/prefix/stripped/registry loads) each reach StaticLoadObjectInternal ->
+    // caller-supplied class reference through here. Four LoadObject calls below (the direct load,
+    // the "_C" retry - which PRESERVES a "//" from the input - the UBlueprint retry, and the
+    // registry load) each reach StaticLoadObjectInternal ->
     // ResolveName2(Create=true) -> CreatePackage, which logs at Fatal for a name containing "//"
     // (UObjectGlobals.cpp:1094-1096). Fatal is not compiled out in any configuration: the editor
     // PROCESS ends and every unsaved package in it is lost, and no `if (!Found)` below is reached.
@@ -177,10 +176,16 @@ UClass* ResolveUClass(const FString& Input)
     if (Found)
         return Found;
 
-    // 2. Try loading it directly
-    Found = LoadObject<UClass>(nullptr, *Input);
-    if (Found)
-        return Found;
+    // 2. Try loading it directly - only for a path-shaped input. A bare name ("Object", "Actor")
+    //    has no package to load, so StaticLoadObject can only fail and log
+    //    "Failed to find object 'Class Object'" before a later tier finds it anyway.
+    //    A dotted name without '/' ("Engine.Actor") still loads via the short script-package map.
+    if (Input.Contains(TEXT("/")) || Input.Contains(TEXT(".")))
+    {
+        Found = LoadObject<UClass>(nullptr, *Input);
+        if (Found)
+            return Found;
+    }
 
     // 3. Handle Blueprint Generated Classes explicitly for any content-mount path.
     //    Any path that starts with "/" but is NOT a "/Script/" native class is
@@ -215,7 +220,10 @@ UClass* ResolveUClass(const FString& Input)
         return nullptr;
     }
 
-    // 4. Short name resolution
+    // 4. Short name resolution. FindObject only in the /Script/ tiers: script packages are
+    //    PKG_CompiledIn, so LoadObject never loads anything there that FindObject missed - it only
+    //    logs "Failed to find object", creates a stray package for an unloaded module, and marks
+    //    the package known-missing (silencing later genuine load warnings for it).
     const TArray<FString> ScriptPackages = {TEXT("/Script/Engine"),
                                             TEXT("/Script/CoreUObject"),
                                             TEXT("/Script/UMG"),
@@ -227,9 +235,6 @@ UClass* ResolveUClass(const FString& Input)
     {
         FString TryPath = FString::Printf(TEXT("%s.%s"), *Pkg, *Input);
         Found = FindObject<UClass>(nullptr, *TryPath);
-        if (Found)
-            return Found;
-        Found = LoadObject<UClass>(nullptr, *TryPath);
         if (Found)
             return Found;
     }
@@ -261,9 +266,6 @@ UClass* ResolveUClass(const FString& Input)
                 Found = FindObject<UClass>(nullptr, *TryPath);
                 if (Found)
                     return Found;
-                Found = LoadObject<UClass>(nullptr, *TryPath);
-                if (Found)
-                    return Found;
             }
 
             for (TObjectIterator<UClass> It; It; ++It)
@@ -284,9 +286,6 @@ UClass* ResolveUClass(const FString& Input)
         {
             FString TryPath = FString::Printf(TEXT("%s.%s"), *Pkg, *Stripped);
             Found = FindObject<UClass>(nullptr, *TryPath);
-            if (Found)
-                return Found;
-            Found = LoadObject<UClass>(nullptr, *TryPath);
             if (Found)
                 return Found;
         }
