@@ -6,6 +6,7 @@
 #include "GameplayTagContainer.h"
 
 class UObject;
+class UWorld;
 class UCommonActivatableWidgetContainerBase;
 
 // Resolves a CommonUI activatable-widget container from a CommonGame/Lyra UI layer
@@ -33,9 +34,13 @@ namespace PinWrightUi
     // reflection (LAYER_HOST_UNAVAILABLE if CommonGame is not present), finds the live
     // instance for PlayerIndex, converts LayerTagStr to a registered FGameplayTag
     // (LAYER_TAG_INVALID if unregistered), then delegates to ResolveStackFromLayersMap.
+    // World (the `world`-selected PIE world) restricts the layout search to that world: every
+    // PIE game instance has its own local player 0, so PlayerIndex alone cannot tell them
+    // apart. Null searches every live world (no PIE world was selected).
     UCommonActivatableWidgetContainerBase* ResolveStackByLayerTagInPie(
         const FString& LayerTagStr,
         int32 PlayerIndex,
+        UWorld* World,
         FString& OutErrorCode,
         FString& OutErrorMsg);
 }

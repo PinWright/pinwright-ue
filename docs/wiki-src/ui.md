@@ -6,6 +6,17 @@ Runtime UMG operations on live widget instances — instantiate a widget bluepri
 
 Only three method families here are plugin-gated: `ui.activatable_*` (push/pop), `ui.list_stack_widgets`, and `ui.get_active_widget` require the **CommonUI** engine plugin. That integration auto-loads when CommonUI is enabled in the host project; when it is disabled, those methods are unregistered and calling one returns `PLUGIN_DISABLED` (enable CommonUI and restart the editor). The rest of `ui.*` is always available.
 
+## Multi-client PIE: the `world` selector
+
+`ui.create_hud`, `ui.set_widget_text` / `_image` / `_visibility`, `ui.remove_widget_from_viewport` and every `ui.activatable_*` / `ui.list_stack_widgets` / `ui.get_active_widget` method take an optional `world` with the grammar of `editor.console_command`: `server`, `client`, `client:N` (1-based), `pie:N` (raw PIEInstance). The verb then acts only in that PIE instance: `ui.create_hud` creates the widget in that world, owned by its first local player; `host` / `layerTag` (+`playerIndex`) resolve only there, which matters because every PIE instance has its own local player 0. Successful responses echo `pieInstance` and `kind` (`server` / `client` / `standalone`).
+
+Omitted: the only PIE world when one runs, the old no-PIE default when none runs, and `TARGET_AMBIGUOUS` (listing the contexts) when several run, never a silent pick. A selector that matches no PIE world returns `WORLD_NOT_FOUND`; `editor` or a malformed selector returns `INVALID_ARGUMENT`. `ui.create_hud` on a dedicated-server instance returns `NO_VIEWPORT` (it renders no UI). Example for a listen server plus one client:
+
+```
+ui.create_hud {widgetPath:"/Game/UI/WBP_Results.WBP_Results", world:"server"}   → {widgetName:"WBP_Results_C_<n>", pieInstance:0, kind:"server"}
+ui.create_hud {widgetPath:"/Game/UI/WBP_Results.WBP_Results", world:"client:1"} → {widgetName:"WBP_Results_C_<n>", pieInstance:1, kind:"client"}
+```
+
 ## Cross-cluster overlap
 
 `ui.screenshot` is a near-duplicate of `editor.screenshot`, kept for symmetry within this namespace. Prefer the canonical `editor.*` form unless you need this method's `ui.*`-runtime behavior (see its method page).

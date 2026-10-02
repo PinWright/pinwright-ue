@@ -24,6 +24,11 @@
   `button`, `hold_ms` and pressed `waypoints`, and runs its steps across engine frames, so per-frame
   mouse polling (gizmo drags, box select) sees the button held. The `os_input` gates apply.
   `drive.drag` now accepts `os_input`.
+- Added: `ui.create_hud`, `ui.set_widget_*`, `ui.remove_widget_from_viewport`, `ui.activatable_*`,
+  `ui.list_stack_widgets` and `ui.get_active_widget` take `world` (`server` / `client:N` / `pie:N`,
+  as `editor.console_command`) to act in one instance of a multi-client PIE, and echo `pieInstance`.
+  An omitted `world` with several PIE worlds running returns `TARGET_AMBIGUOUS` instead of acting in
+  whichever instance came first.
 - Added (untested): `drive.click` / `drive.hover` `os_input` on Windows through `SendInput`
   (`input_path: "os_win32"`): virtual-desktop absolute moves with the X11 path's pacing, a
   session-wide named-mutex lock, `WindowFromPoint` ownership gate, a foreground step before the

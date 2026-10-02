@@ -16,6 +16,7 @@
 #include "Engine/EngineBaseTypes.h"
 #include "Engine/EngineTypes.h"
 #include "Engine/World.h"
+#include "Handlers/ErrorCodes.h"
 
 namespace PieWorldSelector
 {
@@ -309,6 +310,60 @@ inline FString DescribeContexts(const TArray<FPieContextInfo>& Contexts)
         Parts.Add(Part);
     }
     return FString::Join(Parts, TEXT(", "));
+}
+
+// The `world` contract for runtime verbs that only act on a running game (the ui.* runtime
+// verbs): an explicit PIE selector picks that PIE world; an omitted one follows ResolveOmitted
+// (no PIE -> true with OutIndex INDEX_NONE, so the caller keeps its no-PIE default; one PIE world
+// -> it; several -> TARGET_AMBIGUOUS, never a silent pick). "editor" is refused: the editor world
+// has no game viewport or local player. On failure returns false with OutErrorCode
+// (INVALID_ARGUMENT / TARGET_AMBIGUOUS / WORLD_NOT_FOUND) and OutErrorMessage filled.
+inline bool ResolveGameWorld(const FString& WorldSelector, const TArray<FPieContextInfo>& Contexts,
+    int32& OutIndex, FString& OutErrorCode, FString& OutErrorMessage)
+{
+    OutIndex = INDEX_NONE;
+    const FString Trimmed = WorldSelector.TrimStartAndEnd();
+    const FParsedSelector Parsed = Parse(Trimmed);
+    if (Parsed.Kind == ESelectorKind::Invalid)
+    {
+        OutErrorCode = ErrorCodes::ERR_INVALID_ARGUMENT;
+        OutErrorMessage = Parsed.Error;
+        return false;
+    }
+    if (Trimmed.IsEmpty())
+    {
+        switch (ResolveOmitted(Contexts))
+        {
+        case EOmittedWorld::Ambiguous:
+            OutErrorCode = ErrorCodes::ERR_TARGET_AMBIGUOUS;
+            OutErrorMessage = FString::Printf(
+                TEXT("'world' was omitted and %d PIE worlds are running, so the target game instance is ambiguous. ")
+                TEXT("Pass world: 'server', 'client', 'client:N' or 'pie:N'. Available PIE contexts: %s"),
+                Contexts.Num(), *DescribeContexts(Contexts));
+            return false;
+        case EOmittedWorld::SolePie:
+            OutIndex = 0;
+            return true;
+        default:
+            return true;
+        }
+    }
+    if (Parsed.Kind == ESelectorKind::Editor)
+    {
+        OutErrorCode = ErrorCodes::ERR_INVALID_ARGUMENT;
+        OutErrorMessage = TEXT("world 'editor' has no game viewport or player; pass a PIE selector ")
+            TEXT("('server', 'client', 'client:N', 'pie:N') or omit 'world'.");
+        return false;
+    }
+    OutIndex = ResolveSelector(Parsed, Contexts);
+    if (OutIndex == INDEX_NONE)
+    {
+        OutErrorCode = ErrorCodes::ERR_WORLD_NOT_FOUND;
+        OutErrorMessage = FString::Printf(TEXT("No PIE world matches world selector '%s'. Available PIE contexts: %s"),
+            *WorldSelector, *DescribeContexts(Contexts));
+        return false;
+    }
+    return true;
 }
 
 } // namespace PieWorldSelector

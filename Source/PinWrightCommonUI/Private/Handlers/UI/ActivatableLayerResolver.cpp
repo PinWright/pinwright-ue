@@ -83,6 +83,7 @@ namespace PinWrightUi
     UCommonActivatableWidgetContainerBase* ResolveStackByLayerTagInPie(
         const FString& LayerTagStr,
         int32 PlayerIndex,
+        UWorld* World,
         FString& OutErrorCode,
         FString& OutErrorMsg)
     {
@@ -104,7 +105,8 @@ namespace PinWrightUi
         for (TObjectIterator<UUserWidget> It; It; ++It)
         {
             UUserWidget* Widget = *It;
-            if (!Widget || Widget->GetWorld() == nullptr || !Widget->IsA(LayoutClass))
+            if (!Widget || Widget->GetWorld() == nullptr || (World && Widget->GetWorld() != World)
+                || !Widget->IsA(LayoutClass))
             {
                 continue;
             }

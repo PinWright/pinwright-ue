@@ -3,6 +3,7 @@
 #include "Handlers/HandlerRegistration.h"
 #include "Handlers/HandlerContext.h"
 #include "Handlers/ErrorCodes.h"
+#include "Handlers/Editor/PieWorldSelector.h"
 #include "PinWrightSubsystem.h"
 #include "PinWrightHelpers.h"
 
@@ -55,12 +56,44 @@ namespace
         return McpActorUtils::ResolveQueryWorld(TEXT("auto"), ResolvedMode);
     }
 
-    // Enumerate the live UserWidgets of the PIE-first resolved world. Restricting
-    // the candidate set to the rendered world is what makes the write land on the
-    // painted instance instead of an editor-world decoy.
-    void CollectRuntimeUserWidgets(TArray<UUserWidget*>& OutWidgets)
+    // Resolves the optional `world` selector of the ui.* runtime verbs through the shared
+    // PieWorldSelector::ResolveGameWorld (same grammar as editor.console_command). Sends the
+    // error and returns false on failure. OutPie.World stays null when `world` is omitted and
+    // PIE is not running, so each verb keeps its no-PIE default.
+    bool ResolveUiPieContext(FHandlerContext& Ctx, PieWorldSelector::FPieContextInfo& OutPie)
     {
-        if (UWorld* World = ResolveRuntimeWidgetWorld())
+        const TArray<PieWorldSelector::FPieContextInfo> Contexts = PieWorldSelector::GatherPieContexts();
+        int32 Index = INDEX_NONE;
+        FString ErrorCode;
+        FString ErrorMessage;
+        if (!PieWorldSelector::ResolveGameWorld(Ctx.GetString(TEXT("world")), Contexts, Index, ErrorCode, ErrorMessage))
+        {
+            Ctx.SendError(ErrorCode, ErrorMessage);
+            return false;
+        }
+        if (Index != INDEX_NONE)
+        {
+            OutPie = Contexts[Index];
+        }
+        return true;
+    }
+
+    // Echoes which PIE instance a ui.* runtime verb acted on (nothing when no PIE world was chosen).
+    void EchoPieInstance(const TSharedPtr<FJsonObject>& Result, const PieWorldSelector::FPieContextInfo& Pie)
+    {
+        if (Pie.World)
+        {
+            Result->SetNumberField(TEXT("pieInstance"), Pie.PieInstance);
+            Result->SetStringField(TEXT("kind"), PieWorldSelector::ClassifyNetMode(Pie.NetMode));
+        }
+    }
+
+    // Enumerate the live UserWidgets of World (the `world`-selected PIE world, else the
+    // PIE-first resolved world). Restricting the candidate set to the rendered world is what
+    // makes the write land on the painted instance instead of an editor-world decoy.
+    void CollectRuntimeUserWidgets(UWorld* World, TArray<UUserWidget*>& OutWidgets)
+    {
+        if (World)
         {
             UWidgetBlueprintLibrary::GetAllWidgetsOfClass(World, OutWidgets, UUserWidget::StaticClass(), false);
         }
@@ -120,11 +153,11 @@ namespace
     // match. Shared by ui.set_widget_text / ui.set_widget_image so the candidate
     // iteration and first-match-wins policy live in one place.
     template <class TChild>
-    TChild* FindRuntimeChildByKey(const FString& Key, UUserWidget*& OutOwner)
+    TChild* FindRuntimeChildByKey(UWorld* World, const FString& Key, UUserWidget*& OutOwner)
     {
         OutOwner = nullptr;
         TArray<UUserWidget*> Widgets;
-        CollectRuntimeUserWidgets(Widgets);
+        CollectRuntimeUserWidgets(World, Widgets);
         for (UUserWidget* Widget : Widgets)
         {
             if (TChild* Child = Cast<TChild>(Widget->GetWidgetFromName(FName(*Key))))
@@ -138,11 +171,11 @@ namespace
 
     // Visibility's variant: the key may name the top-level UserWidget itself OR a
     // named child of any type, so it returns the base UWidget*.
-    UWidget* FindRuntimeWidgetByKey(const FString& Key, UUserWidget*& OutOwner)
+    UWidget* FindRuntimeWidgetByKey(UWorld* World, const FString& Key, UUserWidget*& OutOwner)
     {
         OutOwner = nullptr;
         TArray<UUserWidget*> Widgets;
-        CollectRuntimeUserWidgets(Widgets);
+        CollectRuntimeUserWidgets(World, Widgets);
         for (UUserWidget* Widget : Widgets)
         {
             if (Widget->GetName() == Key)
@@ -257,10 +290,16 @@ REGISTER_RPC_HANDLER("ui.screenshot", "ui", "Capture a screenshot of the active 
     return true;
 }
 
+// The `world` selector shared by the ui.* runtime verbs (single-sourced, same idiom as
+// ACTIVATABLE_TARGET_PARAMS); resolved by ResolveUiPieContext.
+#define UI_PIE_WORLD_PARAM \
+    RPC_PARAM_OPT("world", "string", "PIE instance to act in, same grammar as editor.console_command: 'server', 'client', 'client:N' (1-based), 'pie:N' (raw PIEInstance). Omitted: the only PIE world; TARGET_AMBIGUOUS when several run (listen server + clients). The response echoes pieInstance and kind.")
+
 // ---- ui.create_hud ----
 REGISTER_RPC_HANDLER("ui.create_hud", "ui", "Construct a UMG widget instance from a UWidgetBlueprint and add it to the player viewport at runtime. Distinct from widget.create_widget_blueprint which authors the asset; this one instantiates an existing one.",
     RPC_PARAMS(
-        RPC_PARAM_REQ("widgetPath", "classref", "Class path for the widget to create")
+        RPC_PARAM_REQ("widgetPath", "classref", "Class path for the widget to create"),
+        UI_PIE_WORLD_PARAM
     ))
 {
     FString WidgetPath = Ctx.GetString(TEXT("widgetPath"));
@@ -289,21 +328,41 @@ REGISTER_RPC_HANDLER("ui.create_hud", "ui", "Construct a UMG widget instance fro
         return true;
     }
 
-    if (!GEngine || !GEngine->GameViewport)
+    PieWorldSelector::FPieContextInfo Pie;
+    if (!ResolveUiPieContext(Ctx, Pie))
     {
-        Ctx.SendError(ErrorCodes::ERR_NO_VIEWPORT, TEXT("No game viewport available (is PIE running?)"));
         return true;
     }
 
-    UWorld* World = GEngine->GameViewport->GetWorld();
+    // The selected PIE world, never GEngine->GameViewport: that follows whichever PIE instance
+    // ticked or was clicked last, so in multi-client PIE it is not a choice.
+    UWorld* World = Pie.World;
+    if (World && !World->GetGameViewport())
+    {
+        Ctx.SendError(ErrorCodes::ERR_NO_VIEWPORT, FString::Printf(
+            TEXT("PIE world pie:%d (%s) has no game viewport (a dedicated server renders no UI)"),
+            Pie.PieInstance, PieWorldSelector::ClassifyNetMode(Pie.NetMode)));
+        return true;
+    }
+    if (!World)
+    {
+        if (!GEngine || !GEngine->GameViewport)
+        {
+            Ctx.SendError(ErrorCodes::ERR_NO_VIEWPORT, TEXT("No game viewport available (is PIE running?)"));
+            return true;
+        }
+        World = GEngine->GameViewport->GetWorld();
+    }
     if (World)
     {
+        // CreateWidget(World) owns the widget by that world's first local player.
         UUserWidget* Widget = CreateWidget<UUserWidget>(World, WidgetClass);
         if (Widget)
         {
             Widget->AddToViewport();
             TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
             Result->SetStringField(TEXT("widgetName"), Widget->GetName());
+            EchoPieInstance(Result, Pie);
             Ctx.SendSuccess(Result);
         }
         else
@@ -322,22 +381,31 @@ REGISTER_RPC_HANDLER("ui.create_hud", "ui", "Construct a UMG widget instance fro
 REGISTER_RPC_HANDLER("ui.set_widget_text", "ui", "Set the Text property on a runtime UTextBlock widget by name (live in the viewport). For asset-side text changes use property.set on the widget blueprint's CDO.",
     RPC_PARAMS(
         RPC_PARAM_REQ("key", "string", "Name of the TextBlock widget"),
-        RPC_PARAM_REQ("value", "string", "Text value to set")
+        RPC_PARAM_REQ("value", "string", "Text value to set"),
+        UI_PIE_WORLD_PARAM
     ))
 {
     FString Key = Ctx.GetString(TEXT("key"));
     FString Value = Ctx.GetString(TEXT("value"));
 
+    PieWorldSelector::FPieContextInfo Pie;
+    if (!ResolveUiPieContext(Ctx, Pie))
+    {
+        return true;
+    }
+
     // Resolve PIE-first so the write lands on the painted/rendered instance, not
     // an editor-world decoy that would silently absorb the SetText.
     UUserWidget* OwningWidget = nullptr;
-    if (UTextBlock* MatchedTextBlock = FindRuntimeChildByKey<UTextBlock>(Key, OwningWidget))
+    if (UTextBlock* MatchedTextBlock = FindRuntimeChildByKey<UTextBlock>(
+            Pie.World ? Pie.World : ResolveRuntimeWidgetWorld(), Key, OwningWidget))
     {
         MatchedTextBlock->SetText(FText::FromString(Value));
         TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
         Result->SetStringField(TEXT("key"), Key);
         Result->SetStringField(TEXT("value"), Value);
         EchoOwningUserWidget(Result, OwningWidget);
+        EchoPieInstance(Result, Pie);
         Ctx.SendSuccess(Result);
     }
     else
@@ -354,7 +422,8 @@ REGISTER_RPC_HANDLER("ui.set_widget_text", "ui", "Set the Text property on a run
 REGISTER_RPC_HANDLER("ui.set_widget_image", "ui", "Set the Brush texture on a runtime UImage widget by name. Affects only the live viewport instance; not persisted to the asset.",
     RPC_PARAMS(
         RPC_PARAM_REQ("key", "string", "Name of the Image widget"),
-        RPC_PARAM_REQ("texturePath", "path", "Path to the texture asset")
+        RPC_PARAM_REQ("texturePath", "path", "Path to the texture asset"),
+        UI_PIE_WORLD_PARAM
     ))
 {
     FString Key = Ctx.GetString(TEXT("key"));
@@ -367,15 +436,23 @@ REGISTER_RPC_HANDLER("ui.set_widget_image", "ui", "Set the Brush texture on a ru
         return true;
     }
 
+    PieWorldSelector::FPieContextInfo Pie;
+    if (!ResolveUiPieContext(Ctx, Pie))
+    {
+        return true;
+    }
+
     // Resolve PIE-first so the brush lands on the painted instance, mirroring
     // ui.set_widget_text rather than TObjectIterator's non-deterministic order.
     UUserWidget* OwningWidget = nullptr;
-    if (UImage* MatchedImage = FindRuntimeChildByKey<UImage>(Key, OwningWidget))
+    if (UImage* MatchedImage = FindRuntimeChildByKey<UImage>(
+            Pie.World ? Pie.World : ResolveRuntimeWidgetWorld(), Key, OwningWidget))
     {
         MatchedImage->SetBrushFromTexture(Texture);
         TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
         Result->SetStringField(TEXT("key"), Key);
         EchoOwningUserWidget(Result, OwningWidget);
+        EchoPieInstance(Result, Pie);
         Ctx.SendSuccess(Result);
     }
     else
@@ -391,7 +468,8 @@ REGISTER_RPC_HANDLER("ui.set_widget_visibility", "ui", "Set the ESlateVisibility
     RPC_PARAMS(
         RPC_PARAM_REQ("key", "string", "Name of the widget"),
         RPC_PARAM_OPT("visibility", "string", "ESlateVisibility state: Visible / Collapsed / Hidden / HitTestInvisible / SelfHitTestInvisible. Takes precedence over `visible`."),
-        RPC_PARAM_OPT("visible", "boolean", "Back-compat shorthand: true->Visible, false->Collapsed (default true). Ignored when `visibility` is supplied.")
+        RPC_PARAM_OPT("visible", "boolean", "Back-compat shorthand: true->Visible, false->Collapsed (default true). Ignored when `visibility` is supplied."),
+        UI_PIE_WORLD_PARAM
     ))
 {
     FString Key = Ctx.GetString(TEXT("key"));
@@ -417,10 +495,17 @@ REGISTER_RPC_HANDLER("ui.set_widget_visibility", "ui", "Set the ESlateVisibility
         TargetVisibility = bVisible ? ESlateVisibility::Visible : ESlateVisibility::Collapsed;
     }
 
+    PieWorldSelector::FPieContextInfo Pie;
+    if (!ResolveUiPieContext(Ctx, Pie))
+    {
+        return true;
+    }
+
     // Resolve PIE-first so visibility flips the painted instance, not an
     // editor-world / non-rendered widget that TObjectIterator might reach first.
     UUserWidget* OwningWidget = nullptr;
-    if (UWidget* MatchedWidget = FindRuntimeWidgetByKey(Key, OwningWidget))
+    if (UWidget* MatchedWidget = FindRuntimeWidgetByKey(
+            Pie.World ? Pie.World : ResolveRuntimeWidgetWorld(), Key, OwningWidget))
     {
         MatchedWidget->SetVisibility(TargetVisibility);
         TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
@@ -430,6 +515,7 @@ REGISTER_RPC_HANDLER("ui.set_widget_visibility", "ui", "Set the ESlateVisibility
         Result->SetStringField(TEXT("visibility"), WidgetAuthoringHelpers::VisibilityToString(TargetVisibility));
         Result->SetBoolField(TEXT("visible"), TargetVisibility == ESlateVisibility::Visible);
         EchoOwningUserWidget(Result, OwningWidget);
+        EchoPieInstance(Result, Pie);
         Ctx.SendSuccess(Result);
     }
     else
@@ -443,42 +529,44 @@ REGISTER_RPC_HANDLER("ui.set_widget_visibility", "ui", "Set the ESlateVisibility
 // ---- ui.remove_widget_from_viewport ----
 REGISTER_RPC_HANDLER("ui.remove_widget_from_viewport", "ui", "Remove a UMG widget instance from the player viewport, undoing a prior ui.create_hud. Does not destroy the widget blueprint asset.",
     RPC_PARAMS(
-        RPC_PARAM_OPT("key", "string", "Name of the widget (empty = remove all)")
+        RPC_PARAM_OPT("key", "string", "Name of the widget (empty = remove all)"),
+        UI_PIE_WORLD_PARAM
     ))
 {
     FString Key = Ctx.GetString(TEXT("key"));
 
+    PieWorldSelector::FPieContextInfo Pie;
+    if (!ResolveUiPieContext(Ctx, Pie))
+    {
+        return true;
+    }
+    UWorld* ViewportWorld = Pie.World
+        ? Pie.World
+        : (GEngine && GEngine->GameViewport ? GEngine->GameViewport->GetWorld() : nullptr);
+    if (!ViewportWorld || !ViewportWorld->GetGameViewport())
+    {
+        Ctx.SendError(ErrorCodes::ERR_NO_VIEWPORT, TEXT("No game viewport available"));
+        return true;
+    }
+
     if (Key.IsEmpty())
     {
         // Remove all user widgets
-        if (GEngine && GEngine->GameViewport && GEngine->GameViewport->GetWorld())
+        TArray<UUserWidget*> Widgets;
+        UWidgetBlueprintLibrary::GetAllWidgetsOfClass(
+            ViewportWorld, Widgets, UUserWidget::StaticClass(), true);
+        for (UUserWidget* W : Widgets)
         {
-            TArray<UUserWidget*> Widgets;
-            UWidgetBlueprintLibrary::GetAllWidgetsOfClass(
-                GEngine->GameViewport->GetWorld(), Widgets, UUserWidget::StaticClass(), true);
-            for (UUserWidget* W : Widgets)
-            {
-                W->RemoveFromParent();
-            }
-            TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
-            Result->SetNumberField(TEXT("removedCount"), Widgets.Num());
-            Ctx.SendSuccess(Result);
+            W->RemoveFromParent();
         }
-        else
-        {
-            Ctx.SendError(ErrorCodes::ERR_NO_VIEWPORT, TEXT("No game viewport available"));
-        }
+        TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+        Result->SetNumberField(TEXT("removedCount"), Widgets.Num());
+        EchoPieInstance(Result, Pie);
+        Ctx.SendSuccess(Result);
     }
     else
     {
-        if (!GEngine || !GEngine->GameViewport || !GEngine->GameViewport->GetWorld())
-        {
-            Ctx.SendError(ErrorCodes::ERR_NO_VIEWPORT, TEXT("No game viewport available"));
-            return true;
-        }
-
-        UWorld* ViewportWorld = GEngine->GameViewport->GetWorld();
-        UWorld* RuntimeWorld = ResolveRuntimeWidgetWorld();
+        UWorld* RuntimeWorld = Pie.World ? Pie.World : ResolveRuntimeWidgetWorld();
         if (!RuntimeWorld || RuntimeWorld != ViewportWorld)
         {
             Ctx.SendError(ErrorCodes::ERR_NO_VIEWPORT, TEXT("The runtime widget world does not match the active game viewport"));
@@ -552,6 +640,7 @@ REGISTER_RPC_HANDLER("ui.remove_widget_from_viewport", "ui", "Remove a UMG widge
             TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
             Result->SetStringField(TEXT("key"), Key);
             SetRuntimeWidgetIdentity(Result, Widget);
+            EchoPieInstance(Result, Pie);
             Ctx.SendSuccess(Result);
         }
         else
@@ -561,3 +650,5 @@ REGISTER_RPC_HANDLER("ui.remove_widget_from_viewport", "ui", "Remove a UMG widge
     }
     return true;
 }
+
+#undef UI_PIE_WORLD_PARAM
