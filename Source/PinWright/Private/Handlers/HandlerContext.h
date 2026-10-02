@@ -18,6 +18,13 @@ struct FJobBindArgs
     FString Method;
     TSharedPtr<FJsonObject> StartedPayload;
     TFunction<void(FJobOnComplete)> BindNativeDelegate;
+    // The bind delegate does all of its work inline and calls OnComplete before it returns.
+    // StartJob then answers a non-streaming caller AFTER the delegate, with the terminal outcome
+    // (the job's result plus ticket_id on success, its error code on failure), instead of the
+    // "running" envelope it otherwise sends BEFORE the delegate runs. That early envelope leaves
+    // the transport while the work is still on the game thread, so a fast client reads it before
+    // the work's output exists (B-editor-screenshot-returns-before-png-exists).
+    bool bCompletesInBind = false;
 };
 
 // Captures the response sent by a handler instead of forwarding to the

@@ -174,7 +174,7 @@ Older clients read the text block; newer clients consume `structuredContent` dir
 
 ## Long-running operations
 
-For non-streaming requests (plain-JSON clients, or an explicit `wait: false` opt-out), long-running RPCs (`system.run_tests`, `level.build_lighting`, `asset.dump_folder`, `editor.screenshot`, save operations, …) return a job ticket synchronously as a normal successful `tools/call` result:
+For non-streaming requests (plain-JSON clients, or an explicit `wait: false` opt-out), long-running RPCs (`system.run_tests`, `level.build_lighting`, `asset.dump_folder`, save operations, …) return a job ticket synchronously as a normal successful `tools/call` result (a ticketed verb that finishes inline, such as `editor.screenshot`, instead replies after the work with its terminal result plus `ticket_id`):
 
 ```json
 {

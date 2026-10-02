@@ -712,7 +712,7 @@ REGISTER_RPC_HANDLER("editor.set_game_view", "editor", "Toggle 'Game View' in th
 }
 
 // ---- editor.screenshot ----
-REGISTER_RPC_HANDLER("editor.screenshot", "editor", "Capture a PNG screenshot into Saved/Screenshots/. Uses the game/PIE viewport when one exists; otherwise falls back to the active level-editor viewport. Optional paired width/height render an exact-size frame; on the game viewport this includes Slate/UMG at the requested UIScaleCurve value. Runs as a synchronously-completed tracked job. Filename is sanitised against path traversal.",
+REGISTER_RPC_HANDLER("editor.screenshot", "editor", "Capture a PNG screenshot into Saved/Screenshots/. Uses the game/PIE viewport when one exists; otherwise falls back to the active level-editor viewport. Optional paired width/height render an exact-size frame; on the game viewport this includes Slate/UMG at the requested UIScaleCurve value. Runs as a synchronously-completed tracked job: the response is sent after the PNG is written and carries the result plus ticket_id. Filename is sanitised against path traversal.",
     RPC_PARAMS(
         RPC_PARAM_OPT("filename", "filepath", "Output filename inside Saved/Screenshots/. Auto-generated as 'Screenshot_<timestamp>.png' when empty. The .png extension is appended if missing."),
         RPC_PARAM_OPT("width", "number", "Exact output width in pixels. Must be supplied together with height; omit both for the live viewport size."),
@@ -774,6 +774,9 @@ REGISTER_RPC_HANDLER("editor.screenshot", "editor", "Capture a PNG screenshot in
   Args.Method = TEXT("editor.screenshot");
   Args.StartedPayload = MakeShared<FJsonObject>();
   Args.StartedPayload->SetStringField(TEXT("requested_path"), OutPath);
+  // The capture below runs inline and writes the PNG before OnComplete. Reply after it, so a
+  // success response means the file is already on disk (B-editor-screenshot-returns-before-png-exists).
+  Args.bCompletesInBind = true;
 
   Args.BindNativeDelegate =
       [OutPath, RequestedFilename, RequestedSize, Exposure](FJobOnComplete OnComplete)
@@ -888,6 +891,24 @@ REGISTER_RPC_HANDLER("editor.screenshot", "editor", "Capture a PNG screenshot in
                   ? TEXT("nativeBackBuffer")
                   : TEXT("sceneOnlyFallback")));
           R->SetNumberField(TEXT("dpiScale"), Metadata.DpiScale);
+          if (Metadata.bUsedOffscreenComposite)
+          {
+              // Measured per browser in the off-screen pass, so an image missing the web UI says so.
+              TArray<TSharedPtr<FJsonValue>> Omitted;
+              for (const FString& Type : Metadata.OmittedWidgets)
+              {
+                  Omitted.Add(MakeShared<FJsonValueString>(Type));
+              }
+              R->SetArrayField(TEXT("omittedWidgets"), Omitted);
+              if (Omitted.Num() > 0)
+              {
+                  R->SetStringField(TEXT("warning"), FString::Printf(
+                      TEXT("%d visible web browser view(s) (CEF) contributed no pixels to this "
+                           "fixed-size composite, so web UI on screen is missing from the image. "
+                           "Capture without width/height (captureMode nativeBackBuffer) to include it."),
+                      Omitted.Num()));
+              }
+          }
           R->SetBoolField(TEXT("viewportRestored"), Metadata.bViewportRestored);
 
           TSharedPtr<FJsonObject> ExposureInfo = MakeShared<FJsonObject>();

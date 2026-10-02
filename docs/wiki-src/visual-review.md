@@ -16,7 +16,7 @@ review; do not spawn temporary actors or write runtime visibility when a dedicat
 | One asset under a **different** material | Spawn one actor, set `materialPaths` / `OverrideMaterials` | Asset preview uses committed bindings and no override; a level actor swaps material without changing the asset. |
 | One placed actor, one angle | `camera.frame_actor` | Fits bounds from chosen `azimuth`/`elevation`; one PNG. |
 | One placed actor, several angles | `camera.orbit_shots` | N evenly spaced shots or explicit poses in one call. See [Multi-Angle Actor Review](#multi-angle-actor-review). |
-| PIE/game viewport | `editor.screenshot` | Async screenshot under `Saved/Screenshots/`; poll `system.job_status`. Omit `width`/`height` for the live size, or provide both for an exact-size scene + UMG frame; read `captureMode` and `viewportRestored` on the game/PIE path. |
+| PIE/game viewport | `editor.screenshot` | Screenshot under `Saved/Screenshots/`; the reply comes after the PNG is written and carries `path`. Omit `width`/`height` for the live size, or provide both for an exact-size scene + UMG frame; read `captureMode` and `viewportRestored` on the game/PIE path, and `omittedWidgets` on a fixed-size one (web UI it could not composite). |
 | Widget Blueprint audit previews | `asset.dump` or `asset.dump_folder` with `includeWidgetScreenshot: true` | Writes `preview.png` beside supported dumps; leave off for text-only sweeps. |
 | Runtime UI structure, not PNG | `widget.describe` or `widget.export_xml` with `capture_source: "live"` | Structured JSON/XML of the live PIE UMG tree, optionally with geometry. |
 

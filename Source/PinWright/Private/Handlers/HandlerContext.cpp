@@ -711,7 +711,7 @@ FString FHandlerContext::StartJob(const FJobBindArgs& Args) const
     {
         Sub->RegisterStreamingJob(TicketId, RequestId);
     }
-    else
+    else if (!Args.bCompletesInBind)
     {
         auto Resp = MakeShared<FJsonObject>();
         Resp->SetStringField(TEXT("status"), TEXT("running"));
@@ -737,6 +737,43 @@ FString FHandlerContext::StartJob(const FJobBindArgs& Args) const
                 .Complete(TicketId, bSuccess, Result, Error);
         };
         Args.BindNativeDelegate(MoveTemp(OnComplete));
+    }
+
+    // bCompletesInBind: reply now, after the work, with what actually happened (see FJobBindArgs).
+    if (!bStreamJob && Args.bCompletesInBind)
+    {
+        FJobTicket Ticket;
+        const bool bFound = Reg.Get(TicketId, Ticket);
+        TSharedPtr<FJsonObject> Resp = MakeShared<FJsonObject>();
+        if (Args.StartedPayload.IsValid())
+        {
+            Resp->Values = Args.StartedPayload->Values;
+        }
+        if (bFound && Ticket.Result.IsValid())
+        {
+            Resp->Values.Append(Ticket.Result->Values);
+        }
+        Resp->SetStringField(TEXT("ticket_id"), TicketId);
+        Resp->SetStringField(TEXT("status"), bFound ? Ticket.Status : FString(TEXT("unknown")));
+        if (bFound && Ticket.Status == TEXT("completed"))
+        {
+            SendSuccess(Resp);
+        }
+        else
+        {
+            // A delegate that broke its own contract and left the job running is reported as a
+            // failure rather than as a success the caller would trust.
+            const FString Code = (bFound && !Ticket.Error.IsEmpty())
+                ? Ticket.Error : FString(ErrorCodes::ERR_INTERNAL_ERROR);
+            FString Message;
+            Resp->TryGetStringField(TEXT("message"), Message);
+            if (Message.IsEmpty())
+            {
+                Message = FString::Printf(TEXT("%s finished with status '%s' (%s)"),
+                    *Args.Method, bFound ? *Ticket.Status : TEXT("unknown"), *Code);
+            }
+            SendError(Code, Message, Resp);
+        }
     }
     return TicketId;
 }

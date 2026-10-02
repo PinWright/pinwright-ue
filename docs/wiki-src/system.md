@@ -94,7 +94,7 @@ only, so cross-session lines would reference dangling IDs; every session starts 
 | `lighting.build_lighting` | same lighting delegates |
 | `level.build_navigation`, `navigation.rebuild_navigation` | poll `UNavigationSystemV1::IsNavigationBuildInProgress` |
 | `level.build_all` | lighting + nav fan-in |
-| `editor.screenshot` | Synchronous `CaptureGameViewportToPngFile` or `CaptureActiveLevelViewportToScreenshot` inside the tracked job; completes inline |
+| `editor.screenshot` | Synchronous `CaptureGameViewportToPngFile` or `CaptureActiveLevelViewportToScreenshot` inside the tracked job; completes inline, and the reply is the terminal result (`status:"completed"` + `ticket_id`, or an error reply) sent after the PNG is written, never a `running` envelope |
 | `level.save`, `level.save_as` | wraps engine save in `AsyncTask`, completes on return |
 | `render.nanite_rebuild_mesh` | retains the mesh after `Build`, then polls `IsCompiling` with a bounded 120-second core ticker; final drain/save/probe runs after settle and persistence is on the terminal result |
 | `blueprint.build_api_index` | wraps iterator in `AsyncTask` |

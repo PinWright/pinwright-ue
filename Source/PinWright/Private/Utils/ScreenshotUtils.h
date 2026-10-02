@@ -37,6 +37,9 @@ namespace PinWrightScreenshotUtils
         // FlushBeforeReadback ran on this capture. See its declaration for what that does and
         // does not establish.
         bool bReadbackFlushed = false;
+        // Fixed-size path only: one entry per visible web browser view (CEF) whose pixels did
+        // not reach the off-screen composite. See FindWebBrowsersMissingFromOverlay.
+        TArray<FString> OmittedWidgets;
     };
 
     // The ONE readback preamble. Call it on the game thread immediately before a capture path
@@ -142,6 +145,17 @@ namespace PinWrightScreenshotUtils
     // platform-DPI factor makes the output depend on the requested game resolution, not the host monitor.
     bool RenderSlateWidgetToSrgbColors(const TSharedRef<SWidget>& Widget, FIntPoint DrawSize,
         float DrawScale, TArray<FColor>& OutColorData, FString& OutErrorCode);
+
+    // Measure, for every visible SWebBrowserView under Root, whether it contributed any pixel to
+    // Overlay (Root rendered by RenderSlateWidgetToSrgbColors at the same size and scale): each
+    // one is re-rendered out at render opacity 0 and the two layers are compared. A browser whose
+    // removal changes nothing reached the composite with nothing, so its type is returned, once
+    // per instance, for the caller to report instead of shipping an image silently missing the
+    // web UI (B-screenshot-fixed-size-omits-webbrowser). Costs one extra render per browser and
+    // nothing when there is none. A page that is genuinely blank also counts as omitted - the
+    // live window would show nothing there either.
+    TArray<FString> FindWebBrowsersMissingFromOverlay(const TSharedRef<SWidget>& Root,
+        FIntPoint DrawSize, float DrawScale, const TArray<FColor>& Overlay);
 
     // Slate's ordinary alpha blend writes premultiplied RGB into a transparent target.
     // Composite that layer over an opaque scene in linear space.

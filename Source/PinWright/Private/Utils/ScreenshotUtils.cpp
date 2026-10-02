@@ -26,6 +26,7 @@
 #include "UnrealClient.h"
 #include "UObject/StrongObjectPtr.h"
 #include "Framework/Application/SlateApplication.h"
+#include "Layout/Children.h"
 #include "Widgets/SWidget.h"
 #include "Widgets/SViewport.h"
 
@@ -434,6 +435,49 @@ namespace
         return true;
     }
 
+    TArray<FString> FindWebBrowsersMissingFromOverlay(const TSharedRef<SWidget>& Root,
+        FIntPoint DrawSize, float DrawScale, const TArray<FColor>& Overlay)
+    {
+        // Matched by type name so this util needs nothing from the WebBrowser module.
+        static const FName WebBrowserViewType(TEXT("SWebBrowserView"));
+        TArray<TSharedRef<SWidget>> Browsers;
+        TFunction<void(const TSharedRef<SWidget>&)> Collect = [&](const TSharedRef<SWidget>& Widget)
+        {
+            if (!Widget->GetVisibility().IsVisible())
+            {
+                return;
+            }
+            if (Widget->GetType() == WebBrowserViewType)
+            {
+                Browsers.Add(Widget);
+                return;
+            }
+            FChildren* Children = Widget->GetChildren();
+            for (int32 Index = 0; Children && Index < Children->Num(); ++Index)
+            {
+                Collect(Children->GetChildAt(Index));
+            }
+        };
+        Collect(Root);
+
+        TArray<FString> Omitted;
+        for (const TSharedRef<SWidget>& Browser : Browsers)
+        {
+            const float Opacity = Browser->GetRenderOpacity();
+            Browser->SetRenderOpacity(0.0f);
+            TArray<FColor> Without;
+            FString IgnoredError;
+            const bool bRendered = RenderSlateWidgetToSrgbColors(Root, DrawSize, DrawScale, Without,
+                IgnoredError);
+            Browser->SetRenderOpacity(Opacity);
+            if (bRendered && Without == Overlay)
+            {
+                Omitted.Add(WebBrowserViewType.ToString());
+            }
+        }
+        return Omitted;
+    }
+
     bool CompositePremultipliedSlateLayer(TArray<FColor>& Scene, const TArray<FColor>& Overlay)
     {
         if (Scene.Num() == 0 || Scene.Num() != Overlay.Num())
@@ -529,6 +573,7 @@ namespace
 
         TArray<FColor> Bitmap;
         bool bUsedNativeBackBuffer = false;
+        TArray<FString> OmittedWidgets;
         if (bFixedSizeRequested)
         {
             // SetFixedViewportSize has already drawn once. Draw again after the resize notification
@@ -565,9 +610,14 @@ namespace
             // Overlay and blended over the separate exact-size scene readback a second time.
             const float ViewportOpacity = ViewportWidget->GetRenderOpacity();
             ViewportWidget->SetRenderOpacity(0.0f);
+            const TSharedRef<SWidget> LayerRoot = MCP_GAME_LAYER_MANAGER_WIDGET(GameLayerManager);
             const bool bRenderedOverlay = RenderSlateWidgetToSrgbColors(
-                MCP_GAME_LAYER_MANAGER_WIDGET(GameLayerManager), CaptureOptions.OutputSize,
-                DrawScale, Overlay, SlateError);
+                LayerRoot, CaptureOptions.OutputSize, DrawScale, Overlay, SlateError);
+            if (bRenderedOverlay)
+            {
+                OmittedWidgets = FindWebBrowsersMissingFromOverlay(
+                    LayerRoot, CaptureOptions.OutputSize, DrawScale, Overlay);
+            }
             ViewportWidget->SetRenderOpacity(ViewportOpacity);
             if (!bRenderedOverlay || !CompositePremultipliedSlateLayer(Bitmap, Overlay))
             {
@@ -656,6 +706,7 @@ namespace
         Metadata.bExposureRestored = true;
         Metadata.ExposureViewCount = ExposureViewCount;
         Metadata.bReadbackFlushed = bReadbackFlushed;
+        Metadata.OmittedWidgets = MoveTemp(OmittedWidgets);
 
         // Reject a never-drawn surface BEFORE the alpha stamp below rewrites it into a
         // plausible opaque-black frame. The readback itself is already GPU-coherent

@@ -35,15 +35,15 @@ namespace
         return true;
     }
 
-    // Shared verification for both editor.screenshot regressions: invoke the
-    // handler, confirm the synchronous "running" envelope carries a ticket_id,
-    // then assert the job is terminal (never hung in "running") and — when it
-    // completed — that it wrote a valid PNG under Screenshots/<Filename> with
-    // positive dimensions. bAllowFailedTerminal distinguishes the two cases: the
-    // level-viewport fallback (a live viewport is guaranteed by the caller's skip
-    // guard) must end "completed"; the PIE path accepts "failed" with a real error
-    // code as an alternative terminal status, the only forbidden outcome being the
-    // "running" hang the ticket reports.
+    // Shared verification for both editor.screenshot regressions: invoke the handler and check
+    // the REPLY first - it is sent only after the capture ran, so it is terminal and never a
+    // "running" envelope, and on success the file it names is already on disk
+    // (B-editor-screenshot-returns-before-png-exists: the old reply left the transport before the
+    // PNG was written, so a scripted client copying `path` right away hit FileNotFoundError).
+    // Then assert the registry ticket agrees and the PNG is valid. bAllowFailedTerminal
+    // distinguishes the two cases: the level-viewport fallback (a live viewport is guaranteed by
+    // the caller's skip guard) must complete; the PIE path accepts a failed reply carrying a real
+    // error code, the only forbidden outcome being a reply that is not terminal.
     void RunScreenshotTerminalCheck(FAutomationTestBase& Test, const FString& Filename,
         bool bAllowFailedTerminal)
     {
@@ -53,15 +53,40 @@ namespace
         FTestResponseCapture Capture;
         Test.TestTrue(TEXT("editor.screenshot handler found"),
             InvokeHandlerWithCapture(TEXT("editor.screenshot"), Payload, Capture));
-        Test.TestTrue(TEXT("running envelope returned"), Capture.bSuccess);
-        if (!Capture.bSuccess || !Capture.Result.IsValid())
+        if (!Test.TestTrue(TEXT("reply carries a payload"), Capture.Result.IsValid()))
         {
             return;
         }
 
         FString TicketId;
-        Test.TestTrue(TEXT("running envelope carries ticket_id"),
+        Test.TestTrue(TEXT("reply carries ticket_id"),
             Capture.Result->TryGetStringField(TEXT("ticket_id"), TicketId));
+        FString ReplyStatus;
+        Capture.Result->TryGetStringField(TEXT("status"), ReplyStatus);
+        Test.TestNotEqual(TEXT("reply is sent after the capture, never as a running envelope"),
+            ReplyStatus, FString(TEXT("running")));
+        if (!Capture.bSuccess)
+        {
+            if (!bAllowFailedTerminal)
+            {
+                Test.AddError(FString::Printf(TEXT("level-viewport capture failed: %s"), *Capture.ErrorCode));
+            }
+            Test.TestFalse(TEXT("failed reply names its error code"), Capture.ErrorCode.IsEmpty());
+            return;
+        }
+        Test.TestEqual(TEXT("successful reply reports completed"), ReplyStatus, FString(TEXT("completed")));
+        FString ReplyPath;
+        Test.TestTrue(TEXT("successful reply carries the written path"),
+            Capture.Result->TryGetStringField(TEXT("path"), ReplyPath));
+        ON_SCOPE_EXIT
+        {
+            if (!ReplyPath.IsEmpty())
+            {
+                IFileManager::Get().Delete(*ReplyPath, false, true);
+            }
+        };
+        Test.TestTrue(TEXT("the PNG named by the reply exists when the reply is sent"),
+            !ReplyPath.IsEmpty() && IFileManager::Get().FileSize(*ReplyPath) > 0);
         if (TicketId.IsEmpty())
         {
             return;
@@ -70,29 +95,10 @@ namespace
         FJobTicket Ticket;
         Test.TestTrue(TEXT("job ticket exists in registry"),
             FPluginState::Get().GetJobRegistry().Get(TicketId, Ticket));
-
-        // The capture runs synchronously inside StartJob, so the ticket is already
-        // terminal on return. The reverted async handler leaves it "running" here.
-        if (bAllowFailedTerminal)
+        Test.TestEqual(TEXT("registry ticket agrees with the reply"), Ticket.Status, FString(TEXT("completed")));
+        if (Ticket.Status != TEXT("completed"))
         {
-            Test.TestTrue(TEXT("job is terminal, not hung in running"),
-                Ticket.Status != TEXT("running"));
-            if (Ticket.Status == TEXT("running"))
-            {
-                return;
-            }
-            if (Ticket.Status != TEXT("completed"))
-            {
-                return; // "failed" with a concrete error code is an acceptable terminal status.
-            }
-        }
-        else
-        {
-            Test.TestEqual(TEXT("job is terminal completed"), Ticket.Status, FString(TEXT("completed")));
-            if (Ticket.Status != TEXT("completed"))
-            {
-                return;
-            }
+            return;
         }
 
         // Completed: it wrote a valid PNG under Screenshots/<Filename>.
@@ -112,14 +118,7 @@ namespace
         Test.TestTrue(TEXT("width is positive"), Width > 0);
         Test.TestTrue(TEXT("height is positive"), Height > 0);
 
-        ON_SCOPE_EXIT
-        {
-            if (!Path.IsEmpty())
-            {
-                IFileManager::Get().Delete(*Path, false, true);
-            }
-        };
-
+        Test.TestEqual(TEXT("registry result names the same file as the reply"), Path, ReplyPath);
         Test.TestTrue(TEXT("PNG file exists on disk"), IFileManager::Get().FileExists(*Path));
         TArray<uint8> Bytes;
         Test.TestTrue(TEXT("PNG file loaded"), FFileHelper::LoadFileToArray(Bytes, *Path));
