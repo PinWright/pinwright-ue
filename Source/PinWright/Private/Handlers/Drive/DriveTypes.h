@@ -69,6 +69,9 @@ struct FDriveElement
     bool bGeometryStale = false;
     // Optional widget/slate path string.
     FString Path;
+    // Game surface: the backing-widget name of the live UMG root this element was walked under
+    // (an observe with no root selector spans every root). Empty on other surfaces.
+    FString Root;
     // Surface this element belongs to.
     EDriveSurface Surface = EDriveSurface::Auto;
     // Optional Set-of-Mark index; unset when this element carries no mark.
@@ -146,8 +149,13 @@ struct FDriveObservation
     int64 Frame = 0;
     // Wall-clock capture time (serialized as ISO-8601).
     FDateTime Timestamp;
-    // The resolved root the observation was taken from (live UMG/Slate root name).
+    // The resolved root(s) the observation was taken from (live UMG/Slate root name; several
+    // game roots are comma-separated in z-order).
     FString RootName;
+    // Game surface: the PIE instance the observation was taken from, as a re-passable `world`
+    // selector ("pie:N") and its role (server | client | standalone). Empty on other surfaces.
+    FString World;
+    FString WorldKind;
     // Count of elements dropped by a max_elements cap on an explicit observe (0 when
     // nothing was truncated). Serialized as `omitted_count` only when > 0 so callers
     // always learn that the list was shortened (no silent truncation).

@@ -112,6 +112,10 @@ TSharedPtr<FJsonObject> FDriveJson::WriteElement(const FDriveElement& Element)
     {
         Obj->SetStringField(TEXT("value"), Element.Value);
     }
+    if (!Element.Root.IsEmpty())
+    {
+        Obj->SetStringField(TEXT("root"), Element.Root);
+    }
     Obj->SetBoolField(TEXT("enabled"), Element.bEnabled);
     Obj->SetBoolField(TEXT("visible"), Element.bVisible);
     Obj->SetBoolField(TEXT("focused"), Element.bFocused);
@@ -208,6 +212,11 @@ TSharedPtr<FJsonObject> FDriveJson::WriteObservation(const FDriveObservation& Ob
     TSharedPtr<FJsonObject> Root = JsonBuilders::MakeObject();
     Root->SetStringField(TEXT("surface"), SurfaceToString(Observation.Surface));
     Root->SetStringField(TEXT("root_name"), Observation.RootName);
+    if (!Observation.World.IsEmpty())
+    {
+        Root->SetStringField(TEXT("world"), Observation.World);
+        Root->SetStringField(TEXT("world_kind"), Observation.WorldKind);
+    }
     Root->SetNumberField(TEXT("frame"), static_cast<double>(Observation.Frame));
     Root->SetStringField(TEXT("timestamp"), Observation.Timestamp.ToIso8601());
 

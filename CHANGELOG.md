@@ -19,6 +19,14 @@
   before the final read; and the supervisor stops transient scopes the systemd user manager left
   `active` with no processes.
 
+- Changed: game-surface `drive.*` with no `instance_name` / `root_index` walks every live UMG root
+  on the viewport (z-order, bottom-most first) instead of failing `AMBIGUOUS_LIVE_ROOT`; each
+  element carries `root`, handles are unique across roots, and `root_name` lists the walked roots.
+- Added: `world` on game-surface `drive.observe` / `expect` / `wait_for` / action verbs, in
+  `editor.console_command`'s grammar, picks the PIE instance (the listen-server host is now
+  reachable). Omitted, it is the only PIE instance with a game viewport, and `TARGET_AMBIGUOUS`
+  when several have one, instead of the ambient `GEngine->GameViewport`, which flipped between
+  instances. `drive.observe` reports `world` / `world_kind` and screenshots that instance.
 - Fixed: class lookups by bare short name (`Object`, `Actor`, `PointLight`) no longer log
   `Failed to find object 'Class <Name>'` warnings before succeeding; the class resolvers no longer
   attempt a load for a bare name or a `/Script/` class.

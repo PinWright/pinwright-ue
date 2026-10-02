@@ -7,6 +7,8 @@
 #include "Handlers/Drive/DriveSetOfMarkLayout.h"
 #include "Handlers/Drive/DriveEditorChrome.h"  // FDriveWindowSelector
 
+class UGameViewportClient;
+
 // Renders a Set-of-Mark overlay onto a live capture: grabs the current frame (the
 // game/PIE viewport, or a selected editor window), filters the supplied elements to
 // interactables, lays out numbered marks (FDriveSetOfMarkLayout), paints box outlines
@@ -38,7 +40,8 @@ public:
     // WindowSelector default to the game viewport so existing game-only callers are
     // unchanged. When `bWriteToFile` is true the encoded PNG is written to disk and
     // OutScreenshot.Path is set (Base64 left empty) instead of inlining the base64 blob;
-    // a write failure returns false with OutErrorCode=WRITE_FAILED.
+    // a write failure returns false with OutErrorCode=WRITE_FAILED. GameViewport picks the PIE
+    // instance captured on the game/web surface (null: GEngine->GameViewport).
     static bool CaptureAnnotated(
         const TArray<FDriveElement>& Elements,
         int32 MarkCap,
@@ -46,7 +49,8 @@ public:
         FString& OutErrorCode,
         EDriveSurface Surface = EDriveSurface::Game,
         const FDriveWindowSelector& WindowSelector = FDriveWindowSelector(),
-        bool bWriteToFile = false);
+        bool bWriteToFile = false,
+        UGameViewportClient* GameViewport = nullptr);
 
     // Deliver already-encoded PNG bytes into OutScreenshot in one of two mutually-exclusive
     // shapes: when bWriteToFile, write them to a Saved/Screenshots/Drive PNG (reusing the

@@ -88,7 +88,8 @@ FColor FDriveSetOfMarkRenderer::LabelColor()
 
 bool FDriveSetOfMarkRenderer::CaptureAnnotated(const TArray<FDriveElement>& Elements,
     int32 MarkCap, FDriveScreenshot& OutScreenshot, FString& OutErrorCode,
-    EDriveSurface Surface, const FDriveWindowSelector& WindowSelector, bool bWriteToFile)
+    EDriveSurface Surface, const FDriveWindowSelector& WindowSelector, bool bWriteToFile,
+    UGameViewportClient* GameViewport)
 {
     // 1) Live capture into a raw FColor bitmap, plus the desktop position of its (0,0) pixel
     // (element geometry is desktop space; see FDriveSetOfMarkLayout::BuildLayout). The source
@@ -113,19 +114,20 @@ bool FDriveSetOfMarkRenderer::CaptureAnnotated(const TArray<FDriveElement>& Elem
     else
     {
         // Game and Web: the game/PIE viewport.
-        if (!GEngine || !GEngine->GameViewport)
+        UGameViewportClient* const ViewportClient = GameViewport ? GameViewport : (GEngine ? GEngine->GameViewport.Get() : nullptr);
+        if (!ViewportClient)
         {
             OutErrorCode = TEXT("NO_VIEWPORT");
             return false;
         }
-        FViewport* Viewport = GEngine->GameViewport->Viewport;
+        FViewport* Viewport = ViewportClient->Viewport;
         if (!Viewport)
         {
             OutErrorCode = TEXT("NO_VIEWPORT");
             return false;
         }
 
-        const TSharedPtr<SViewport> ViewportWidget = GEngine->GameViewport->GetGameViewportWidget();
+        const TSharedPtr<SViewport> ViewportWidget = ViewportClient->GetGameViewportWidget();
         if (ViewportWidget.IsValid())
         {
             // Both the back-buffer rect and the scene render target start at the viewport

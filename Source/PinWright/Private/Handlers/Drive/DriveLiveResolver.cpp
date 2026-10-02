@@ -24,7 +24,7 @@
 #include "Widgets/Text/STextBlock.h"
 
 // Most of the live-walk plumbing below is replicated from the file-local anonymous-namespace
-// helpers in Handlers/UI/LiveUiSnapshot.cpp (ResolvePieWorld, ResolveGameViewportWindow,
+// helpers in Handlers/UI/LiveUiSnapshot.cpp (ResolveGameViewportWindow,
 // IsUmgRootCandidate, CollectUmgRootCandidates, BuildBackingWidgetMap, ResolveCandidateName).
 // Those are not exposed in LiveUiSnapshot.h, so rather than export them (and widen that unit's
 // surface) they are re-implemented here to match exactly. The only LiveUiSnapshot symbol reused
@@ -52,35 +52,9 @@ namespace DriveLiveResolverLocal
         return false;
     }
 
-    UWorld* ResolvePieWorld()
+    TSharedPtr<SWindow> ResolveGameViewportWindow(UGameViewportClient* ViewportClient)
     {
-        if (!GEngine || !GEngine->GameViewport)
-        {
-            return nullptr;
-        }
-
-        UWorld* World = GEngine->GameViewport->GetWorld();
-        if (!World)
-        {
-            return nullptr;
-        }
-
-        if (World->WorldType != EWorldType::PIE && !World->IsPlayInEditor())
-        {
-            return nullptr;
-        }
-
-        return World;
-    }
-
-    TSharedPtr<SWindow> ResolveGameViewportWindow()
-    {
-        if (!GEngine || !GEngine->GameViewport)
-        {
-            return nullptr;
-        }
-
-        TSharedPtr<SViewport> ViewportWidget = GEngine->GameViewport->GetGameViewportWidget();
+        TSharedPtr<SViewport> ViewportWidget = ViewportClient ? ViewportClient->GetGameViewportWidget() : nullptr;
         if (!ViewportWidget.IsValid())
         {
             return nullptr;
@@ -510,20 +484,27 @@ namespace DriveLiveResolverLocal
         }
     }
 
-    // Resolve the live game viewport, collect UMG root candidates, build the backing map, and
-    // run the shared selector. On success returns the selected root subtree, its backing map,
-    // and its addressable name. On failure returns false with a LiveUiSnapshot-vocabulary code.
-    bool ResolveSelectedRoot(
+    // A live UMG root picked for the walk, with its addressable backing-widget name.
+    struct FDriveLiveRoot
+    {
+        TSharedRef<SWidget> Widget;
+        FString Name;
+    };
+
+    // Resolve the selected PIE instance's game viewport, collect its UMG root candidates, build the
+    // backing map, and apply the root selector: no instance_name / root_index walks every root (in
+    // the candidates' Slate order, i.e. viewport z-order, bottom-most first); either selector runs
+    // the shared snapshot selector and yields one root. On failure returns false with a
+    // LiveUiSnapshot-vocabulary code, suffixed with the instance once one was resolved.
+    bool ResolveRoots(
         const FDriveRootSelector& Selector,
-        TSharedPtr<SWidget>& OutRoot,
+        TArray<FDriveLiveRoot>& OutRoots,
         TMap<SWidget*, UWidget*>& OutBackingMap,
-        FString& OutRootName,
         FString& OutErrorCode,
         FString& OutErrorMessage)
     {
-        OutRoot.Reset();
+        OutRoots.Reset();
         OutBackingMap.Reset();
-        OutRootName.Reset();
         OutErrorCode.Reset();
         OutErrorMessage.Reset();
 
@@ -532,39 +513,40 @@ namespace DriveLiveResolverLocal
             return false;
         }
 
-        UWorld* World = ResolvePieWorld();
-        if (!World)
+        FDriveGameSurfaceTarget Target;
+        if (!FDriveLiveResolver::ResolveGameSurface(Selector.World, Target, OutErrorCode, OutErrorMessage))
         {
-            OutErrorCode = TEXT("PIE_NOT_RUNNING");
-            OutErrorMessage = TEXT("No active PIE game viewport world");
             return false;
         }
 
-        TSharedPtr<SWindow> GameWindow = ResolveGameViewportWindow();
+        TSharedPtr<SWindow> GameWindow = ResolveGameViewportWindow(Target.ViewportClient);
         if (!GameWindow.IsValid())
         {
             OutErrorCode = TEXT("GAME_VIEWPORT_NOT_FOUND");
-            OutErrorMessage = TEXT("Could not resolve the active game viewport window");
+            OutErrorMessage = FString::Printf(
+                TEXT("Could not resolve the game viewport window of PIE world %s (%s)"), *Target.WorldLabel, *Target.WorldKind);
             return false;
         }
 
         TArray<TSharedRef<SWidget>> RootCandidates;
         CollectUmgRootCandidates(GameWindow.ToSharedRef(), RootCandidates);
 
-        BuildBackingWidgetMap(World, OutBackingMap);
-
-        if (RootCandidates.Num() == 0)
-        {
-            OutErrorCode = TEXT("LIVE_UI_NOT_FOUND");
-            OutErrorMessage = TEXT("No live UMG root subtree was found in the game viewport window");
-            return false;
-        }
+        BuildBackingWidgetMap(Target.World, OutBackingMap);
 
         TArray<FString> CandidateNames;
         CandidateNames.Reserve(RootCandidates.Num());
         for (const TSharedRef<SWidget>& Candidate : RootCandidates)
         {
             CandidateNames.Add(ResolveCandidateName(Candidate, OutBackingMap));
+        }
+
+        if (RootCandidates.Num() > 0 && Selector.InstanceName.IsEmpty() && !Selector.RootIndex.IsSet())
+        {
+            for (int32 Index = 0; Index < RootCandidates.Num(); ++Index)
+            {
+                OutRoots.Add(FDriveLiveRoot{RootCandidates[Index], CandidateNames[Index]});
+            }
+            return true;
         }
 
         // Reuse the production selector so the ambiguity / not-found errors match the snapshot RPCs.
@@ -576,19 +558,42 @@ namespace DriveLiveResolverLocal
         if (!FLiveUiSnapshotService::SelectRootCandidate(
                 CandidateNames, Request, SelectedIndex, OutErrorCode, OutErrorMessage))
         {
+            OutErrorMessage += FString::Printf(TEXT(" [PIE world %s (%s)]"), *Target.WorldLabel, *Target.WorldKind);
             return false;
         }
 
-        OutRoot = RootCandidates[SelectedIndex];
-        OutRootName = CandidateNames[SelectedIndex];
+        OutRoots.Add(FDriveLiveRoot{RootCandidates[SelectedIndex], CandidateNames[SelectedIndex]});
         return true;
+    }
+
+    // Walk every resolved root and assign handles across the combined set, so a handle is unique
+    // over everything the caller was shown. The parent walk is unbounded (nullptr boundary): nothing
+    // above a root candidate is a UMG-backed widget, so no anchor segment can come from there, and a
+    // single-root walk keeps exactly the handles the per-root boundary produced.
+    void WalkRoots(
+        const TArray<FDriveLiveRoot>& Roots,
+        const TMap<SWidget*, UWidget*>& BackingMap,
+        TArray<FDriveLiveWalkedElement>& OutWalked)
+    {
+        for (const FDriveLiveRoot& Root : Roots)
+        {
+            const int32 First = OutWalked.Num();
+            // Seeded visible+enabled: the walk starts at the live UMG root, and the widgets above it
+            // (the viewport, the window) are not part of this surface.
+            WalkAndCollect(Root.Widget, DriveElementFactory::FAncestorState{}, OutWalked);
+            for (int32 Index = First; Index < OutWalked.Num(); ++Index)
+            {
+                OutWalked[Index].Element.Root = Root.Name;
+            }
+        }
+        AssignDriveHandles(OutWalked, BackingMap, nullptr);
     }
 
     // Map a root-resolution failure code to a ResolveHandle status. Only the no-selector /
     // loose-selector multi-root case is "ambiguous"; everything else is "no live UI to walk".
     EDriveResolveStatus RootFailureToStatus(const FString& ErrorCode)
     {
-        return ErrorCode == TEXT("AMBIGUOUS_LIVE_ROOT")
+        return ErrorCode == TEXT("AMBIGUOUS_LIVE_ROOT") || ErrorCode == TEXT("TARGET_AMBIGUOUS")
             ? EDriveResolveStatus::Ambiguous
             : EDriveResolveStatus::NoLiveUi;
     }
@@ -639,20 +644,24 @@ bool FDriveLiveResolver::BuildElementList(
     FString& OutErrorMessage)
 {
     OutElements.Reset();
+    OutRootName.Reset();
 
-    TSharedPtr<SWidget> Root;
+    TArray<FDriveLiveRoot> Roots;
     TMap<SWidget*, UWidget*> BackingMap;
-    if (!ResolveSelectedRoot(Selector, Root, BackingMap, OutRootName, OutErrorCode, OutErrorMessage))
+    if (!ResolveRoots(Selector, Roots, BackingMap, OutErrorCode, OutErrorMessage))
     {
         return false;
     }
 
+    TArray<FString> RootNames;
+    for (const FDriveLiveRoot& Root : Roots)
+    {
+        RootNames.Add(Root.Name);
+    }
+    OutRootName = FString::Join(RootNames, TEXT(", "));
+
     TArray<FDriveLiveWalkedElement> Walked;
-    // Seeded visible+enabled: the walk starts at the selected live UMG root, and the widgets
-    // above it (the viewport, the window) are not part of this surface. A collapsed viewport
-    // resolves to no live UI at all, so there is no root-above-root state to fold in here.
-    WalkAndCollect(Root.ToSharedRef(), DriveElementFactory::FAncestorState{}, Walked);
-    AssignDriveHandles(Walked, BackingMap, Root.Get());
+    WalkRoots(Roots, BackingMap, Walked);
 
     OutElements.Reserve(Walked.Num());
     for (FDriveLiveWalkedElement& Entry : Walked)
@@ -669,18 +678,16 @@ FDriveResolveResult FDriveLiveResolver::ResolveHandle(
 {
     FDriveResolveResult Result;
 
-    TSharedPtr<SWidget> Root;
+    TArray<FDriveLiveRoot> Roots;
     TMap<SWidget*, UWidget*> BackingMap;
-    FString RootName;
-    if (!ResolveSelectedRoot(Selector, Root, BackingMap, RootName, Result.ErrorCode, Result.ErrorMessage))
+    if (!ResolveRoots(Selector, Roots, BackingMap, Result.ErrorCode, Result.ErrorMessage))
     {
         Result.Status = RootFailureToStatus(Result.ErrorCode);
         return Result;
     }
 
     TArray<FDriveLiveWalkedElement> Walked;
-    WalkAndCollect(Root.ToSharedRef(), DriveElementFactory::FAncestorState{}, Walked);
-    AssignDriveHandles(Walked, BackingMap, Root.Get());
+    WalkRoots(Roots, BackingMap, Walked);
 
     for (FDriveLiveWalkedElement& Entry : Walked)
     {
@@ -695,6 +702,91 @@ FDriveResolveResult FDriveLiveResolver::ResolveHandle(
 
     Result.Status = EDriveResolveStatus::NotFound;
     return Result;
+}
+
+bool FDriveLiveResolver::SelectPieInstance(
+    const FString& World,
+    const TArray<FDrivePieInstance>& Instances,
+    int32& OutIndex,
+    FString& OutErrorCode,
+    FString& OutErrorMessage)
+{
+    OutIndex = INDEX_NONE;
+
+    // The shared runtime `world` contract (PieWorldSelector::ResolveGameWorld), with one drive
+    // rule on top: only an instance with a game viewport has UI to walk. An omitted selector is
+    // resolved over those instances alone (a dedicated server does not make a one-client session
+    // ambiguous); an explicit one over every instance, so client:N / pie:N number as everywhere else.
+    TArray<PieWorldSelector::FPieContextInfo> Contexts;
+    TArray<PieWorldSelector::FPieContextInfo> Drivable;
+    TArray<int32> DrivableIndices;
+    for (int32 Index = 0; Index < Instances.Num(); ++Index)
+    {
+        Contexts.Add(Instances[Index].Context);
+        if (Instances[Index].bHasGameViewport)
+        {
+            Drivable.Add(Instances[Index].Context);
+            DrivableIndices.Add(Index);
+        }
+    }
+
+    const bool bOmitted = World.TrimStartAndEnd().IsEmpty();
+    int32 Match = INDEX_NONE;
+    if (!PieWorldSelector::ResolveGameWorld(World, bOmitted ? Drivable : Contexts, Match, OutErrorCode, OutErrorMessage))
+    {
+        return false;
+    }
+    if (bOmitted)
+    {
+        if (Match == INDEX_NONE)
+        {
+            OutErrorCode = TEXT("PIE_NOT_RUNNING");
+            OutErrorMessage = FString::Printf(
+                TEXT("No active PIE game viewport world (PIE contexts: %s)"), *PieWorldSelector::DescribeContexts(Contexts));
+            return false;
+        }
+        OutIndex = DrivableIndices[Match];
+        return true;
+    }
+    if (!Instances[Match].bHasGameViewport)
+    {
+        OutErrorCode = TEXT("GAME_VIEWPORT_NOT_FOUND");
+        OutErrorMessage = FString::Printf(
+            TEXT("PIE world pie:%d (%s) selected by '%s' has no game viewport (a dedicated server renders no UI). Available PIE contexts: %s"),
+            Instances[Match].Context.PieInstance, PieWorldSelector::ClassifyNetMode(Instances[Match].Context.NetMode),
+            *World, *PieWorldSelector::DescribeContexts(Contexts));
+        return false;
+    }
+    OutIndex = Match;
+    return true;
+}
+
+bool FDriveLiveResolver::ResolveGameSurface(
+    const FString& World,
+    FDriveGameSurfaceTarget& OutTarget,
+    FString& OutErrorCode,
+    FString& OutErrorMessage)
+{
+    OutTarget = FDriveGameSurfaceTarget();
+
+    TArray<FDrivePieInstance> Instances;
+    for (const PieWorldSelector::FPieContextInfo& Context : PieWorldSelector::GatherPieContexts())
+    {
+        Instances.Add(FDrivePieInstance{Context, Context.World->GetGameViewport() != nullptr});
+    }
+
+    int32 Index = INDEX_NONE;
+    if (!SelectPieInstance(World, Instances, Index, OutErrorCode, OutErrorMessage))
+    {
+        return false;
+    }
+
+    const PieWorldSelector::FPieContextInfo& Context = Instances[Index].Context;
+    OutTarget.World = Context.World;
+    OutTarget.ViewportClient = Context.World->GetGameViewport();
+    OutTarget.WorldLabel = FString::Printf(TEXT("pie:%d"), Context.PieInstance);
+    OutTarget.WorldKind = PieWorldSelector::ClassifyNetMode(Context.NetMode);
+    return true;
 }
 
 TArray<FString> FDriveLiveResolver::BuildHandlesForTest(

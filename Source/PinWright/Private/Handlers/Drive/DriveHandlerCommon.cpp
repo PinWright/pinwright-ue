@@ -125,6 +125,7 @@ FDriveRootSelector FDriveHandlerCommon::ParseRootSelector(const FHandlerContext&
     // Same selector vocabulary (and camelCase aliases) as the live-UI snapshot RPCs.
     Selector.InstanceName = Ctx.GetStringFirstOf({ TEXT("instance_name"), TEXT("instanceName") });
     Selector.RootIndex = Ctx.GetIntFirstOf({ TEXT("root_index"), TEXT("rootIndex") });
+    Selector.World = Ctx.GetString(TEXT("world"));
     return Selector;
 }
 
@@ -267,7 +268,7 @@ int32 FDriveHandlerCommon::EstimateElementJsonBytes(const FDriveElement& Element
     // over-count rationale and its non-ASCII limits.
     constexpr int32 FixedOverheadBytes = 256;
     return Element.Handle.Len() + Element.Type.Len() + Element.Label.Len()
-        + Element.Value.Len() + FixedOverheadBytes;
+        + Element.Value.Len() + Element.Root.Len() + FixedOverheadBytes;
 }
 
 void FDriveHandlerCommon::FilterObservationElements(
@@ -341,6 +342,23 @@ bool FDriveHandlerCommon::BuildObservation(
         return false;
     }
 
+    // Name the PIE instance that answered, and capture that instance's viewport (not the ambient
+    // GEngine->GameViewport, which follows whichever instance ticked last). Resolved by the same
+    // deterministic rule the element walk just used, so it cannot name a different instance.
+    UGameViewportClient* CaptureViewport = nullptr;
+    if (Surface == EDriveSurface::Game)
+    {
+        FDriveGameSurfaceTarget Target;
+        FString IgnoredCode;
+        FString IgnoredMessage;
+        if (FDriveLiveResolver::ResolveGameSurface(Selector.World, Target, IgnoredCode, IgnoredMessage))
+        {
+            Out.World = Target.WorldLabel;
+            Out.WorldKind = Target.WorldKind;
+            CaptureViewport = Target.ViewportClient;
+        }
+    }
+
     // Compact the list before anything reads it (so the screenshot marks the same set the
     // caller receives). A no-op unless the explicit observe asked for filtering.
     FilterObservationElements(Out.Elements, bInteractablesOnly, MaxElements, MaxBytes, Out.OmittedCount);
@@ -354,7 +372,7 @@ bool FDriveHandlerCommon::BuildObservation(
     {
         FDriveScreenshot Screenshot;
         FString ScreenshotErrorCode;
-        if (FDriveSetOfMarkRenderer::CaptureAnnotated(Out.Elements, MarkCap, Screenshot, ScreenshotErrorCode, Surface, WindowSelector, bScreenshotToFile))
+        if (FDriveSetOfMarkRenderer::CaptureAnnotated(Out.Elements, MarkCap, Screenshot, ScreenshotErrorCode, Surface, WindowSelector, bScreenshotToFile, CaptureViewport))
         {
             Out.Screenshot = MoveTemp(Screenshot);
         }

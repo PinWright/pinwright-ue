@@ -22,6 +22,7 @@ REGISTER_RPC_HANDLER("drive.expect", "drive",
         RPC_PARAM_OPT("instanceName", "string", "Alias for instance_name."),
         RPC_PARAM_OPT("root_index", "integer", "Live UMG root selector: the Nth root (0-based). Takes precedence over instance_name."),
         RPC_PARAM_OPT("rootIndex", "integer", "Alias for root_index."),
+        DRIVE_WORLD_SELECTOR_PARAM,
         DRIVE_WINDOW_SELECTOR_PARAMS,
         RPC_PARAM_REQ("condition", "object", "Condition to evaluate (type + target/expected_text/expected_count/count_op/expected_bounds/severity).")
     ))

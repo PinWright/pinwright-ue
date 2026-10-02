@@ -23,6 +23,11 @@ class FHandlerContext;
     RPC_PARAM_OPT("window_index", "integer", "Editor-chrome window selector: the Nth visible top-level window (0-based, see drive.list_windows). Takes precedence over window_title. Ignored on the game surface."), \
     RPC_PARAM_OPT("index", "integer", "Alias for window_index.")
 
+// The game-surface PIE-instance selector, single-sourced for every drive.* verb whose body
+// reads FDriveHandlerCommon::ParseRootSelector (observe, expect, wait_for and the action verbs).
+#define DRIVE_WORLD_SELECTOR_PARAM \
+    RPC_PARAM_OPT("world", "string", "Game surface: which PIE instance's viewport to walk, same grammar as editor.console_command: 'server', 'client', 'client:N' (1-based), 'pie:N' (raw PIEInstance). Omitted: the only PIE instance with a game viewport; TARGET_AMBIGUOUS when several have one (listen server + clients). Ignored on other surfaces.")
+
 // Result of one journal delta query from the live tail, owned by PinWrightRecorder.
 struct FLiveTailDelta;
 
@@ -91,7 +96,7 @@ public:
 
     // Approximate upper-bound estimate of one element's serialized JSON size, in characters (the
     // unit the spill threshold also measures; see FDriveJson::WriteElement). The variable cost is
-    // the four string fields (handle/type/label/value); the four bools, the geometry object, an
+    // the five string fields (handle/type/label/value/root); the four bools, the geometry object, an
     // optional mark, the JSON keys, quotes and punctuation are covered by a fixed ceiling.
     // Deliberately over-counts for the common ASCII-dominant case; heavy non-ASCII/escaped label
     // or value text (a JSON \uXXXX escape is 6 chars per source char) can in the worst case exceed

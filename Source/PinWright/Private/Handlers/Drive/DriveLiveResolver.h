@@ -5,8 +5,10 @@
 #include "CoreMinimal.h"
 #include "Misc/Optional.h"
 #include "Handlers/Drive/DriveTypes.h"
+#include "Handlers/Editor/PieWorldSelector.h"
 
 class SWidget;
+class UGameViewportClient;
 
 // Live Slate/UMG I/O for the drive capability: walks the in-PIE UMG tree NOW and
 // produces FDriveElement value types for the pure fingerprint/condition units to
@@ -18,13 +20,37 @@ class SWidget;
 
 // Root selector for the live walk. Same semantics as FLiveUiSnapshotRequest's
 // instance_name / root_index: substring match against the backing widget name, then a
-// positional fallback. Both unset means "the single root" (ambiguous if more than one).
+// positional fallback. Both unset means EVERY live root of the instance's viewport, walked
+// in viewport z-order (bottom-most first) with each element tagged by its root.
 struct FDriveRootSelector
 {
     // Substring-matched against each live UMG root's backing widget name.
     FString InstanceName;
     // Positional selector: the Nth live root (0-based). Takes precedence over InstanceName.
     TOptional<int32> RootIndex;
+    // PIE instance whose game viewport is walked, in editor.console_command's `world` grammar
+    // ('server' | 'client' | 'client:N' | 'pie:N'). Empty: the only PIE instance that has a game
+    // viewport; TARGET_AMBIGUOUS when several do (never a pick of the ambient GEngine->GameViewport,
+    // which follows whichever instance ticked or was clicked last).
+    FString World;
+};
+
+// One live PIE context reduced to what instance selection reads, so the rule is unit-testable
+// with fake instances (Context.World may be null).
+struct FDrivePieInstance
+{
+    PieWorldSelector::FPieContextInfo Context;
+    bool bHasGameViewport = false;
+};
+
+// The PIE instance the game surface resolved to.
+struct FDriveGameSurfaceTarget
+{
+    UWorld* World = nullptr;
+    UGameViewportClient* ViewportClient = nullptr;
+    // Re-passable selector naming the instance ("pie:N") and its role (server | client | standalone).
+    FString WorldLabel;
+    FString WorldKind;
 };
 
 // How ResolveHandle terminated.
@@ -62,9 +88,10 @@ struct FDriveResolveResult
 class FDriveLiveResolver
 {
 public:
-    // Walk the selected live UMG root and emit one FDriveElement per interactable OR
-    // text/label-bearing widget (structural panels are skipped). Returns true and fills
-    // OutElements + OutRootName on success. On failure returns false and sets
+    // Walk the selected live UMG root(s) of the selected PIE instance and emit one FDriveElement
+    // per interactable OR text/label-bearing widget (structural panels are skipped), each tagged
+    // with its root's name. Returns true and fills OutElements + OutRootName (the walked root
+    // names, comma-separated in z-order) on success. On failure returns false and sets
     // OutErrorCode/OutErrorMessage using the LiveUiSnapshot error vocabulary; callers may
     // treat the "no capturable UI" codes as a skip the same way the snapshot tests do.
     static bool BuildElementList(
@@ -86,6 +113,24 @@ public:
     // from the host project's UI-recording subsystem. Exposed so it can be unit-tested
     // over synthetic widgets without a live PIE viewport.
     static bool IsLikelyInteractable(const TSharedRef<SWidget>& Widget);
+
+    // Pure PIE-instance pick (see FDriveRootSelector::World). Returns the index into Instances, or
+    // false with INVALID_ARGUMENT (malformed / 'editor'), PIE_NOT_RUNNING (no instance with a game
+    // viewport), TARGET_AMBIGUOUS (World empty, several viewports), WORLD_NOT_FOUND (no match) or
+    // GAME_VIEWPORT_NOT_FOUND (the match renders no UI, e.g. a dedicated server).
+    static bool SelectPieInstance(
+        const FString& World,
+        const TArray<FDrivePieInstance>& Instances,
+        int32& OutIndex,
+        FString& OutErrorCode,
+        FString& OutErrorMessage);
+
+    // Live wrapper over SelectPieInstance against the running PIE contexts.
+    static bool ResolveGameSurface(
+        const FString& World,
+        FDriveGameSurfaceTarget& OutTarget,
+        FString& OutErrorCode,
+        FString& OutErrorMessage);
 
     // Test seam for the handle scheme. Runs the exact AssignHandles core the live walk uses
     // (named-ancestor chain + leaf type, with "[k]" disambiguation for collisions), driven by
