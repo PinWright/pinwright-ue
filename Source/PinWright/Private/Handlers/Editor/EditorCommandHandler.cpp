@@ -39,6 +39,7 @@
 #include "Engine/Blueprint.h"
 #include "Engine/DemoNetDriver.h"
 #include "Engine/GameInstance.h"
+#include "Engine/LocalPlayer.h"
 #include "ReplaySubsystem.h"
 #if __has_include("Subsystems/AssetEditorSubsystem.h")
 #include "Subsystems/AssetEditorSubsystem.h"
@@ -310,10 +311,10 @@ bool SaveDirtyPackagesWithIntegrityGate(TSharedPtr<FJsonObject>& OutResult, FStr
 } // namespace EditorSaveAllDiagnostic
 
 // ---- editor.console_command ----
-REGISTER_RPC_HANDLER("editor.console_command", "editor", "Execute a console command in the editor world or, via the optional 'world' selector, inside a specific PIE world ('server', 'client', 'client:N', 'pie:N') — the multiplayer-in-PIE routing path (e.g. run 'servertravel ...' in the PIE server world, 'open <ip>' in a PIE client world). Distinct from system.console_command which targets the broader process; use this for editor-, viewport-, and PIE-world-scoped commands. See editor.pie_status for what PIE worlds exist. Returns EXEC_FAILED when no exec handler and no console variable recognised the line (typo, or a command owned by an unloaded module); a success means the line was consumed, NOT that the command's effect succeeded — read that back with a typed verb. A line that SETS a scalability CVar is REFUSED with SCALABILITY_CVAR_USE_TYPED_VERB — either an 'sg.*' group, or any CVar carrying ECVF_Scalability / ECVF_ScalabilityGroup (r.ViewDistanceScale, r.Streaming.PoolSize, r.ScreenPercentage, r.MaxAnisotropy, ...), because a console set pins it at ECVF_SetByConsole above the ECVF_SetByScalability priority the editor's own Settings > Engine Scalability Settings panel writes at, for the rest of the session. Use performance.set_scalability, or pass force:true to accept the pin. READING such a CVar (its name with no value) is not refused, and neither is the aggregate 'scalability N', which routes through Scalability::SetQualityLevels at the panel's own priority. A line whose first command word is QUIT_EDITOR or CLOSE_SLATE_MAINFRAME is REFUSED with EDITOR_QUIT_USE_TYPED_VERB (use editor.quit), PY with PYTHON_USE_TYPED_VERB (use python.execute), EXECFILE with EXECFILE_SEND_LINES_INDIVIDUALLY, and DEBUG followed by a crash, hang or memory subcommand with DEBUG_COMMAND_CRASHES_PROCESS / DEBUG_COMMAND_HANGS_PROCESS / DEBUG_COMMAND_EXHAUSTS_MEMORY (DEBUG HITCH / RENDERHITCH are allowed); force:true runs any of them anyway.",
+REGISTER_RPC_HANDLER("editor.console_command", "editor", "Execute a console command in the editor world or, via the optional 'world' selector, inside a specific PIE world ('server', 'client', 'client:N', 'pie:N') — the multiplayer-in-PIE routing path (e.g. run 'servertravel ...' in the PIE server world, 'open <ip>' in a PIE client world). With 'world' omitted the target is the editor world when no PIE world runs, the PIE world when exactly one runs, and a TARGET_AMBIGUOUS refusal when several run; the response names the resolved 'world' and sets worldDefaulted. In a PIE world a line the engine does not consume is retried through that world's first local player, the in-game console route, so PlayerController / CheatManager / game-viewport exec commands (EnableCheats, summon, viewmode) work; the response's 'route' says which path consumed it ('engine' or 'localPlayer'). Distinct from system.console_command which targets the broader process; use this for editor-, viewport-, and PIE-world-scoped commands. See editor.pie_status for what PIE worlds exist. Returns EXEC_FAILED when no exec handler and no console variable recognised the line (typo, or a command owned by an unloaded module); a success means the line was consumed, NOT that the command's effect succeeded — read that back with a typed verb. A line that SETS a scalability CVar is REFUSED with SCALABILITY_CVAR_USE_TYPED_VERB — either an 'sg.*' group, or any CVar carrying ECVF_Scalability / ECVF_ScalabilityGroup (r.ViewDistanceScale, r.Streaming.PoolSize, r.ScreenPercentage, r.MaxAnisotropy, ...), because a console set pins it at ECVF_SetByConsole above the ECVF_SetByScalability priority the editor's own Settings > Engine Scalability Settings panel writes at, for the rest of the session. Use performance.set_scalability, or pass force:true to accept the pin. READING such a CVar (its name with no value) is not refused, and neither is the aggregate 'scalability N', which routes through Scalability::SetQualityLevels at the panel's own priority. A line whose first command word is QUIT_EDITOR or CLOSE_SLATE_MAINFRAME is REFUSED with EDITOR_QUIT_USE_TYPED_VERB (use editor.quit), PY with PYTHON_USE_TYPED_VERB (use python.execute), EXECFILE with EXECFILE_SEND_LINES_INDIVIDUALLY, and DEBUG followed by a crash, hang or memory subcommand with DEBUG_COMMAND_CRASHES_PROCESS / DEBUG_COMMAND_HANGS_PROCESS / DEBUG_COMMAND_EXHAUSTS_MEMORY (DEBUG HITCH / RENDERHITCH are allowed); force:true runs any of them anyway.",
     RPC_PARAMS(
         RPC_PARAM_REQ("command", "string", "Full console command line including arguments, e.g. 'Stat Unit' or 'showflag.Bloom 0'."),
-        RPC_PARAM_DEF("world", "string", "Target world selector: 'editor' (default, the historical behavior), 'server' (first PIE world with authority — listen/dedicated server, or the sole standalone instance), 'client' (first PIE client), 'client:N' (N-th PIE client, 1-based), or 'pie:N' (raw PIEInstance N).", "editor"),
+        RPC_PARAM_OPT("world", "string", "Target world selector: 'editor' (the editor world, even while PIE runs), 'server' (first PIE world with authority — listen/dedicated server, or the sole standalone instance), 'client' (first PIE client), 'client:N' (N-th PIE client, 1-based), or 'pie:N' (raw PIEInstance N). Omitted: the editor world when PIE is not running, the PIE world when exactly one runs, TARGET_AMBIGUOUS when several run."),
         RPC_PARAM_DEF("force", "boolean", "Run a refused line anyway: a scalability-CVar set ('sg.<Group> N' or any ECVF_Scalability CVar), accepting that the CVar is pinned at ECVF_SetByConsole and the editor's own Scalability panel can no longer change its group until the editor restarts; or a QUIT_EDITOR / CLOSE_SLATE_MAINFRAME, PY, EXECFILE or DEBUG crash/hang/memory line, accepting that it skips the checks of the typed verb named in the refusal. Ignored for every other command.", "false")
     ))
 {
@@ -356,10 +357,47 @@ REGISTER_RPC_HANDLER("editor.console_command", "editor", "Execute a console comm
     return true;
   }
 
+  // An omitted `world` used to mean the editor world even while a PIE session ran, so a game
+  // command answered `consumed` there and did nothing (E-console-command-editor-default-during-pie).
+  // Now: no PIE -> editor, one PIE world -> that world, several -> refused (see ResolveOmitted).
+  const bool bWorldOmitted = WorldSelector.TrimStartAndEnd().IsEmpty();
+  const TArray<PieWorldSelector::FPieContextInfo> PieContexts = PieWorldSelector::GatherPieContexts();
+  int32 MatchIndex = INDEX_NONE;
+  if (bWorldOmitted) {
+    switch (PieWorldSelector::ResolveOmitted(PieContexts)) {
+    case PieWorldSelector::EOmittedWorld::Ambiguous: {
+      TSharedPtr<FJsonObject> Details = MakeShared<FJsonObject>();
+      Details->SetStringField(TEXT("availablePieContexts"), PieWorldSelector::DescribeContexts(PieContexts));
+      Ctx.SendError(ErrorCodes::ERR_TARGET_AMBIGUOUS,
+          FString::Printf(TEXT("'world' was omitted and %d PIE worlds are running, so the target world is "
+                               "ambiguous. Pass world: 'server', 'client', 'client:N' or 'pie:N' for a game "
+                               "world, or 'editor' for the editor world. Available PIE contexts: %s"),
+              PieContexts.Num(), *PieWorldSelector::DescribeContexts(PieContexts)),
+          Details);
+      return true;
+    }
+    case PieWorldSelector::EOmittedWorld::SolePie:
+      MatchIndex = 0;
+      break;
+    default:
+      break;
+    }
+  } else if (Selector.Kind != PieWorldSelector::ESelectorKind::Editor) {
+    MatchIndex = PieWorldSelector::ResolveSelector(Selector, PieContexts);
+    if (MatchIndex == INDEX_NONE) {
+      Ctx.SendError(ErrorCodes::ERR_WORLD_NOT_FOUND,
+          FString::Printf(TEXT("No PIE world matches selector '%s'. Available PIE contexts: %s"),
+              *WorldSelector, *PieWorldSelector::DescribeContexts(PieContexts)));
+      return true;
+    }
+  }
+
   TSharedPtr<FJsonObject> Resp = MakeShared<FJsonObject>();
   UWorld* World = nullptr;
-  if (Selector.Kind == PieWorldSelector::ESelectorKind::Editor) {
+  FString ResolvedSelector = WorldSelector.TrimStartAndEnd();
+  if (MatchIndex == INDEX_NONE) {
     World = GEditor->GetEditorWorldContext().World();
+    ResolvedSelector = TEXT("editor");
     if (!World) {
       // Was unchecked: Exec(nullptr, ...) ran and the handler still reported
       // "Console command executed". World-scoped commands silently did nothing.
@@ -368,16 +406,11 @@ REGISTER_RPC_HANDLER("editor.console_command", "editor", "Execute a console comm
       return true;
     }
   } else {
-    const TArray<PieWorldSelector::FPieContextInfo> PieContexts = PieWorldSelector::GatherPieContexts();
-    const int32 MatchIndex = PieWorldSelector::ResolveSelector(Selector, PieContexts);
-    if (MatchIndex == INDEX_NONE) {
-      Ctx.SendError(ErrorCodes::ERR_WORLD_NOT_FOUND,
-          FString::Printf(TEXT("No PIE world matches selector '%s'. Available PIE contexts: %s"),
-              *WorldSelector, *PieWorldSelector::DescribeContexts(PieContexts)));
-      return true;
-    }
     const PieWorldSelector::FPieContextInfo& Match = PieContexts[MatchIndex];
     World = Match.World;
+    if (bWorldOmitted) {
+      ResolvedSelector = FString::Printf(TEXT("pie:%d"), Match.PieInstance);
+    }
     Resp->SetNumberField(TEXT("pieInstance"), Match.PieInstance);
     Resp->SetStringField(TEXT("kind"), PieWorldSelector::ClassifyNetMode(Match.NetMode));
   }
@@ -391,19 +424,44 @@ REGISTER_RPC_HANDLER("editor.console_command", "editor", "Execute a console comm
   // than anywhere else: this verb is the fallback an agent reaches for when a typed verb
   // fails, so the documented recovery path could not report failure. Same shape as the
   // honest sibling at Handlers/Editor/ViewportHandler.cpp:434.
-  if (!GEditor->Exec(World, *Command)) {
+  //
+  // In a PIE world an unconsumed line is retried through the world's first local player, the
+  // route the in-game console takes (ULocalPlayer::Exec: game viewport client, game instance,
+  // then UPlayer::Exec over PlayerInput, PlayerController, pawn, HUD, GameMode, CheatManager,
+  // GameState, camera manager). GEngine->Exec reaches none of those, so EnableCheats, summon
+  // and viewmode used to fail here (E-console-command-player-exec).
+  bool bConsumed = GEditor->Exec(World, *Command);
+  ULocalPlayer* LocalPlayer = MatchIndex != INDEX_NONE ? GEngine->GetFirstGamePlayer(World) : nullptr;
+  const bool bPlayerRoute = !bConsumed && LocalPlayer;
+  if (bPlayerRoute) {
+    bConsumed = LocalPlayer->Exec(World, *Command, *GLog);
+  }
+  if (!bConsumed) {
+    const FString PlayerNote = MatchIndex == INDEX_NONE
+        ? FString(TEXT(" PlayerController / CheatManager / game-viewport exec commands (EnableCheats, summon, "
+                       "viewmode) only exist in a PIE world: pass world: 'server' or 'client'."))
+        : LocalPlayer
+            ? FString(TEXT(" The world's local player chain (game viewport, PlayerController, pawn, HUD, "
+                           "GameMode, CheatManager) was tried too."))
+            : FString(TEXT(" This PIE world has no local player (a dedicated server), so PlayerController / "
+                           "CheatManager exec commands cannot run in it; target a client world."));
     Ctx.SendError(ErrorCodes::ERR_EXEC_FAILED,
         FString::Printf(
-            TEXT("No exec command or console variable consumed '%s'. Check the spelling, and "
-                 "note that commands owned by an unloaded module are not registered."),
-            *Command));
+            TEXT("No exec command or console variable consumed '%s' in world '%s'. Check the spelling, and "
+                 "note that commands owned by an unloaded module are not registered.%s"),
+            *Command, *ResolvedSelector, *PlayerNote));
     return true;
   }
 
   Resp->SetBoolField(TEXT("success"), true);
   Resp->SetStringField(TEXT("command"), Command);
-  Resp->SetStringField(TEXT("world"), WorldSelector.IsEmpty() ? TEXT("editor") : *WorldSelector);
+  Resp->SetStringField(TEXT("world"), ResolvedSelector);
+  Resp->SetBoolField(TEXT("worldDefaulted"), bWorldOmitted);
   Resp->SetStringField(TEXT("worldPath"), World->GetPathName());
+  Resp->SetStringField(TEXT("route"), bPlayerRoute ? TEXT("localPlayer") : TEXT("engine"));
+  if (bPlayerRoute && LocalPlayer->PlayerController) {
+    Resp->SetStringField(TEXT("playerController"), LocalPlayer->PlayerController->GetName());
+  }
   // "consumed", not "executed": Exec's true means a handler claimed the line, which is
   // the strongest thing this call can honestly observe. It is not a claim that the
   // command's own effect succeeded — a cvar set to an out-of-range value is consumed too.

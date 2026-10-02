@@ -1,7 +1,8 @@
 // Copyright (c) 2026 Alexander Penkin. MIT License.
 
 // Shared PIE world-selector helpers for the Editor handler cluster.
-// editor.console_command uses Parse + GatherPieContexts + ResolveSelector to route a
+// editor.console_command uses Parse + GatherPieContexts + ResolveSelector (+ ResolveOmitted
+// when `world` is not given) to route a
 // console command into a specific PIE world ("server" / "client" / "client:N" / "pie:N"),
 // and editor.pie_status uses GatherPieContexts + the classification helpers to enumerate
 // live PIE contexts. Parse / ClassifyNetMode / ResolveSelector are pure (no engine
@@ -244,6 +245,25 @@ inline int32 ResolveSelector(const FParsedSelector& Selector, const TArray<FPieC
     default:
         return INDEX_NONE;
     }
+}
+
+// What an OMITTED `world` resolves to (an explicit "editor" is never routed here). With no PIE
+// world the editor world is the only candidate. With exactly one PIE world that world is the
+// default: a caller running PIE almost always means the game, and the old editor default answered
+// `consumed` for `App.Launch` while it did nothing (board E-console-command-editor-default-during-pie).
+// Several PIE worlds are ambiguous: the caller must name one, never a pick.
+enum class EOmittedWorld : uint8
+{
+    Editor,
+    SolePie,   // Contexts[0]
+    Ambiguous
+};
+
+inline EOmittedWorld ResolveOmitted(const TArray<FPieContextInfo>& Contexts)
+{
+    return Contexts.Num() == 0 ? EOmittedWorld::Editor
+        : Contexts.Num() == 1 ? EOmittedWorld::SolePie
+        : EOmittedWorld::Ambiguous;
 }
 
 // Human-readable summary of the available PIE contexts for WORLD_NOT_FOUND messages,

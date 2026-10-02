@@ -4,7 +4,7 @@ Drive the editor application itself — viewport camera, view mode, PIE play/pau
 
 ## Cross-cluster overlap
 
-- **`editor.console_command` ↔ `system.console_command`** — both run console commands; `editor.*` targets the editor world by default or a selected PIE world, while `system.*` targets the broader process / GEngine scope. Use `system.console.search` before unfamiliar commands.
+- **`editor.console_command` ↔ `system.console_command`** — both run console commands; `editor.*` targets the editor world, a selected PIE world, or (with `world` omitted) the sole running PIE world, while `system.*` targets the broader process / GEngine scope. Use `system.console.search` before unfamiliar commands.
 - **`editor.screenshot` / `editor.play` / `editor.stop` / `editor.simulate_input` / `editor.save_all` ↔ `ui.*` same-named** — the `ui.*` versions exist as legacy wrappers; prefer the `editor.*` form here.
 - **PIE control** — `editor.play`, `editor.stop`, `editor.pause`, `editor.resume`, `editor.step_frame` guard their lifecycle state (`alreadyPlaying` / `alreadyStopped` / `NO_ACTIVE_SESSION` rather than destructive retries). `play` waits for `PlayWorld`; `stop` waits until Unreal's broader session-in-progress predicate is false and `PlayWorld` is gone. One editor-thread lifecycle owner prevents overlapping waiters from claiming the same later session. Every terminal play/stop payload carries measured `pieActive` and `timedOut`. `editor.status` and `editor.pie_status` are the read-only probes, and both report `uiFrozen` beside `pieIsPaused` — the world tick and the UI clocks are separate things, see `editor.pause`.
 
@@ -42,9 +42,10 @@ Note on legacy: the `editor.execute.*` family was dropped (Wave 1, Chunk 1C). Ea
 
 Run a console command in the editor world (e.g. `Stat FPS`, `showflag.Bloom 0`, `viewmode Lit`) — or, with the optional `world` selector, inside a **specific PIE world**. Distinct from `system.console_command` which targets the broader process / GEngine scope; use this one for editor-, viewport-, and PIE-world-scoped commands.
 
-**World targeting** (`world`, default `"editor"` — fully backward compatible):
+**World targeting** (`world`, optional):
 
-- `editor` — the editor world (the historical behavior).
+- omitted — the editor world when PIE is not running; **the PIE world when exactly one is running** (a game command such as a project's level-launch command reached the editor world, answered `consumed`, and did nothing); refused `TARGET_AMBIGUOUS` (listing the PIE contexts) when several PIE worlds run, because picking one would be a guess. The response carries the resolved selector in `world` (`pie:N` when the default chose a PIE world) and `worldDefaulted: true`.
+- `editor` — the editor world, even while PIE runs.
 - `server` — the first PIE context whose world has authority: the listen or dedicated server, or the sole instance of a standalone PIE session (which is its own authority).
 - `client` — the first PIE client; `client:N` — the N-th PIE client, **1-based** (`client:1` is the first client), counted in `GEngine->GetWorldContexts()` order.
 - `pie:N` — the PIE context with raw `PIEInstance == N`, for full manual control.
@@ -53,7 +54,9 @@ Classification reads each PIE world's `GetNetMode()`: listen/dedicated server �
 
 Typical multiplayer-in-PIE loop: run the travel command in the server world (`{command: "servertravel MyMap", world: "server"}`), then connect or drive a client (`{command: "open 127.0.0.1:7777", world: "client"}`, or `world: "client:2"` for the second client). This replaces the old python.execute workaround of hand-iterating world contexts around `unreal.SystemLibrary.execute_console_command`.
 
-The success response echoes `world` and `worldPath`, plus `pieInstance` and `kind` when a PIE world was targeted.
+**Player exec commands.** `PlayerController`, `CheatManager`, pawn, HUD, GameMode, GameState and game-viewport exec commands (`EnableCheats`, `summon <class>`, `viewmode lit`, `God`) are not engine commands: the in-game console reaches them through the local player. In a PIE world, a line the engine does not consume is retried through that world's first local player (`ULocalPlayer::Exec`, the in-game console route), and `route` reports which path consumed it: `engine` or `localPlayer` (with `playerController` naming the receiver). They do not exist in the editor world, and a dedicated-server PIE world has no local player, so target a listen-server, standalone or client world. The `EXEC_FAILED` message says which of those cases applied.
+
+The success response echoes `world`, `worldDefaulted`, `worldPath` and `route`, plus `pieInstance` and `kind` when a PIE world was targeted.
 
 For multiple cvars, prefer `editor.set_preferences` so applied / failed are reported separately — but note it carries **no** scalability guard and writes at the default `ECVF_SetByCode`, so routing a scalability CVar through it pins that CVar above the user's Scalability panel for the session. Use `performance.set_scalability` for anything scalability-flagged.
 
