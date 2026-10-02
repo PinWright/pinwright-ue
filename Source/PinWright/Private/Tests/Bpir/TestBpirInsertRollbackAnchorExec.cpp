@@ -127,8 +127,8 @@ bool FBpirInsertRollbackAnchorExecTest::RunTest(const FString& Parameters)
         return true;
     }
 
-    UEdGraphPin* AnchorThen = FindExecOutput(Anchor);
-    UEdGraphPin* DownstreamExec = FindExecInput(DownstreamNode);
+    UEdGraphPin* AnchorThen = BpirInsertRollbackAnchorExecTest::FindExecOutput(Anchor);
+    UEdGraphPin* DownstreamExec = BpirInsertRollbackAnchorExecTest::FindExecInput(DownstreamNode);
     TestNotNull(TEXT("Anchor exec output exists"), AnchorThen);
     TestNotNull(TEXT("Downstream exec input exists"), DownstreamExec);
     if (!AnchorThen || !DownstreamExec)
@@ -169,8 +169,8 @@ bool FBpirInsertRollbackAnchorExecTest::RunTest(const FString& Parameters)
         return true;
     }
 
-    UEdGraphPin* BaselineAnchorThen = FindExecOutput(BaselineAnchor);
-    UEdGraphPin* BaselineDownstreamExec = FindExecInput(BaselineDownstream);
+    UEdGraphPin* BaselineAnchorThen = BpirInsertRollbackAnchorExecTest::FindExecOutput(BaselineAnchor);
+    UEdGraphPin* BaselineDownstreamExec = BpirInsertRollbackAnchorExecTest::FindExecInput(BaselineDownstream);
     TestNotNull(TEXT("Baseline anchor exec output exists"), BaselineAnchorThen);
     TestNotNull(TEXT("Baseline downstream exec input exists"), BaselineDownstreamExec);
     if (!BaselineAnchorThen || !BaselineDownstreamExec)
@@ -179,9 +179,9 @@ bool FBpirInsertRollbackAnchorExecTest::RunTest(const FString& Parameters)
     }
 
     TestEqual(TEXT("Baseline anchor links to downstream exactly once"),
-        CountLinksTo(BaselineAnchorThen, BaselineDownstreamExec), 1);
+        BpirInsertRollbackAnchorExecTest::CountLinksTo(BaselineAnchorThen, BaselineDownstreamExec), 1);
     TestEqual(TEXT("Baseline downstream links back to anchor exactly once"),
-        CountLinksTo(BaselineDownstreamExec, BaselineAnchorThen), 1);
+        BpirInsertRollbackAnchorExecTest::CountLinksTo(BaselineDownstreamExec, BaselineAnchorThen), 1);
 
     UEdGraph* BaselineGraph = BaselineAnchor->GetGraph();
     if (!TestNotNull(TEXT("Baseline graph resolves"), BaselineGraph))
@@ -250,8 +250,8 @@ bool FBpirInsertRollbackAnchorExecTest::RunTest(const FString& Parameters)
         return true;
     }
 
-    UEdGraphPin* RestoredAnchorThen = FindExecOutput(RestoredAnchor);
-    UEdGraphPin* RestoredDownstreamExec = FindExecInput(RestoredDownstream);
+    UEdGraphPin* RestoredAnchorThen = BpirInsertRollbackAnchorExecTest::FindExecOutput(RestoredAnchor);
+    UEdGraphPin* RestoredDownstreamExec = BpirInsertRollbackAnchorExecTest::FindExecInput(RestoredDownstream);
     TestNotNull(TEXT("Restored anchor exec output exists"), RestoredAnchorThen);
     TestNotNull(TEXT("Restored downstream exec input exists"), RestoredDownstreamExec);
     if (!RestoredAnchorThen || !RestoredDownstreamExec)
@@ -264,9 +264,9 @@ bool FBpirInsertRollbackAnchorExecTest::RunTest(const FString& Parameters)
     TestEqual(TEXT("Restored downstream input has exactly one link"),
         RestoredDownstreamExec->LinkedTo.Num(), 1);
     TestEqual(TEXT("Restored anchor links to downstream exactly once"),
-        CountLinksTo(RestoredAnchorThen, RestoredDownstreamExec), 1);
+        BpirInsertRollbackAnchorExecTest::CountLinksTo(RestoredAnchorThen, RestoredDownstreamExec), 1);
     TestEqual(TEXT("Restored downstream links back to anchor exactly once"),
-        CountLinksTo(RestoredDownstreamExec, RestoredAnchorThen), 1);
+        BpirInsertRollbackAnchorExecTest::CountLinksTo(RestoredDownstreamExec, RestoredAnchorThen), 1);
 
     UEdGraph* RestoredGraph = RestoredAnchor->GetGraph();
     if (TestNotNull(TEXT("Restored graph resolves"), RestoredGraph))
