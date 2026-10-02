@@ -9,6 +9,7 @@
 #include "Handlers/Drive/DriveHandlerCommon.h"
 #include "Handlers/Drive/DriveInput.h"
 #include "Handlers/Drive/DriveLiveResolver.h"
+#include "Handlers/Drive/DriveOsGesture.h"
 #include "Handlers/Drive/DriveOsInput.h"
 #include "Handlers/Drive/DriveWebHandlers.h"
 
@@ -74,7 +75,7 @@
         "at the target by Slate's window order (occluding_window / occluding_window_type), or " \
         "the top X window there belongs to another process (occluding_window / occluding_pid). " \
         "Serialized per X display across editors: OS_INPUT_BUSY (holder_pid) when another " \
-        "injection holds the display for >5s; drive.click refuses with POINTER_MOVED, unpressed, " \
+        "injection holds the display for >5s; drive.click / drive.drag refuse with POINTER_MOVED, unpressed, " \
         "when the real pointer is not on the target right before the press. " \
         "POINTER_GRABBED (held_by_this_editor), with nothing injected, while any X client " \
         "holds a pointer grab (drive.input_state os_grab shows it). " \
@@ -353,6 +354,7 @@ REGISTER_RPC_HANDLER("drive.drag", "drive",
         RPC_PARAM_OPT("to_x", "number", "Absolute screen X of the release point (used with to_y when to_handle is absent)."),
         RPC_PARAM_OPT("to_y", "number", "Absolute screen Y of the release point (used with to_x when to_handle is absent)."),
         RPC_PARAM_DEF("duration_ms", "number", "Drag duration spreading the interpolated moves, in ms (default 200).", "200"),
+        DRIVE_OS_INPUT_PARAM,
         DRIVE_COMMON_ACTION_PARAMS
     ))
 {
@@ -421,9 +423,23 @@ REGISTER_RPC_HANDLER("drive.drag", "drive",
         return true;
     }
 
+    bool bOsInput = false;
+    if (!ResolveOsInput(Ctx, bOsInput)) return true;
+
     const int32 DurationMs = Ctx.GetInt(TEXT("duration_ms"), 200);
     FDriveActionCommon::RunAction(Ctx, FromHandle,
-        [ToPoint, DurationMs](const FVector2D& From, FDriveInjectFailure&) { return FDriveInput::DragFromTo(From, ToPoint, DurationMs); });
+        [ToPoint, DurationMs, bOsInput](const FVector2D& From, FDriveInjectFailure& Failure)
+        {
+            if (bOsInput)
+            {
+                // Left button, the default hold, then one pressed segment to the release point.
+                const FIntPoint Release(FMath::RoundToInt(ToPoint.X), FMath::RoundToInt(ToPoint.Y));
+                return FDriveOsGesture::RunBlocking(FIntPoint(FMath::RoundToInt(From.X), FMath::RoundToInt(From.Y)),
+                    { Release }, EDriveMouseButton::Left, FDriveOsGesture::DefaultHoldMs, DurationMs, Failure);
+            }
+            return FDriveInput::DragFromTo(From, ToPoint, DurationMs);
+        },
+        bOsInput ? FDriveOsInput::InputPathLabel() : TEXT("slate"));
     return true;
 }
 

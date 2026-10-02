@@ -19,6 +19,11 @@
   before the final read; and the supervisor stops transient scopes the systemd user manager left
   `active` with no processes.
 
+- Added: `drive.os_gesture`, a real-pointer (XTEST) click or drag at a PIE game-viewport pixel
+  or a world actor (`{actor, component?}`, projected through the player's view). It takes
+  `button`, `hold_ms` and pressed `waypoints`, and runs its steps across engine frames, so per-frame
+  mouse polling (gizmo drags, box select) sees the button held. The `os_input` gates apply.
+  `drive.drag` now accepts `os_input`.
 - Changed: game-surface `drive.*` with no `instance_name` / `root_index` walks every live UMG root
   on the viewport (z-order, bottom-most first) instead of failing `AMBIGUOUS_LIVE_ROOT`; each
   element carries `root`, handles are unique across roots, and `root_name` lists the walked roots.

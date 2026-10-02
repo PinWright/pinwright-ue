@@ -610,32 +610,8 @@ bool FDriveOsInput::ClickAt(const FVector2D& ScreenPos, EDriveMouseButton Button
         return false;
     }
 
-    // The motion took ~0.25 s; a window raised over the point meanwhile must not get the press.
-    FForeignWindow Foreign;
-    if (FindForeignWindowAt(ScreenPos, Foreign))
+    if (!CheckPress(FIntPoint(FMath::RoundToInt(ScreenPos.X), FMath::RoundToInt(ScreenPos.Y)), OutFailure))
     {
-        Fail(OutFailure, ErrorCodes::ERR_INPUT_FAILED,
-            FString::Printf(TEXT("X window 0x%llx '%s' (pid %u) was raised over the target during the motion; the button was not pressed."),
-                Foreign.WindowId, *Foreign.Title, Foreign.Pid));
-        return false;
-    }
-
-    // The lock only binds PinWright injectors; a human's mouse or a raw xdotool script can
-    // still move the pointer, and a pointer grab can clamp the motion short of the target.
-    // XTEST presses wherever the pointer IS, so check it is on the target right before.
-    const FIntPoint Target(FMath::RoundToInt(ScreenPos.X), FMath::RoundToInt(ScreenPos.Y));
-    FIntPoint Pointer(0, 0);
-    if (!IsPointerAt(Target, Pointer))
-    {
-        TSharedPtr<FJsonObject> Details = MakeShared<FJsonObject>();
-        Details->SetNumberField(TEXT("x"), Target.X);
-        Details->SetNumberField(TEXT("y"), Target.Y);
-        Details->SetNumberField(TEXT("pointer_x"), Pointer.X);
-        Details->SetNumberField(TEXT("pointer_y"), Pointer.Y);
-        Fail(OutFailure, ErrorCodes::ERR_POINTER_MOVED,
-            FString::Printf(TEXT("The pointer is at (%d, %d), not on the target (%d, %d), after the motion: another X client moved it, or a pointer grab confined it. The button was not pressed."),
-                Pointer.X, Pointer.Y, Target.X, Target.Y),
-            Details);
         return false;
     }
 
@@ -653,5 +629,101 @@ bool FDriveOsInput::ClickAt(const FVector2D& ScreenPos, EDriveMouseButton Button
     IsAvailable(Error);
     Fail(OutFailure, ErrorCodes::ERR_INPUT_FAILED, Error);
     return false;
+#endif
+}
+
+bool FDriveOsInput::CheckPress(const FIntPoint& Target, FDriveInjectFailure& OutFailure)
+{
+    // The motion took ~0.25 s; a window raised over the point meanwhile must not get the press.
+    FForeignWindow Foreign;
+    if (FindForeignWindowAt(FVector2D(Target), Foreign))
+    {
+        Fail(OutFailure, ErrorCodes::ERR_INPUT_FAILED,
+            FString::Printf(TEXT("X window 0x%llx '%s' (pid %u) was raised over the target during the motion; the button was not pressed."),
+                Foreign.WindowId, *Foreign.Title, Foreign.Pid));
+        return false;
+    }
+
+    // The lock only binds PinWright injectors; a human's mouse or a raw xdotool script can
+    // still move the pointer, and a pointer grab can clamp the motion short of the target.
+    // XTEST presses wherever the pointer IS, so check it is on the target right before.
+    FIntPoint Pointer(0, 0);
+    if (!IsPointerAt(Target, Pointer))
+    {
+        TSharedPtr<FJsonObject> Details = MakeShared<FJsonObject>();
+        Details->SetNumberField(TEXT("x"), Target.X);
+        Details->SetNumberField(TEXT("y"), Target.Y);
+        Details->SetNumberField(TEXT("pointer_x"), Pointer.X);
+        Details->SetNumberField(TEXT("pointer_y"), Pointer.Y);
+        Fail(OutFailure, ErrorCodes::ERR_POINTER_MOVED,
+            FString::Printf(TEXT("The pointer is at (%d, %d), not on the target (%d, %d), after the motion: another X client moved it, or a pointer grab confined it. The button was not pressed."),
+                Pointer.X, Pointer.Y, Target.X, Target.Y),
+            Details);
+        return false;
+    }
+    return true;
+}
+
+TSharedPtr<FDriveOsInput::FDisplayLock> FDriveOsInput::BeginGesture(FIntPoint& OutPointer, FDriveInjectFailure& OutFailure)
+{
+#if PLATFORM_LINUX
+    const FString LockPath = DisplayLockPath();
+    TSharedPtr<FDisplayLock> Lock = MakeShared<FDisplayLock>(LockPath, LockTimeoutSeconds);
+    FX11Api& Api = GetApi();
+    if (!LockHeldOrFail(*Lock, LockPath, OutFailure))
+    {
+        return nullptr;
+    }
+    if (!Api.IsValid())
+    {
+        Fail(OutFailure, ErrorCodes::ERR_INPUT_FAILED, Api.Error);
+        return nullptr;
+    }
+    if (RefuseIfPointerGrabbed(Api, OutFailure))
+    {
+        return nullptr;
+    }
+    if (!QueryPointerPos(Api, OutPointer))
+    {
+        Fail(OutFailure, ErrorCodes::ERR_INPUT_FAILED,
+            TEXT("XQueryPointer failed; the pointer position could not be read, so nothing was injected."));
+        return nullptr;
+    }
+    return Lock;
+#else
+    (void)OutPointer;
+    FString Error;
+    IsAvailable(Error);
+    Fail(OutFailure, ErrorCodes::ERR_INPUT_FAILED, Error);
+    return nullptr;
+#endif
+}
+
+void FDriveOsInput::SendMotion(const FIntPoint& Point)
+{
+#if PLATFORM_LINUX
+    FX11Api& Api = GetApi();
+    if (Api.IsValid())
+    {
+        Api.FakeMotionEvent(Api.Display, -1, Point.X, Point.Y, 0);
+        Api.Flush(Api.Display);
+    }
+#else
+    (void)Point;
+#endif
+}
+
+void FDriveOsInput::SendButton(EDriveMouseButton Button, bool bPress)
+{
+#if PLATFORM_LINUX
+    FX11Api& Api = GetApi();
+    if (Api.IsValid())
+    {
+        Api.FakeButtonEvent(Api.Display, static_cast<unsigned int>(ButtonToXButton(Button)), bPress ? 1 : 0, 0);
+        Api.Flush(Api.Display);
+    }
+#else
+    (void)Button;
+    (void)bPress;
 #endif
 }

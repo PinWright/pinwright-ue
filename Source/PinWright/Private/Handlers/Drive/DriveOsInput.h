@@ -124,6 +124,23 @@ public:
     // False when X is unavailable (non-Linux, no display); Out is then left untouched.
     static bool ProbeGrabs(FGrabState& Out);
 
+    // ---- Gesture primitives: FDriveOsGesture paces these across engine ticks ----
+
+    // Take the display lock and run MoveTo's refusals before anything moves (OS_INPUT_BUSY,
+    // POINTER_GRABBED, INPUT_FAILED). Null on refusal; otherwise the caller holds the returned
+    // lock for the whole gesture, and OutPointer is where the real pointer is now. Does not block
+    // beyond the lock wait.
+    static TSharedPtr<FDisplayLock> BeginGesture(FIntPoint& OutPointer, FDriveInjectFailure& OutFailure);
+
+    // ClickAt's refusals right before a press at Target: INPUT_FAILED when another process's
+    // window took the point, POINTER_MOVED when the real pointer is not on it.
+    static bool CheckPress(const FIntPoint& Target, FDriveInjectFailure& OutFailure);
+
+    // One XTEST motion event / button edge, flushed at once. No checks and no pacing: the caller
+    // holds BeginGesture's lock and checked the press with CheckPress.
+    static void SendMotion(const FIntPoint& Point);
+    static void SendButton(EDriveMouseButton Button, bool bPress);
+
     // ---- Pure helpers (no X11 dependency; unit-tested) ----
 
     // Interpolated pointer path from From to To in whole screen pixels. Excludes From and

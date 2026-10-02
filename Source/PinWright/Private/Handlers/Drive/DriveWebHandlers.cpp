@@ -1051,6 +1051,10 @@ void FDriveWebHandlers::DragWeb(FHandlerContext& Ctx)
             TEXT("drive.drag on surface=web requires a 'handle' for the element to drag from."));
         return;
     }
+    if (RefuseOsInput(Ctx))
+    {
+        return;
+    }
 
     // Web drag is DOM-element-to-element, so a drop target handle is required and the coordinate
     // to_x/to_y release point used on the game/editor surfaces has no web meaning.
