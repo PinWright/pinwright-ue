@@ -337,7 +337,7 @@ REGISTER_RPC_HANDLER("widget.screenshot_designer", "widget",
 
         // Force alpha opaque (Slate may leave it non-255); contract in ScreenshotUtils.h.
         // Same window back-buffer source as EditorWindowHandlers.cpp's editor.screenshot_window
-        // and FDriveEditorChrome::CaptureWindow, both of which stamp — without it this path
+        // and drive.observe's editor-chrome capture, both of which stamp — without it this path
         // writes a near-fully-transparent PNG that reads as blank in any alpha-compositing
         // viewer (B-horizontal-orthographic-views-render-no-geometry).
         PinWrightScreenshotUtils::ForceOpaqueAlpha(ColorData);

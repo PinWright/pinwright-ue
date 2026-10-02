@@ -593,9 +593,8 @@ bool FDriveEditorChrome::CaptureWindow(
         return false;
     }
 
-    // Force alpha opaque (Slate may leave it non-255); contract in ScreenshotUtils.h.
-    PinWrightScreenshotUtils::ForceOpaqueAlpha(Bitmap);
-
+    // Alpha stays raw: the Set-of-Mark renderer runs IsBlankReadback on it before stamping
+    // opaque, and a stamp here would hide an all-zero (never drawn) readback from that check.
     OutPixels = MoveTemp(Bitmap);
     OutWidth = SizeVec.X;
     OutHeight = SizeVec.Y;

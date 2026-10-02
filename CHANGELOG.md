@@ -27,6 +27,8 @@
   reachable). Omitted, it is the only PIE instance with a game viewport, and `TARGET_AMBIGUOUS`
   when several have one, instead of the ambient `GEngine->GameViewport`, which flipped between
   instances. `drive.observe` reports `world` / `world_kind` and screenshots that instance.
+- Fixed: `drive.observe` on `editor_chrome` fails with `BLANK_CAPTURE` for a window that read back
+  entirely empty, instead of returning its marks over a black frame as a successful observation.
 - Fixed: class lookups by bare short name (`Object`, `Actor`, `PointLight`) no longer log
   `Failed to find object 'Class <Name>'` warnings before succeeding; the class resolvers no longer
   attempt a load for a bare name or a `/Script/` class.

@@ -97,8 +97,9 @@ public:
         const FString& Handle);
 
     // Capture the selected window into a row-major FColor bitmap via
-    // FSlateApplication::TakeScreenshot rooted at the window widget (alpha forced opaque), for
-    // the later Set-of-Mark rendering of editor windows. Returns false with OutErrorCode set
+    // FSlateApplication::TakeScreenshot rooted at the window widget (alpha left as read back, so
+    // the caller can run IsBlankReadback before ForceOpaqueAlpha), for the later Set-of-Mark
+    // rendering of editor windows. Returns false with OutErrorCode set
     // (the window-resolution codes, or CAPTURE_FAILED) on failure. OutDesktopOrigin is the
     // window's desktop position, i.e. where the bitmap's (0,0) sits in element-geometry space.
     static bool CaptureWindow(
