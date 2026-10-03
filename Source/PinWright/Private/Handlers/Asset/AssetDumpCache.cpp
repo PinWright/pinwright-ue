@@ -784,7 +784,9 @@ int32 GetAspectVersion(const FString& RelativeFile)
         { TEXT("static_mesh.json"),         2 },
         { TEXT("static_mesh.txt"),          2 },
         { TEXT("level_sequence.json"),      3 },
-        { TEXT("anim_sequence.json"),       3 },
+        // 4: curves[] reads the data model instead of the runtime RawCurveData copy, which strips
+        //    redundant keys on load (different keyCount) and can lag the model.
+        { TEXT("anim_sequence.json"),       4 },
         { TEXT("anim_graph.json"),          4 },
         { TEXT("skeletal_mesh.json"),       2 },
         // 7: UK2Node_Message no longer emits as a plain `call` — it is a

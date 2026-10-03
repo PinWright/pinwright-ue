@@ -96,6 +96,34 @@ namespace GeometryOps
     // refused removal is success-with-bChanged-false rather than an error.
     FOpResult DeleteTriangle(UDynamicMesh* Mesh, const FDeleteTriangleParams& Params);
 
+    // --- delete_triangles_by_bone_influence ---------------------------------------------
+    struct FDeleteByBoneInfluenceParams
+    {
+        TArray<FName> BoneNames;
+        bool bIncludeDescendants = true;
+        // A triangle is in the region when the mean, over its three corners, of each corner's
+        // summed default-profile weight on the region bones is >= Threshold. (0, 1].
+        double Threshold = 0.5;
+        // true: delete every triangle OUTSIDE the region. false: delete the region.
+        bool bKeepRegion = true;
+    };
+
+    struct FDeleteByBoneInfluenceReport
+    {
+        TArray<FName> RegionBones;
+        int32 RegionTriangles = 0;
+        int32 TrianglesRemoved = 0;
+    };
+
+    // Selects triangles by the mesh's own bone attribute and default skin-weight profile (what
+    // geometry.create_from_skeletal_mesh carries) and removes one side, with isolated vertices.
+    // Refuses before touching the mesh: INVALID_ARGUMENT (no bones named, threshold out of
+    // range, or the removal would take every triangle), NO_SKIN_WEIGHTS (no bones or no
+    // default profile), BONE_NOT_FOUND (names the unknown bones), BONE_REGION_EMPTY (no
+    // triangle reaches Threshold).
+    FOpResult DeleteTrianglesByBoneInfluence(UDynamicMesh* Mesh, const FDeleteByBoneInfluenceParams& Params,
+        FDeleteByBoneInfluenceReport& OutReport);
+
     // --- set_vertex_color ---------------------------------------------------------------
     struct FSetVertexColorParams
     {

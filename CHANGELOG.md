@@ -135,6 +135,19 @@
   success). On an Actor Blueprint the returned `replicates` / `replicateMovement` are read back
   from the CDO.
 
+- Fixed: `animation.authoring.list_curves`, the `curves` arrays other `animation.authoring.*`
+  responses attach, `animation.describe_sequence` and `asset.dump`'s `anim_sequence.json` read
+  curves from the sequence's data model instead of the runtime `RawCurveData` copy, which lags
+  the model inside a controller bracket and drops redundant keys on load. **`keyCount` can differ
+  from before** for a loaded clip; `anim_sequence.json` aspect version 3 -> 4.
+- Changed: `skeleton.get_bone_transform` no longer declares `lodIndex`, which it never read
+  (`lodIndex: 999` used to succeed). **Sending it is now refused `UNKNOWN_PARAMS`**; the read is
+  the asset-wide reference pose.
+- Added: `geometry.delete_triangles_by_bone_influence` deletes a skinned dynamic mesh's
+  triangles by skin weight on named bones (and their descendants), keeping or deleting that
+  region, so part of a skeletal mesh can be cut out between `create_from_skeletal_mesh` and
+  `convert_to_skeletal_mesh` without a boolean. New error code `BONE_REGION_EMPTY`.
+
 - Fixed: `blueprint.compile_bpir` — **`break<T>` on a struct with a native break function
   (`Rotator`, `Vector`, `HitResult`, `Transform`, ...) now emits that function** (`BreakRotator`,
   `BreakHitResult`, ...) instead of a generic Break Struct node the Blueprint compiler warned on

@@ -327,6 +327,7 @@ Not listed: internal plumbing namespaces, not intended for direct use - `pipelin
 | `geometry.create_torus` | Create a torus dynamic mesh actor |
 | `geometry.cylindrify` | Project vertices of a dynamic mesh toward a cylinder |
 | `geometry.delete_triangle` | Remove a triangle from a dynamic mesh |
+| `geometry.delete_triangles_by_bone_influence` | Delete a skinned dynamic mesh's triangles by skin weight on named bones (keep or delete that region) |
 | `geometry.delete_vertex` | Remove a vertex from a dynamic mesh (also removes connected triangles) |
 | `geometry.difference` | Perform boolean subtraction (alias for boolean_subtract) |
 | `geometry.duplicate_along_spline` | Duplicate an actor along a spline path |

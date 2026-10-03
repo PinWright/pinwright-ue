@@ -144,7 +144,8 @@ namespace FixtureOwnershipContractHelpers
         TEXT("PinWright/Private/Tests/Assets/TestAnimSequenceCreate.cpp|2"),
         // 7: Shape and WritesAnimSequenceAspectFile each bind a transient skeleton, scoped by
         // FScopedAnimAssetRoot as the next statement (CheckAnimationFactoryCallers enforces it).
-        TEXT("PinWright/Private/Tests/Assets/TestAnimSequenceDumpBuilder.cpp|7"),
+        // 9: CurvesReadDataModel adds one sequence and one skeleton, scoped the same way.
+        TEXT("PinWright/Private/Tests/Assets/TestAnimSequenceDumpBuilder.cpp|9"),
         TEXT("PinWright/Private/Tests/Format/TestPwAnimCompiler.cpp|6"),
         // 1: UsageBitmaskGatesTargetStack binds BuildEmptySystemWithEmitter's rooted system, scoped
         // by FAuthorableSystemRoots (system + first emitter) immediately after the null check.

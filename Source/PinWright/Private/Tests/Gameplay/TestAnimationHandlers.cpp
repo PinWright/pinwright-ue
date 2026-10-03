@@ -43,6 +43,8 @@
 #include "Tests/Gameplay/TestAnimationNotifyStatePropertyFixtures.h"
 #include "Tests/Gameplay/TestAnimationFixtures.h"
 #include "Tests/TestUtils.h"
+#include "Tests/Infra/ParamSpecTestHelpers.h"
+#include "Tests/Infra/DispatcherTestHelpers.h"
 #include "Utils/BlueprintGraphSnapshot.h"
 #include "Utils/LogUtils.h"
 #include "UObject/Package.h"
@@ -3274,6 +3276,39 @@ bool FSkeletonListBonesValidNoCrashTest::RunTest(const FString& Parameters)
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
     TestTrue(TEXT("skeleton.list_bones handler found"),
         InvokeHandler(TEXT("skeleton.list_bones"), Payload));
+    return true;
+}
+
+// skeleton.get_bone_transform reads the asset-wide reference skeleton, never a mesh LOD, so it must
+// not accept a LOD selector (B-skeleton-get-bone-transform-ignores-lod): lodIndex=999 used to
+// succeed exactly like lodIndex=0. Undeclared, the dispatcher refuses it UNKNOWN_PARAMS.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSkeletonGetBoneTransformRefusesLodIndexTest,
+    "PinWright.skeleton.get_bone_transform.RefusesLodIndex",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FSkeletonGetBoneTransformRefusesLodIndexTest::RunTest(const FString& Parameters)
+{
+    const FString Method = TEXT("skeleton.get_bone_transform");
+    TestTrue(TEXT("boneName is accepted (verb registered)"), ParamSpecTestHelpers::IsParamAccepted(Method, TEXT("boneName")));
+    TestFalse(TEXT("lodIndex is not accepted"), ParamSpecTestHelpers::IsParamAccepted(Method, TEXT("lodIndex")));
+    TestFalse(TEXT("lod_index is not accepted"), ParamSpecTestHelpers::IsParamAccepted(Method, TEXT("lod_index")));
+
+    // Wire refusal the CHANGELOG/wiki promise: the dispatcher's unknown-param gate runs before the
+    // handler, so no fixture skeleton is needed.
+    AddExpectedMessagePlain(TEXT("[skeleton.get_bone_transform] Unknown parameter(s): lodIndex"),
+        ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
+    DispatcherTestHelpers::FSinkPtr Sink;
+    FRpcDispatcher Dispatcher;
+    DispatcherTestHelpers::MakeDispatcher(Sink, Dispatcher);
+    TSharedPtr<FJsonObject> Params = MakeShared<FJsonObject>();
+    Params->SetStringField(TEXT("skeletonPath"), TEXT("/Game/PinWrightTests/NoSuchSkeleton"));
+    Params->SetStringField(TEXT("boneName"), TEXT("root"));
+    Params->SetNumberField(TEXT("lodIndex"), 0);
+    bool bSuccess = true;
+    FString ErrorCode;
+    DispatcherTestHelpers::Dispatch(Dispatcher, Sink, Method, TEXT("req-get-bone-transform-lodindex"),
+        Params, bSuccess, ErrorCode);
+    TestFalse(TEXT("lodIndex call fails"), bSuccess);
+    TestEqual(TEXT("lodIndex is refused UNKNOWN_PARAMS"), ErrorCode, FString(TEXT("UNKNOWN_PARAMS")));
     return true;
 }
 

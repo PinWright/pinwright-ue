@@ -432,12 +432,11 @@ REGISTER_RPC_HANDLER("skeleton.list_bones", "skeleton",
 // ===========================================================================
 
 REGISTER_RPC_HANDLER("skeleton.get_bone_transform", "skeleton",
-    "Read the reference (bind) pose transform of a single bone by name. Returns location, rotation, and scale in the bone's local space (relative to its parent).",
+    "Read the reference (bind) pose transform of a single bone by name. Returns location, rotation, and scale in the bone's local space (relative to its parent). Asset-wide and LOD-independent: it reads the reference skeleton, not a mesh LOD, so it takes no lodIndex.",
     RPC_PARAMS(
         RPC_PARAM_OPT("skeletalMeshPath", "path", "Path to the skeletal mesh"),
         RPC_PARAM_OPT("skeletonPath", "path", "Path to the skeleton asset"),
-        RPC_PARAM_REQ("boneName", "string", "Name of the bone"),
-        RPC_PARAM_OPT("lodIndex", "integer", "LOD index (default 0)")
+        RPC_PARAM_REQ("boneName", "string", "Name of the bone")
     ))
 {
     FString SkeletalMeshPath = Ctx.GetString(TEXT("skeletalMeshPath"));

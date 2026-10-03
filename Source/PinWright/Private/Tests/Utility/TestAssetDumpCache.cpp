@@ -206,16 +206,17 @@ bool FAssetDumpCacheAnimSequenceAspectVersionTest::RunTest(const FString& Parame
 {
     // Bumped to 3 alongside boneTracks[] being added to anim_sequence.json (per-bone-track readback,
     // ticket E-rpc-animation-bone-track-readback) — the serialized shape changed, so the aspect
-    // version had to bump to invalidate stale caches.
+    // version had to bump to invalidate stale caches. Bumped to 4 when curves[] moved from the runtime
+    // RawCurveData copy to the data model (B-anim-curves-read-runtime-copy).
     TestEqual(TEXT("anim_sequence.json explicit aspect version"),
         AssetDumpCache::GetAspectVersion(DumpFileNames::AnimSequence),
-        static_cast<int32>(3));
+        static_cast<int32>(4));
 
     const TArray<FString> WrittenFiles{DumpFileNames::AnimSequence};
     const TMap<FString, int32> AspectVersions = AssetDumpCache::MakeCurrentAspectVersions(WrittenFiles);
     TestEqual(TEXT("anim_sequence.json current aspect version"),
         AspectVersions.FindRef(DumpFileNames::AnimSequence),
-        static_cast<int32>(3));
+        static_cast<int32>(4));
 
     return true;
 }

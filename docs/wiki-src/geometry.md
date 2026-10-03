@@ -208,6 +208,14 @@ false`. The rule is ordinal, not a distance threshold, so it needs no tuning —
 mesh against the reference pose its own bone attributes carry, so a mesh deliberately moved away
 from its skeleton will flag. It reports; it never blocks a write.
 
+**Cutting out part of a skinned mesh: select by bone, not by coordinates.**
+`geometry.delete_triangles_by_bone_influence` deletes triangles by their skin weight on named
+bones, so "keep only what the clavicles and below skin" (an arms-only first-person viewmodel from a
+full-body character) is `{boneNames: ["clavicle_l", "clavicle_r"], mode: "keep"}` between load and
+write: no cutting box, no guessed axis, and no new cut vertices whose weights a boolean has to
+re-derive. Where the arms share a material section with the torso, this is the only route that
+separates them without guessed cut volumes.
+
 **These write base skinning, `skeleton.*` does not.** Every `skeleton.*` weight verb
 (`normalize_weights`, `prune_weights`, `set_vertex_weights`, `copy_weights`) writes a
 *named skin weight profile* — the engine's alternate-influence channel — and leaves the
@@ -805,6 +813,16 @@ Gotchas: returns `{actorName, actorPath, actorObjectName, class, assetPath, reus
 - `RenderData` reads the built render mesh, which is **split at UV seams and hard-normal creases** — expect a higher vertex count and unwelded-looking `check_health` output. `SourceModel` reads the editable MeshDescription.
 - `lodIndex` is **silently clamped** by the engine to the asset's source-model count, so the echoed `lodIndex` is what you asked for, not necessarily what was read.
 - A mesh over 500 000 triangles is `POLYGON_LIMIT_EXCEEDED` (the dynamic-mesh budget) — load a coarser `lodIndex`. Missing asset is `MESH_NOT_FOUND`; an unknown `lodType` is `INVALID_PARAMS` listing the valid tokens.
+
+### geometry.delete_triangles_by_bone_influence
+
+Delete a skinned `DynamicMeshActor`'s triangles by skin weight. The region is `boneNames` plus, by default, every descendant (`includeDescendants`). A triangle is in the region when the mean over its three corners of each corner's summed base-profile weight on the region bones is `>= threshold` (default `0.5`, range `(0, 1]`). `mode` is required: `keep` deletes everything outside the region, `delete` deletes the region. Isolated vertices go with their triangles; surviving vertices keep their weights unchanged.
+
+Returns `{actorName, actorPath, actorObjectName, mode, threshold, regionBones, regionTriangles, trianglesRemoved, trianglesBefore, triangleCount, verticesBefore, vertexCount, changed}`. `regionBones` is the resolved set, descendants included. `keep` over a region that already covers the mesh removes nothing and answers `changed: false`.
+
+Refusals change nothing: `BONE_NOT_FOUND` names bones the mesh does not carry (`skeleton.list_bones` on the source asset lists them); `BONE_REGION_EMPTY` when no triangle reaches `threshold`; `NO_SKIN_WEIGHTS` for a mesh with no bones or no base profile (load it with `geometry.create_from_skeletal_mesh` or run `geometry.bind_skin_weights`); `INVALID_ARGUMENT` for an unknown `mode`, an empty `boneNames`, a `threshold` outside `(0, 1]`, or a `delete` that would remove every triangle.
+
+The cut edge is the mesh's own triangle boundary and stays open, with no cap. Write the result with `geometry.convert_to_skeletal_mesh` as usual.
 
 ### geometry.bind_skin_weights
 

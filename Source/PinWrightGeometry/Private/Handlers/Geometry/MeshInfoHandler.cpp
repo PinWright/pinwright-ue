@@ -389,6 +389,87 @@ REGISTER_RPC_HANDLER("geometry.delete_triangle", "geometry", "Remove a triangle 
 }
 
 // ============================================================================
+// delete_triangles_by_bone_influence
+// ============================================================================
+REGISTER_RPC_HANDLER("geometry.delete_triangles_by_bone_influence", "geometry",
+    "Delete a skinned dynamic mesh's triangles by skin weight: keep (or delete) the region the named bones and their descendants drive. The selection step of the create_from_skeletal_mesh -> edit -> convert_to_skeletal_mesh round trip, e.g. keep only what clavicle_l/clavicle_r and below skin for an arms-only viewmodel.",
+    RPC_PARAMS(
+        RPC_PARAM_REQ("actorName", "string", "Name of the DynamicMeshActor (from geometry.create_from_skeletal_mesh)"),
+        RPC_PARAM_REQ("boneNames", "array", "Bone names (strings) that define the region; each must be a bone on the mesh"),
+        RPC_PARAM_REQ("mode", "string", "keep: delete every triangle OUTSIDE the region. delete: delete the region"),
+        RPC_PARAM_DEF("includeDescendants", "boolean", "Extend the region to every descendant of the named bones", "true"),
+        RPC_PARAM_DEF("threshold", "number", "A triangle is in the region when the mean over its corners of each corner's summed default-profile weight on the region bones is >= this. (0, 1]", "0.5")
+    ))
+{
+    const FString ActorName = Ctx.GetString(TEXT("actorName"));
+    const FString Mode = Ctx.GetString(TEXT("mode"));
+    if (Mode != TEXT("keep") && Mode != TEXT("delete"))
+    {
+        Ctx.SendError(ErrorCodes::ERR_INVALID_ARGUMENT,
+            FString::Printf(TEXT("mode must be 'keep' or 'delete', got '%s'"), *Mode));
+        return true;
+    }
+
+    GeometryOps::FDeleteByBoneInfluenceParams Params;
+    Params.bKeepRegion = Mode == TEXT("keep");
+    Params.bIncludeDescendants = Ctx.GetBool(TEXT("includeDescendants"), true);
+    Params.Threshold = Ctx.GetNumber(TEXT("threshold"), 0.5);
+    if (const TArray<TSharedPtr<FJsonValue>>* Bones = Ctx.GetArray(TEXT("boneNames")))
+    {
+        for (const TSharedPtr<FJsonValue>& Value : *Bones)
+        {
+            FString BoneName;
+            if (!Value.IsValid() || Value->Type != EJson::String || !Value->TryGetString(BoneName) || BoneName.IsEmpty())
+            {
+                Ctx.SendError(ErrorCodes::ERR_INVALID_ARGUMENT, TEXT("boneNames must be an array of non-empty strings"));
+                return true;
+            }
+            Params.BoneNames.Add(FName(*BoneName));
+        }
+    }
+
+    FGeometryTarget Target;
+    if (!GeometryTarget::ResolveOrSendError(Ctx, ActorName, Target))
+        return true;
+
+    GeometryOps::FDeleteByBoneInfluenceReport Report;
+    const GeometryOps::FOpResult Op = GeometryOps::DeleteTrianglesByBoneInfluence(Target.Mesh, Params, Report);
+    if (!Op.bSuccess)
+    {
+        Ctx.SendError(Op.ErrorCode, Op.ErrorMessage);
+        return true;
+    }
+
+    if (Op.bChanged)
+    {
+        GeometryUtils::MarkGeometryActorModified(Target.Component);
+    }
+
+    TArray<TSharedPtr<FJsonValue>> RegionBones;
+    for (const FName& Bone : Report.RegionBones)
+    {
+        RegionBones.Add(MakeShared<FJsonValueString>(Bone.ToString()));
+    }
+
+    TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+    Result->SetStringField(TEXT("actorName"), ActorName);
+    GeometryUtils::AddResolvedActorIdentity(Result, Target.Actor);
+    Result->SetStringField(TEXT("mode"), Mode);
+    Result->SetNumberField(TEXT("threshold"), Params.Threshold);
+    Result->SetArrayField(TEXT("regionBones"), RegionBones);
+    Result->SetNumberField(TEXT("regionTriangles"), Report.RegionTriangles);
+    Result->SetNumberField(TEXT("trianglesRemoved"), Report.TrianglesRemoved);
+    Result->SetNumberField(TEXT("trianglesBefore"), Op.TrianglesBefore);
+    Result->SetNumberField(TEXT("triangleCount"), Op.TrianglesAfter);
+    Result->SetNumberField(TEXT("verticesBefore"), Op.VerticesBefore);
+    Result->SetNumberField(TEXT("vertexCount"), Op.VerticesAfter);
+    Result->SetBoolField(TEXT("changed"), Op.bChanged);
+    GeometryOps::AddOpWarnings(Result, Op);
+    Ctx.SendSuccess(TEXT("Triangles deleted by bone influence"), Result);
+    return true;
+}
+
+// ============================================================================
 // set_vertex_color
 // ============================================================================
 REGISTER_RPC_HANDLER("geometry.set_vertex_color", "geometry", "Set vertex colors on a dynamic mesh",

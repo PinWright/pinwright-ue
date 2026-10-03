@@ -35,6 +35,12 @@
 
 #include "GeometryScript/MeshTransformFunctions.h"
 
+// delete_triangles_by_bone_influence reads the bone attribute and the default skin-weight profile.
+#include "BoneWeights.h"
+#include "DynamicMesh/DynamicBoneAttribute.h"
+#include "DynamicMesh/DynamicVertexSkinWeightsAttribute.h"
+#include "GeometryScript/MeshBoneWeightFunctions.h"
+
 namespace GeometryOps
 {
 
@@ -141,6 +147,134 @@ FOpResult DeleteTriangle(UDynamicMesh* Mesh, const FDeleteTriangleParams& Params
     // touches anything, so a non-Ok result cannot have moved a count: the delta can only ever
     // agree with the mesh's verdict here, and bForceChanged alone is exact.
     FinishOp(Mesh, Result, /*bForceChanged=*/RemoveResult == UE::Geometry::EMeshResult::Ok);
+    return Result;
+}
+
+FOpResult DeleteTrianglesByBoneInfluence(UDynamicMesh* Mesh, const FDeleteByBoneInfluenceParams& Params,
+    FDeleteByBoneInfluenceReport& OutReport)
+{
+    FOpResult Result;
+    if (!BeginOp(Mesh, Result)) return Result;
+
+    if (Params.BoneNames.Num() == 0)
+    {
+        return FOpResult::FailIn(Result, ErrorCodes::ERR_INVALID_ARGUMENT, TEXT("boneNames must name at least one bone"));
+    }
+    if (!(Params.Threshold > 0.0 && Params.Threshold <= 1.0))
+    {
+        return FOpResult::FailIn(Result, ErrorCodes::ERR_INVALID_ARGUMENT,
+            FString::Printf(TEXT("threshold must be in (0, 1], got %g"), Params.Threshold));
+    }
+
+    UE::Geometry::FDynamicMesh3& EditMesh = Mesh->GetMeshRef();
+    const UE::Geometry::FDynamicMeshAttributeSet* Attributes = EditMesh.HasAttributes() ? EditMesh.Attributes() : nullptr;
+    const UE::Geometry::FDynamicMeshBoneNameAttribute* Names = Attributes ? Attributes->GetBoneNames() : nullptr;
+    const UE::Geometry::FDynamicMeshBoneParentIndexAttribute* Parents = Attributes ? Attributes->GetBoneParentIndices() : nullptr;
+    const UE::Geometry::FDynamicMeshVertexSkinWeightsAttribute* Weights =
+        Attributes ? Attributes->GetSkinWeightsAttribute(FGeometryScriptBoneWeightProfile().GetProfileName()) : nullptr;
+    if (!Names || !Parents || !Weights || Names->GetAttribValues().Num() == 0)
+    {
+        return FOpResult::FailIn(Result, ErrorCodes::ERR_NO_SKIN_WEIGHTS,
+            TEXT("Mesh carries no bones or no default skin-weight profile. Load it with geometry.create_from_skeletal_mesh, or bind weights with geometry.bind_skin_weights"));
+    }
+
+    const int32 NumBones = Names->GetAttribValues().Num();
+    TBitArray<> InRegion(false, NumBones);
+    TArray<FString> Unknown;
+    for (const FName& BoneName : Params.BoneNames)
+    {
+        const int32 Index = Names->GetAttribValues().IndexOfByKey(BoneName);
+        if (Index == INDEX_NONE)
+        {
+            Unknown.Add(BoneName.ToString());
+            continue;
+        }
+        InRegion[Index] = true;
+    }
+    if (Unknown.Num() > 0)
+    {
+        return FOpResult::FailIn(Result, ErrorCodes::ERR_BONE_NOT_FOUND,
+            FString::Printf(TEXT("Bone(s) not on the mesh: %s. skeleton.list_bones on the source asset lists the names"),
+                *FString::Join(Unknown, TEXT(", "))));
+    }
+    if (Params.bIncludeDescendants)
+    {
+        // Walk each bone's parent chain against the NAMED set (not the growing one), so bone order
+        // does not matter. Bounded by NumBones in case the attribute carries a cycle.
+        const TBitArray<> Named = InRegion;
+        for (int32 Bone = 0; Bone < NumBones; ++Bone)
+        {
+            int32 Ancestor = Parents->GetValue(Bone);
+            for (int32 Step = 0; Step < NumBones && Ancestor >= 0 && Ancestor < NumBones; ++Step)
+            {
+                if (Named[Ancestor])
+                {
+                    InRegion[Bone] = true;
+                    break;
+                }
+                Ancestor = Parents->GetValue(Ancestor);
+            }
+        }
+    }
+    for (int32 Bone = 0; Bone < NumBones; ++Bone)
+    {
+        if (InRegion[Bone])
+        {
+            OutReport.RegionBones.Add(Names->GetValue(Bone));
+        }
+    }
+
+    TArray<double> VertexRegionWeight;
+    VertexRegionWeight.SetNumZeroed(EditMesh.MaxVertexID());
+    for (const int32 VertexID : EditMesh.VertexIndicesItr())
+    {
+        UE::AnimationCore::FBoneWeights VertexWeights;
+        Weights->GetValue(VertexID, VertexWeights);
+        for (const UE::AnimationCore::FBoneWeight& Influence : VertexWeights)
+        {
+            const int32 Bone = Influence.GetBoneIndex();
+            if (Bone < NumBones && InRegion[Bone])
+            {
+                VertexRegionWeight[VertexID] += Influence.GetWeight();
+            }
+        }
+    }
+
+    TArray<int32> ToRemove;
+    for (const int32 TriangleID : EditMesh.TriangleIndicesItr())
+    {
+        const UE::Geometry::FIndex3i Tri = EditMesh.GetTriangle(TriangleID);
+        const double Mean = (VertexRegionWeight[Tri.A] + VertexRegionWeight[Tri.B] + VertexRegionWeight[Tri.C]) / 3.0;
+        const bool bInRegion = Mean >= Params.Threshold;
+        OutReport.RegionTriangles += bInRegion ? 1 : 0;
+        if (bInRegion != Params.bKeepRegion)
+        {
+            ToRemove.Add(TriangleID);
+        }
+    }
+
+    if (OutReport.RegionTriangles == 0)
+    {
+        return FOpResult::FailIn(Result, ErrorCodes::ERR_BONE_REGION_EMPTY,
+            FString::Printf(TEXT("No triangle reaches threshold %g on the %d region bone(s); nothing was removed. Lower threshold or name other bones"),
+                Params.Threshold, OutReport.RegionBones.Num()));
+    }
+    if (ToRemove.Num() == EditMesh.TriangleCount())
+    {
+        return FOpResult::FailIn(Result, ErrorCodes::ERR_INVALID_ARGUMENT,
+            TEXT("The region covers every triangle, so mode 'delete' would empty the mesh; nothing was removed"));
+    }
+
+    for (const int32 TriangleID : ToRemove)
+    {
+        if (EditMesh.RemoveTriangle(TriangleID, /*bRemoveIsolatedVertices=*/true, /*bPreserveManifold=*/false)
+            == UE::Geometry::EMeshResult::Ok)
+        {
+            ++OutReport.TrianglesRemoved;
+        }
+    }
+
+    FinishOp(Mesh, Result, /*bForceChanged=*/OutReport.TrianglesRemoved > 0);
     return Result;
 }
 

@@ -262,6 +262,9 @@ namespace ErrorCodes
     // this means "that bone cannot influence that vertex on this mesh as built". Emitted by
     // skeleton.set_vertex_weights. See Handlers/Animation/SkinWeightTransferUtils.h.
     inline constexpr TCHAR ERR_BONE_NOT_IN_SECTION[]                        = TEXT("BONE_NOT_IN_SECTION");
+    // geometry.delete_triangles_by_bone_influence: the named bones exist, but no triangle's skin
+    // weight on them reaches the threshold, so the selection is empty and nothing was removed.
+    inline constexpr TCHAR ERR_BONE_REGION_EMPTY[]                          = TEXT("BONE_REGION_EMPTY");
     inline constexpr TCHAR ERR_BOOKMARK_EMPTY[]                             = TEXT("BOOKMARK_EMPTY");
     inline constexpr TCHAR ERR_BOOKMARK_SET_FAILED[]                        = TEXT("BOOKMARK_SET_FAILED");
     inline constexpr TCHAR ERR_BOOLEAN_FAILED[]                             = TEXT("BOOLEAN_FAILED");

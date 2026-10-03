@@ -24,6 +24,9 @@
 
 #include "Animation/AnimSequence.h"
 #include "Animation/AnimTypes.h"
+#include "Animation/AnimCurveTypes.h"
+#include "Animation/AnimData/CurveIdentifier.h"
+#include "Curves/RichCurve.h"
 #include "Animation/AnimData/IAnimationDataController.h"
 #include "Animation/AnimData/IAnimationDataModel.h"
 #include "Animation/Skeleton.h"
@@ -503,4 +506,75 @@ bool FAnimSequenceDumpBuilderBoneTracksReadbackTest::RunTest(const FString& Para
 
     return true;
 #endif
+}
+
+// Regression for B-anim-curves-read-runtime-copy: curves[] (list_curves, describe_sequence,
+// anim_sequence.json) must come from the data model, not UAnimSequenceBase::GetCurveData(). The
+// engine copies model curves into that runtime copy only outside a controller bracket, so inside
+// an open bracket the copy is empty while the model holds the authored curves - a deterministic
+// divergence. The old read returned curves[] empty here.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAnimSequenceDumpBuilderCurvesReadDataModelTest,
+    "PinWright.Assets.AnimSequence.DumpBuilder.CurvesReadDataModel",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAnimSequenceDumpBuilderCurvesReadDataModelTest::RunTest(const FString& Parameters)
+{
+    FString ObjectPath;
+    UAnimSequence* Sequence = NewTransientAnimSequence(ObjectPath);
+    FScopedAnimAssetRoot SequenceRoot(Sequence);
+    USkeleton* Skeleton = NewTransientSkeletonWithBones({ FName(TEXT("root")) });
+    FScopedAnimAssetRoot SkeletonRoot(Skeleton);
+    if (!TestNotNull(TEXT("Transient UAnimSequence created"), Sequence)
+        || !TestNotNull(TEXT("Transient skeleton created"), Skeleton))
+    {
+        return false;
+    }
+    Sequence->SetSkeleton(Skeleton);
+    Sequence->GetController().InitializeModel();
+
+    const FAnimationCurveIdentifier FloatId(FName(TEXT("PwModelFloat")), ERawCurveTrackTypes::RCT_Float);
+    const FAnimationCurveIdentifier TransformId(FName(TEXT("PwModelTransform")), ERawCurveTrackTypes::RCT_Transform);
+
+    IAnimationDataController& Controller = Sequence->GetController();
+    Controller.OpenBracket(FText::FromString(TEXT("PinWright CurvesReadDataModel Test")), /*bShouldTransact=*/false);
+    Controller.AddCurve(FloatId, AACF_DefaultCurve, /*bShouldTransact=*/false);
+    Controller.SetCurveKeys(FloatId, { FRichCurveKey(0.0f, 1.0f), FRichCurveKey(0.5f, 2.0f) }, /*bShouldTransact=*/false);
+    Controller.AddCurve(TransformId, AACF_DefaultCurve, /*bShouldTransact=*/false);
+
+    // Fixture preconditions: the model holds both curves, the runtime copy holds neither.
+    TestEqual(TEXT("data model holds the float curve"), Sequence->GetDataModel()->GetFloatCurves().Num(), 1);
+    TestEqual(TEXT("data model holds the transform curve"), Sequence->GetDataModel()->GetTransformCurves().Num(), 1);
+    const bool bDiverged = TestEqual(TEXT("runtime float copy not yet synced inside the bracket"), Sequence->GetCurveData().FloatCurves.Num(), 0)
+        && TestEqual(TEXT("runtime transform copy not yet synced inside the bracket"), Sequence->GetCurveData().TransformCurves.Num(), 0);
+
+    const TArray<TSharedPtr<FJsonValue>> Curves = AnimSequenceDumpBuilder::BuildCurvesArrayJson(Sequence);
+    Controller.CloseBracket(/*bShouldTransact=*/false);
+    if (!bDiverged)
+    {
+        return false;
+    }
+
+    TMap<FString, TPair<FString, int32>> ByName;
+    for (const TSharedPtr<FJsonValue>& Value : Curves)
+    {
+        const TSharedPtr<FJsonObject> Obj = Value.IsValid() ? Value->AsObject() : nullptr;
+        if (Obj.IsValid())
+        {
+            ByName.Add(Obj->GetStringField(TEXT("name")),
+                TPair<FString, int32>(Obj->GetStringField(TEXT("type")), static_cast<int32>(Obj->GetNumberField(TEXT("keyCount")))));
+        }
+    }
+    TestEqual(TEXT("curves[] lists both model curves"), Curves.Num(), 2);
+    const TPair<FString, int32>* Float = ByName.Find(TEXT("PwModelFloat"));
+    const TPair<FString, int32>* Transform = ByName.Find(TEXT("PwModelTransform"));
+    if (TestNotNull(TEXT("float curve listed from the model"), Float))
+    {
+        TestEqual(TEXT("float curve type"), Float->Key, FString(TEXT("Float")));
+        TestEqual(TEXT("float curve keyCount is the model's"), Float->Value, 2);
+    }
+    if (TestNotNull(TEXT("transform curve listed from the model"), Transform))
+    {
+        TestEqual(TEXT("transform curve type"), Transform->Key, FString(TEXT("Transform")));
+    }
+    return true;
 }

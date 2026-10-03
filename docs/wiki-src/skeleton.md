@@ -118,6 +118,10 @@ Errors:
 - `SKELETON_NOT_FOUND`: neither path loaded or mesh has no bound Skeleton.
 - `INVALID_ASSET_TYPE`: existing path has another class; message names it and the `USkeleton`/`USkeletalMesh` path to use.
 
+### skeleton.get_bone_transform
+
+Reads one bone's reference (bind) pose in parent-local space from `skeletonPath`, or from a `skeletalMeshPath`'s own reference skeleton (`skeletalMeshPath` wins when both are given). The read is asset-wide and LOD-independent: it does not take a `lodIndex` (sending one is refused `UNKNOWN_PARAMS`) and does not say whether a mesh LOD keeps the bone. For the pose a placed component currently shows, use `animation.get_live_pose`.
+
 ### skeleton.list_physics_bodies
 
 Enumerate `UPhysicsAsset` bodies (`USkeletalBodySetup`) for ragdoll audit: each row has `boneName`, `considerForBounds`, `collisionType`, and `sphereCount` / `boxCount` / `capsuleCount` / `convexCount`. This is the **full-enumeration** verb; `skeleton.get_physics_asset_info` otherwise gives counts and opt-in `bodies[]`/`constraints[]`.

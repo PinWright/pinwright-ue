@@ -16,6 +16,7 @@
 // Read-only asset audit on the shared contract (Audit/AuditFramework.h, rpc-design.md section 18).
 
 #include "Audit/AuditFramework.h"
+#include "Handlers/Asset/AnimSequenceDumpBuilder.h"
 #include "Handlers/ErrorCodes.h"
 #include "Handlers/HandlerContext.h"
 #include "Handlers/HandlerRegistration.h"
@@ -25,7 +26,6 @@
 
 #include "Animation/AnimCurveMetadata.h"
 #include "Animation/AnimCurveTypes.h"
-#include "Animation/AnimData/IAnimationDataModel.h"
 #include "Animation/AnimMontage.h"
 #include "Animation/AnimSequenceBase.h"
 #include "Animation/MorphTarget.h"
@@ -43,11 +43,9 @@ namespace
     {
         auto AddSequenceCurves = [&OutCurves](const UAnimSequenceBase* Sequence)
         {
-            // The data model is the editor authority. GetCurveData() is the runtime RawCurveData
-            // copy, synced from the model only on some notifications, and was measured EMPTY for a
+            // Data model, not the runtime GetCurveData() copy: that copy was measured EMPTY for a
             // sequence whose model held four float curves - every curve would read as absent.
-            const IAnimationDataModel* Model = Sequence->IsDataModelValid() ? Sequence->GetDataModel() : nullptr;
-            for (const FFloatCurve& Curve : Model ? Model->GetFloatCurves() : Sequence->GetCurveData().FloatCurves)
+            for (const FFloatCurve& Curve : AnimSequenceDumpBuilder::GetAuthoredFloatCurves(Sequence))
             {
                 OutCurves.Add(Curve.GetName());
             }

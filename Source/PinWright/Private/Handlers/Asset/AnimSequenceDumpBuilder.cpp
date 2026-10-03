@@ -147,6 +147,16 @@ TArray<TSharedPtr<FJsonValue>> AnimSequenceDumpBuilder::BuildNotifiesArrayJson(c
     return Arr;
 }
 
+const TArray<FFloatCurve>& AnimSequenceDumpBuilder::GetAuthoredFloatCurves(const UAnimSequenceBase* Sequence)
+{
+    return Sequence->IsDataModelValid() ? Sequence->GetDataModel()->GetFloatCurves() : Sequence->GetCurveData().FloatCurves;
+}
+
+const TArray<FTransformCurve>& AnimSequenceDumpBuilder::GetAuthoredTransformCurves(const UAnimSequenceBase* Sequence)
+{
+    return Sequence->IsDataModelValid() ? Sequence->GetDataModel()->GetTransformCurves() : Sequence->GetCurveData().TransformCurves;
+}
+
 TArray<TSharedPtr<FJsonValue>> AnimSequenceDumpBuilder::BuildCurvesArrayJson(const UAnimSequence* Sequence)
 {
     struct FCurveEntry
@@ -162,7 +172,7 @@ TArray<TSharedPtr<FJsonValue>> AnimSequenceDumpBuilder::BuildCurvesArrayJson(con
         return {};
     }
 
-    for (const FFloatCurve& Curve : Sequence->GetCurveData().FloatCurves)
+    for (const FFloatCurve& Curve : GetAuthoredFloatCurves(Sequence))
     {
         FCurveEntry Entry;
         Entry.Name = Curve.GetName().ToString();
@@ -170,7 +180,7 @@ TArray<TSharedPtr<FJsonValue>> AnimSequenceDumpBuilder::BuildCurvesArrayJson(con
         Entry.KeyCount = Curve.FloatCurve.GetNumKeys();
         Entries.Add(MoveTemp(Entry));
     }
-    for (const FTransformCurve& Curve : Sequence->GetCurveData().TransformCurves)
+    for (const FTransformCurve& Curve : GetAuthoredTransformCurves(Sequence))
     {
         FCurveEntry Entry;
         Entry.Name = Curve.GetName().ToString();
