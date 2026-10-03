@@ -55,6 +55,8 @@ User-defined type creation is also editor-only: `blueprint.create_enum` and `blu
 
 Compiles a text-based Blueprint IR into wired graph nodes and runs `blueprint.compile` implicitly on success. Single call replaces a long sequence of `blueprint.graph.create_node` + `blueprint.graph.connect_pins` RPCs and is the preferred way to author non-trivial graph logic.
 
+**It does not save.** `compiled:true` / `success:true` describe the in-memory Blueprint only; the `.uasset` is untouched until you call `asset.save` (or `editor.save_all`). Every kept placement carries the persistence block `blueprint.set_default` uses: `saveRequested:true`, `markedForSave:true`, `saved` (measured: `false` while the package holds unsaved edits) and `pendingFlush:true` until something writes it. An editor crash before that save loses every graph authored since the last one, so save after each `compile_bpir` you want to keep rather than batching several.
+
 With the default `allowPreexistingErrors:false` behavior, if BPIR placement succeeds but the following whole-Blueprint compile fails, `compile_bpir` and both `insert_bpir_*` verbs return `BLUEPRINT_COMPILE_FAILED` with the standard `compiled:false`, `status`, error/warning arrays, and `reinstanced` block when live instances were rebuilt, and roll back the transaction. For `compile_bpir`, `allowPreexistingErrors:true` is the exception: when the placement introduces no new compile errors and all remaining errors are exclusively pre-existing, the valid placement is retained and the response reports `success:true`, `compiled:false`, and `preexistingErrorsOnly:true` with full diagnostics; if it introduces a new error, the default rollback/error path applies.
 
 Reach for it whenever you want to add a fresh function body, an event handler, a small graph excerpt, or seed a new BP's logic from scratch. The IR syntax is documented in `call("bpir.instructions")` (with entry-point shapes in `call("bpir.entry-points")` and type rules in `call("bpir.types")`); worked examples live in `call("bpir.examples")`. To learn the IR for an unfamiliar pattern quickly, decompile an existing graph with `blueprint.decompile` and adapt the output.
@@ -167,6 +169,17 @@ Decompiler output includes current `@(x, y)` suffixes for node-backed BPIR lines
 
 For direct node topology questions after decompile — exact pins, node GUIDs, orphaned nodes, graph connections, or execution flow — switch to [`blueprint.graph`](blueprint.graph.md). For Widget Blueprints, pair decompiled `widget_event` handlers with [`widget.describe`](widget.describe.md) or [`widget.export_xml`](widget.export_xml.md) so widget variable names come from the actual UMG tree.
 
+#### Round-trip is semantic (topology + coordinates), not literal text
+
+The decompiler re-emits BPIR from the compiled graph; it does not replay what was authored. Node topology (which pin feeds which), node classes and authored `@(x, y)` coordinates survive a compile → decompile round trip. The surface text is canonicalized:
+
+- **Labels are regenerated.** Jump and reconvergence labels come from fixed bases (`@then`, `@else`, `@merge`, `@body`, `@done`, `@ok`, `@fail`, ...; a reused base gets a `_2`, `_3` suffix), never the authored label string.
+- **SSA temps are renumbered.** Value registers are always emitted as `%n0`, `%n1`, ... in walk order, whatever names you wrote.
+- **Branch arms are canonically ordered.** Exec targets print alphabetically by pin name, so a branch reads `[false -> ..., true -> ...]` even when authored true-first. The mapping is unchanged; only the order is.
+- **Omitted defaults may be expanded.** An argument you left out can come back spelled with its pin default.
+
+So do not diff decompiled text against your source line by line. Compare topology and coordinates, and confirm exec wiring with `blueprint.graph.get_graph_connections {edgeType: "exec"}` when it matters.
+
 #### K2Node_Composite is inlined into the parent graph
 
 Collapsed graphs (`K2Node_Composite`) are pure editor-time grouping — `FKismetCompilerContext::ExpandTunnelsAndMacros` dissolves them via `Schema->CollapseGatewayNode` before any node-handler scheduling, so they have no runtime artifact. The decompiler reflects that: when a graph contains composites, the decompile pass clones the graph under the Blueprint's outer, calls `BoundGraph->MoveNodesToAnotherGraph` per composite (the same primitive `BlueprintEditor::ExpandNode` uses), and walks the inlined result. Callers reading `bpir.txt` will never see a `composite` opcode or a `call K2Node_Composite(...)` placeholder.
@@ -227,13 +240,13 @@ The `defaults` object maps each member variable name to its class-default-object
 
 ### blueprint.inspect
 
-Single-call structural dump of a Blueprint: parent class, variables, functions, events, components, graphs (as BPIR pseudocode + execution-flow summary), and references. Replaces what would otherwise be a fan-out of `blueprint.get` (variables/functions/events) + `blueprint.scs.get` (component templates) + per-graph `blueprint.graph.get_*` calls — the component surface in this fan-out comes from `blueprint.scs.get`, since `blueprint.get` omits components (see the `blueprint.get` section).
+Single-call structural dump of a Blueprint: parent class, variables, functions, events, components, graphs (name + node count), and references. Replaces what would otherwise be a fan-out of `blueprint.get` (variables/functions/events) + `blueprint.scs.get` (component templates) + per-graph `blueprint.graph.get_*` calls — the component surface in this fan-out comes from `blueprint.scs.get`, since `blueprint.get` omits components (see the `blueprint.get` section).
 
 Use it as the default first call when you need to understand an unfamiliar Blueprint. It is the C++-side equivalent of the `asset.dump` cache for BPs and produces the same shape — when iterating across many BPs, prefer one `asset.dump_folder` sweep and read the cached `bpir.txt` files.
 
 For component-template detail, use [`blueprint.scs.get`](blueprint.scs.md); for bulk audits, read `scs.json` from the dump cache. `blueprint.get` is the lighter summary with no graphs, references, or components.
 
-Lightweight vs deep mode: pass `includeDecompile: false` for metadata only (no graphs, much faster) when you only need the variable / function / component shape. Use `includeReferences: true` to fold in the same data `blueprint.references` returns, and `includeScriptRefs: true` to surface script-level dependents. Use `includeProperties: true` when you need CDO property values with the same sparse inheritance-tagged shape as `asset.dump` `properties.json`.
+There is no decompile switch: `graphs` lists each graph's `name` and `nodeCount` only, and the BPIR text comes from `blueprint.decompile` / `blueprint.decompile_function`. Use `includeReferences: false` to skip the dependency walk (it defaults to `true` and folds in the same data `blueprint.references` returns), and `includeScriptRefs: true` to surface script-level dependents. Use `includeProperties: true` when you need CDO property values with the same sparse inheritance-tagged shape as `asset.dump` `properties.json`.
 
 `includeProperties` adds a `properties` object to the response. Each key is a reflected property whose Blueprint CDO value differs from the immediate generated superclass CDO, so unchanged inherited defaults are omitted. Each emitted property entry mirrors `asset.dump` `properties.json`: `type`, `value`, `flags` when available, `inherited_from` for properties declared on an ancestor class, and `is_overridden_locally: true` when the child CDO value differs from that immediate parent baseline. This is the live readback path to pair with `blueprint.set_default` when you need to verify local CDO overrides without running a full dump.
 

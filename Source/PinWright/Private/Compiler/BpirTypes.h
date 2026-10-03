@@ -236,6 +236,7 @@ struct FBpirEntryBlock
 {
     EBpirEntryKind Kind = EBpirEntryKind::Event;
     FString Name;                // Event/function name
+    int32 SourceLine = -1;       // 1-based line of the `entry ...` signature; -1 when not parsed from text
     // For functions/overrides: return type. Default-constructed (IsEmpty()) means
     // "no -> clause present at all" — distinct from an explicit `-> void`.
     FBpirTypeSpec ReturnType;

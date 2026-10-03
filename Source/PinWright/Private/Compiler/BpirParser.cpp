@@ -640,6 +640,7 @@ bool FBpirParser::Parse(const FString& Code, TArray<FBpirEntryBlock>& OutBlocks,
 
             OutBlocks.AddDefaulted();
             CurrentBlock = &OutBlocks.Last();
+            CurrentBlock->SourceLine = LineNum;
             bInsideBlock = true;
 
             if (bPendingMetadataActive)

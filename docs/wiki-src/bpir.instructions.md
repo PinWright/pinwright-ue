@@ -48,7 +48,10 @@ message BPI_Damageable_C::ApplyDamage(Target: %owner, Amount: 10.0)
 The qualifier is the only thing that names the interface (the self pin is a plain object), so the
 decompiler always emits it. Use the **generated-class** name for a Blueprint interface —
 `BPI_Damageable_C`, `_C` included, because the stripped asset name does not resolve — and the plain
-class name for a native one (`UserListEntry`). Unqualified `message Foo(...)` goes through the
+class name for a native one (`UserListEntry`). The decompiler emits that same generated-class
+name (`message BPI_Damageable_C::ApplyDamage(...)`), never the editor's skeleton twin
+`SKEL_BPI_Damageable_C` that the node resolves through in-session, so decompiled text diffs clean
+against what you wrote. Unqualified `message Foo(...)` goes through the
 normal resolution cascade and is refused with a compile error when the resolved function's owner is
 not an interface, because such a node can never dispatch.
 

@@ -803,12 +803,14 @@ int32 GetAspectVersion(const FString& RelativeFile)
         //    graph body starts on its own line instead of sharing the closing `}`. Entries
         //    tied on graph and NodePosY keep graph node order instead of an unstable sort's. A generic
         //    Break Struct node on a HasNativeBreak struct prints `break<FTransform>` (F-prefixed
-        //    form, so it recompiles to the generic node) instead of `break<Transform>`.
+        //    form, so it recompiles to the generic node) instead of `break<Transform>`. A
+        //    Blueprint-interface `message` qualifies with the generated class (`BPI_X_C::`)
+        //    instead of the skeleton class (`SKEL_BPI_X_C::`).
         { TEXT("bpir.txt"),                 12 },
         // 2: level_bp.txt is BuildBpirText output for a map's level Blueprint, so it carries the
-        //    bpir.txt 12 changes. First row this aspect has had -- it was served at
-        //    AssetDumpDefaultAspectVersion, so 1 -> 2 invalidates exactly like a bump on any
-        //    listed aspect.
+        //    bpir.txt 12 changes (including the `BPI_X_C::` message qualifier). First row this
+        //    aspect has had -- it was served at AssetDumpDefaultAspectVersion, so 1 -> 2
+        //    invalidates exactly like a bump on any listed aspect.
         { TEXT("level_bp.txt"),             2 },
         // 3: entry material blocks now carry the material-level properties (blend mode,
         //    shading model, two-sided, domain, translucency lighting mode, ...) as

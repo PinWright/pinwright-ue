@@ -605,8 +605,13 @@ FString FBpirTextEmitter::GetFunctionDisplayName(UK2Node_CallFunction* Node)
         }
         if (ShouldQualifyFunctionName(Node, Func))
         {
-            if (const UClass* OwnerClass = Func->GetOuterUClass())
+            if (UClass* OwnerClass = Func->GetOuterUClass())
             {
+                // A Blueprint function resolved through the SkeletonGeneratedClass is owned by
+                // `SKEL_<Asset>_C`; name the generated class the author writes instead
+                // (E-wiki-bpir-example-uncompilable-and-skel-qualifier-undocumented: every
+                // Blueprint-interface `message` decompiled as `SKEL_BPI_X_C::`).
+                OwnerClass = OwnerClass->GetAuthoritativeClass();
                 // A message call keeps the generated-class name verbatim, `_C` and all.
                 // ResolveUClass resolves a bare Blueprint name ONLY through its `_C` form
                 // (ClassUtils.cpp step 7's asset-registry lookup); the stripped asset name

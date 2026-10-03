@@ -446,6 +446,15 @@ REGISTER_RPC_HANDLER("blueprint.compile_bpir", "blueprint",
             RollbackBpirTransaction(Transaction, PendingResponse.Snapshot);
         }
     }
+    // compile_bpir never writes the .uasset. Say so with the same measured
+    // {saveRequested, markedForSave, saved, pendingFlush} block blueprint.set_default emits,
+    // so compiled:true / success:true is not read as durable
+    // (E-compile-bpir-no-persistence-field: eight compiled graphs lost to a crash before save).
+    if (PendingResponse.Kind == EBpirPendingResponseKind::Success && PendingResponse.Payload.IsValid())
+    {
+        McpSafeAssetSave(BP);
+        AddMarkDirtySaveReport(PendingResponse.Payload, BP, /*bSaveRequested=*/true);
+    }
     SendBpirPendingResponse(Ctx, PendingResponse);
     return true;
 }

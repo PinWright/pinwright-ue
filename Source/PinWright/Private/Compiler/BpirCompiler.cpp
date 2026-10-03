@@ -3563,12 +3563,21 @@ FCompileResult FBpirCompiler::Compile(const FString& Code, EBpirCompileMode Mode
 
         const int32 ErrorsBeforeSetup = AccumulatedErrors.Num();
         UEdGraphPin* EntryExecPin = SetupEntryPoint(Block);
+        // Entry setup (override resolution / signature checks, input-action loads, ...) reports
+        // without a line; stamp those with the authored `entry` line (B-bpir-override-errors-line).
+        for (int32 ErrIdx = ErrorsBeforeSetup; ErrIdx < AccumulatedErrors.Num(); ++ErrIdx)
+        {
+            if (AccumulatedErrors[ErrIdx].Line < 0)
+            {
+                AccumulatedErrors[ErrIdx].Line = Block.SourceLine;
+            }
+        }
         if (!EntryExecPin && Block.Kind != EBpirEntryKind::Macro)
         {
             UE_LOG(LogBpirCompiler, Warning, TEXT("Failed to create entry point for block: %s"), *Block.Name);
             if (AccumulatedErrors.Num() == ErrorsBeforeSetup)
             {
-                AccumulatedErrors.Add(FCompileError{-1, FString::Printf(TEXT("Failed to create entry point for block: %s"), *Block.Name)});
+                AccumulatedErrors.Add(FCompileError{Block.SourceLine, FString::Printf(TEXT("Failed to create entry point for block: %s"), *Block.Name)});
             }
             continue;
         }

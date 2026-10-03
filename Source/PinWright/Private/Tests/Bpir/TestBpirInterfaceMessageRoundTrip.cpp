@@ -26,13 +26,19 @@
 #include "CompilerTestUtils.h"
 #include "BpirGraphTestHelpers.h"
 #include "Tests/TestSkipReporting.h"
+#include "Tests/TestUtils.h"
 
 #include "Compiler/BpirCompiler.h"
 #include "Compiler/CompilerTypes.h"
 #include "Decompiler/BpirDecompiler.h"
+#include "Dom/JsonObject.h"
+#include "EditorAssetLibrary.h"
 #include "Internationalization/Regex.h"
 #include "K2Node_CallFunction.h"
 #include "K2Node_Message.h"
+#include "Misc/Guid.h"
+#include "Misc/PackageName.h"
+#include "Misc/ScopeExit.h"
 #include "UObject/Class.h"
 #include "UObject/UObjectGlobals.h"
 
@@ -170,6 +176,127 @@ bool FBpirInterfaceMessageRoundTripTest::RunTest(const FString& Parameters)
                 FindFirstNodeOfType<UK2Node_Message>(RejectBP));
         }
     }
+
+    return true;
+}
+
+// E-wiki-bpir-example-uncompilable-and-skel-qualifier-undocumented: the native fixture above has
+// no skeleton twin, so it never exercised the path every Blueprint interface takes. A message
+// node bound to a Blueprint-interface function resolves through the interface's
+// SkeletonGeneratedClass, and GetFunctionDisplayName printed that owner verbatim:
+// `message SKEL_BPI_X_C::Fn(...)` instead of the `BPI_X_C::Fn` the author wrote.
+// Counterfactual: drop the ClassGeneratedBy -> GeneratedClass mapping in
+// BpirTextEmitter.cpp GetFunctionDisplayName and the SKEL_ / exact-qualifier assertions fail.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FBpirBlueprintInterfaceMessageRoundTripTest,
+    "PinWright.bpir.round_trip.BlueprintInterfaceMessage",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FBpirBlueprintInterfaceMessageRoundTripTest::RunTest(const FString& Parameters)
+{
+    const FString InterfaceName = FString::Printf(
+        TEXT("BPI_BpirMessageRoundTrip_%s"), *FGuid::NewGuid().ToString(EGuidFormats::Digits));
+    const FString InterfacePath =
+        FString::Printf(TEXT("/Game/PinWrightTests/__PW_GatewayTests/%s"), *InterfaceName);
+    ON_SCOPE_EXIT
+    {
+        CleanupTestAsset(InterfacePath);
+    };
+
+    {
+        TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+        Payload->SetStringField(TEXT("name"), InterfaceName);
+        Payload->SetStringField(TEXT("savePath"), FPackageName::GetLongPackagePath(InterfacePath));
+        Payload->SetStringField(TEXT("blueprintType"), TEXT("interface"));
+        FTestResponseCapture Capture;
+        TestTrue(TEXT("blueprint.create handler found"),
+            InvokeHandlerWithCapture(TEXT("blueprint.create"), Payload, Capture));
+        if (!TestTrue(FString::Printf(TEXT("interface created (%s %s)"), *Capture.ErrorCode, *Capture.Message),
+                Capture.bSuccess))
+        {
+            return false;
+        }
+    }
+    {
+        TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+        Payload->SetStringField(TEXT("path"), InterfacePath);
+        Payload->SetStringField(TEXT("functionName"), TEXT("ProbePing"));
+        FTestResponseCapture Capture;
+        TestTrue(TEXT("blueprint.add_function handler found"),
+            InvokeHandlerWithCapture(TEXT("blueprint.add_function"), Payload, Capture));
+        if (!TestTrue(FString::Printf(TEXT("interface function added (%s %s)"), *Capture.ErrorCode, *Capture.Message),
+                Capture.bSuccess))
+        {
+            return false;
+        }
+    }
+
+    UBlueprint* InterfaceBP = Cast<UBlueprint>(UEditorAssetLibrary::LoadAsset(ToObjectPath(InterfacePath)));
+    UClass* InterfaceClass = InterfaceBP ? InterfaceBP->GeneratedClass.Get() : nullptr;
+    if (!TestNotNull(TEXT("interface generated class exists"), InterfaceClass)
+        || !TestNotNull(TEXT("fixture precondition: interface declares ProbePing"),
+            InterfaceClass->FindFunctionByName(TEXT("ProbePing"))))
+    {
+        return false;
+    }
+
+    UBlueprint* CallerBP = CreateTransientTestBP(TEXT("BlueprintInterfaceMessageBP"));
+    UBlueprint* RecompileBP = CreateTransientTestBP(TEXT("BlueprintInterfaceMessageRecompileBP"));
+    // Declared after the interface cleanup so it runs first: callers must not outlive the interface.
+    ON_SCOPE_EXIT
+    {
+        for (UBlueprint* Target : {CallerBP, RecompileBP})
+        {
+            if (Target)
+            {
+                Target->ClearEditorReferences();
+                PwTestAssetTeardown::DiscardLoadedAssetNoGc(Target);
+                Target->MarkAsGarbage();
+            }
+        }
+    };
+    if (!TestNotNull(TEXT("caller Blueprint created"), CallerBP)
+        || !TestNotNull(TEXT("recompile Blueprint created"), RecompileBP))
+    {
+        return false;
+    }
+
+    const FString Qualified = FString::Printf(TEXT("%s::ProbePing"), *InterfaceClass->GetName());
+    FBpirCompiler Compiler(CallerBP);
+    const FCompileResult CompileResult = Compiler.Compile(FString::Printf(
+        TEXT("entry event BeginPlay() {\n    message %s(Target: self)\n}"), *Qualified));
+    for (const FCompileError& Err : CompileResult.Errors)
+    {
+        AddError(FString::Printf(TEXT("Compile L%d: %s"), Err.Line, *Err.Message));
+    }
+    if (!TestTrue(TEXT("Blueprint-interface message compiles"), CompileResult.bSuccess)
+        || !TestNotNull(TEXT("compile emits a UK2Node_Message"), FindFirstNodeOfType<UK2Node_Message>(CallerBP)))
+    {
+        return false;
+    }
+
+    FBpirDecompiler Decompiler(CallerBP);
+    const FBpirDecompileResult DecompileResult = Decompiler.Decompile();
+    if (!TestTrue(TEXT("Decompile succeeded"), DecompileResult.bSuccess))
+    {
+        return false;
+    }
+    TestTrue(FString::Printf(TEXT("decompile names the generated class 'message %s(' (got: %s)"),
+            *Qualified, *DecompileResult.BpirText),
+        DecompileResult.BpirText.Contains(FString::Printf(TEXT("message %s("), *Qualified)));
+    TestFalse(TEXT("decompile does not leak the SKEL_ skeleton-class qualifier"),
+        DecompileResult.BpirText.Contains(TEXT("SKEL_")));
+
+    FBpirCompiler RecompileCompiler(RecompileBP);
+    const FCompileResult RecompileResult =
+        RecompileCompiler.Compile(StripMessageTestAuthoredPositions(DecompileResult.BpirText));
+    for (const FCompileError& Err : RecompileResult.Errors)
+    {
+        AddError(FString::Printf(TEXT("Recompile L%d: %s"), Err.Line, *Err.Message));
+    }
+    TestTrue(TEXT("decompiled Blueprint-interface message recompiles"), RecompileResult.bSuccess);
+    TestNotNull(TEXT("recompiled graph still holds a UK2Node_Message"),
+        FindFirstNodeOfType<UK2Node_Message>(RecompileBP));
 
     return true;
 }

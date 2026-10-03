@@ -68,6 +68,13 @@
   gate's own measurement (new `HttpResponseSpill::MeasureInlineCharacters`, one condensed copy)
   instead of a pretty print, so **pages can hold more kinds and `pageCount` may drop**. Handlers
   that budget their own response should measure with that helper.
+- Changed: a successful `blueprint.compile_bpir` now carries the persistence block
+  `blueprint.set_default` emits — `saveRequested`, `markedForSave`, `saved` (measured) and
+  `pendingFlush:true` while unsaved. The verb still does not save; call `asset.save` after it.
+- Fixed: `blueprint.decompile` prints a Blueprint-interface `message` as `BPI_X_C::Fn`, not
+  `SKEL_BPI_X_C::Fn`. BPIR compile errors raised while setting up an entry (override resolution
+  and signature mismatches, input-action loads) report the `entry` line instead of `-1`.
+
 - Fixed: `blueprint.compile_bpir` — **`break<T>` on a struct with a native break function
   (`Rotator`, `Vector`, `HitResult`, `Transform`, ...) now emits that function** (`BreakRotator`,
   `BreakHitResult`, ...) instead of a generic Break Struct node the Blueprint compiler warned on

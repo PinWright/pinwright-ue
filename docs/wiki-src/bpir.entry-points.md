@@ -166,7 +166,7 @@ entry event BeginPlay() {
 # Fix: remove the position marker from the zero-node instruction, or attach positions only to instructions that emit visible primary nodes.
 ```
 
-Comment-only lines and transparent reroutes/knots do not carry BPIR position suffixes in v1. Decompilation emits current graph coordinates for node-backed BPIR lines, so manually moved nodes round-trip back into editable `@(x, y)` suffixes. Entries are emitted in graph order, then by `NodePosY`; entries tied on both keep the graph's node order, and compile creates entry nodes in text order, so entry order survives a round trip.
+Comment-only lines and transparent reroutes/knots do not carry BPIR position suffixes in v1. Decompilation emits current graph coordinates for node-backed BPIR lines, so manually moved nodes round-trip back into editable `@(x, y)` suffixes. What round-trips is positions + topology, not literal text: labels, SSA temp names and branch-arm order are regenerated on decompile (see `call("blueprint.decompile")`, "Round-trip is semantic"). Entries are emitted in graph order, then by `NodePosY`; entries tied on both keep the graph's node order, and compile creates entry nodes in text order, so entry order survives a round trip.
 
 ## 1b.1 Node Enabled State
 
