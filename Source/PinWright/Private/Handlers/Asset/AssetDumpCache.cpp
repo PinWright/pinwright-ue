@@ -755,7 +755,10 @@ int32 GetAspectVersion(const FString& RelativeFile)
         //    (defaultForOutputPin / defaultForPinId); previously it was anonymous and unjoinable.
         { TEXT("niagara_graphs.json"),      4 },
         { TEXT("niagara_compile.json"),     3 },
-        { TEXT("meta.json"),                6 },
+        // 7: `source` {fileMd5, unsavedChanges} records the package file the dump was taken from.
+        { TEXT("meta.json"),                7 },
+        // 2: each external-reference entry carries `source`, its own actor package's stamp.
+        { TEXT("actors/manifest.json"),     2 },
         // 8: an unsupported member is marked in place instead of collapsing its enclosing
         //    struct, array, map, or set to a single marker; material-instance parameter
         //    ExpressionGUIDs are dropped (session-dependent cache of the parent material's

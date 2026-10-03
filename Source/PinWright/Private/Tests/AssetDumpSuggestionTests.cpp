@@ -7,6 +7,7 @@
 #include "HAL/FileManager.h"
 #include "Misc/Guid.h"
 #include "Misc/ScopeExit.h"
+#include "Misc/FileHelper.h"
 
 // Unit coverage for AssetDumpSuggestion::BuildDumpSuggestionHint.
 //
@@ -116,8 +117,8 @@ bool FAssetDumpSuggestionLevelKindTest::RunTest(const FString& Parameters)
 // this file hits the missing-mirror branch, so BuildDumpSuggestionHint could be reduced to
 // "always return a hint" and the whole file would stay green.
 //
-// Level subjects are used because their gate is the directory alone (freshness is not
-// tracked for maps/worlds), so the case needs a mkdir rather than a real registry-fresh
+// Level subjects are used because a level mirror with no meta.json source stamp is gated by
+// the directory alone, so the case needs a mkdir rather than a real registry-fresh
 // asset dump. The Asset-kind fresh path additionally runs AssetDumpCache::IsDumpFresh and
 // is still uncovered here.
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpSuggestionExistingLevelMirrorIsSilentTest,
@@ -155,6 +156,47 @@ bool FAssetDumpSuggestionExistingLevelMirrorIsSilentTest::RunTest(const FString&
     };
 
     TestTrue(TEXT("an existing level mirror silences the nudge"),
+        AssetDumpSuggestion::BuildDumpSuggestionHint(
+            PackagePath, AssetDumpSuggestion::EDumpSubjectKind::Level).IsEmpty());
+    return true;
+}
+
+// B-asset-dump-no-source-freshness-stamp: a level mirror is no longer judged fresh by its
+// directory alone. Its meta.json `source.fileMd5` is compared with the map file now on
+// disk; a mismatch (here: a recorded hash for a package whose file is gone) is STALE, a
+// match (null == null, no file then or now) stays silent. Reverting the comparison makes
+// the existing mirror silence the stale case and the first assertion fails.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpSuggestionLevelMirrorWithChangedMapFileIsStaleTest,
+    "PinWright.AssetDumpSuggestion.LevelMirrorWithChangedMapFileIsStale",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAssetDumpSuggestionLevelMirrorWithChangedMapFileIsStaleTest::RunTest(const FString& Parameters)
+{
+    const FString PackagePath = FString::Printf(TEXT("/Game/__PinWrightTest_SuggestStamp_%s/MyLevel"),
+        *FGuid::NewGuid().ToString(EGuidFormats::Digits));
+    const FString DumpDir = AssetDumpWriter::ResolveDumpDir(PackagePath, TEXT(""));
+    if (!TestTrue(TEXT("created the dump mirror directory"),
+            IFileManager::Get().MakeDirectory(*DumpDir, /*Tree=*/true)))
+    {
+        return true;
+    }
+    ON_SCOPE_EXIT
+    {
+        IFileManager::Get().DeleteDirectory(*DumpDir, /*RequireExists=*/false, /*Tree=*/true);
+    };
+    const FString MetaPath = DumpDir / TEXT("meta.json");
+
+    FFileHelper::SaveStringToFile(
+        TEXT("{\"source\": {\"fileMd5\": \"0123456789abcdef0123456789abcdef\", \"unsavedChanges\": false}}"),
+        *MetaPath);
+    const FString StaleHint = AssetDumpSuggestion::BuildDumpSuggestionHint(
+        PackagePath, AssetDumpSuggestion::EDumpSubjectKind::Level);
+    TestTrue(TEXT("a recorded map hash that no longer matches is reported STALE"), StaleHint.Contains(TEXT("STALE")));
+    TestTrue(TEXT("the stale hint names the single-level re-dump"),
+        StaleHint.Contains(FString::Printf(TEXT("asset.dump({\"assetPath\":\"%s\"})"), *PackagePath)));
+
+    FFileHelper::SaveStringToFile(TEXT("{\"source\": {\"fileMd5\": null, \"unsavedChanges\": false}}"), *MetaPath);
+    TestTrue(TEXT("a recorded stamp that matches the file now on disk is silent"),
         AssetDumpSuggestion::BuildDumpSuggestionHint(
             PackagePath, AssetDumpSuggestion::EDumpSubjectKind::Level).IsEmpty());
     return true;

@@ -273,6 +273,10 @@ namespace
         if (UPackage* ExternalPackage = Actor->GetExternalPackage())
         {
             Entry->SetStringField(TEXT("package"), ExternalPackage->GetName());
+            // The transform above lives in this package, not in the map file meta.json stamps.
+            // ponytail: one file hash per actor package (thousands on a World Partition map);
+            // see the cost note on BuildSourceStampJson.
+            Entry->SetObjectField(TEXT("source"), AssetDumpBuilder::BuildSourceStampJson(ExternalPackage->GetName()));
         }
         Entry->SetStringField(TEXT("guid"), Actor->GetActorGuid().ToString());
         return Entry;
@@ -284,6 +288,7 @@ namespace
         Entry->SetStringField(TEXT("storage"), TEXT("external-reference"));
         Entry->SetStringField(TEXT("guid"), Desc->GetGuid().ToString());
         Entry->SetStringField(TEXT("package"), Desc->GetActorPackage().ToString());
+        Entry->SetObjectField(TEXT("source"), AssetDumpBuilder::BuildSourceStampJson(Desc->GetActorPackage().ToString()));
         Entry->SetStringField(TEXT("path"), Desc->GetActorSoftPath().ToString());
         Entry->SetStringField(TEXT("name"), Desc->GetActorName().ToString());
         Entry->SetStringField(TEXT("label"), Desc->GetActorLabel().ToString());

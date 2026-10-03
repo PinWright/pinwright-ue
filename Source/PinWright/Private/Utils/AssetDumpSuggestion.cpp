@@ -2,8 +2,12 @@
 
 #include "Utils/AssetDumpSuggestion.h"
 #include "Utils/AssetDumpWriter.h"
+#include "Utils/AssetDumpBuilder.h"
 #include "Handlers/Asset/AssetDumpCache.h"
 #include "HAL/FileManager.h"
+#include "Misc/FileHelper.h"
+#include "Serialization/JsonReader.h"
+#include "Serialization/JsonSerializer.h"
 #include "AssetRegistry/IAssetRegistry.h"
 
 namespace AssetDumpSuggestion
@@ -52,10 +56,33 @@ FString BuildDumpSuggestionHint(const FString& PackagePath, EDumpSubjectKind Kin
     }
     else // EDumpSubjectKind::Level
     {
-        // Freshness isn't tracked for maps/worlds, so an existing mirror is enough.
+        // Maps have no cache fingerprint; the mirror's own meta.json source stamp is the
+        // freshness record. A mirror without one (written before the stamp existed) cannot
+        // be judged and stays silent.
+        // ponytail: compares the map file only. An actor in its own external package (OFPA)
+        // moved and saved changes that package, not the map: actors/manifest.json stamps each
+        // entry, but hashing every one on every call is too slow for a hint.
         if (bMirrorExists)
         {
-            return TEXT("");
+            FString MetaText;
+            TSharedPtr<FJsonObject> Meta;
+            const TSharedPtr<FJsonObject>* RecordedSource = nullptr;
+            if (!FFileHelper::LoadFileToString(MetaText, *(DumpDir / TEXT("meta.json")))
+                || !FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(MetaText), Meta)
+                || !Meta.IsValid()
+                || !Meta->TryGetObjectField(TEXT("source"), RecordedSource))
+            {
+                return TEXT("");
+            }
+            FString RecordedMd5;
+            FString CurrentMd5;
+            (*RecordedSource)->TryGetStringField(TEXT("fileMd5"), RecordedMd5);
+            AssetDumpBuilder::BuildSourceStampJson(PackagePath)->TryGetStringField(TEXT("fileMd5"), CurrentMd5);
+            if (RecordedMd5 == CurrentMd5)
+            {
+                return TEXT("");
+            }
+            bStale = true;
         }
     }
 
@@ -91,6 +118,15 @@ FString BuildDumpSuggestionHint(const FString& PackagePath, EDumpSubjectKind Kin
     }
 
     const bool bUnderGame = (MountRoot == TEXT("/Game"));
+
+    if (Kind == EDumpSubjectKind::Level && bStale)
+    {
+        return FString::Printf(
+            TEXT("The asset-dump mirror for level %s is STALE (the map file changed since it was dumped; ")
+            TEXT("meta.json source.fileMd5 no longer matches) — re-dump it before reading it: ")
+            TEXT("asset.dump({\"assetPath\":\"%s\"})."),
+            *PackagePath, *PackagePath);
+    }
 
     if (Kind == EDumpSubjectKind::Level)
     {

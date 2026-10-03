@@ -13,6 +13,12 @@ struct FBpirWarning;
 namespace AssetDumpBuilder
 {
     PINWRIGHT_API TSharedPtr<FJsonObject> BuildMetaJson(UObject* Asset);
+
+    // Provenance of the package a dump was taken from: {fileMd5, unsavedChanges}. fileMd5 is the
+    // lowercase-hex MD5 of the package file on disk (JSON null when the package has no file);
+    // unsavedChanges is true when the loaded package was dirty, i.e. the dump describes
+    // in-memory state the file does not hold yet.
+    PINWRIGHT_API TSharedPtr<FJsonObject> BuildSourceStampJson(const FString& PackageName);
     PINWRIGHT_API FString BuildBpirText(UBlueprint* Blueprint);
 
     // True when AssetDumpHandler should emit bpir.txt for this blueprint. Returns false only when

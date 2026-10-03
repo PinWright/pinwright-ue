@@ -90,7 +90,7 @@ The baseline mirror is left untouched in diff mode. Each diff run wipes and repl
 
 Diff mode is single-asset only. `asset.dump_folder` hard-codes `bDiff=false` (`AssetDumpHandler.cpp`), so diff output can only appear from manual per-asset `asset.dump(...,diff=true)` calls.
 
-Git hygiene is self-contained: every dump seeds root-level scaffolding into the dump root (create-if-missing, never overwritten, safe to customize) — a `.gitignore` covering machine-local residue (`.dumpcache.json` markers, `*.tmp` atomic-write leftovers), a `.gitattributes` disabling text normalization (`* -text`), and `CLAUDE.md` + `AGENTS.md` (identical content) telling agents how to read the tree. A full-project baseline repo can grow large for big projects. Trees written by plugin builds that predate Saved-based diff output may still contain in-tree diff artifacts; extend the seeded `.gitignore` with `*_new.json` / `*_new.txt` / `*_new.xml` / `*_diff.txt` there.
+Git hygiene is self-contained: every dump seeds root-level scaffolding into the dump root (create-if-missing, never overwritten, safe to customize) — a `.gitignore` covering machine-local residue (`.dumpcache.json` markers, `*.tmp` atomic-write leftovers), a `.gitattributes` pinning LF line ends (`* text=auto eol=lf`, matching the LF the writer emits on every platform), and `CLAUDE.md` + `AGENTS.md` (identical content) telling agents how to read the tree. A full-project baseline repo can grow large for big projects. Trees written by plugin builds that predate Saved-based diff output may still contain in-tree diff artifacts; extend the seeded `.gitignore` with `*_new.json` / `*_new.txt` / `*_new.xml` / `*_diff.txt` there.
 
 ## Dump root modes: Saved scratch vs committed mirror
 

@@ -26,6 +26,9 @@
 #include "EdGraph/EdGraph.h"
 #include "EdGraphSchema_K2.h"
 #include "UObject/Interface.h"
+#include "Misc/PackageName.h"
+#include "Misc/SecureHash.h"
+#include "Misc/Guid.h"
 
 // ============================================================================
 // AssetDumpBuilder.MetaJsonShape
@@ -829,5 +832,109 @@ bool FWidgetXmlExporterInheritedRootTest::RunTest(const FString& Parameters)
             R2.Reason.Contains(TEXT("inheritable")));
     }
 
+    return true;
+}
+
+// ============================================================================
+// AssetDumpBuilder.SourceStampHashesThePackageFile
+// B-asset-dump-no-source-freshness-stamp: meta.json must name the package file state the
+// dump was taken from, so a reader can tell a stale mirror from a current one without the
+// gitignored .dumpcache.json. The stamp is the MD5 of the package file on disk (checked
+// against an independently resolved file), null when the package has no file, and
+// unsavedChanges reports a dirty in-memory package the file does not describe yet.
+// ============================================================================
+
+namespace TestAssetDumpBuilderSourceStampHelpers
+{
+    // Counts log lines containing a needle; a Warning only fails a test on hosts that elevate it.
+    class FNeedleLogWatch : public FOutputDevice
+    {
+    public:
+        explicit FNeedleLogWatch(const TCHAR* InNeedle) : Needle(InNeedle) { GLog->AddOutputDevice(this); }
+        virtual ~FNeedleLogWatch() override { GLog->RemoveOutputDevice(this); }
+        virtual void Serialize(const TCHAR* Message, ELogVerbosity::Type Verbosity, const FName& Category) override
+        {
+            if (FCString::Strstr(Message, *Needle))
+            {
+                FPlatformAtomics::InterlockedIncrement(&Hits);
+            }
+        }
+        virtual bool CanBeUsedOnAnyThread() const override { return true; }
+        virtual bool CanBeUsedOnMultipleThreads() const override { return true; }
+        int32 GetHits() const { return Hits; }
+
+    private:
+        FString Needle;
+        volatile int32 Hits = 0;
+    };
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpBuilderSourceStampHashesThePackageFileTest,
+    "PinWright.utils.asset_dump_builder.SourceStampHashesThePackageFile",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetDumpBuilderSourceStampHashesThePackageFileTest::RunTest(const FString& Parameters)
+{
+    // 1. A saved engine asset: meta.json carries the file's MD5.
+    const TCHAR* EnginePackage = TEXT("/Engine/BasicShapes/Cube");
+    FString EngineFile;
+    if (!TestTrue(TEXT("precondition: engine package file exists"),
+            FPackageName::DoesPackageExist(EnginePackage, &EngineFile)))
+    {
+        return false;
+    }
+    UObject* Cube = LoadObject<UObject>(nullptr, TEXT("/Engine/BasicShapes/Cube.Cube"));
+    if (!TestNotNull(TEXT("precondition: engine asset loads"), Cube))
+    {
+        return false;
+    }
+    TestFalse(TEXT("precondition: engine package is not dirty"), Cube->GetOutermost()->IsDirty());
+
+    const TSharedPtr<FJsonObject> Meta = AssetDumpBuilder::BuildMetaJson(Cube);
+    const TSharedPtr<FJsonObject>* Source = nullptr;
+    if (!TestTrue(TEXT("meta.json carries a source object"), Meta->TryGetObjectField(TEXT("source"), Source)))
+    {
+        return false;
+    }
+    FString RecordedMd5;
+    TestTrue(TEXT("source.fileMd5 is a string for a saved package"),
+        (*Source)->TryGetStringField(TEXT("fileMd5"), RecordedMd5));
+    TestEqual(TEXT("source.fileMd5 is the MD5 of the package file"),
+        RecordedMd5, LexToString(FMD5Hash::HashFile(*EngineFile)));
+    TestEqual(TEXT("source.fileMd5 is 32 hex chars"), RecordedMd5.Len(), 32);
+    bool bUnsaved = true;
+    TestTrue(TEXT("source.unsavedChanges present"), (*Source)->TryGetBoolField(TEXT("unsavedChanges"), bUnsaved));
+    TestFalse(TEXT("a clean package reports no unsaved changes"), bUnsaved);
+
+    // 2. A package with no file and unsaved in-memory state: fileMd5 null, unsavedChanges true.
+    const FString MemoryPackageName = FString::Printf(TEXT("/Game/PinWrightTests/__SourceStamp_%s"),
+        *FGuid::NewGuid().ToString(EGuidFormats::Digits));
+    UPackage* MemoryPackage = CreatePackage(*MemoryPackageName);
+    MemoryPackage->SetDirtyFlag(true);
+    const TSharedPtr<FJsonObject> MemoryStamp = AssetDumpBuilder::BuildSourceStampJson(MemoryPackageName);
+    MemoryPackage->SetDirtyFlag(false);
+
+    const TSharedPtr<FJsonValue> MemoryMd5 = MemoryStamp->TryGetField(TEXT("fileMd5"));
+    TestTrue(TEXT("fileMd5 is present and null for a package with no file"),
+        MemoryMd5.IsValid() && MemoryMd5->Type == EJson::Null);
+    bool bMemoryUnsaved = false;
+    MemoryStamp->TryGetBoolField(TEXT("unsavedChanges"), bMemoryUnsaved);
+    TestTrue(TEXT("a dirty package reports unsaved changes"), bMemoryUnsaved);
+
+    // 3. A class default object lives in an unmounted /Script package: no file, and no
+    //    "DoesPackageExist called on PackageName that will always return false" warning, which
+    //    the FString DoesPackageExist overload logs for an unmounted name.
+    TSharedPtr<FJsonObject> CdoMeta;
+    int32 UnmountedWarnings = 0;
+    {
+        TestAssetDumpBuilderSourceStampHelpers::FNeedleLogWatch Watch(TEXT("will always return false"));
+        CdoMeta = AssetDumpBuilder::BuildMetaJson(USceneComponent::StaticClass()->GetDefaultObject());
+        UnmountedWarnings = Watch.GetHits();
+    }
+    TestEqual(TEXT("a /Script CDO dump logs no unmounted-package warning"), UnmountedWarnings, 0);
+    const TSharedPtr<FJsonObject>* CdoSource = nullptr;
+    TestTrue(TEXT("a CDO dump still carries source"), CdoMeta->TryGetObjectField(TEXT("source"), CdoSource));
+    const TSharedPtr<FJsonValue> CdoMd5 = CdoSource ? (*CdoSource)->TryGetField(TEXT("fileMd5")) : nullptr;
+    TestTrue(TEXT("a CDO has no package file, so fileMd5 is null"), CdoMd5.IsValid() && CdoMd5->Type == EJson::Null);
     return true;
 }

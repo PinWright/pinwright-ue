@@ -11,6 +11,10 @@
 #include "Engine/Blueprint.h"
 #include "Engine/SimpleConstructionScript.h"
 #include "Misc/DateTime.h"
+#include "Misc/PackageName.h"
+#include "Misc/PackagePath.h"
+#include "Misc/SecureHash.h"
+#include "UObject/Package.h"
 #include "Dom/JsonValue.h"
 #include "WidgetBlueprint.h"
 #include "UObject/ObjectRedirector.h"
@@ -52,12 +56,44 @@ FString ResolveRedirectorTarget(const UObjectRedirector* Redirector)
         : FString();
 }
 
+TSharedPtr<FJsonObject> BuildSourceStampJson(const FString& PackageName)
+{
+    TSharedPtr<FJsonObject> Source = MakeShared<FJsonObject>();
+    // A content hash, not an mtime: git checkout rewrites mtimes, so an mtime would make the
+    // committed mirror differ per machine, while the hash survives copy, commit and clone.
+    // ponytail: one full read of the package file per stamp, so a whole-tree sweep after a
+    // version bump reads every package twice (load + hash) and a level dump reads every actor
+    // package. Kept over the registry's PackageSavedHash because only a file hash can be checked
+    // by a reader with md5sum, which is the point of the stamp; if sweep time matters, store the
+    // registry hash beside it and hash only on a registry miss.
+    // TryFromMountedName first: the FString DoesPackageExist overload logs a warning for an
+    // unmounted name (/Script, /Temp, /Engine/Transient), which a dump of a CDO would trip.
+    FPackagePath PackagePath;
+    const FMD5Hash Hash = (!PackageName.IsEmpty()
+            && FPackagePath::TryFromMountedName(PackageName, PackagePath)
+            && FPackageName::DoesPackageExist(PackagePath, &PackagePath))
+        ? FMD5Hash::HashFile(*PackagePath.GetLocalFullPath())
+        : FMD5Hash();
+    if (Hash.IsValid())
+    {
+        Source->SetStringField(TEXT("fileMd5"), LexToString(Hash));
+    }
+    else
+    {
+        Source->SetField(TEXT("fileMd5"), MakeShared<FJsonValueNull>());
+    }
+    const UPackage* Package = PackageName.IsEmpty() ? nullptr : FindPackage(nullptr, *PackageName);
+    Source->SetBoolField(TEXT("unsavedChanges"), Package && Package->IsDirty());
+    return Source;
+}
+
 TSharedPtr<FJsonObject> BuildMetaJson(UObject* Asset)
 {
     TSharedPtr<FJsonObject> Meta = MakeShared<FJsonObject>();
     if (!Asset) return Meta;
 
     Meta->SetStringField(TEXT("assetPath"), Asset->GetPathName());
+    Meta->SetObjectField(TEXT("source"), BuildSourceStampJson(Asset->GetOutermost()->GetName()));
 
     FString ClassName;
     FString ParentClass;
@@ -146,6 +182,8 @@ TSharedPtr<FJsonObject> BuildMetaJson(UObject* Asset)
     // v9: removed `compileStateAvailable` and `compileStateReason`. Persistent Niagara
     //     sidecars now describe authored state; live compile diagnostics stay on the
     //     niagara.inspect / niagara.validate response surfaces.
+    // v10: added `source` ({fileMd5, unsavedChanges}, BuildSourceStampJson) so a reader can
+    //     tell whether the asset moved on since the dump without the gitignored .dumpcache.json.
     return Meta;
 }
 

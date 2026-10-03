@@ -14,7 +14,9 @@ namespace AssetDumpCache
     //    a member the exporter cannot decompose is now an inline `_kind: unsupported` marker
     //    instead of one marker stamped over the whole enclosing struct/collection, and
     //    material-instance ExpressionGUIDs are dropped as non-semantic.
-    inline constexpr int32 AssetDumpCoreVersion = 3;
+    // 4: every text sidecar is written with LF line ends on every platform (a Windows sweep
+    //    wrote CRLF), so a mirror written before this differs byte-for-byte on Windows.
+    inline constexpr int32 AssetDumpCoreVersion = 4;
     inline constexpr int32 AssetDumpDefaultAspectVersion = 1;
 
     enum class EAssetDumpSourceFingerprintKind : uint8

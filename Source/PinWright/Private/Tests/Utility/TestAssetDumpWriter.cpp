@@ -854,8 +854,10 @@ bool FAssetDumpWriterEnsureDumpRootScaffoldTest::RunTest(const FString& Paramete
 
     FString GitattributesContent;
     FFileHelper::LoadFileToString(GitattributesContent, *GitattributesPath);
-    TestTrue(TEXT(".gitattributes disables text normalization"),
-        GitattributesContent.Contains(TEXT("* -text")));
+    TestTrue(TEXT(".gitattributes pins LF, matching the writer"),
+        GitattributesContent.Contains(TEXT("* text=auto eol=lf")));
+    TestFalse(TEXT(".gitattributes no longer commits platform bytes verbatim"),
+        GitattributesContent.Contains(TEXT("-text")));
 
     FString ClaudeMdContent;
     FFileHelper::LoadFileToString(ClaudeMdContent, *ClaudeMdPath);
@@ -893,6 +895,68 @@ bool FAssetDumpWriterEnsureDumpRootScaffoldTest::RunTest(const FString& Paramete
         FM.FileExists(*GitattributesPath));
 
     // Cleanup.
+    FM.DeleteDirectory(*DumpRoot, /*RequireExists=*/false, /*Tree=*/true);
+    return true;
+}
+
+// ============================================================================
+// AssetDumpWriter.TextSidecarsAreWrittenLf
+// B-asset-dump-writes-crlf: UE's pretty JSON policy terminates lines with the
+// platform LINE_TERMINATOR (CRLF on Windows). The writer must normalize CRLF to LF
+// so the mirror's bytes do not depend on the OS that ran the sweep, and the diff
+// path must not report a CRLF baseline against an LF re-dump as a change. Binary
+// sidecars are bytes, never text, and stay untouched.
+// ============================================================================
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpWriterTextSidecarsAreWrittenLfTest,
+    "PinWright.utils.asset_dump_writer.TextSidecarsAreWrittenLf",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetDumpWriterTextSidecarsAreWrittenLfTest::RunTest(const FString& Parameters)
+{
+    const FString TestRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir()) / TEXT("AssetDumpTests");
+    const FString Guid = FGuid::NewGuid().ToString();
+    const FString DumpRoot = TestRoot / Guid;
+    const FString DumpDir = DumpRoot / TEXT("MyAsset");
+    IFileManager& FM = IFileManager::Get();
+
+    // CRLF line ends (one with trailing spaces before the CR) and a lone CR that is
+    // not a line end and must survive.
+    const FString CrlfJson = TEXT("{\r\n\t\"a\": 1,  \r\n\t\"b\": \"x\ry\"\r\n}\r\n");
+    const FString ExpectedLf = TEXT("{\n\t\"a\": 1,\n\t\"b\": \"x\ry\"\n}\n");
+
+    TArray<AssetDumpWriter::FDumpFile> Files;
+    Files.Add({TEXT("meta.json"), CrlfJson});
+    TMap<FString, TArray<uint8>> BinaryFiles;
+    const TArray<uint8> BinaryBytes = {0x89, 0x50, 0x0d, 0x0a, 0x1a, 0x0a};
+    BinaryFiles.Add(TEXT("preview.png"), BinaryBytes);
+
+    FString OutError;
+    AssetDumpWriter::WriteAssetDump(DumpDir, DumpRoot, Files, BinaryFiles, OutError);
+    TestTrue(TEXT("No error"), OutError.IsEmpty());
+
+    TArray<uint8> MetaBytes;
+    TestTrue(TEXT("meta.json readable"), FFileHelper::LoadFileToArray(MetaBytes, *(DumpDir / TEXT("meta.json"))));
+    const FTCHARToUTF8 ExpectedUtf8(*ExpectedLf, ExpectedLf.Len());
+    const TArray<uint8> ExpectedBytes(reinterpret_cast<const uint8*>(ExpectedUtf8.Get()), ExpectedUtf8.Length());
+    TestTrue(TEXT("Text sidecar bytes are LF-only (CRLF normalized, lone CR kept)"), MetaBytes == ExpectedBytes);
+
+    TArray<uint8> PreviewBytes;
+    FFileHelper::LoadFileToArray(PreviewBytes, *(DumpDir / TEXT("preview.png")));
+    TestTrue(TEXT("Binary sidecar keeps its CRLF bytes"), PreviewBytes == BinaryBytes);
+
+    // Diff path: a CRLF baseline against the same content in LF is not a change.
+    const FString DiffDir = DumpRoot / TEXT("Diff") / TEXT("MyAsset");
+    TArray<AssetDumpWriter::FBaselineDumpFile> Aspects;
+    Aspects.Add({TEXT("bpir.txt"), TEXT("line one\r\nline two\r\n"), TEXT("line one\nline two\n")});
+    const AssetDumpWriter::FWriteResult DiffResult = AssetDumpWriter::WriteAssetDumpDiff(
+        DiffDir, DumpRoot, CrlfJson, Aspects, OutError);
+    TestEqual(TEXT("CRLF-vs-LF baseline produces no diff artifacts"), DiffResult.WrittenPaths.Num(), 1);
+    TestFalse(TEXT("bpir_diff.txt not created"), FM.FileExists(*(DiffDir / TEXT("bpir_diff.txt"))));
+    FString DiffMeta;
+    FFileHelper::LoadFileToString(DiffMeta, *(DiffDir / TEXT("meta.json")));
+    TestEqual(TEXT("Diff-mode meta.json is LF-only too"), DiffMeta, ExpectedLf);
+
     FM.DeleteDirectory(*DumpRoot, /*RequireExists=*/false, /*Tree=*/true);
     return true;
 }

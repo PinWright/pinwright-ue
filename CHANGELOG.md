@@ -13,6 +13,19 @@
   tick. **Behaviour change:** it now runs at the next safe point instead of inline, its schema
   gains the optional `expectWorld` precondition (refused with `WORLD_MISMATCH` on mismatch), and a
   successful response carries `world` (the current world object path) besides `success`.
+- Added: asset-dump `meta.json` carries `source: {fileMd5, unsavedChanges}` (MD5 of the package
+  file the dump was taken from, `null` when it has no file; `true` when the package was dirty),
+  and each external-reference entry in a level's `actors/manifest.json` carries the same stamp
+  for its actor package, so a committed mirror can be checked against the asset without
+  `.dumpcache.json`. The level stale-dump `hint` now compares the map file against that stamp
+  instead of treating any existing mirror as current. `meta.json` aspect version 7,
+  `actors/manifest.json` 2.
+- Fixed: asset-dump text sidecars are written with LF line ends on every platform (a Windows
+  sweep wrote CRLF, so the mirror's bytes depended on the OS and every `git add` warned per
+  file). The seeded dump-root `.gitattributes` is now `* text=auto eol=lf` (was `* -text`), and the
+  seeded `CLAUDE.md`/`AGENTS.md` name the `source.fileMd5` check; all are create-if-missing, so an
+  existing dump root keeps its old files until they are deleted. Dump core version 4: every cached aspect regenerates once.
+
 - Changed: `audio.synth.describe_schema` packs its `generators` / `effects` pages with the spill
   gate's own measurement (new `HttpResponseSpill::MeasureInlineCharacters`, one condensed copy)
   instead of a pretty print, so **pages can hold more kinds and `pageCount` may drop**. Handlers
