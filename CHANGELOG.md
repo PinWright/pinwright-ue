@@ -23,6 +23,13 @@
   later removed (by `blueprint.remove_function`, an editor edit, or another verb) still read back
   in `functions[]`. `functions[]` is now only the live enumeration of the function graphs, as
   `events[]` already was.
+- Changed: `actor.set_collision` refuses `NO_COMPONENT` (with `rootComponentClass` and
+  `primitiveComponents`) when the actor has no root or a non-primitive root such as a
+  `DefaultSceneRoot` holder, instead of answering success with nothing written. On success it names
+  `componentName`, reads `collisionEnabled` back off that component rather than echoing the
+  request, reports `actorEnableCollision`, and adds a `warnings` entry when the read-back differs
+  from the request. **Behaviour change** for callers that pointed it at holder actors: use
+  `actor.set_component_properties {actorName, componentName, properties:{BodyInstance:{CollisionEnabled:"NoCollision"}}}`.
 - Changed: the PinWright Setup screen no longer opens at launch in an `-unattended` editor (the
   automation suite, offscreen/headless `editor_start`), even with `bShowSetupScreenOnLaunch` or a
   port-conflict alert; the conflict is still logged. On a real display its window covered the

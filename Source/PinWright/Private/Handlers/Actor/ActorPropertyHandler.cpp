@@ -179,7 +179,7 @@ REGISTER_RPC_HANDLER("actor.apply_force", "actor", "Apply an instantaneous physi
 }
 
 // ---- actor.set_collision ----
-REGISTER_RPC_HANDLER("actor.set_collision", "actor", "Toggle collision on the actor's root primitive component between QueryAndPhysics (enabled) and NoCollision (disabled). Affects only the root; component-level collision channels are not touched.",
+REGISTER_RPC_HANDLER("actor.set_collision", "actor", "Toggle collision on the actor's root primitive component between QueryAndPhysics (enabled) and NoCollision (disabled). Affects only the root; component-level collision channels are not touched. Refuses NO_COMPONENT, naming rootComponentClass and listing primitiveComponents, when the actor has no root or its root is not a primitive (e.g. a DefaultSceneRoot holding instanced mesh components). The response's collisionEnabled is read back off the written componentName, so it is false when actor-level collision is off (reported as actorEnableCollision; an enable that reads back false carries a warning).",
     RPC_PARAMS(
         ParamAliasUtils::MakeAliasParamSpec(TEXT("actorName"), TEXT("string"),
             TEXT("Display label or name of the actor (also accepts snake_case actor_name)."),
@@ -204,19 +204,64 @@ REGISTER_RPC_HANDLER("actor.set_collision", "actor", "Toggle collision on the ac
     return true;
   }
 
-  if (USceneComponent* RootComp = Actor->GetRootComponent()) {
-    if (UPrimitiveComponent* PrimComp = Cast<UPrimitiveComponent>(RootComp)) {
-      if (bCollisionEnabled) {
-        PrimComp->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
-      } else {
-        PrimComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-      }
+  // Only a primitive root has a collision setting to write. A missing or plain scene root
+  // (DefaultSceneRoot, the wiki's HISM holder actors) used to fall through to a success that
+  // echoed the request; refuse instead and name what the root is.
+  // Raw "NO_COMPONENT" literal matches actor.apply_force: this file has not adopted the
+  // ErrorCodes registry (B-set-collision-nonprimitive-root-silent-success).
+  USceneComponent* RootComp = Actor->GetRootComponent();
+  UPrimitiveComponent* PrimComp = Cast<UPrimitiveComponent>(RootComp);
+  if (!PrimComp) {
+    const FString RootClass = RootComp ? RootComp->GetClass()->GetName() : FString();
+    // The primitives the caller can address instead, so the next call needs no
+    // actor.get_components round-trip.
+    TArray<UPrimitiveComponent*> Prims;
+    Actor->GetComponents<UPrimitiveComponent>(Prims);
+    TArray<TSharedPtr<FJsonValue>> PrimNames;
+    for (const UPrimitiveComponent* Prim : Prims) {
+      PrimNames.Add(MakeShared<FJsonValueString>(Prim->GetName()));
     }
+    TSharedPtr<FJsonObject> ErrData = MakeShared<FJsonObject>();
+    ErrData->SetStringField(TEXT("actorName"), ActorName);
+    ErrData->SetStringField(TEXT("rootComponentClass"), RootClass);
+    ErrData->SetArrayField(TEXT("primitiveComponents"), PrimNames);
+    const TCHAR* Remedy = TEXT("Set it per component with actor.set_component_properties {actorName, componentName, properties:{BodyInstance:{CollisionEnabled:\"NoCollision\"}}} (or \"QueryAndPhysics\"); primitiveComponents lists the candidates. If it is empty, add one with actor.add_component first.");
+    Ctx.SendError(TEXT("NO_COMPONENT"),
+        RootComp
+            ? FString::Printf(TEXT("Actor '%s' root component '%s' is a %s, not a primitive component, so it has no collision to set. Nothing was written. %s"),
+                  *ActorName, *RootComp->GetName(), *RootClass, Remedy)
+            : FString::Printf(TEXT("Actor '%s' has no root component, so there is no collision to set. Nothing was written. %s"),
+                  *ActorName, Remedy),
+        ErrData);
+    return true;
   }
 
+  PrimComp->SetCollisionEnabled(bCollisionEnabled ? ECollisionEnabled::QueryAndPhysics
+                                                  : ECollisionEnabled::NoCollision);
+
+  // Read back the effective state the engine uses (owner-checked), and say why when it
+  // differs from the request: actor-level collision off reads NoCollision on every component.
+  const bool bReadBack = PrimComp->GetCollisionEnabled() != ECollisionEnabled::NoCollision;
+  const bool bActorEnableCollision = Actor->GetActorEnableCollision();
   TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
   Data->SetStringField(TEXT("actorName"), ActorName);
-  Data->SetBoolField(TEXT("collisionEnabled"), bCollisionEnabled);
+  Data->SetStringField(TEXT("componentName"), PrimComp->GetName());
+  Data->SetBoolField(TEXT("collisionEnabled"), bReadBack);
+  Data->SetBoolField(TEXT("actorEnableCollision"), bActorEnableCollision);
+  TArray<TSharedPtr<FJsonValue>> Warnings;
+  if (bReadBack != bCollisionEnabled) {
+    Warnings.Add(MakeShared<FJsonValueString>(bActorEnableCollision
+        ? FString::Printf(TEXT("Requested collisionEnabled=%s but '%s' reads back %s."),
+              bCollisionEnabled ? TEXT("true") : TEXT("false"), *PrimComp->GetName(),
+              bReadBack ? TEXT("true") : TEXT("false"))
+        : FString::Printf(TEXT("Requested collisionEnabled=true but actor-level collision is off (bActorEnableCollision=false), so '%s' has no effective collision. Its own setting reads %s and takes effect once actor collision is re-enabled."),
+              *PrimComp->GetName(),
+              PrimComp->BodyInstance.GetCollisionEnabled(/*bCheckOwner=*/false) != ECollisionEnabled::NoCollision
+                  ? TEXT("enabled") : TEXT("disabled"))));
+  }
+  if (Warnings.Num() > 0) {
+    Data->SetArrayField(TEXT("warnings"), Warnings);
+  }
   Ctx.SendSuccess(Data);
   return true;
 }
