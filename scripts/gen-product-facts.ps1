@@ -355,7 +355,7 @@ foreach ($group in $readmeGroups.Keys) {
         $summary = (Get-ShortDescription $lede).TrimEnd('.').Replace('<', '&lt;').Replace('>', '&gt;')
         if ($summary) { $summary = ": $summary" }
         $noun = if ($ops.Count -eq 1) { 'operation' } else { 'operations' }
-        $maturity = if ($namespace.tier -eq 'core') { 'Core' } else { 'Experimental' }
+        $maturity = if ($namespace.tier -eq 'core') { 'Core' } else { 'Unclassified' }
         $body.Add('<details>')
         $body.Add("<summary><code>$slug</code>$summary ($($ops.Count) $noun, $maturity)</summary>")
         $body.Add('')

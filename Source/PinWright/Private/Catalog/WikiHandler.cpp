@@ -41,7 +41,7 @@ namespace WikiHandler
 
         bool IsKnownTier(const FString& Tier)
         {
-            return Tier == TEXT("core") || Tier == TEXT("experimental") || Tier == TEXT("internal");
+            return Tier == TEXT("core") || Tier == TEXT("internal");
         }
 
         FString RootIntroFromPrelude(const FString& Prelude)
@@ -141,7 +141,7 @@ namespace WikiHandler
             TMap<FString, const FHandlerRegistration*> MethodsByLowerName;       // lowercased MethodName -> registration
             TMap<FString, TArray<const FHandlerRegistration*>> MethodsByCategory; // lowercased Category -> methods
             TArray<FString> SuggestionPool;                                      // method full names + namespace nodes, lowercase
-            TMap<FString, FString> MaturityBySlug;                               // top-level namespace slug -> "core"|"experimental"|"internal"
+            TMap<FString, FString> MaturityBySlug;                               // top-level namespace slug -> "core"|"internal"
         };
 
         // Load docs/wiki-src/maturity.json: a flat JSON object mapping each
@@ -279,7 +279,7 @@ namespace WikiHandler
                     {
                         UE_LOG(LogWikiHandler, Warning,
                             TEXT("maturity.json gives namespace '%s' the unknown tier '%s' - it renders as '%s'; ")
-                            TEXT("use core, experimental or internal"), *Ns, **Tier, UnclassifiedTier);
+                            TEXT("use core or internal"), *Ns, **Tier, UnclassifiedTier);
                     }
                 }
                 for (const auto& KV : Cache.MaturityBySlug)
@@ -674,7 +674,7 @@ namespace WikiHandler
             Out += RenderGuideIndex(Cache);
             Out += TEXT("## Namespaces\n\n");
             // The tier legend sits with the list it annotates, not in the intro.
-            Out += TEXT("Namespaces marked (experimental) work but are less complete and still changing; (internal) is plumbing not meant for direct use; (unclassified) has no maturity entry at all, so treat it as the least stable of the four and expect anything; unmarked namespaces are core.\n\n");
+            Out += TEXT("Namespaces marked (internal) are plumbing not meant for direct use; (unclassified) has no maturity entry at all, so nothing about it is promised and you should expect anything; unmarked namespaces are core.\n\n");
             for (const FString& Ns : TopLevels)
             {
                 Out += RenderRootNamespaceEntry(Ns, RootIntroFromPrelude(WikiOverlay::LoadGroupPrelude(Ns)),
@@ -773,10 +773,6 @@ namespace WikiHandler
             {
                 Out += TEXT("Stability: core — solid, primary surface.\n\n");
             }
-            else if (Tier == TEXT("experimental"))
-            {
-                Out += TEXT("Stability: experimental — works but is less complete and still changing.\n\n");
-            }
             else if (Tier == TEXT("internal"))
             {
                 Out += TEXT("Stability: internal — plumbing, not intended for direct use.\n\n");
@@ -784,7 +780,7 @@ namespace WikiHandler
             else
             {
                 Out += TEXT("Stability: unclassified — this namespace has no maturity entry, so nothing here is promised. ")
-                       TEXT("Treat it as less stable than experimental until it is classified.\n\n");
+                       TEXT("Treat it as unstable until it is classified.\n\n");
             }
 
             const FString Prelude = WikiOverlay::LoadGroupPrelude(Namespace);

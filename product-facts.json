@@ -21,17 +21,17 @@
                        },
                        {
                            "slug":  "ai",
-                           "tier":  "experimental",
+                           "tier":  "core",
                            "methods":  33
                        },
                        {
                            "slug":  "anim",
-                           "tier":  "experimental",
+                           "tier":  "core",
                            "methods":  5
                        },
                        {
                            "slug":  "animation",
-                           "tier":  "experimental",
+                           "tier":  "core",
                            "methods":  77
                        },
                        {
@@ -46,7 +46,7 @@
                        },
                        {
                            "slug":  "behavior_tree",
-                           "tier":  "experimental",
+                           "tier":  "core",
                            "methods":  13
                        },
                        {
@@ -56,12 +56,12 @@
                        },
                        {
                            "slug":  "camera",
-                           "tier":  "experimental",
+                           "tier":  "core",
                            "methods":  3
                        },
                        {
                            "slug":  "character",
-                           "tier":  "experimental",
+                           "tier":  "core",
                            "methods":  13
                        },
                        {
@@ -76,7 +76,7 @@
                        },
                        {
                            "slug":  "controlrig",
-                           "tier":  "experimental",
+                           "tier":  "core",
                            "methods":  2
                        },
                        {
@@ -96,42 +96,42 @@
                        },
                        {
                            "slug":  "effect",
-                           "tier":  "experimental",
+                           "tier":  "core",
                            "methods":  10
                        },
                        {
                            "slug":  "environment",
-                           "tier":  "experimental",
+                           "tier":  "core",
                            "methods":  10
                        },
                        {
                            "slug":  "eqs",
-                           "tier":  "experimental",
+                           "tier":  "core",
                            "methods":  6
                        },
                        {
                            "slug":  "foliage",
-                           "tier":  "experimental",
+                           "tier":  "core",
                            "methods":  6
                        },
                        {
                            "slug":  "game_features",
-                           "tier":  "experimental",
+                           "tier":  "core",
                            "methods":  1
                        },
                        {
                            "slug":  "game_framework",
-                           "tier":  "experimental",
+                           "tier":  "core",
                            "methods":  9
                        },
                        {
                            "slug":  "gameplay_tags",
-                           "tier":  "experimental",
+                           "tier":  "core",
                            "methods":  6
                        },
                        {
                            "slug":  "gas",
-                           "tier":  "experimental",
+                           "tier":  "core",
                            "methods":  27
                        },
                        {
@@ -141,7 +141,7 @@
                        },
                        {
                            "slug":  "image",
-                           "tier":  "experimental",
+                           "tier":  "core",
                            "methods":  3
                        },
                        {
@@ -156,12 +156,12 @@
                        },
                        {
                            "slug":  "interaction",
-                           "tier":  "experimental",
+                           "tier":  "core",
                            "methods":  9
                        },
                        {
                            "slug":  "landscape",
-                           "tier":  "experimental",
+                           "tier":  "core",
                            "methods":  9
                        },
                        {
@@ -171,7 +171,7 @@
                        },
                        {
                            "slug":  "lighting",
-                           "tier":  "experimental",
+                           "tier":  "core",
                            "methods":  13
                        },
                        {
@@ -181,7 +181,7 @@
                        },
                        {
                            "slug":  "material",
-                           "tier":  "experimental",
+                           "tier":  "core",
                            "methods":  76
                        },
                        {
@@ -191,27 +191,27 @@
                        },
                        {
                            "slug":  "model",
-                           "tier":  "experimental",
+                           "tier":  "core",
                            "methods":  3
                        },
                        {
                            "slug":  "mrq",
-                           "tier":  "experimental",
+                           "tier":  "core",
                            "methods":  6
                        },
                        {
                            "slug":  "navigation",
-                           "tier":  "experimental",
+                           "tier":  "core",
                            "methods":  12
                        },
                        {
                            "slug":  "networking",
-                           "tier":  "experimental",
+                           "tier":  "core",
                            "methods":  22
                        },
                        {
                            "slug":  "niagara",
-                           "tier":  "experimental",
+                           "tier":  "core",
                            "methods":  54
                        },
                        {
@@ -221,7 +221,7 @@
                        },
                        {
                            "slug":  "pcg",
-                           "tier":  "experimental",
+                           "tier":  "core",
                            "methods":  15
                        },
                        {
@@ -231,7 +231,7 @@
                        },
                        {
                            "slug":  "physics",
-                           "tier":  "experimental",
+                           "tier":  "core",
                            "methods":  3
                        },
                        {
@@ -241,12 +241,12 @@
                        },
                        {
                            "slug":  "pose_search",
-                           "tier":  "experimental",
+                           "tier":  "core",
                            "methods":  3
                        },
                        {
                            "slug":  "post_process",
-                           "tier":  "experimental",
+                           "tier":  "core",
                            "methods":  6
                        },
                        {
@@ -271,7 +271,7 @@
                        },
                        {
                            "slug":  "rendering",
-                           "tier":  "experimental",
+                           "tier":  "core",
                            "methods":  4
                        },
                        {
@@ -281,12 +281,12 @@
                        },
                        {
                            "slug":  "session",
-                           "tier":  "experimental",
+                           "tier":  "core",
                            "methods":  4
                        },
                        {
                            "slug":  "skeleton",
-                           "tier":  "experimental",
+                           "tier":  "core",
                            "methods":  45
                        },
                        {
@@ -296,17 +296,17 @@
                        },
                        {
                            "slug":  "spatial",
-                           "tier":  "experimental",
+                           "tier":  "core",
                            "methods":  12
                        },
                        {
                            "slug":  "spline",
-                           "tier":  "experimental",
+                           "tier":  "core",
                            "methods":  14
                        },
                        {
                            "slug":  "state_tree",
-                           "tier":  "experimental",
+                           "tier":  "core",
                            "methods":  5
                        },
                        {
@@ -331,17 +331,17 @@
                        },
                        {
                            "slug":  "vehicle",
-                           "tier":  "experimental",
+                           "tier":  "core",
                            "methods":  5
                        },
                        {
                            "slug":  "volume",
-                           "tier":  "experimental",
+                           "tier":  "core",
                            "methods":  26
                        },
                        {
                            "slug":  "water",
-                           "tier":  "experimental",
+                           "tier":  "core",
                            "methods":  6
                        },
                        {
@@ -351,7 +351,7 @@
                        },
                        {
                            "slug":  "world_partition",
-                           "tier":  "experimental",
+                           "tier":  "core",
                            "methods":  4
                        }
                    ],

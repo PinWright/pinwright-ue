@@ -14,7 +14,7 @@ Diagnostics are structured (`severity`, `line`, `column`, `code`, `message`, own
 
 `model.*` requires the **GeometryScripting** engine plugin, like `geometry.*`. When disabled, methods are unregistered and calls return `PLUGIN_DISABLED`; enable it and restart the editor.
 
-Maturity is **experimental**: `pwmodel 0` has no compatibility promise and may require regeneration until version `1`.
+`pwmodel 0` has no compatibility promise and may require regeneration until version `1`.
 
 ## Why a source file rather than more geometry verbs
 

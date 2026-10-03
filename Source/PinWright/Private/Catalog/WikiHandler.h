@@ -26,7 +26,7 @@ namespace WikiHandler
     struct FRegistryNamespaceStat
     {
         FString Slug;      // lowercased top-level namespace
-        FString Tier;      // "core" | "experimental" | "internal" | "unclassified"; never empty.
+        FString Tier;      // "core" | "internal" | "unclassified"; never empty.
                            // "unclassified" is the fail-closed fallback for a slug maturity.json
                            // has no entry for (or classifies with an unknown value) - an omission
                            // must not read as core. Not a legal maturity.json value.

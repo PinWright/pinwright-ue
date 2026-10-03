@@ -30,7 +30,7 @@ The cache is a process-singleton built once at the first wiki render. Adding a b
 
 If you misspell a path, the wiki returns a fuzzy-match suggestion list — substring-contains hits first, then Levenshtein-similarity matches. Re-call with the corrected path.
 
-**Maturity markers.** Each root-index entry carries its tier in parentheses and each namespace page repeats it as a `Stability:` line. Unmarked means `core` — solid, primary surface. `(experimental)` works but is less complete and still changing. `(internal)` is plumbing, not meant for direct use. `(unclassified)` means the namespace has **no** maturity entry at all: nothing about it is promised, so treat it as weaker than experimental and verify anything it tells you. Only `core` renders bare, so an unmarked namespace is always a deliberate classification and never an omission.
+**Maturity markers.** Each root-index entry carries its tier in parentheses and each namespace page repeats it as a `Stability:` line. Unmarked means `core` — solid, primary surface. `(internal)` is plumbing, not meant for direct use. `(unclassified)` means the namespace has **no** maturity entry at all: nothing about it is promised, so treat it as unstable and verify anything it tells you. Only `core` renders bare, so an unmarked namespace is always a deliberate classification and never an omission.
 
 ## Where editorial content lives
 

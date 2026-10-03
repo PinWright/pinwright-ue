@@ -1312,14 +1312,14 @@ bool FWikiHandlerActivatableHostInstanceNameDocumentedTest::RunTest(const FStrin
 
 // ============================================================================
 // Root index carries maturity-tier markers: non-core namespaces are flagged
-// inline right after the backticked name (`material` (experimental),
-// `pipeline` (internal)), core namespaces stay unmarked, and the intro carries
+// inline right after the backticked name (`pipeline` (internal)), core
+// namespaces stay unmarked, and the intro carries
 // the one-line legend explaining the markers. Tiers come from
 // docs/wiki-src/maturity.json, loaded into the wiki cache and rendered by
 // RenderRootNamespaceEntry / RenderRoot.
 // Counterfactual: if the maturity map is no longer loaded into the cache (or
 // RenderRootNamespaceEntry drops its Tier parameter), every entry renders bare,
-// the (experimental)/(internal) markers and the legend line disappear, and the
+// the (internal) marker and the legend line disappear, and the
 // assertions fail. This pins E-wiki-maturity-tiers.
 // ============================================================================
 
@@ -1337,8 +1337,6 @@ bool FWikiHandlerRootIndexMaturityMarkersTest::RunTest(const FString& Parameters
     }
 
     // Non-core tiers are flagged inline right after the backticked name.
-    TestTrue(TEXT("root index marks material as experimental"),
-        Text.Contains(TEXT("`material` (experimental)")));
     TestTrue(TEXT("root index marks pipeline as internal"),
         Text.Contains(TEXT("`pipeline` (internal)")));
     // Core namespaces stay unmarked — no parenthesized tier after the name.
@@ -1346,6 +1344,9 @@ bool FWikiHandlerRootIndexMaturityMarkersTest::RunTest(const FString& Parameters
         Text.Contains(TEXT("- `blueprint`")));
     TestFalse(TEXT("root index does not mark the core blueprint namespace"),
         Text.Contains(TEXT("- `blueprint` (")));
+    // v1.0 retired the experimental tier: formerly experimental namespaces are core.
+    TestFalse(TEXT("root index does not mark the formerly experimental material namespace"),
+        Text.Contains(TEXT("- `material` (")));
     // The one-line legend explaining the markers renders in the intro.
     TestTrue(TEXT("root index carries the maturity legend"),
         Text.Contains(TEXT("unmarked namespaces are core")));
@@ -1361,7 +1362,7 @@ bool FWikiHandlerRootIndexMaturityMarkersTest::RunTest(const FString& Parameters
 // their tier, unmapped ones say `unclassified` (covered by
 // Maturity.UnmappedNamespaceRendersUnclassified). The lookup keys on the FIRST
 // dotted segment so nested namespace pages inherit their top-level tier
-// (material.authoring inherits material's experimental). Rendered by
+// (material.authoring inherits material's core). Rendered by
 // RenderNamespaceHeader via ResolveTier over the cache's maturity map.
 // Counterfactual: if RenderNamespaceHeader stops emitting the Stability line
 // (or looks up the full dotted path instead of the first segment, which has no
@@ -1379,9 +1380,8 @@ bool FWikiHandlerNamespacePageStabilityLineTest::RunTest(const FString& Paramete
     struct FCase { const TCHAR* Path; const TCHAR* Marker; };
     for (const FCase& Case : {
         FCase{ TEXT("blueprint"), TEXT("Stability: core") },
-        FCase{ TEXT("material"), TEXT("Stability: experimental") },
         FCase{ TEXT("pipeline"), TEXT("Stability: internal") },
-        FCase{ TEXT("material.authoring"), TEXT("Stability: experimental") } })
+        FCase{ TEXT("material.authoring"), TEXT("Stability: core") } })
     {
         FString Text;
         if (!WikiDocTestHelpers::RenderOrFail(*this, Case.Path, Text))
@@ -1391,15 +1391,6 @@ bool FWikiHandlerNamespacePageStabilityLineTest::RunTest(const FString& Paramete
         TestTrue(*FString::Printf(TEXT("%s page carries '%s'"), Case.Path, Case.Marker),
             Text.Contains(Case.Marker));
     }
-
-    // The experimental wording must state the meaning, not just the tier name.
-    FString MaterialText;
-    if (!WikiDocTestHelpers::RenderOrFail(*this, TEXT("material"), MaterialText))
-    {
-        return false;
-    }
-    TestTrue(TEXT("experimental Stability line explains the tier"),
-        MaterialText.Contains(TEXT("still changing")));
     return true;
 }
 
@@ -1457,9 +1448,9 @@ bool FWikiHandlerUnmappedNamespaceUnclassifiedTest::RunTest(const FString& Param
     TestTrue(TEXT("unmapped namespace page carries an unclassified Stability line"),
         Page.Contains(TEXT("Stability: unclassified")));
     // The line must say what the tier means, not just name it — an agent reading
-    // the page has to learn that this is weaker than experimental.
+    // the page has to learn that nothing about it is promised.
     TestTrue(TEXT("unclassified Stability line explains the tier"),
-        Page.Contains(TEXT("less stable than experimental")));
+        Page.Contains(TEXT("nothing here is promised")));
     return true;
 }
 
@@ -1509,7 +1500,7 @@ bool FWikiHandlerEveryNamespaceClassifiedTest::RunTest(const FString& Parameters
     {
         AddError(FString::Printf(
             TEXT("%d registered namespace(s) have no docs/wiki-src/maturity.json entry and render as ")
-            TEXT("'unclassified': %s. Classify each as core, experimental or internal."),
+            TEXT("'unclassified': %s. Classify each as core or internal."),
             Unclassified.Num(), *FString::Join(Unclassified, TEXT(", "))));
         return false;
     }

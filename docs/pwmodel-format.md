@@ -2362,8 +2362,7 @@ need regenerating. The version bumps to `1` once real models have exercised it; 
 breaking change bumps the integer and old parser paths are kept.
 
 Freezing now would mean committing to support a vocabulary derived from parameter structs that no
-model has been authored against. The `model` namespace ships at the `experimental` maturity tier
-for the same reason.
+model has been authored against.
 
 **No migration machinery ships in version 0** — no parser version branches, no upgrade paths, no
 compatibility tests. Adding them before there is anything to migrate would be maintaining a
