@@ -1686,6 +1686,24 @@ class ProxyStdioLifecycleTest(unittest.TestCase):
         self.assertIn("args: {...}})` executes the RPC", instructions)
         self.assertIn("still require `args: {}` to execute", instructions)
 
+    def test_canonical_instructions_checkout_is_pinned_lf(self):
+        # The byte-exact comparisons above (and PinWright.infra.request_core.Initialize) only hold on
+        # a core.autocrlf=true Windows clone because .gitattributes pins this file to eol=lf; on
+        # Linux they pass without the pin, so this guards the pin itself.
+        plugin_root = os.path.normpath(os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "..", "..", ".."
+        ))
+        try:
+            result = subprocess.run(
+                ["git", "check-attr", "eol", "--", "mcp-instructions.md"],
+                cwd=plugin_root, capture_output=True, text=True, check=False,
+            )
+        except FileNotFoundError:
+            self.skipTest("git is not installed")
+        if result.returncode != 0:
+            self.skipTest("plugin is not a git checkout")
+        self.assertEqual(result.stdout.strip(), "mcp-instructions.md: eol: lf")
+
     def test_eof_ends_the_wait_but_leaves_the_detached_editor_running(self):
         with tempfile.TemporaryDirectory() as temp:
             proxy = self._proxy(self._project(temp))
