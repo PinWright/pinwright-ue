@@ -18,8 +18,8 @@ entry key_pressed S(ctrl, shift) {
 }
 ```
 
-During decompilation, `key_pressed` and `key_released` are distinct entry identities even though an InputKey node exposes both exec outputs. Body traversal starts from the named `Pressed` or `Released` pin that matches the emitted signature. UE allocates `Pressed` first, so using generic exec-output index zero for a `key_released` entry would emit the correct signature but silently drop its body. Compilation currently creates one InputKey node per logical BPIR entry; sharing one node across both pins would require a broader node-and-pin entry representation.
+During decompilation, `key_pressed` and `key_released` are distinct entry identities even though an InputKey node exposes both exec outputs. Body traversal starts from the named `Pressed` or `Released` pin that matches the emitted signature. UE allocates `Pressed` first, so using generic exec-output index zero for a `key_released` entry would emit the correct signature but silently drop its body. An InputKey node with both `Pressed` and `Released` wired decompiles as two entries, a `key_pressed` and then a `key_released` with the same key, each holding its own body. Compilation creates one InputKey node per BPIR entry, so a round trip turns that node into two equivalent single-pin nodes.
 
-> **Tests:** Parser: `ParseKeyPressedEntry`, `input_key_modifiers.ParseCtrlJ` | Compiler: `KeyPressedEntry` | Decompiler: `KeyReleasedEntry`, `input_key_modifiers.DecompileEmitsModifiers` | Round-trip: `KeyReleasedEntry`, `input_key_modifiers.RoundTrip`
+> **Tests:** Parser: `ParseKeyPressedEntry`, `input_key_modifiers.ParseCtrlJ` | Compiler: `KeyPressedEntry` | Decompiler: `KeyReleasedEntry`, `input_key_modifiers.DecompileEmitsModifiers` | Round-trip: `KeyReleasedEntry`, `input_key_modifiers.RoundTrip`, `input_key_dual_active.EmitsBothEntriesAndRoundTrips`
 
 _See also: call("bpir.examples") for the full index._

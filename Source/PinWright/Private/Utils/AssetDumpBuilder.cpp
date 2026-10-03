@@ -191,6 +191,13 @@ TSharedPtr<FJsonObject> BuildMetaJson(UObject* Asset)
 // warning, so consumers can distinguish source-graph notes from decompiler-internal failures.
 void FormatBpirWarningMarkers(const TArray<FBpirWarning>& Warnings, FString& Output)
 {
+    // The decompiled body ends with its entry's closing `}` and no trailing newline, so
+    // without this every marker would share that line (`}# BPIR_WARN: ...`) and hide from
+    // anchored `^}` / `^# BPIR_` line consumers.
+    if (Warnings.Num() > 0 && !Output.IsEmpty() && !Output.EndsWith(TEXT("\n")))
+    {
+        Output += TEXT("\n");
+    }
     for (const FBpirWarning& W : Warnings)
     {
         const TCHAR* Prefix = (W.Severity == EBpirWarningSeverity::Error)

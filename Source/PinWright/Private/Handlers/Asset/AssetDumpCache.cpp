@@ -798,7 +798,16 @@ int32 GetAspectVersion(const FString& RelativeFile)
         //    its keys, so any Blueprint holding a Timeline with tracks dumps different bytes.
         // 11: `entry key_pressed/key_released` now carries the InputKey modifier list
         //    (`J(ctrl)`), so any Blueprint with a Ctrl/Alt/Shift/Cmd key event dumps different bytes.
-        { TEXT("bpir.txt"),                 11 },
+        // 12: an InputKey node with Pressed and Released both wired emits both entries; a pure
+        //    binding read from another block moves to the entry top; a warning marker after a
+        //    graph body starts on its own line instead of sharing the closing `}`. Entries
+        //    tied on graph and NodePosY keep graph node order instead of an unstable sort's.
+        { TEXT("bpir.txt"),                 12 },
+        // 2: level_bp.txt is BuildBpirText output for a map's level Blueprint, so it carries the
+        //    bpir.txt 12 changes. First row this aspect has had -- it was served at
+        //    AssetDumpDefaultAspectVersion, so 1 -> 2 invalidates exactly like a bump on any
+        //    listed aspect.
+        { TEXT("level_bp.txt"),             2 },
         // 3: entry material blocks now carry the material-level properties (blend mode,
         //    shading model, two-sided, domain, translucency lighting mode, ...) as
         //    `property Name: Value` lines above the graph.

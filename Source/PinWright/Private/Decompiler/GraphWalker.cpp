@@ -132,8 +132,12 @@ TArray<UEdGraphNode*> FGraphWalker::FindEntryPoints()
 
     // Sort by (GraphPathName, NodePosY) for deterministic ordering across nested scopes.
     // Two entry nodes from different child graphs with the same Y position must not float;
-    // the graph path provides a stable secondary discriminator.
-    EntryPoints.Sort([](const UEdGraphNode& A, const UEdGraphNode& B)
+    // the graph path provides a stable secondary discriminator. Entries tied on both keep
+    // the graph's node order (creation order; compile creates entries in text order), so
+    // a decompile -> compile -> decompile round trip reproduces the entry order. The
+    // unstable Sort reversed ties (its small-range selection sort swaps the first maximum
+    // to the back), so two entries at one position swapped on every round trip.
+    EntryPoints.StableSort([](const UEdGraphNode& A, const UEdGraphNode& B)
     {
         const FString PathA = A.GetGraph() ? A.GetGraph()->GetPathName() : FString();
         const FString PathB = B.GetGraph() ? B.GetGraph()->GetPathName() : FString();

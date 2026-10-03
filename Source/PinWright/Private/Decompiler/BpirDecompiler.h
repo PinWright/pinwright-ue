@@ -126,6 +126,9 @@ private:
         // Map nodes to the line index where they were emitted (for retroactive label insertion)
         TMap<UEdGraphNode*, int32> NodeToLineIndex;
 
+        // Number of lines AppendNodeLine emitted for each node (generated prefix lines included)
+        TMap<UEdGraphNode*, int32> NodeToLineCount;
+
         // The current label being walked
         FString CurrentWalkLabel;
 
@@ -153,6 +156,10 @@ private:
 
     // Append a BPIR body instruction for a concrete graph node and record its source line.
     void AppendNodeLine(FEntryState& State, UEdGraphNode* Node, const FString& Line);
+
+    // Move a pure binding emitted inside a labeled block, but read from another block, to the
+    // top of the entry body so the text never implies the value exists on one path only.
+    void HoistCrossBlockPureBindings(FEntryState& State);
 
     UBlueprint* TargetBlueprint;
     TUniquePtr<FGraphWalker> GraphWalker;

@@ -63,12 +63,15 @@ public:
 
     // Entry signatures. SourceGraphName and bIsInterfaceGraph describe the un-cloned
     // source graph — the entry node may live on a composite-flattening clone whose
-    // auto-suffixed name and ownership must not leak into the signature.
+    // auto-suffixed name and ownership must not leak into the signature. EntryExecPin is
+    // the exec output this entry's body starts from; an InputKey node with both Pressed
+    // and Released wired is two entries, and the pin picks key_pressed vs key_released.
     FString EmitEntrySignature(
         UEdGraphNode* EntryNode,
         const UBlueprint* BlueprintContext,
         const FString& SourceGraphName,
-        bool bIsInterfaceGraph);
+        bool bIsInterfaceGraph,
+        const UEdGraphPin* EntryExecPin = nullptr);
 
     // Entry-level decorator lines: 0, 1, or 2 lines (`@meta(...)` and/or `@flags(...)`)
     // that go immediately above the `entry …` signature. Empty array when the entry

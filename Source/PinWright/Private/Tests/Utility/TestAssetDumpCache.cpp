@@ -255,15 +255,24 @@ bool FAssetDumpCacheBpirAspectVersionTest::RunTest(const FString& Parameters)
     // (ticket B-decompile-drops-timeline-tracks).
     // Bumped to 11: `entry key_pressed/key_released` carries the InputKey modifier list,
     // `J(ctrl)` (ticket B-bpir-inputkey-modifiers-dropped).
+    // Bumped to 12: dual-active InputKey entries, cross-block pure hoist, warning marker on its
+    // own line (B-bpir-dual-active-inputkey, E-bpir-pure-nodes-in-branch-block,
+    // B-bpir-warn-marker-not-newline-separated).
     TestEqual(TEXT("bpir.txt explicit aspect version"),
         AssetDumpCache::GetAspectVersion(DumpFileNames::BpirTxt),
-        static_cast<int32>(11));
+        static_cast<int32>(12));
 
     const TArray<FString> WrittenFiles{DumpFileNames::BpirTxt};
     const TMap<FString, int32> AspectVersions = AssetDumpCache::MakeCurrentAspectVersions(WrittenFiles);
     TestEqual(TEXT("bpir.txt current aspect version"),
         AspectVersions.FindRef(DumpFileNames::BpirTxt),
-        static_cast<int32>(11));
+        static_cast<int32>(12));
+
+    // level_bp.txt is the same BuildBpirText output for a level Blueprint; its first row (2)
+    // landed with the bpir.txt 12 bump.
+    TestEqual(TEXT("level_bp.txt explicit aspect version"),
+        AssetDumpCache::GetAspectVersion(DumpFileNames::LevelBp),
+        static_cast<int32>(2));
 
     return true;
 }

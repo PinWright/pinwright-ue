@@ -1526,7 +1526,8 @@ FString FBpirTextEmitter::EmitEntrySignature(
     UEdGraphNode* EntryNode,
     const UBlueprint* BlueprintContext,
     const FString& SourceGraphName,
-    bool bIsInterfaceGraph)
+    bool bIsInterfaceGraph,
+    const UEdGraphPin* EntryExecPin)
 {
     if (!EntryNode)
     {
@@ -1871,19 +1872,10 @@ FString FBpirTextEmitter::EmitEntrySignature(
     {
         FString KeyName = FBpirInputKeyHelpers::FormatInputKeyAsBpirIdentifier(InputKeyNode->InputKey);
 
-        // Determine pressed vs released by checking which exec pin is wired
-        bool bIsReleased = false;
-        for (UEdGraphPin* Pin : EntryNode->Pins)
-        {
-            if (Pin && Pin->Direction == EGPD_Output
-                && Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_Exec
-                && Pin->PinName == TEXT("Released")
-                && Pin->LinkedTo.Num() > 0)
-            {
-                bIsReleased = true;
-                break;
-            }
-        }
+        // The caller's entry pin decides; without one, Released wins when it is wired.
+        const bool bIsReleased = EntryExecPin
+            ? EntryExecPin->PinName == FBpirInputKeyHelpers::GetInputKeyExecPinName(/*bReleased=*/true)
+            : FBpirInputKeyHelpers::IsInputKeyExecPinActive(InputKeyNode, /*bReleased=*/true);
 
         FString Kind = bIsReleased ? TEXT("key_released") : TEXT("key_pressed");
         return AppendEntryPosition(FString::Printf(TEXT("entry %s %s(%s)"), *Kind, *KeyName,

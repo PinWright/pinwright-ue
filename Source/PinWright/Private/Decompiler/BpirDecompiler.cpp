@@ -527,6 +527,7 @@ void FBpirDecompiler::AppendNodeLine(FEntryState& State, UEdGraphNode* Node, con
         if (Node)
         {
             State.NodeToLineIndex.Add(Node, FirstLineIndex);
+            State.NodeToLineCount.Add(Node, 1);
         }
         return;
     }
@@ -579,7 +580,183 @@ void FBpirDecompiler::AppendNodeLine(FEntryState& State, UEdGraphNode* Node, con
     if (Node)
     {
         State.NodeToLineIndex.Add(Node, FirstLineIndex);
+        State.NodeToLineCount.Add(Node, State.Lines.Num() - FirstLineIndex);
     }
+}
+
+namespace BpirDecompilerPureHoist
+{
+    bool HasExecPin(const UEdGraphNode* Node)
+    {
+        for (const UEdGraphPin* Pin : Node->Pins)
+        {
+            if (Pin && Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_Exec)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // `%n2` read as a whole token: `%n2.Field`, `%n2)` and `%n2,` match, `%n20` does not.
+    bool LineReadsValue(const FString& Line, const FString& Token)
+    {
+        int32 From = 0;
+        while (true)
+        {
+            const int32 At = Line.Find(Token, ESearchCase::CaseSensitive, ESearchDir::FromStart, From);
+            if (At == INDEX_NONE)
+            {
+                return false;
+            }
+            const int32 After = At + Token.Len();
+            if (After >= Line.Len() || !(FChar::IsAlnum(Line[After]) || Line[After] == TEXT('_')))
+            {
+                return true;
+            }
+            From = After;
+        }
+    }
+}
+
+void FBpirDecompiler::HoistCrossBlockPureBindings(FEntryState& State)
+{
+    int32 SignatureIndex = INDEX_NONE;
+    for (int32 Index = 0; Index < State.Lines.Num(); ++Index)
+    {
+        if (State.Lines[Index].StartsWith(TEXT("entry ")))
+        {
+            SignatureIndex = Index;
+            break;
+        }
+    }
+    if (SignatureIndex == INDEX_NONE)
+    {
+        return;
+    }
+
+    // Block of each body line; "" is everything above the first label. Every path through
+    // the entry starts there, so it runs before any labeled block -- even when a retroactive
+    // @merge label splits the walk's first block, only the part above that label counts as "".
+    TArray<FString> BlockOfLine;
+    BlockOfLine.SetNum(State.Lines.Num());
+    FString CurrentBlock;
+    for (int32 Index = SignatureIndex + 1; Index < State.Lines.Num(); ++Index)
+    {
+        const FString& Line = State.Lines[Index];
+        if (Line.StartsWith(TEXT("@")) && Line.EndsWith(TEXT(":")))
+        {
+            CurrentBlock = Line.Mid(1, Line.Len() - 2);
+        }
+        BlockOfLine[Index] = CurrentBlock;
+    }
+
+    auto IsBoundPure = [&State](UEdGraphNode* Node)
+    {
+        return State.NodeToValueName.Contains(Node)
+            && State.NodeToLineIndex.Contains(Node)
+            && !BpirDecompilerPureHoist::HasExecPin(Node);
+    };
+
+    // A binding can move to the top only when everything it reads is available there:
+    // literals, self, variables, entry outputs, or other pure bindings that move with it.
+    // ponytail: a pure value fed by an impure node's output stays in its first consumer's
+    // block; placing it after its producer needs a dominator walk over the labels.
+    TFunction<bool(UEdGraphNode*, TSet<UEdGraphNode*>&)> CollectHoistable =
+        [&](UEdGraphNode* Node, TSet<UEdGraphNode*>& Closure) -> bool
+    {
+        for (UEdGraphPin* Pin : Node->Pins)
+        {
+            if (!Pin || Pin->Direction != EGPD_Input
+                || Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_Exec
+                || Pin->LinkedTo.Num() == 0)
+            {
+                continue;
+            }
+            UEdGraphPin* DeadEnd = nullptr;
+            UEdGraphPin* SourcePin = BpirDecompiler::Helpers::FollowKnotsBackward(Pin->LinkedTo[0], DeadEnd);
+            UEdGraphNode* Source = SourcePin ? SourcePin->GetOwningNode() : nullptr;
+            if (!Source || Source->IsA<UK2Node_Self>()
+                || BlueprintHandlerUtils::IsBlueprintEntryNode(Source)
+                || BlueprintHandlerUtils::IsMacroEntryTunnel(Source))
+            {
+                continue;
+            }
+            if (Source->IsA<UK2Node_VariableGet>())
+            {
+                if (!CollectHoistable(Source, Closure)) return false;
+                continue;
+            }
+            if (!IsBoundPure(Source)) return false;
+            if (Closure.Contains(Source)) continue;
+            Closure.Add(Source);
+            if (!CollectHoistable(Source, Closure)) return false;
+        }
+        return true;
+    };
+
+    TSet<UEdGraphNode*> Hoisted;
+    for (const TPair<UEdGraphNode*, FString>& Binding : State.NodeToValueName)
+    {
+        UEdGraphNode* Node = Binding.Key;
+        if (!Node || !IsBoundPure(Node) || Hoisted.Contains(Node))
+        {
+            continue;
+        }
+        const int32 First = State.NodeToLineIndex[Node];
+        const int32 Count = State.NodeToLineCount.FindRef(Node);
+        if (First <= SignatureIndex || BlockOfLine[First].IsEmpty())
+        {
+            continue;
+        }
+
+        const FString Token = TEXT("%") + Binding.Value;
+        bool bReadElsewhere = false;
+        for (int32 Index = SignatureIndex + 1; Index < State.Lines.Num() && !bReadElsewhere; ++Index)
+        {
+            bReadElsewhere = (Index < First || Index >= First + Count)
+                && BlockOfLine[Index] != BlockOfLine[First]
+                && BpirDecompilerPureHoist::LineReadsValue(State.Lines[Index], Token);
+        }
+        if (!bReadElsewhere)
+        {
+            continue;
+        }
+
+        TSet<UEdGraphNode*> Closure{Node};
+        if (CollectHoistable(Node, Closure))
+        {
+            Hoisted.Append(Closure);
+        }
+    }
+    if (Hoisted.Num() == 0)
+    {
+        return;
+    }
+
+    // Emission order already puts every dependency before its reader; keep it.
+    TArray<TPair<int32, int32>> Ranges;
+    for (UEdGraphNode* Node : Hoisted)
+    {
+        Ranges.Emplace(State.NodeToLineIndex[Node], State.NodeToLineCount.FindRef(Node));
+    }
+    Ranges.Sort([](const TPair<int32, int32>& A, const TPair<int32, int32>& B) { return A.Key < B.Key; });
+    TArray<FString> Moved;
+    for (const TPair<int32, int32>& Range : Ranges)
+    {
+        for (int32 Index = Range.Key; Index < Range.Key + Range.Value; ++Index)
+        {
+            Moved.Add(State.Lines[Index]);
+        }
+    }
+    for (int32 RangeIndex = Ranges.Num() - 1; RangeIndex >= 0; --RangeIndex)
+    {
+        State.Lines.RemoveAt(Ranges[RangeIndex].Key, Ranges[RangeIndex].Value);
+    }
+    State.Lines.Insert(Moved, SignatureIndex + 1);
+    // Line indices are stale from here on; nothing after the entry walk reads them.
+    State.NodeToLineIndex.Reset();
+    State.NodeToLineCount.Reset();
 }
 
 // ---------------------------------------------------------------------------
@@ -895,11 +1072,37 @@ void FBpirDecompiler::DecompileGraphInternal(
         UEdGraphNode* EntryNode = nullptr;
         FEntryState State;
     };
-    TArray<FRenderedEntry> RenderedEntries;
-    RenderedEntries.Reserve(EntryPoints.Num());
-
+    // An entry is a node plus the exec pin its body hangs off. A legacy InputKey node with
+    // both Pressed and Released wired is two BPIR entries (key_pressed + key_released) on
+    // one node; every other entry node keeps a single entry and a null pin here.
+    TArray<TPair<UEdGraphNode*, UEdGraphPin*>> EntryEmits;
     for (UEdGraphNode* EntryNode : EntryPoints)
     {
+        UK2Node_InputKey* InputKeyNode = Cast<UK2Node_InputKey>(EntryNode);
+        if (!InputKeyNode)
+        {
+            EntryEmits.Emplace(EntryNode, nullptr);
+            continue;
+        }
+        const bool bPressedActive = FBpirInputKeyHelpers::IsInputKeyExecPinActive(InputKeyNode, /*bReleased=*/false);
+        const bool bReleasedActive = FBpirInputKeyHelpers::IsInputKeyExecPinActive(InputKeyNode, /*bReleased=*/true);
+        if (bPressedActive || !bReleasedActive)
+        {
+            EntryEmits.Emplace(EntryNode, FBpirInputKeyHelpers::FindInputKeyExecPin(InputKeyNode, /*bReleased=*/false));
+        }
+        if (bReleasedActive)
+        {
+            EntryEmits.Emplace(EntryNode, FBpirInputKeyHelpers::FindInputKeyExecPin(InputKeyNode, /*bReleased=*/true));
+        }
+    }
+
+    TArray<FRenderedEntry> RenderedEntries;
+    RenderedEntries.Reserve(EntryEmits.Num());
+
+    for (const TPair<UEdGraphNode*, UEdGraphPin*>& EntryEmit : EntryEmits)
+    {
+        UEdGraphNode* EntryNode = EntryEmit.Key;
+        UEdGraphPin* EntryExecPin = EntryEmit.Value;
         if (!EntryNode)
         {
             continue;
@@ -909,7 +1112,8 @@ void FBpirDecompiler::DecompileGraphInternal(
             EntryNode,
             TargetBlueprint,
             CurrentSourceGraphName,
-            bIsInterfaceGraph);
+            bIsInterfaceGraph,
+            EntryExecPin);
 
         // AnimGraph roots (and any other node class the engine root-sets) reach
         // FindEntryPoints through the class-agnostic backstop in IsBlueprintEntryNode,
@@ -1024,12 +1228,9 @@ void FBpirDecompiler::DecompileGraphInternal(
                     TEXT("Unbound K2Node_EnhancedInputAction cannot be round-tripped")});
             }
         }
-        if (UK2Node_InputKey* InputKeyNode = Cast<UK2Node_InputKey>(EntryNode))
+        if (EntryExecPin)
         {
-            if (FBpirInputKeyHelpers::IsInputKeyExecPinActive(InputKeyNode, /*bReleased=*/true))
-            {
-                ExecStartPin = FBpirInputKeyHelpers::FindInputKeyExecPin(InputKeyNode, /*bReleased=*/true);
-            }
+            ExecStartPin = EntryExecPin;
         }
 
         // Walk the initial exec chain (pre-label block, CurrentWalkLabel is empty)
@@ -1083,6 +1284,8 @@ void FBpirDecompiler::DecompileGraphInternal(
                 break; // Only one exit tunnel per macro graph
             }
         }
+
+        HoistCrossBlockPureBindings(State);
 
         // Closing brace is appended later, after the orphan-pure injection pass below,
         // so injected statements land inside the entry block.

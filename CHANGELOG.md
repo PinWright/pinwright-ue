@@ -26,6 +26,16 @@
   seeded `CLAUDE.md`/`AGENTS.md` name the `source.fileMd5` check; all are create-if-missing, so an
   existing dump root keeps its old files until they are deleted. Dump core version 4: every cached aspect regenerates once.
 
+- Fixed: BPIR decompilation of an InputKey node with both `Pressed` and `Released` wired emitted
+  only a `key_released` entry and dropped the Pressed body without a warning. It now emits a
+  `key_pressed` and a `key_released` entry, each with its own body (`bpir.txt` aspect 12).
+- Fixed: BPIR decompilation swapped entries that share a graph and `NodePosY` (an unstable sort),
+  so such entries changed order on every round trip. Ties now keep the graph's node order.
+- Changed: a decompiled pure binding read from more than one block is printed at the top of the
+  entry body instead of inside its first consumer's branch block, so a `@merge:` read never
+  points into one branch. Pure values fed by an impure node's output keep their old placement.
+- Fixed: `bpir.txt` printed the first `# BPIR_WARN:` / `# BPIR_ERROR:` marker after a graph body
+  on the same line as its closing brace (`}# BPIR_WARN: ...`); every marker now starts a line.
 - Changed: `EDITOR_NOT_RUNNING` tells a never-started editor from one that served this project and
   died. `structuredContent.lastSession` carries `state` (`never_started` | `crashed` |
   `killed_externally` | `exited` | `stopped`), the last port, the last `jobs.jsonl` job, the editor

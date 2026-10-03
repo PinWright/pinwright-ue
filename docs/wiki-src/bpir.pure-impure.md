@@ -46,6 +46,8 @@ Bindings may carry an optional `: Type` annotation on the register (see the "Opt
 | `return [ExitPin]` | Impure | Yes | No — terminal (macro exit) |
 | `return [ExitPin] (...)` | Impure | Yes | No — terminal (macro exit + data) |
 
+**Where the decompiler binds a pure value.** A pure binding has no exec pins, so the block it is printed in schedules nothing. The decompiler binds it in the block of its first consumer; when blocks other than that one also read it, the binding (with the pure bindings it reads) moves to the top of the entry body, so a `@merge:` read never refers to a value bound inside one branch's block. A pure value that reads an impure node's output stays in its first consumer's block.
+
 ## Discovering the concrete pure function name
 
 The table classifies purity by *syntax shape*, not the Kismet UFunctions a pure
