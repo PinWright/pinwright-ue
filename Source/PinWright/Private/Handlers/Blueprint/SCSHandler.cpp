@@ -82,7 +82,7 @@ static bool PrepareSCSCompile(
 }
 
 // ---- blueprint.scs.get ----
-REGISTER_RPC_HANDLER("blueprint.scs.get", "blueprint", "Read the Simple Construction Script (SCS) component tree of a Blueprint class — the templates that get instanced on every spawned actor. Returns hierarchy + per-node class/transform/properties.",
+REGISTER_RPC_HANDLER("blueprint.scs.get", "blueprint", "Read the Simple Construction Script (SCS) component tree of a Blueprint class — the templates that get instanced on every spawned actor. Returns hierarchy (per-row parent, children and child_count across every source) + per-node class/transform/properties.",
     RPC_PARAMS(
         RPC_PARAM_REQ("blueprintPath", "path", "Blueprint asset path whose SCS tree is being read."),
         RPC_PARAM_OPT("nameMatch", "string", "Case-insensitive substring filter on component name. Snake_case name_match accepted."),

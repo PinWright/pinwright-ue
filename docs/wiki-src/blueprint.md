@@ -226,7 +226,7 @@ Field entries mirror the rich struct dump shape: `name`, `displayName`, `guid`, 
 
 ### blueprint.get
 
-Asset-registry-backed summary of a Blueprint class: parent class, `variables`, `functions`, `events`, plus `metadata` (per-variable) and a `defaults` map.
+Asset-registry-backed summary of a Blueprint class: `parentClass` (the full class path read off the Blueprint, e.g. `/Script/Engine.Pawn` or `/Game/BP_Base.BP_Base_C`; `null` when the parent class is missing; note `blueprint.inspect` returns the short class name under the same key), `variables`, `functions`, `events`, plus `metadata` (per-variable) and a `defaults` map.
 
 `events` is a live enumeration of the ubergraph nodes, so it is an independent check on the authoring verbs rather than a replay of them: an event authored with `blueprint.add_event` and later removed — including by a default-mode `compile_bpir`, whose Phase 0 sweep deletes it (see [BPIR gotchas](blueprint.bpir-gotchas.md)) — is absent from `events`, and each entry's `parameters` are the node's real pins.
 
@@ -456,6 +456,8 @@ Response fields:
 | `status` | One of `"UpToDate"`, `"UpToDateWithWarnings"`, `"Error"`, `"Unknown"`. |
 | `errors` | Array of `{message, nodeGuid?, graph?}` objects from `FCompilerResultsLog` errors. `nodeGuid` / `graph` name the source graph node the engine linked the message to; they are absent for a class-level error. |
 | `warnings` | Array of `{message}` objects from `FCompilerResultsLog` warnings. With `warningsAsErrors: true` warnings are reported in `errors` instead and `compiled` is `false`; `status` stays the engine's own. |
+| `orphanedCount` | Nodes unreachable from any entry point after the compile, across every graph, counted with the same model as `blueprint.graph.find_orphaned_nodes` (default `includeDataOnly: true`). Always present. UE compiles a disconnected node cleanly, so an orphan never appears in `errors`/`warnings` and never fails `warningsAsErrors`; rewiring an input away from a getter is the usual way to create one. |
+| `orphanedNodes` | Present only when `orphanedCount > 0`: the same `{nodeId, nodeType, title, graphName, hasExecPins}` rows `find_orphaned_nodes` returns. Orphans are legal — delete them with `blueprint.graph.delete_orphaned_nodes` or by nodeId when they were not intended. |
 
 **Compiling a Widget Blueprint whose UMG Designer is open is safe as of 2026-09-03, and it was not
 before.** Every PinWright compile route reaches `FKismetEditorUtilities::CompileBlueprint` directly,

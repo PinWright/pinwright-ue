@@ -277,6 +277,21 @@ bool FAssetDumpCacheBpirAspectVersionTest::RunTest(const FString& Parameters)
     return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpCacheScsAspectVersionTest,
+    "PinWright.AssetDumpCache.ScsAspectVersion",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetDumpCacheScsAspectVersionTest::RunTest(const FString& Parameters)
+{
+    // scs.json 6 / scs.txt 2: GetBlueprintSCS rows gained children[] and parent on native /
+    // inherited-override rows, so scs.txt nests them (ticket B-scs-get-inherited-override-rows-no-parent).
+    TestEqual(TEXT("scs.json explicit aspect version"),
+        AssetDumpCache::GetAspectVersion(DumpFileNames::Scs), static_cast<int32>(6));
+    TestEqual(TEXT("scs.txt explicit aspect version"),
+        AssetDumpCache::GetAspectVersion(DumpFileNames::ScsTxt), static_cast<int32>(2));
+    return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpCacheFileValidationTest,
     "PinWright.AssetDumpCache.FileValidation",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)

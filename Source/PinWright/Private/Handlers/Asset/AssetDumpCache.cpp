@@ -716,8 +716,11 @@ int32 GetAspectVersion(const FString& RelativeFile)
         // 5: component-template properties go through the shared exporter, so a template
         //    holding an undecodable member (FNavAgentProperties, TObjectPtr<UThumbnailInfo>)
         //    now carries the rest of its fields instead of one whole-value marker.
-        { TEXT("scs.json"),                 5 },
-        { TEXT("scs.txt"),                  1 },
+        // 6: every row carries children[] (child_count now counts all sources), and native /
+        //    inherited-override rows carry `parent`.
+        { TEXT("scs.json"),                 6 },
+        // 2: inherited and native rows nest under their parent instead of listing flat.
+        { TEXT("scs.txt"),                  2 },
         // 3: each enum staticSwitchInputs entry now carries enumOptions, the index/name/label
         //    table its numeric `value` is expressed in.
         // 4: a staticSwitchInputs override whose stored value cannot be decoded no longer

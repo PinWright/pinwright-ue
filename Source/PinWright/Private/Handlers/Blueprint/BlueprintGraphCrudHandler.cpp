@@ -332,12 +332,12 @@ REGISTER_RPC_HANDLER("blueprint.graph.create_node", "blueprint.graph",
         RPC_PARAM_OPT("graphName", "string", "Graph name (defaults to EventGraph)"),
         RPC_PARAM_REQ("x", "number", "X position in graph (required — nodes stack at origin if all callers pass 0)"),
         RPC_PARAM_REQ("y", "number", "Y position in graph (required — nodes stack at origin if all callers pass 0)"),
-        RPC_PARAM_OPT("target", "string", "Type-dependent target spec. For CallFunction accepts bare member names or qualified 'Class::Function' / 'Class.Function'; for Timeline accepts the timeline variable name."),
-        RPC_PARAM_OPT("variableName", "string", "Variable name for VariableGet/Set nodes"),
+        RPC_PARAM_OPT("target", "string", "Type-dependent target spec, taking precedence over the legacy aliases. CallFunction / VariableGet / VariableSet / Event accept a bare member name or qualified 'Class::Member' / 'Class.Member' (a qualified variable on another class creates an external-member node); CustomEvent takes the bare event name; Cast takes the class name; Timeline accepts the timeline variable name."),
+        RPC_PARAM_OPT("variableName", "string", "Legacy alias for target on VariableGet/Set nodes (read only when target is absent)"),
         RPC_PARAM_OPT("memberName", "string", "Function name for CallFunction nodes"),
-        RPC_PARAM_OPT("memberClass", "classref", "Class for CallFunction/Event nodes"),
-        RPC_PARAM_OPT("eventName", "string", "Event name for Event/CustomEvent nodes"),
-        RPC_PARAM_OPT("targetClass", "classref", "Target class for Cast nodes"),
+        RPC_PARAM_OPT("memberClass", "classref", "Owner class for Event/VariableGet/VariableSet nodes when target is absent or unqualified; for CallFunction only when target is absent"),
+        RPC_PARAM_OPT("eventName", "string", "Event name for CustomEvent nodes; legacy alias for target on Event nodes"),
+        RPC_PARAM_OPT("targetClass", "classref", "Legacy alias for target on Cast nodes"),
         RPC_PARAM_OPT("timelineName", "string", "Legacy Timeline variable name alias; target takes precedence"),
         RPC_PARAM_OPT("inputAxisName", "string", "Axis name for InputAxisEvent nodes"),
         RPC_PARAM_OPT("inputAction", "path", "Full UInputAction object path for EnhancedInputAction nodes")
@@ -401,6 +401,52 @@ REGISTER_RPC_HANDLER("blueprint.graph.create_node", "blueprint.graph",
         }
     }
 
+    // Variable nodes resolve and validate before the transaction, so a refused call leaves the
+    // Blueprint clean. `target` ('Var' or 'Class::Var' / 'Class.Var') takes precedence over the
+    // legacy variableName; memberClass supplies the owner only when target is unqualified.
+    const bool bIsVariableGet = NodeType == TEXT("VariableGet") || NodeType == TEXT("K2Node_VariableGet");
+    const bool bIsVariableNode = bIsVariableGet || NodeType == TEXT("VariableSet") || NodeType == TEXT("K2Node_VariableSet");
+    UClass* OwnerClass = nullptr;
+    FName VarFName;
+    bool bSelfMember = true;
+    if (bIsVariableNode)
+    {
+        FString TargetSpec, VarName, MemberClass;
+        Payload->TryGetStringField(TEXT("target"), TargetSpec);
+        Payload->TryGetStringField(TEXT("variableName"), VarName);
+        Payload->TryGetStringField(TEXT("memberClass"), MemberClass);
+        BlueprintHandlerUtils::FBlueprintGraphTargetParts TargetParts = !TargetSpec.TrimStartAndEnd().IsEmpty()
+            ? BlueprintHandlerUtils::ParseGraphTargetSpec(TargetSpec)
+            : BlueprintHandlerUtils::FBlueprintGraphTargetParts{ FString(), VarName.TrimStartAndEnd() };
+        if (TargetParts.ClassName.IsEmpty()) TargetParts.ClassName = MemberClass.TrimStartAndEnd();
+
+        FString ErrCode, ErrMsg;
+        if (!BlueprintHandlerUtils::ResolveGraphVariableTarget(Blueprint, TargetParts, nullptr, OwnerClass, VarFName, ErrCode, ErrMsg))
+        {
+            Ctx.SendError(*ErrCode, ErrMsg);
+            return true;
+        }
+
+        // A qualifier naming this Blueprint's own class (or an ancestor) is still a self member.
+        UClass* SelfClass = Blueprint->SkeletonGeneratedClass
+            ? Blueprint->SkeletonGeneratedClass->GetAuthoritativeClass()
+            : Blueprint->GeneratedClass.Get();
+        bSelfMember = !OwnerClass
+            || (SelfClass && SelfClass->IsChildOf(OwnerClass->GetAuthoritativeClass()));
+        // A self member is looked up without an owner so a variable added but not yet compiled
+        // (present only in NewVariables / the skeleton) still resolves. An ancestor qualifier
+        // ('Actor::Var') must still name a property of that ancestor, not a BP-only variable.
+        const bool bAncestorQualifier = bSelfMember && OwnerClass && OwnerClass->GetAuthoritativeClass() != SelfClass;
+        if (!BlueprintHandlerUtils::DoesGraphVariableExist(Blueprint, bSelfMember ? nullptr : OwnerClass, VarFName)
+            || (bAncestorQualifier && !OwnerClass->FindPropertyByName(VarFName)))
+        {
+            Ctx.SendError(TEXT("VARIABLE_NOT_FOUND"), OwnerClass
+                ? FString::Printf(TEXT("Variable '%s' not found on class '%s'"), *VarFName.ToString(), *OwnerClass->GetName())
+                : FString::Printf(TEXT("Variable '%s' not found"), *VarFName.ToString()));
+            return true;
+        }
+    }
+
     const FScopedTransaction Transaction(FText::FromString(TEXT("Create Blueprint Node")));
     Blueprint->Modify();
     TargetGraph->Modify();
@@ -446,53 +492,25 @@ REGISTER_RPC_HANDLER("blueprint.graph.create_node", "blueprint.graph",
     }
 
     // Special nodes requiring extra parameters
-    if (NodeType == TEXT("VariableGet") || NodeType == TEXT("K2Node_VariableGet"))
+    if (bIsVariableNode)
     {
-        FString VarName;
-        Payload->TryGetStringField(TEXT("variableName"), VarName);
-        FName VarFName(*VarName);
-        bool bFound = false;
-        for (const FBPVariableDescription& VarDesc : Blueprint->NewVariables)
+        auto CreateVariableNode = [&](auto& NodeCreator)
         {
-            if (VarDesc.VarName == VarFName) { bFound = true; break; }
-        }
-        if (!bFound && Blueprint->GeneratedClass && Blueprint->GeneratedClass->FindPropertyByName(VarFName))
-            bFound = true;
-        if (!bFound)
+            auto* VarNode = NodeCreator.CreateNode(false);
+            if (bSelfMember) VarNode->VariableReference.SetSelfMember(VarFName);
+            else VarNode->VariableReference.SetExternalMember(VarFName, OwnerClass);
+            FinalizeAndReport(NodeCreator, VarNode);
+        };
+        if (bIsVariableGet)
         {
-            Ctx.SendError(TEXT("VARIABLE_NOT_FOUND"),
-                FString::Printf(TEXT("Variable '%s' not found"), *VarName));
-            return true;
+            FGraphNodeCreator<UK2Node_VariableGet> NodeCreator(*TargetGraph);
+            CreateVariableNode(NodeCreator);
         }
-        FGraphNodeCreator<UK2Node_VariableGet> NodeCreator(*TargetGraph);
-        UK2Node_VariableGet* VarGet = NodeCreator.CreateNode(false);
-        VarGet->VariableReference.SetSelfMember(VarFName);
-        FinalizeAndReport(NodeCreator, VarGet);
-        return true;
-    }
-
-    if (NodeType == TEXT("VariableSet") || NodeType == TEXT("K2Node_VariableSet"))
-    {
-        FString VarName;
-        Payload->TryGetStringField(TEXT("variableName"), VarName);
-        FName VarFName(*VarName);
-        bool bFound = false;
-        for (const FBPVariableDescription& VarDesc : Blueprint->NewVariables)
+        else
         {
-            if (VarDesc.VarName == VarFName) { bFound = true; break; }
+            FGraphNodeCreator<UK2Node_VariableSet> NodeCreator(*TargetGraph);
+            CreateVariableNode(NodeCreator);
         }
-        if (!bFound && Blueprint->GeneratedClass && Blueprint->GeneratedClass->FindPropertyByName(VarFName))
-            bFound = true;
-        if (!bFound)
-        {
-            Ctx.SendError(TEXT("VARIABLE_NOT_FOUND"),
-                FString::Printf(TEXT("Variable '%s' not found"), *VarName));
-            return true;
-        }
-        FGraphNodeCreator<UK2Node_VariableSet> NodeCreator(*TargetGraph);
-        UK2Node_VariableSet* VarSet = NodeCreator.CreateNode(false);
-        VarSet->VariableReference.SetSelfMember(VarFName);
-        FinalizeAndReport(NodeCreator, VarSet);
         return true;
     }
 
@@ -537,10 +555,18 @@ REGISTER_RPC_HANDLER("blueprint.graph.create_node", "blueprint.graph",
 
     if (NodeType == TEXT("Event") || NodeType == TEXT("K2Node_Event"))
     {
-        FString EventName, MemberClass;
+        FString TargetSpec, EventName, MemberClass;
+        Payload->TryGetStringField(TEXT("target"), TargetSpec);
         Payload->TryGetStringField(TEXT("eventName"), EventName);
         Payload->TryGetStringField(TEXT("memberClass"), MemberClass);
-        if (EventName.IsEmpty()) { Ctx.SendError(TEXT("INVALID_ARGUMENT"), TEXT("eventName required")); return true; }
+        // `target` ('Event' or 'Class::Event') takes precedence over the legacy eventName/memberClass.
+        if (!TargetSpec.TrimStartAndEnd().IsEmpty())
+        {
+            const BlueprintHandlerUtils::FBlueprintGraphTargetParts TargetParts = BlueprintHandlerUtils::ParseGraphTargetSpec(TargetSpec);
+            EventName = TargetParts.MemberName;
+            if (!TargetParts.ClassName.IsEmpty()) MemberClass = TargetParts.ClassName;
+        }
+        if (EventName.IsEmpty()) { Ctx.SendError(TEXT("INVALID_ARGUMENT"), TEXT("target (event name, optionally 'Class::Event') or eventName required")); return true; }
         // Class-aware shorthand: only apply the AActor Receive-prefix mapping when
         // the parent is an AActor subclass AND the literal name does not already
         // resolve on the parent. UUserWidget::Tick must stay literal "Tick".
@@ -591,8 +617,11 @@ REGISTER_RPC_HANDLER("blueprint.graph.create_node", "blueprint.graph",
 
     if (NodeType == TEXT("CustomEvent") || NodeType == TEXT("K2Node_CustomEvent"))
     {
-        FString EventName;
+        FString EventName, TargetSpec;
         Payload->TryGetStringField(TEXT("eventName"), EventName);
+        // `target` takes precedence; a class qualifier is meaningless for a custom event and is dropped.
+        if (Payload->TryGetStringField(TEXT("target"), TargetSpec) && !TargetSpec.TrimStartAndEnd().IsEmpty())
+            EventName = BlueprintHandlerUtils::ParseGraphTargetSpec(TargetSpec).MemberName;
         FGraphNodeCreator<UK2Node_CustomEvent> NodeCreator(*TargetGraph);
         UK2Node_CustomEvent* EventNode = NodeCreator.CreateNode(false);
         EventNode->CustomFunctionName = FName(*EventName);
@@ -603,7 +632,10 @@ REGISTER_RPC_HANDLER("blueprint.graph.create_node", "blueprint.graph",
     if (NodeType == TEXT("Cast") || NodeType.StartsWith(TEXT("CastTo")))
     {
         FString TargetClassName;
-        Payload->TryGetStringField(TEXT("targetClass"), TargetClassName);
+        // `target` (class name) takes precedence over the legacy targetClass alias.
+        if (!Payload->TryGetStringField(TEXT("target"), TargetClassName) || TargetClassName.TrimStartAndEnd().IsEmpty())
+            Payload->TryGetStringField(TEXT("targetClass"), TargetClassName);
+        TargetClassName.TrimStartAndEndInline();
         if (TargetClassName.IsEmpty() && NodeType.StartsWith(TEXT("CastTo")))
             TargetClassName = NodeType.Mid(6);
         UClass* TargetClass = ResolveUClass(TargetClassName);

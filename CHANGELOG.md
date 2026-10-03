@@ -123,6 +123,26 @@
   parameter named `Target` fed a non-object value no longer logs a `ResolveTargetClass` error.
   `%r = $obj.Prop` (no `get`) is still rejected, now with `Property access cannot be assigned
   directly ... Use '%r = get $obj.Prop'` instead of `Unknown instruction keyword after '='`.
+- Fixed: `blueprint.get` returns `parentClass` (full class path; `null` when the parent is
+  missing), which its description always promised. The field comes from the shared Blueprint
+  snapshot, so the other verbs returning that snapshot carry it too.
+- Fixed: `blueprint.scs.get` rows carry the hierarchy from every producer: `inherited-override`
+  rows get the `parent` of the ancestor node they override, `native` rows the CDO attach parent,
+  and every row a new `children[]`. **`child_count` now equals `children.Num()`**, counted from the
+  emitted parent links across all producers (it used to be the local `GetChildNodes()` count, which
+  missed inherited and native children), so `scs.txt` nests those components instead of flattening them.
+  Aspect versions `scs.json` 5 -> 6 and `scs.txt` 1 -> 2.
+- Added: `blueprint.compile` reports `orphanedCount` (always) and `orphanedNodes` (when non-empty),
+  the same orphan model as `blueprint.graph.find_orphaned_nodes`; UE compiles orphans cleanly, so
+  they are not errors or warnings.
+- Fixed: `blueprint.graph.create_node` honours `target` for VariableGet / VariableSet (bare or
+  `Class::Var`, which creates an external-member node), Event, CustomEvent and Cast, as documented;
+  `target` wins over the legacy alias. `memberClass` now also qualifies variable and event nodes
+  when `target` is unqualified. A variable node with no name is `INVALID_ARGUMENT` naming `target`
+  instead of `VARIABLE_NOT_FOUND: Variable ''`. A self-member variable added but not yet compiled
+  still resolves when `memberClass` names the Blueprint's own class, and variable-node refusals no
+  longer open a transaction.
+
 - Added: graph layout keeps comment boxes. Every PinWright layout (BPIR / MGIR / AGIR compiles,
   `material.authoring.auto_layout`) records each comment's members from the rects before it runs;
   a comment around unmoved nodes is an obstacle the moved nodes stay out of, and a comment with

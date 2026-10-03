@@ -52,7 +52,7 @@ REGISTER_RPC_HANDLER("blueprint.exists", "blueprint", "Check whether a blueprint
 }
 
 // ---- blueprint.get ----
-REGISTER_RPC_HANDLER("blueprint.get", "blueprint", "Return summary metadata for a Blueprint: parent class, variables, functions, events, and a defaults map (each member variable's CDO default value, same shape as property.get includeDefault). events[] is a live enumeration of the graph nodes, including legacy and Enhanced Input entry nodes; input entries identify their key/action in name and expose connected edges in execOutputs[]. An event that was authored and later removed is absent from it. Does NOT include components — for class-level component templates use blueprint.scs.get, or blueprint.inspect for the full structural dump (graphs/references/components).",
+REGISTER_RPC_HANDLER("blueprint.get", "blueprint", "Return summary metadata for a Blueprint: parentClass (full class path, null when the parent is missing), variables, functions, events, and a defaults map (each member variable's CDO default value, same shape as property.get includeDefault). events[] is a live enumeration of the graph nodes, including legacy and Enhanced Input entry nodes; input entries identify their key/action in name and expose connected edges in execOutputs[]. An event that was authored and later removed is absent from it. Does NOT include components — for class-level component templates use blueprint.scs.get, or blueprint.inspect for the full structural dump (graphs/references/components).",
     RPC_PARAMS(
         BlueprintPathParamReq(TEXT("path"), TEXT("path"), TEXT("Blueprint asset path to inspect."))
     ))

@@ -394,10 +394,52 @@ FSCSHandlers::GetBlueprintSCS(
   TMap<FName, FName> LocalChildToParent;
   BuildScsChildParentMap(AllNodes, LocalChildToParent);
 
+  // Parent links of every ancestor-Blueprint SCS node, resolved the same way as
+  // the local loop. Both the inherited-scs rows and the inherited-override (ICH)
+  // rows read it: an ICH record overrides an ancestor node, so its attachment
+  // lives in that ancestor's SCS, not in the record.
+  TMap<FName, FName> AncestorParentOf;
+  for (UClass* P = Blueprint->ParentClass; P; P = P->GetSuperClass())
+  {
+    UBlueprint* ParentBP = Cast<UBlueprint>(P->ClassGeneratedBy);
+    if (!ParentBP || !ParentBP->SimpleConstructionScript)
+      continue;
+    const TArray<USCS_Node*>& InheritedNodes =
+        ParentBP->SimpleConstructionScript->GetAllNodes();
+    TMap<FName, FName> InheritedChildToParent;
+    BuildScsChildParentMap(InheritedNodes, InheritedChildToParent);
+    for (USCS_Node* Node : InheritedNodes)
+    {
+      if (!Node || Node->GetVariableName().IsNone())
+        continue;
+      const FName VarName = Node->GetVariableName();
+      if (!Node->ParentComponentOrVariableName.IsNone())
+        AncestorParentOf.FindOrAdd(VarName, Node->ParentComponentOrVariableName);
+      else if (const FName* DerivedParent = InheritedChildToParent.Find(VarName))
+        AncestorParentOf.FindOrAdd(VarName, *DerivedParent);
+    }
+  }
+
+  // Child lists over every component any producer contributes (recorded before
+  // the name filter), so `children` / `child_count` on each emitted row agree
+  // with the `parent` fields regardless of which producer emitted the child.
+  TMap<FName, TArray<FName>> ChildrenOf;
+  auto RecordParent = [&ChildrenOf](const FName Child, const FName Parent)
+  {
+    if (!Parent.IsNone())
+      ChildrenOf.FindOrAdd(Parent).Add(Child);
+  };
+
   for (USCS_Node *Node : AllNodes) {
     if (Node && Node->GetVariableName().IsValid()) {
       const FName VarName = Node->GetVariableName();
       ScsNodeNames.Add(VarName);
+      FName ParentName = Node->ParentComponentOrVariableName;
+      if (ParentName.IsNone()) {
+        if (const FName *DerivedParent = LocalChildToParent.Find(VarName))
+          ParentName = *DerivedParent;
+      }
+      RecordParent(VarName, ParentName);
       if (!ComponentFilter.Matches(VarName.ToString(), GetScsNodeComponentClass(Node))) {
         continue;
       }
@@ -408,11 +450,8 @@ FSCSHandlers::GetBlueprintSCS(
           TEXT("class"), Node->ComponentClass ? Node->ComponentClass->GetName()
                                               : TEXT("Unknown"));
       ComponentObj->SetStringField(TEXT("source"), KSourceScs);
-      if (!Node->ParentComponentOrVariableName.IsNone()) {
-        ComponentObj->SetStringField(
-            TEXT("parent"), Node->ParentComponentOrVariableName.ToString());
-      } else if (const FName *DerivedParent = LocalChildToParent.Find(VarName)) {
-        ComponentObj->SetStringField(TEXT("parent"), DerivedParent->ToString());
+      if (!ParentName.IsNone()) {
+        ComponentObj->SetStringField(TEXT("parent"), ParentName.ToString());
       }
 
       if (Node->ComponentTemplate) {
@@ -431,9 +470,6 @@ FSCSHandlers::GetBlueprintSCS(
           ComponentObj->SetObjectField(TEXT("properties"), PropsObj);
         }
       }
-
-      ComponentObj->SetNumberField(TEXT("child_count"),
-                                   Node->GetChildNodes().Num());
 
       Components.Add(MakeShareable(new FJsonValueObject(ComponentObj)));
     }
@@ -475,6 +511,10 @@ FSCSHandlers::GetBlueprintSCS(
         if (ScsNodeNames.Contains(NativeName))
           continue;
         ScsNodeNames.Add(NativeName);
+        USceneComponent* NativeScene = Cast<USceneComponent>(NativeComp);
+        const FName NativeParent = NativeScene && NativeScene->GetAttachParent()
+            ? NativeScene->GetAttachParent()->GetFName() : NAME_None;
+        RecordParent(NativeName, NativeParent);
         if (!ComponentFilter.Matches(NativeName.ToString(), NativeComp->GetClass()))
           continue;
 
@@ -482,6 +522,8 @@ FSCSHandlers::GetBlueprintSCS(
         ComponentObj->SetStringField(TEXT("name"), NativeName.ToString());
         ComponentObj->SetStringField(TEXT("class"), NativeComp->GetClass()->GetName());
         ComponentObj->SetStringField(TEXT("source"), KSourceNative);
+        if (!NativeParent.IsNone())
+          ComponentObj->SetStringField(TEXT("parent"), NativeParent.ToString());
 
         if (USceneComponent* SceneComp = Cast<USceneComponent>(NativeComp))
         {
@@ -526,6 +568,9 @@ FSCSHandlers::GetBlueprintSCS(
       if (ScsNodeNames.Contains(ICHName))
         continue;
       ScsNodeNames.Add(ICHName);
+      const FName* ICHParent = AncestorParentOf.Find(ICHName);
+      if (ICHParent)
+        RecordParent(ICHName, *ICHParent);
       if (!ComponentFilter.Matches(ICHName.ToString(), ICHComp->GetClass()))
         continue;
 
@@ -533,6 +578,8 @@ FSCSHandlers::GetBlueprintSCS(
       ComponentObj->SetStringField(TEXT("name"), ICHName.ToString());
       ComponentObj->SetStringField(TEXT("class"), ICHComp->GetClass()->GetName());
       ComponentObj->SetStringField(TEXT("source"), KSourceIch);
+      if (ICHParent)
+        ComponentObj->SetStringField(TEXT("parent"), ICHParent->ToString());
 
       if (USceneComponent* SceneComp = Cast<USceneComponent>(ICHComp))
       {
@@ -565,10 +612,6 @@ FSCSHandlers::GetBlueprintSCS(
     const TArray<USCS_Node*>& InheritedNodes =
         ParentBP->SimpleConstructionScript->GetAllNodes();
 
-    // Same top-down recovery as the local loop, scoped to this ancestor BP's SCS.
-    TMap<FName, FName> InheritedChildToParent;
-    BuildScsChildParentMap(InheritedNodes, InheritedChildToParent);
-
     for (USCS_Node* Node : InheritedNodes)
     {
       if (!Node)
@@ -580,6 +623,9 @@ FSCSHandlers::GetBlueprintSCS(
       if (ScsNodeNames.Contains(VarName))
         continue;
       ScsNodeNames.Add(VarName);
+      const FName* InheritedParent = AncestorParentOf.Find(VarName);
+      if (InheritedParent)
+        RecordParent(VarName, *InheritedParent);
       if (!ComponentFilter.Matches(VarName.ToString(), GetScsNodeComponentClass(Node)))
         continue;
 
@@ -590,14 +636,9 @@ FSCSHandlers::GetBlueprintSCS(
       ComponentObj->SetStringField(TEXT("source"), KSourceInherited);
       ComponentObj->SetStringField(TEXT("inheritedFrom"), ParentBP->GetPathName());
 
-      if (!Node->ParentComponentOrVariableName.IsNone())
+      if (InheritedParent)
       {
-        ComponentObj->SetStringField(TEXT("parent"),
-            Node->ParentComponentOrVariableName.ToString());
-      }
-      else if (const FName* DerivedParent = InheritedChildToParent.Find(VarName))
-      {
-        ComponentObj->SetStringField(TEXT("parent"), DerivedParent->ToString());
+        ComponentObj->SetStringField(TEXT("parent"), InheritedParent->ToString());
       }
 
       if (Node->ComponentTemplate)
@@ -618,9 +659,24 @@ FSCSHandlers::GetBlueprintSCS(
         }
       }
 
-      ComponentObj->SetNumberField(TEXT("child_count"), Node->GetChildNodes().Num());
       Components.Add(MakeShared<FJsonValueObject>(ComponentObj));
     }
+  }
+
+  // Every row, from every producer, names its children; child_count is that list's size.
+  for (const TSharedPtr<FJsonValue>& Value : Components)
+  {
+    const TSharedPtr<FJsonObject> ComponentObj = Value->AsObject();
+    const TArray<FName>* Kids =
+        ChildrenOf.Find(FName(*ComponentObj->GetStringField(TEXT("name"))));
+    TArray<TSharedPtr<FJsonValue>> KidValues;
+    if (Kids)
+    {
+      for (const FName Kid : *Kids)
+        KidValues.Add(MakeShared<FJsonValueString>(Kid.ToString()));
+    }
+    ComponentObj->SetNumberField(TEXT("child_count"), KidValues.Num());
+    ComponentObj->SetArrayField(TEXT("children"), KidValues);
   }
 
   Result->SetBoolField(TEXT("success"), true);

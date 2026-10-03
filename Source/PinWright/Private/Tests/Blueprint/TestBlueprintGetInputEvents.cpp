@@ -17,6 +17,7 @@
 #include "EdGraph/EdGraphPin.h"
 #include "EdGraphSchema_K2.h"
 #include "Engine/Blueprint.h"
+#include "GameFramework/Pawn.h"
 #include "InputAction.h"
 #include "InputCoreTypes.h"
 #include "K2Node_ExecutionSequence.h"
@@ -459,5 +460,38 @@ bool FBlueprintGetOtherInputEntryKindsTest::RunTest(const FString& Parameters)
 
     AssertEntries(TEXT("blueprint.get"), TEXT("path"));
     AssertEntries(TEXT("blueprint.inspect"), TEXT("assetPath"));
+    return true;
+}
+
+// B-blueprint-get-omits-parent-class: the description promises the parent class, so the
+// response must carry it, read off the Blueprint. A non-Actor parent proves it is not a
+// hardcoded default.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBlueprintGetParentClassTest,
+    "PinWright.blueprint.get.ParentClassReadback",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FBlueprintGetParentClassTest::RunTest(const FString& Parameters)
+{
+    UBlueprint* Blueprint = CompilerTestUtils::CreateTransientTestBPWithParent(
+        APawn::StaticClass(), TEXT("BlueprintGetParentClass"));
+    if (!TestNotNull(TEXT("Blueprint created"), Blueprint)
+        || !TestTrue(TEXT("Fixture parent is APawn"), Blueprint->ParentClass == APawn::StaticClass()))
+    {
+        return true;
+    }
+
+    TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+    Payload->SetStringField(TEXT("path"), Blueprint->GetPathName());
+    FTestResponseCapture Capture;
+    TestTrue(TEXT("blueprint.get handler found"), InvokeHandlerWithCapture(TEXT("blueprint.get"), Payload, Capture));
+    if (!TestTrue(TEXT("blueprint.get succeeded"), Capture.bSuccess && Capture.Result.IsValid()))
+    {
+        return true;
+    }
+
+    FString ParentClass;
+    TestTrue(TEXT("Response carries parentClass"), Capture.Result->TryGetStringField(TEXT("parentClass"), ParentClass));
+    TestEqual(TEXT("parentClass is the full path of the real parent"),
+        ParentClass, APawn::StaticClass()->GetPathName());
     return true;
 }

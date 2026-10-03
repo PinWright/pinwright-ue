@@ -25,7 +25,7 @@
 using namespace BlueprintHandlerUtils;
 
 // ---- blueprint.compile ----
-REGISTER_RPC_HANDLER("blueprint.compile", "blueprint", "Run UE's Blueprint compiler on the named asset and return any compile errors/warnings. Required after structural changes (new variables, graph edits, reparenting) before the BP is functional. Compile is in-memory only — to persist the result to disk, call asset.save afterward (it runs the same Blueprint integrity gate at the save choke point). blueprint.compile_bpir compiles + then runs this implicitly. Refused with LIVE_INSTANCES_WOULD_BE_REINSTANCED when loaded worlds hold live instances of the class; see allowReinstancing. errors include the engine's compile-time data validation (e.g. UMG's 'Leak Detected' check, which fails a widget that holds its Slate widget at design time), and an Error status stays on the loaded Blueprint until a clean compile: the editor's Play button then prompts about it, while editor.play starts anyway and lists it in blueprintsWithErrors.",
+REGISTER_RPC_HANDLER("blueprint.compile", "blueprint", "Run UE's Blueprint compiler on the named asset and return any compile errors/warnings. Required after structural changes (new variables, graph edits, reparenting) before the BP is functional. Compile is in-memory only — to persist the result to disk, call asset.save afterward (it runs the same Blueprint integrity gate at the save choke point). blueprint.compile_bpir compiles + then runs this implicitly. Refused with LIVE_INSTANCES_WOULD_BE_REINSTANCED when loaded worlds hold live instances of the class; see allowReinstancing. errors include the engine's compile-time data validation (e.g. UMG's 'Leak Detected' check, which fails a widget that holds its Slate widget at design time), and an Error status stays on the loaded Blueprint until a clean compile: the editor's Play button then prompts about it, while editor.play starts anyway and lists it in blueprintsWithErrors. orphanedCount (always) and orphanedNodes (when non-empty, same rows as blueprint.graph.find_orphaned_nodes) report nodes unreachable from any entry point after the compile; UE compiles them cleanly, so they never appear in errors/warnings.",
     RPC_PARAMS(
         BlueprintPathParamReq(TEXT("path"), TEXT("path"), TEXT("Blueprint asset path to compile.")),
         BlueprintReinstancingGuard::AllowReinstancingParam(),
@@ -70,6 +70,17 @@ REGISTER_RPC_HANDLER("blueprint.compile", "blueprint", "Run UE's Blueprint compi
     TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
     Out->SetStringField(TEXT("blueprintPath"), Path);
     AddCompileDiagnosticsToJson(Diagnostics, Out);
+
+    // UE compiles a disconnected node without complaint, so a clean compile says nothing
+    // about the orphan the edit being compiled just left behind. Report the same orphan
+    // model blueprint.graph.find_orphaned_nodes uses (all graphs, includeDataOnly).
+    // Not a warning: orphans are legal, and warningsAsErrors must not fail on them.
+    const TArray<FBlueprintOrphanNodeInfo> Orphans = FindBlueprintOrphanNodes(BP, /*bIncludeDataOnly=*/true);
+    Out->SetNumberField(TEXT("orphanedCount"), Orphans.Num());
+    if (Orphans.Num() > 0)
+    {
+        Out->SetArrayField(TEXT("orphanedNodes"), BuildOrphanNodeInfoJsonArray(Orphans));
+    }
 
     Ctx.SendSuccess(Out);
     return true;

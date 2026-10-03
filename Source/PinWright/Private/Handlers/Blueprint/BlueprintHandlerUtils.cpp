@@ -1403,6 +1403,12 @@ TSharedPtr<FJsonObject> BuildBlueprintSnapshot(UBlueprint* Blueprint, const FStr
     Snapshot->SetStringField(TEXT("blueprintPath"), NormalizedPath);
     Snapshot->SetStringField(TEXT("resolvedPath"), NormalizedPath);
     Snapshot->SetStringField(TEXT("assetPath"), Blueprint->GetPathName());
+    // Full class path read off the Blueprint itself; null (not absent) when the
+    // parent class is missing, so a broken parent reads as a measurement.
+    if (Blueprint->ParentClass)
+        Snapshot->SetStringField(TEXT("parentClass"), Blueprint->ParentClass->GetPathName());
+    else
+        Snapshot->SetField(TEXT("parentClass"), MakeShared<FJsonValueNull>());
     Snapshot->SetArrayField(TEXT("variables"), CollectBlueprintVariables(Blueprint));
     Snapshot->SetArrayField(TEXT("functions"), CollectBlueprintFunctions(Blueprint));
     Snapshot->SetArrayField(TEXT("events"), CollectBlueprintEvents(Blueprint));
