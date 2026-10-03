@@ -711,6 +711,7 @@ bool PwRenderRecipe(const FPwSynthRecipe& Recipe, FPwAudioBuffer& Out, FPwRender
     OutReport.NormalizeInputDb = NormalizeInputDb;
     OutReport.bNormalizeMeasured = bNormalizeMeasured;
     OutReport.NormalizeGainDb = NormalizeGainDb;
+    OutReport.OutputPeakDb = LinearToDb(MeasurePeakLinear(Bus));
     OutReport.bMeasured = true;
 
     Out = MoveTemp(Bus);

@@ -509,6 +509,12 @@ struct FPwRenderReport
     // and also 0.0 when the bus was silent and no finite gain could reach the target -
     // bNormalizeMeasured is what distinguishes those two cases.
     double NormalizeGainDb = 0.0;
+    // Peak of the FINAL buffer - after normalize, the master fades and the clamp - in dBFS.
+    // The fades run after the normalizer, so a fade covering the sample the normalizer keyed
+    // on leaves this below the target even though NormalizeGainDb reconciles exactly with
+    // NormalizeInputDb (board B-synth-master-fade-runs-after-normalize-and-silently-misses-
+    // the-target). A fully silent buffer reports PwSynthRender::SilenceFloorDb.
+    double OutputPeakDb = 0.0;
 };
 
 namespace PwSynthRender

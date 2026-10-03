@@ -790,3 +790,49 @@ bool FPwCandidateAuditionSeamTest::RunTest(const FString& Parameters)
     Registry.DiscardAll();
     return true;
 }
+
+// =========================================================================
+// list_candidates refuses a fields[] entry that names no column. Dropping it
+// answered fields:["id","recipe"] with bare {"id"} rows, which reads as "this
+// candidate has no recipe" (board F-rpc-synth-get-recipe).
+// =========================================================================
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPwCandidateListRejectsUnknownFieldTest,
+    "PinWright.audio.synth.candidates.ListRejectsUnknownField",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FPwCandidateListRejectsUnknownFieldTest::RunTest(const FString& Parameters)
+{
+    const FString Id = AddPwCandidateToPluginState();
+
+    const auto List = [](const TArray<FString>& Fields, FTestResponseCapture& Capture)
+    {
+        TArray<TSharedPtr<FJsonValue>> Values;
+        for (const FString& Field : Fields)
+        {
+            Values.Add(MakeShared<FJsonValueString>(Field));
+        }
+        TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+        Payload->SetArrayField(TEXT("fields"), Values);
+        InvokeHandlerWithCapture(TEXT("audio.synth.list_candidates"), Payload, Capture);
+    };
+
+    {
+        FTestResponseCapture Capture;
+        List({TEXT("id"), TEXT("recipe")}, Capture);
+        TestFalse(TEXT("an unknown column is refused, not dropped"), Capture.bSuccess);
+        TestEqual(TEXT("...with INVALID_PARAMS"), Capture.ErrorCode, FString(ErrorCodes::ERR_INVALID_PARAMS));
+        TestTrue(FString::Printf(TEXT("the message names the column and the verb that reads recipes (%s)"),
+            *Capture.Message),
+            Capture.Message.Contains(TEXT("recipe")) && Capture.Message.Contains(TEXT("audio.synth.get_recipe")));
+    }
+
+    {
+        // Known columns still project, in any case - the gate must not refuse what it emits.
+        FTestResponseCapture Capture;
+        List({TEXT("id"), TEXT("RecipeDigest")}, Capture);
+        TestTrue(FString::Printf(TEXT("known columns project (%s)"), *Capture.Message), Capture.bSuccess);
+    }
+
+    FPluginState::Get().GetCandidateRegistry().Discard(Id);
+    return true;
+}

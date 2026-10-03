@@ -792,8 +792,8 @@ bool FPwFxChainBRingmodRejectionsTest::RunTest(const FString& Parameters)
     }
 
     {
-        // 2 Hz is inside the schema's rateHz row but below the carrier window
-        // Audio::FRingModulation supports; it must be refused, never clamped to 10 Hz.
+        // 2 Hz is below the carrier window Audio::FRingModulation supports (and the
+        // schema row that publishes it); it must be refused, never clamped to 10 Hz.
         TArray<float> Samples = Source;
         FPwSeededRandom Rng(TestSeed);
         FString Code, Error;

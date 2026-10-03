@@ -53,9 +53,9 @@
 //     spectral envelope with the pitch by construction. Setting it is an
 //     UNSUPPORTED_OPTION error, not a silently-dropped flag.
 //   * ringmod `rateHz` outside 10..10000 Hz - FRingModulation clamps the carrier
-//     into that window (RingModulation.cpp:57) while the schema row allows
-//     0.1..20000. A clamped carrier is a wrong answer reported as a right one, so
-//     an out-of-window rate is an INVALID_PARAMS error naming the supported range.
+//     into that window (RingModulation.cpp:57). The schema row now publishes
+//     exactly that window, so the parser refuses first; the check below stays for
+//     hand-built bags. A clamped carrier is a wrong answer reported as a right one.
 //
 // ---------------------------------------------------------------------------
 // Contracts every effect in this file keeps
@@ -76,7 +76,8 @@
 // 4. A VALUE THE ENGINE WOULD SILENTLY CLAMP IS REJECTED, NOT CLAMPED. Several of
 //    these classes narrow their inputs without saying so - Audio::FBiquadFilter pins
 //    every cutoff into [5 Hz, 0.9 * Nyquist] (Filter.cpp:63), FRingModulation pins its
-//    carrier to 10..10000 Hz - and the schema rows are wider than both. A clamped
+//    carrier to 10..10000 Hz - and the rate-independent schema rows cannot express the
+//    first (it is published as the kind's `constraint` instead). A clamped
 //    value renders a band or a carrier the recipe did not ask for and reports success,
 //    so caller-supplied frequencies are range-checked against what the engine can
 //    actually realise at THIS render rate. The one deliberate exception is the phaser's
@@ -820,9 +821,9 @@ bool PwFxRingmod(const FPwSynthParams& Params, int32 SampleRate, FPwSeededRandom
         return false;
     }
 
-    // The schema's rateHz row is wider than the carrier oscillator the engine class drives.
-    // Clamping here would render a different carrier than the recipe asked for and report
-    // success, so the narrower window is stated as a rejection instead (rpc-design.md §1).
+    // The schema's rateHz row publishes this same window, so a parsed recipe never trips it;
+    // it guards hand-built bags. Clamping would render a different carrier than the recipe
+    // asked for and report success, so it is a rejection (rpc-design.md §1).
     if (RateHz < RingModMinCarrierHz || RateHz > RingModMaxCarrierHz)
     {
         OutErrorCode = ErrorCodes::ERR_INVALID_PARAMS;

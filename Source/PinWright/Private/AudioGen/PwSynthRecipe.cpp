@@ -303,7 +303,10 @@ namespace PwSynthSpecInternal
     const TArray<FPwSynthParamSpec>& RingModParams()
     {
         static const TArray<FPwSynthParamSpec> Table = {
-            ReqNum(TEXT("rateHz"), TEXT("hz"), 0.1, 20000.0, TEXT("Carrier frequency.")),
+            // 10..10000 is Audio::FRingModulation's own carrier window (RingModulation.cpp:57);
+            // publishing anything wider would advertise rates the renderer must refuse
+            // (board B-synth-schema-advertises-unrenderable-ranges).
+            ReqNum(TEXT("rateHz"), TEXT("hz"), 10.0, 10000.0, TEXT("Carrier frequency.")),
             ReqNum(TEXT("mix"), TEXT("ratio"), 0.0, 1.0, TEXT("Wet/dry blend.")),
             DefEnum(TEXT("waveform"), TEXT("sine|triangle|saw|square"), TEXT("sine"), TEXT("Carrier wave shape."))
         };
@@ -412,11 +415,14 @@ namespace PwSynthSpecInternal
         static const TArray<FPwSynthKindSpec> Table = {
             MakeKind(TEXT(""), TEXT(""), ReverseParams()),
             MakeKind(TEXT("osc"), TEXT("Bandlimited single-voice oscillator with optional unison detune."), OscParams()),
-            MakeKind(TEXT("noise"), TEXT("Coloured noise source with a band limit."), NoiseParams()),
+            MakeKind(TEXT("noise"), TEXT("Coloured noise source with a band limit."), NoiseParams(), nullptr,
+                TEXT("lowCutHz must be below highCutHz; a pair with no passband is rejected at render time.")),
             MakeKind(TEXT("modal"), TEXT("Bank of exponentially decaying resonant modes; metallic bodies and impacts."), ModalParams(), &ValidateModalModes,
-                TEXT("modeFreqsHz, modeDecaysMs and modeGainsDb describe the same modes and must be the same length.")),
-            MakeKind(TEXT("formant"), TEXT("Voiced glottal source through a vowel formant bank."), FormantParams()),
-            MakeKind(TEXT("granular"), TEXT("Grain cloud scattered from a source USoundWave."), GranularParams()),
+                TEXT("modeFreqsHz, modeDecaysMs and modeGainsDb describe the same modes and must be the same length. Every modeFreqsHz entry must also be below sampleRate / 2 (24000 Hz at the default 48 kHz); the 20000 Hz row maximum is only reachable at sampleRate above 40000, and a mode at or above Nyquist is rejected at render time.")),
+            MakeKind(TEXT("formant"), TEXT("Voiced glottal source through a vowel formant bank."), FormantParams(), nullptr,
+                TEXT("voicing and breathiness must not both be 0: that source is silent and is rejected at render time. breathiness defaults to 0, so voicing 0 needs a breathiness above 0.")),
+            MakeKind(TEXT("granular"), TEXT("Grain cloud scattered from a source USoundWave."), GranularParams(), nullptr,
+                TEXT("positionStart must not be past positionEnd; a backwards read-head sweep is rejected at render time.")),
             MakeKind(TEXT("sample"), TEXT("Plays a source USoundWave straight into the layer."), SampleParams())
         };
         return Table;
@@ -426,7 +432,8 @@ namespace PwSynthSpecInternal
     {
         static const TArray<FPwSynthKindSpec> Table = {
             MakeKind(TEXT(""), TEXT(""), ReverseParams()),
-            MakeKind(TEXT("filter"), TEXT("Biquad filter."), FilterParams()),
+            MakeKind(TEXT("filter"), TEXT("Biquad filter."), FilterParams(), nullptr,
+                TEXT("cutoffHz must be at most 0.45 * sampleRate, the window the biquad can realise: 21600 Hz at the default 48 kHz, 19845 Hz at 44.1 kHz - below the published 20000 - and 3600 Hz at 8 kHz. A higher cutoff is rejected at render time rather than clamped.")),
             MakeKind(TEXT("distort"), TEXT("Waveshaping saturation."), DistortParams()),
             MakeKind(TEXT("delay"), TEXT("Feedback delay line."), DelayParams()),
             MakeKind(TEXT("reverb"), TEXT("Algorithmic room tail."), ReverbParams()),
@@ -434,9 +441,11 @@ namespace PwSynthSpecInternal
             MakeKind(TEXT("flanger"), TEXT("Short modulated delay with feedback."), FlangerParams()),
             MakeKind(TEXT("phaser"), TEXT("Swept all-pass notch chain."), PhaserParams()),
             MakeKind(TEXT("ringmod"), TEXT("Amplitude multiplication against a carrier."), RingModParams()),
-            MakeKind(TEXT("pitchshift"), TEXT("Pitch transposition without a length change."), PitchShiftParams()),
+            MakeKind(TEXT("pitchshift"), TEXT("Pitch transposition without a length change."), PitchShiftParams(), nullptr,
+                TEXT("formantPreserve must be false: true is rejected with UNSUPPORTED_OPTION, because the engine ships no phase vocoder to hold the formants still.")),
             MakeKind(TEXT("compressor"), TEXT("Dynamic range compression."), CompressorParams()),
-            MakeKind(TEXT("eq"), TEXT("Three-band shelf/peak equalizer."), EqParams()),
+            MakeKind(TEXT("eq"), TEXT("Three-band shelf/peak equalizer."), EqParams(), nullptr,
+                TEXT("lowHz, midHz and highHz must each be at most 0.45 * sampleRate, the window the biquad can realise: 21600 Hz at the default 48 kHz, 19845 Hz at 44.1 kHz - below the published 20000. A higher band frequency is rejected at render time rather than clamped.")),
             MakeKind(TEXT("gain"), TEXT("Static level change."), GainParams()),
             MakeKind(TEXT("width"), TEXT("Mid/side stereo width control. Master only: layers are mono."), WidthParams(), nullptr, nullptr, /*bMasterOnly=*/true),
             MakeKind(TEXT("reverse"), TEXT("Reverses the buffer. Takes no parameters."), ReverseParams()),
@@ -1856,6 +1865,17 @@ namespace PwSynthSerializeInternal
         return Obj;
     }
 
+    TArray<TSharedPtr<FJsonValue>> SerializeFxChain(const TArray<FPwSynthFx>& Chain)
+    {
+        TArray<TSharedPtr<FJsonValue>> Entries;
+        Entries.Reserve(Chain.Num());
+        for (const FPwSynthFx& Fx : Chain)
+        {
+            Entries.Add(MakeShared<FJsonValueObject>(SerializeFx(Fx)));
+        }
+        return Entries;
+    }
+
     TSharedPtr<FJsonObject> SerializeLayer(const FPwSynthLayer& Layer)
     {
         TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
@@ -1910,16 +1930,11 @@ namespace PwSynthSerializeInternal
             Obj->SetObjectField(TEXT("modulation"), ModObj);
         }
 
-        if (Layer.Fx.Num() > 0)
-        {
-            TArray<TSharedPtr<FJsonValue>> Entries;
-            Entries.Reserve(Layer.Fx.Num());
-            for (const FPwSynthFx& Fx : Layer.Fx)
-            {
-                Entries.Add(MakeShared<FJsonValueObject>(SerializeFx(Fx)));
-            }
-            Obj->SetArrayField(TEXT("fx"), Entries);
-        }
+        // Always emitted, even empty: `[]` is a legal chain, and an absent array would make the
+        // RFC-6902 append `/layers/N/fx/-` fail on exactly the layers authored without effects
+        // (board B-synth-patch-canonical-omits-layer-fx). The envelopes and the modulation block
+        // stay omitted when unset because they have no legal empty form.
+        Obj->SetArrayField(TEXT("fx"), SerializeFxChain(Layer.Fx));
 
         return Obj;
     }
@@ -1946,16 +1961,8 @@ TSharedPtr<FJsonObject> SerializeSynthRecipe(const FPwSynthRecipe& In)
     // The master block always round-trips, because fadeInMs / fadeOutMs are
     // defaults made explicit rather than omitted state.
     TSharedPtr<FJsonObject> MasterObj = MakeShared<FJsonObject>();
-    if (In.Master.Fx.Num() > 0)
-    {
-        TArray<TSharedPtr<FJsonValue>> Entries;
-        Entries.Reserve(In.Master.Fx.Num());
-        for (const FPwSynthFx& Fx : In.Master.Fx)
-        {
-            Entries.Add(MakeShared<FJsonValueObject>(SerializeFx(Fx)));
-        }
-        MasterObj->SetArrayField(TEXT("fx"), Entries);
-    }
+    // Always emitted, for the same `/master/fx/-` reason as the layer chain.
+    MasterObj->SetArrayField(TEXT("fx"), SerializeFxChain(In.Master.Fx));
     if (In.Master.Normalize.IsSet())
     {
         TSharedPtr<FJsonObject> NormalizeObj = MakeShared<FJsonObject>();

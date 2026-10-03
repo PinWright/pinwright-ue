@@ -241,7 +241,7 @@ namespace PwSynthSchemaHandler
     {
         TSharedPtr<FJsonObject> Topology = MakeShared<FJsonObject>();
         Topology->SetStringField(TEXT("shape"),
-            TEXT("Fixed signal chain, not a node graph: recipe -> layers[] -> (generator -> ampEnvelope/pitchEnvelope/modulation -> fx[]) -> stereo mix bus -> master.fx[] -> normalize -> fades."));
+            TEXT("Fixed signal chain, not a node graph: recipe -> layers[] -> (generator -> ampEnvelope/pitchEnvelope/modulation -> fx[]) -> stereo mix bus -> master.fx[] -> normalize -> fades. The fades run after normalize, so a fade over the peak lands below a peak target (render.normalize.outputDb and .warning say by how much); ramp in a layer ampEnvelope instead."));
         Topology->SetStringField(TEXT("channels"),
             TEXT("Generators are mono. The mix bus is stereo and each layer's pan (-1..1) places it. No generator takes stereo parameters."));
         Topology->SetStringField(TEXT("timing"),

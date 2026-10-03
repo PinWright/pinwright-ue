@@ -111,6 +111,11 @@ namespace PwSynthGenerateInternal
     // stopping eight failures from spilling the table.
     constexpr int32 MaxRowErrorChars = 160;
 
+    // How far below a peak-normalize target the final buffer may land before the render report
+    // warns. Float gain plus rounding put a clean render within ~1e-6 dB; 0.01 dB is the
+    // smallest step the report publishes.
+    constexpr double NormalizeMissToleranceDb = 0.01;
+
     // ---------------------------------------------------------------------------------------
     // Param specs
     // ---------------------------------------------------------------------------------------
@@ -689,10 +694,11 @@ namespace PwSynthGenerateInternal
                         ? FString::Printf(
                             TEXT("the recipe's value at '%s' is not the one this op asserted, so "
                                  "the document is not in the state the patch was written against. "
-                                 "Re-read the recipe rather than editing the patch."), *Path)
+                                 "Re-read it with audio.synth.get_recipe rather than editing the "
+                                 "patch."), *Path)
                         : FString::Printf(
                             TEXT("'%s' resolves to nothing, so the asserted value cannot hold. "
-                                 "Re-read the recipe for the pointer paths it actually has."),
+                                 "audio.synth.get_recipe returns the pointer paths it actually has."),
                             *Path);
                     return false;
                 }
@@ -801,7 +807,7 @@ namespace PwSynthGenerateInternal
      * ClampedSamples counts the samples the final clamp actually moved, and the normalize block
      * carries the analyzer's own input level. Nothing is re-derived from the recipe.
      */
-    TSharedPtr<FJsonObject> BuildRenderReport(const FPwRenderReport& Report)
+    TSharedPtr<FJsonObject> BuildRenderReport(const FPwRenderReport& Report, const FPwSynthMaster& Master)
     {
         TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
         Out->SetBoolField(TEXT("measured"), Report.bMeasured);
@@ -816,6 +822,26 @@ namespace PwSynthGenerateInternal
         if (Report.bNormalizeMeasured)
         {
             SetRounded(Normalize, TEXT("inputDb"), Report.NormalizeInputDb, 2);
+        }
+        // Peak mode only: there outputDb is in the unit inputDb + gainDb lands on, so the three
+        // reconcile on the page. The master fades run AFTER the normalizer, and a fade that
+        // covers the keyed-on sample leaves the asset below the target while gainDb still
+        // reads as if it hit it - so the miss is published and named rather than left for the
+        // caller to spot against analysis.technical.peakDb.
+        if (Report.bNormalizeMeasured && Master.Normalize.Mode == EPwSynthNormalizeMode::Peak)
+        {
+            SetRounded(Normalize, TEXT("outputDb"), Report.OutputPeakDb, 2);
+            const double MissDb = Master.Normalize.Target - Report.OutputPeakDb;
+            if (MissDb > NormalizeMissToleranceDb)
+            {
+                Normalize->SetStringField(TEXT("warning"), FString::Printf(
+                    TEXT("master.fadeInMs %g / fadeOutMs %g run after normalize and attenuated the ")
+                    TEXT("peak it keyed on: output peak %.2f dBFS, target %.2f dBFS (%.2f dB short). ")
+                    TEXT("Move the edge ramp into the layers' ampEnvelope, which runs before ")
+                    TEXT("normalize, to land on the target exactly."),
+                    Master.FadeInMs, Master.FadeOutMs, Report.OutputPeakDb,
+                    Master.Normalize.Target, MissDb));
+            }
         }
         Out->SetObjectField(TEXT("normalize"), Normalize);
 
@@ -1202,7 +1228,7 @@ namespace PwSynthGenerateInternal
         Result->SetNumberField(TEXT("sampleRate"), In.Buffer.SampleRate);
         Result->SetNumberField(TEXT("channels"), PwExportChannels);
         SetRounded(Result, TEXT("durationSeconds"), In.Buffer.DurationSeconds(), 4);
-        Result->SetObjectField(TEXT("render"), BuildRenderReport(In.Report));
+        Result->SetObjectField(TEXT("render"), BuildRenderReport(In.Report, Recipe.Master));
 
         if (bAnalyzeRequested && In.bAnalyzed)
         {
@@ -1313,15 +1339,19 @@ REGISTER_RPC_HANDLER("audio.synth.patch", "audio.synth",
     "fresh serialization of its recipe - so both takes stay comparable, and the response reports "
     "both ids plus whether the source is still resident. All six operations are supported "
     "(add, remove, replace, move, copy, test); a failed 'test' reports VERIFICATION_FAILED because "
-    "its remedy is to re-read the recipe, while a malformed patch reports INVALID_PARAMS. A patch "
+    "its remedy is to re-read the recipe with audio.synth.get_recipe, while a malformed patch "
+    "reports INVALID_PARAMS. A patch "
     "whose result does not parse errors with the parser's field path and creates no candidate.",
     RPC_PARAMS(
         PwSynthGenerateInternal::CandidateIdParamReq(
             TEXT("Candidate whose recipe is patched. Its own audio and recipe are left untouched.")),
         RPC_PARAM_REQ("patch", "array",
             "RFC-6902 operations, e.g. [{\"op\":\"replace\",\"path\":\"/layers/0/gainDb\","
-            "\"value\":-6}]. Paths are RFC-6901 pointers into the CANONICAL recipe, in which "
-            "every optional value has been made explicit."),
+            "\"value\":-6}]. Paths are RFC-6901 pointers into the CANONICAL recipe "
+            "(audio.synth.get_recipe returns it): every optional parameter is explicit and every "
+            "layer and the master carry an `fx` array, empty when there are no effects, so "
+            "`/layers/N/fx/-` appends. ampEnvelope, pitchEnvelope, modulation and "
+            "master.normalize have no empty form and are absent when unset - add them whole."),
         RPC_PARAM_DEF("analyze", "boolean",
             "Measure the rendered buffer and include the summary analysis.", "true"),
         RPC_PARAM_OPT("plots", "array|string",

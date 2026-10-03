@@ -823,6 +823,7 @@ Not listed: internal plumbing namespaces, not intended for direct use - `pipelin
 | `audio.synth.discard` | Discard one or more synth candidates by id, or every candidate with all=true. |
 | `audio.synth.export` | Write a candidate's audio into the project as a USoundWave asset. |
 | `audio.synth.generate` | Render a synth recipe into a session candidate and report what the render measured. |
+| `audio.synth.get_recipe` | Return a resident candidate's canonical recipe. |
 | `audio.synth.list_candidates` | List the rendered synth candidates held in this session, newest first. |
 | `audio.synth.patch` | Apply an RFC-6902 JSON Patch to a candidate's canonical recipe, re-parse it and render the result as a NEW candidate. |
 | `audio.synth.render_metasound` | Render an existing MetaSound Source asset offline to PCM and measure it. |

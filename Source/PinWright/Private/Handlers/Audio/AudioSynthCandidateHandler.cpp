@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Alexander Penkin. MIT License.
 
-// AudioSynthCandidateHandler.cpp - audio.synth.list_candidates / audio.synth.discard
+// AudioSynthCandidateHandler.cpp - audio.synth.list_candidates / audio.synth.get_recipe /
+// audio.synth.discard
 //
 // The two verbs over FPwCandidateRegistry (Private/AudioGen), the session-scoped store of
 // rendered synth candidates. Everything about eviction that the agent needs to act on -
@@ -16,6 +17,7 @@
 
 #include "AudioGen/PwAudioAudition.h"
 #include "AudioGen/PwCandidateRegistry.h"
+#include "AudioGen/PwSynthRecipe.h"
 #include "State/PluginState.h"
 
 #include "Dom/JsonObject.h"
@@ -124,7 +126,9 @@ REGISTER_RPC_HANDLER("audio.synth.list_candidates", "audio.synth",
         RPC_PARAM_DEF("limit", "integer", "Maximum rows to return (1-200)", "20"),
         RPC_PARAM_DEF("offset", "integer", "Rows to skip before the first returned row", "0"),
         RPC_PARAM_OPT_ALIAS("fields", "array|string",
-            "Per-row column allow-list (e.g. [\"id\",\"recipeDigest\"]). Omit for every column.", "field"),
+            "Per-row column allow-list (e.g. [\"id\",\"recipeDigest\"]). Omit for every column. "
+            "An entry naming no column is rejected rather than dropped; the recipe itself is "
+            "audio.synth.get_recipe, not a column.", "field"),
         RPC_PARAM_OPT_ALIAS("namesOnly", "boolean",
             "Shorthand for fields=[id, createdAt, recipeDigest] - the columns needed to pick a candidate.", "names_only")
     ))
@@ -140,6 +144,35 @@ REGISTER_RPC_HANDLER("audio.synth.list_candidates", "audio.synth",
     const TSet<FString> Fields = Ctx.ReadFieldProjection(
         {TEXT("id"), TEXT("createdat"), TEXT("recipedigest")});
     const bool bProject = Fields.Num() > 0;
+
+    // A key no row can carry is refused by name, never dropped: dropping it answered
+    // fields:["id","recipe"] with {"id":...} rows, which reads as "this candidate has no
+    // recipe" rather than "that column does not exist" (board F-rpc-synth-get-recipe).
+    static const TArray<FString> Columns = {
+        TEXT("id"), TEXT("createdAt"), TEXT("durationSeconds"), TEXT("sampleRate"),
+        TEXT("approxBytes"), TEXT("hasAnalysis"), TEXT("exported"), TEXT("exportedAssetPath"),
+        TEXT("images"), TEXT("recipeDigest")};
+    TArray<FString> UnknownFields;
+    for (const FString& Field : Fields)
+    {
+        if (!Columns.ContainsByPredicate([&Field](const FString& Column)
+                { return Column.Equals(Field, ESearchCase::IgnoreCase); }))
+        {
+            UnknownFields.Add(Field);
+        }
+    }
+    if (UnknownFields.Num() > 0)
+    {
+        UnknownFields.Sort();
+        Ctx.SendError(ErrorCodes::ERR_INVALID_PARAMS,
+            FString::Printf(TEXT("Unknown fields[] entry(s) for 'audio.synth.list_candidates': [%s]. "
+                                 "Valid fields: [%s].%s"),
+                *FString::Join(UnknownFields, TEXT(", ")), *FString::Join(Columns, TEXT(", ")),
+                UnknownFields.Contains(TEXT("recipe"))
+                    ? TEXT(" A candidate's canonical recipe is read with audio.synth.get_recipe.")
+                    : TEXT("")));
+        return true;
+    }
     const auto Wants = [&Fields, bProject](const TCHAR* Key)
     {
         return !bProject || Fields.Contains(FString(Key));
@@ -201,6 +234,71 @@ REGISTER_RPC_HANDLER("audio.synth.list_candidates", "audio.synth",
     }
 
     Ctx.SendSuccess(Message, Result);
+    return true;
+}
+
+REGISTER_RPC_HANDLER("audio.synth.get_recipe", "audio.synth",
+    "Return a resident candidate's CANONICAL recipe - the exact document audio.synth.patch "
+    "applies its RFC-6902 pointers to and audio.synth.variations perturbs, with every optional "
+    "value made explicit - plus its recipeDigest. Read-only. Feed the recipe back to "
+    "audio.synth.generate to re-render it, or address it with patch pointers. A candidate that "
+    "did not come from a recipe (audio.synth.render_metasound, audio.music stems) is refused "
+    "with UNSUPPORTED_OPERATION rather than answered with an empty document.",
+    RPC_PARAMS(
+        ParamAliasUtils::MakeAliasParamSpec(TEXT("candidateId"), TEXT("string"),
+            TEXT("Candidate whose recipe to return. audio.synth.list_candidates enumerates the ids."),
+            /*bRequired=*/true, {TEXT("candidateId"), TEXT("candidate_id"), TEXT("id")})
+    ))
+{
+    const FString CandidateId = Ctx.GetStringFirstOf(
+        {TEXT("candidateId"), TEXT("candidate_id"), TEXT("id")});
+    if (CandidateId.IsEmpty())
+    {
+        Ctx.SendError(ErrorCodes::ERR_INVALID_PARAMS,
+            TEXT("'candidateId' is required. audio.synth.list_candidates enumerates the ids this "
+                 "session holds."));
+        return true;
+    }
+
+    FPwCandidateRegistry& Registry = FPluginState::Get().GetCandidateRegistry();
+    const FPwCandidateLookupResult Lookup = Registry.Get(CandidateId);
+    if (!Lookup.IsHit())
+    {
+        // Same mapping as patch / export / audition, so evicted, discarded and unknown ids keep
+        // their distinct codes and remedies here too.
+        Ctx.SendError(FPwCandidateRegistry::MissErrorCode(Lookup.Status),
+                      FPwCandidateRegistry::MakeMissMessage(CandidateId, Lookup),
+                      Registry.BuildMissPayload(CandidateId, Lookup));
+        return true;
+    }
+
+    // render_metasound and audio.music register their buffers with a default recipe on
+    // purpose; serializing it would hand back a document that never produced these samples.
+    const FPwSynthRecipe& Recipe = Lookup.Candidate->Recipe;
+    if (Recipe.Layers.Num() == 0 || Recipe.DurationMs <= 0.0)
+    {
+        Ctx.SendError(ErrorCodes::ERR_UNSUPPORTED_OPERATION,
+            FString::Printf(TEXT("Candidate %s was not rendered from a synth recipe (it came from "
+                                 "audio.synth.render_metasound or audio.music), so it has no recipe "
+                                 "to return, patch or vary."), *CandidateId));
+        return true;
+    }
+
+    const TSharedPtr<FJsonObject> RecipeJson = SerializeSynthRecipe(Recipe);
+    if (!RecipeJson.IsValid())
+    {
+        Ctx.SendError(ErrorCodes::ERR_INVALID_RECIPE,
+            FString::Printf(TEXT("Candidate %s holds a recipe that does not serialize."), *CandidateId));
+        return true;
+    }
+
+    TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+    Result->SetStringField(TEXT("candidateId"), CandidateId);
+    Result->SetStringField(TEXT("recipeDigest"), FPwCandidateRegistry::RecipeDigest(Recipe));
+    Result->SetObjectField(TEXT("recipe"), RecipeJson);
+
+    Ctx.SendSuccess(FString::Printf(TEXT("Canonical recipe of candidate %s (%d layer(s))."),
+        *CandidateId, Recipe.Layers.Num()), Result);
     return true;
 }
 

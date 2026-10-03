@@ -1036,3 +1036,215 @@ bool FPwSynthRenderEmptyRecipeTest::RunTest(const FString& Parameters)
 
     return true;
 }
+
+// =================================================================================================
+// Contract: every value describe_schema publishes as legal for a generator or effect parameter
+// renders at the default sample rate, unless the kind publishes a `constraint` naming the
+// narrower rule (board B-synth-schema-advertises-unrenderable-ranges). Each numeric row is driven
+// to its published min and max, each enum to every token and each boolean to both values, one row
+// at a time from an in-range baseline. A renderer rejection on a kind with no published constraint
+// is the defect: the schema told the caller the value was legal. Kinds with a String row
+// (granular, sample, convolve) need a project asset and are left to their own tests.
+// =================================================================================================
+namespace PwSynthPublishedRangeTestHelpers
+{
+    FPwSynthParamValue MakeParamValue(const FPwSynthParamSpec& Row, double Number, const FString& Text, bool bBool)
+    {
+        FPwSynthParamValue Value;
+        Value.Type = Row.Type;
+        switch (Row.Type)
+        {
+        case EPwSynthParamType::Boolean:     Value.bBool = bBool; break;
+        case EPwSynthParamType::String:
+        case EPwSynthParamType::Enum:        Value.String = Text; break;
+        case EPwSynthParamType::NumberArray: Value.Numbers = { Number }; break;
+        default:                             Value.Number = Number; break;
+        }
+        return Value;
+    }
+
+    TArray<FString> EnumTokens(const FPwSynthParamSpec& Row)
+    {
+        TArray<FString> Tokens;
+        FString(Row.EnumValues ? Row.EnumValues : TEXT("")).ParseIntoArray(Tokens, TEXT("|"), /*InCullEmpty=*/true);
+        return Tokens;
+    }
+
+    /** In-range value for every row: the documented default, else the middle of the range. */
+    FPwSynthParams Baseline(const FPwSynthKindSpec& Kind)
+    {
+        FPwSynthParams Params;
+        for (const FPwSynthParamSpec& Row : *Kind.Params)
+        {
+            const double Mid = 0.5 * (Row.Min + Row.Max);
+            const double Number = Row.bRequired
+                ? (Row.Type == EPwSynthParamType::Integer ? FMath::RoundToDouble(Mid) : Mid)
+                : Row.DefaultNumber;
+            const TArray<FString> Tokens = EnumTokens(Row);
+            const FString Text = Row.DefaultString ? FString(Row.DefaultString)
+                : (Tokens.Num() > 0 ? Tokens[0] : FString());
+            Params.Values.Add(Row.Name, PwSynthPublishedRangeTestHelpers::MakeParamValue(Row, Number, Text, Row.DefaultNumber != 0.0));
+        }
+        return Params;
+    }
+
+    bool HasStringRow(const FPwSynthKindSpec& Kind)
+    {
+        return Kind.Params && Kind.Params->ContainsByPredicate(
+            [](const FPwSynthParamSpec& Row) { return Row.Type == EPwSynthParamType::String; });
+    }
+
+    /** One 100 ms render at the default rate: the generator (or an osc carrier) plus an optional master effect. */
+    bool Render(EPwSynthGeneratorKind GeneratorKind, const FPwSynthParams& GeneratorParams,
+        EPwSynthFxKind FxKind, const FPwSynthParams& FxParams, FString& OutError)
+    {
+        FPwSynthRecipe Recipe;
+        Recipe.SampleRate = PwSynthLimits::DefaultSampleRate;
+        Recipe.DurationMs = 100.0;
+        FPwSynthLayer& Layer = Recipe.Layers.AddDefaulted_GetRef();
+        Layer.Generator.Kind = GeneratorKind;
+        Layer.Generator.Params = GeneratorParams;
+        if (FxKind != EPwSynthFxKind::Unspecified)
+        {
+            FPwSynthFx& Fx = Recipe.Master.Fx.AddDefaulted_GetRef();
+            Fx.Kind = FxKind;
+            Fx.Params = FxParams;
+        }
+
+        FPwAudioBuffer Buffer;
+        FPwRenderReport Report;
+        FString Code;
+        if (PwRenderRecipe(Recipe, Buffer, Report, Code, OutError))
+        {
+            return true;
+        }
+        OutError = FString::Printf(TEXT("%s: %s"), *Code, *OutError);
+        return false;
+    }
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPwSynthPublishedRangesRenderTest,
+    "PinWright.audio.synth.render.PublishedParamRangesRenderAtDefaultRate",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FPwSynthPublishedRangesRenderTest::RunTest(const FString& Parameters)
+{
+    namespace H = PwSynthPublishedRangeTestHelpers;
+
+    // The effects' input: the osc baseline (a sine, the first waveform token) moved to 440 Hz.
+    FPwSynthParams Carrier = H::Baseline(PwSynthGeneratorSpec(EPwSynthGeneratorKind::Osc));
+    if (FPwSynthParamValue* Frequency = Carrier.Values.Find(FName(TEXT("frequencyHz"))))
+    {
+        Frequency->Number = 440.0;
+    }
+
+    int32 NumCases = 0;
+    int32 NumPublishedRejections = 0;
+
+    // Drives every row of one kind through its published extremes. RenderWith renders the kind
+    // with the given bag in its slot.
+    const auto Sweep = [&](const FPwSynthKindSpec& Kind, const TFunctionRef<bool(const FPwSynthParams&, FString&)> RenderWith)
+    {
+        const FPwSynthParams Base = H::Baseline(Kind);
+        FString BaseError;
+        if (!RenderWith(Base, BaseError))
+        {
+            // The baseline is in range by construction, so this is either a kind whose
+            // constraint the midpoint violates (fixture problem) or the defect itself.
+            AddError(FString::Printf(TEXT("%s: the in-range baseline does not render (%s)"), Kind.Name, *BaseError));
+            return;
+        }
+
+        for (const FPwSynthParamSpec& Row : *Kind.Params)
+        {
+            TArray<FPwSynthParamValue> Values;
+            TArray<FString> Labels;
+            switch (Row.Type)
+            {
+            case EPwSynthParamType::Boolean:
+                Values = { H::MakeParamValue(Row, 0.0, FString(), false), H::MakeParamValue(Row, 0.0, FString(), true) };
+                Labels = { TEXT("false"), TEXT("true") };
+                break;
+            case EPwSynthParamType::Enum:
+                for (const FString& Token : H::EnumTokens(Row))
+                {
+                    Values.Add(H::MakeParamValue(Row, 0.0, Token, false));
+                    Labels.Add(Token);
+                }
+                break;
+            case EPwSynthParamType::String:
+                break;
+            default:
+                if (Row.bHasMin)
+                {
+                    Values.Add(H::MakeParamValue(Row, Row.Min, FString(), false));
+                    Labels.Add(FString::Printf(TEXT("%g (min)"), Row.Min));
+                }
+                if (Row.bHasMax)
+                {
+                    Values.Add(H::MakeParamValue(Row, Row.Max, FString(), false));
+                    Labels.Add(FString::Printf(TEXT("%g (max)"), Row.Max));
+                }
+                break;
+            }
+
+            for (int32 Index = 0; Index < Values.Num(); ++Index)
+            {
+                FPwSynthParams Params = Base;
+                Params.Values.Add(Row.Name, Values[Index]);
+                FString Error;
+                ++NumCases;
+                if (RenderWith(Params, Error))
+                {
+                    continue;
+                }
+                if (Kind.Constraint && FString(Kind.Constraint).Contains(Row.DisplayName, ESearchCase::CaseSensitive))
+                {
+                    // Published: describe_schema states the narrower rule for this row beside the range.
+                    ++NumPublishedRejections;
+                    continue;
+                }
+                AddError(FString::Printf(
+                    TEXT("%s.%s = %s is published as legal but the renderer rejects it at %d Hz with no ")
+                    TEXT("published constraint: %s"),
+                    Kind.Name, Row.DisplayName, *Labels[Index], PwSynthLimits::DefaultSampleRate, *Error));
+            }
+        }
+    };
+
+    for (uint8 Raw = 1; Raw < static_cast<uint8>(EPwSynthGeneratorKind::Count); ++Raw)
+    {
+        const EPwSynthGeneratorKind Kind = static_cast<EPwSynthGeneratorKind>(Raw);
+        const FPwSynthKindSpec& Spec = PwSynthGeneratorSpec(Kind);
+        if (H::HasStringRow(Spec))
+        {
+            continue;
+        }
+        Sweep(Spec, [Kind](const FPwSynthParams& Params, FString& Error)
+        {
+            return H::Render(Kind, Params, EPwSynthFxKind::Unspecified, FPwSynthParams(), Error);
+        });
+    }
+
+    for (uint8 Raw = 1; Raw < static_cast<uint8>(EPwSynthFxKind::Count); ++Raw)
+    {
+        const EPwSynthFxKind Kind = static_cast<EPwSynthFxKind>(Raw);
+        const FPwSynthKindSpec& Spec = PwSynthFxSpec(Kind);
+        if (H::HasStringRow(Spec))
+        {
+            continue;
+        }
+        Sweep(Spec, [Kind, &Carrier](const FPwSynthParams& Params, FString& Error)
+        {
+            return H::Render(EPwSynthGeneratorKind::Osc, Carrier, Kind, Params, Error);
+        });
+    }
+
+    // Non-vacuity: the sweep must actually have exercised the tables, and the published-rule
+    // escape must actually have been taken (noise lowCutHz at its max meets highCutHz), so a
+    // broken Constraint lookup cannot pass by never firing.
+    TestTrue(FString::Printf(TEXT("the sweep rendered a meaningful number of cases (%d)"), NumCases), NumCases > 100);
+    TestTrue(FString::Printf(TEXT("published constraints account for some rejections (%d)"), NumPublishedRejections),
+        NumPublishedRejections > 0);
+    return true;
+}

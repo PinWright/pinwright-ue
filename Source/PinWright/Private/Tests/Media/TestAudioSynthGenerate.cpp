@@ -1684,3 +1684,257 @@ bool FAudioSynthExportRequiresArgumentsTest::RunTest(const FString& Parameters)
     }
     return true;
 }
+
+// =================================================================================================
+// patch - the canonical recipe carries an `fx` array on every layer and on the master even when
+// it is empty, so the RFC-6902 append `/layers/N/fx/-` works on a layer authored without effects
+// (board B-synth-patch-canonical-omits-layer-fx). Before the fix the append failed with "no
+// parent container" and took the batched `replace` down with it.
+// =================================================================================================
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAudioSynthPatchAppendsEffectToBareLayerTest,
+    "PinWright.audio.synth.patch.AppendsEffectToBareLayer",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAudioSynthPatchAppendsEffectToBareLayerTest::RunTest(const FString& Parameters)
+{
+    using namespace PwSynthGenerateTestHelpers;
+
+    FTestResponseCapture GenerateCapture;
+    const FString SourceId = Generate(SimpleRecipe(/*Seed=*/4301, /*DurationMs=*/100.0),
+                                      /*bAnalyze=*/false, GenerateCapture);
+    if (SourceId.IsEmpty())
+    {
+        AddError(TEXT("could not create the source candidate this test patches"));
+        return false;
+    }
+    {
+        // Precondition: the fixture really is a bare layer, so the append below is the case
+        // the ticket is about rather than an append onto an authored chain.
+        const FPwCandidateLookupResult Hit = Registry().Get(SourceId);
+        if (!Hit.IsHit() || Hit.Candidate->Recipe.Layers.Num() != 1 ||
+            Hit.Candidate->Recipe.Layers[0].Fx.Num() != 0 || Hit.Candidate->Recipe.Master.Fx.Num() != 0)
+        {
+            AddError(TEXT("fixture precondition: one layer, no layer fx, no master fx"));
+            return false;
+        }
+    }
+
+    TSharedPtr<FJsonObject> FilterParams = MakeShared<FJsonObject>();
+    FilterParams->SetStringField(TEXT("type"), TEXT("lowpass"));
+    FilterParams->SetNumberField(TEXT("cutoffHz"), 3500.0);
+    TSharedPtr<FJsonObject> Filter = MakeShared<FJsonObject>();
+    Filter->SetStringField(TEXT("kind"), TEXT("filter"));
+    Filter->SetObjectField(TEXT("params"), FilterParams);
+    TSharedPtr<FJsonObject> AppendLayerFx = MakeOp(TEXT("add"), TEXT("/layers/0/fx/-"));
+    AppendLayerFx->SetObjectField(TEXT("value"), Filter);
+
+    TSharedPtr<FJsonObject> GainParams = MakeShared<FJsonObject>();
+    GainParams->SetNumberField(TEXT("gainDb"), -2.0);
+    TSharedPtr<FJsonObject> Gain = MakeShared<FJsonObject>();
+    Gain->SetStringField(TEXT("kind"), TEXT("gain"));
+    Gain->SetObjectField(TEXT("params"), GainParams);
+    TSharedPtr<FJsonObject> AppendMasterFx = MakeOp(TEXT("add"), TEXT("/master/fx/-"));
+    AppendMasterFx->SetObjectField(TEXT("value"), Gain);
+
+    TArray<TSharedPtr<FJsonValue>> Ops;
+    Ops.Add(MakeShared<FJsonValueObject>(MakeNumberOp(TEXT("replace"), TEXT("/layers/0/gainDb"), -4.0)));
+    Ops.Add(MakeShared<FJsonValueObject>(AppendLayerFx));
+    Ops.Add(MakeShared<FJsonValueObject>(AppendMasterFx));
+
+    TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+    Payload->SetStringField(TEXT("candidateId"), SourceId);
+    Payload->SetArrayField(TEXT("patch"), Ops);
+    Payload->SetBoolField(TEXT("analyze"), false);
+    FTestResponseCapture Capture;
+    InvokeHandlerWithCapture(PatchMethod, Payload, Capture);
+
+    TestTrue(FString::Printf(TEXT("appending to a bare layer's and the master's fx chain succeeds "
+                                  "(%s: %s)"), *Capture.ErrorCode, *Capture.Message),
+        Capture.bSuccess);
+    const FString PatchedId = StringField(Capture.Result, TEXT("candidateId"));
+    const FPwCandidateLookupResult Patched = Registry().Get(PatchedId);
+    TestTrue(TEXT("the patched candidate is resident"), Patched.IsHit());
+    if (!Patched.IsHit() || Patched.Candidate->Recipe.Layers.Num() != 1)
+    {
+        return false;
+    }
+    const FPwSynthRecipe& Recipe = Patched.Candidate->Recipe;
+    TestEqual(TEXT("the layer chain gained exactly the appended effect"), Recipe.Layers[0].Fx.Num(), 1);
+    TestTrue(TEXT("...and it is the filter"),
+        Recipe.Layers[0].Fx.Num() == 1 && Recipe.Layers[0].Fx[0].Kind == EPwSynthFxKind::Filter);
+    TestEqual(TEXT("the master chain gained exactly the appended effect"), Recipe.Master.Fx.Num(), 1);
+    TestEqual(TEXT("the replace batched with the appends landed too"), Recipe.Layers[0].GainDb, -4.0);
+    return true;
+}
+
+// =================================================================================================
+// get_recipe - returns the canonical document patch addresses (board F-rpc-synth-get-recipe).
+// Asserted by feeding the returned recipe back to generate: an exact canonical copy converges
+// onto the same candidate (reused:true), anything else renders a new one.
+// =================================================================================================
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAudioSynthGetRecipeReturnsCanonicalTest,
+    "PinWright.audio.synth.get_recipe.ReturnsCanonicalRecipe",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAudioSynthGetRecipeReturnsCanonicalTest::RunTest(const FString& Parameters)
+{
+    using namespace PwSynthGenerateTestHelpers;
+
+    FTestResponseCapture GenerateCapture;
+    const FString SourceId = Generate(SimpleRecipe(/*Seed=*/4302, /*DurationMs=*/90.0),
+                                      /*bAnalyze=*/false, GenerateCapture);
+    if (SourceId.IsEmpty())
+    {
+        AddError(TEXT("could not create the candidate this test reads"));
+        return false;
+    }
+
+    TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+    Payload->SetStringField(TEXT("candidateId"), SourceId);
+    FTestResponseCapture Capture;
+    TestTrue(TEXT("audio.synth.get_recipe is registered"),
+        InvokeHandlerWithCapture(TEXT("audio.synth.get_recipe"), Payload, Capture));
+    TestTrue(FString::Printf(TEXT("get_recipe succeeds (%s: %s)"), *Capture.ErrorCode, *Capture.Message),
+        Capture.bSuccess);
+    const TSharedPtr<FJsonObject> Recipe = ObjectField(Capture.Result, TEXT("recipe"));
+    if (!Recipe.IsValid())
+    {
+        AddError(TEXT("the response carries no recipe object"));
+        return false;
+    }
+
+    TestEqual(TEXT("candidateId echoes the request"), StringField(Capture.Result, TEXT("candidateId")), SourceId);
+    const FPwCandidateLookupResult Source = Registry().Get(SourceId);
+    TestTrue(TEXT("recipeDigest matches the registry's digest of the stored recipe"),
+        Source.IsHit() && StringField(Capture.Result, TEXT("recipeDigest")) ==
+            FPwCandidateRegistry::RecipeDigest(Source.Candidate->Recipe));
+
+    // The canonical form, not the authored one: the fixture never wrote phase or an fx array.
+    const TArray<TSharedPtr<FJsonValue>>* Layers = nullptr;
+    TSharedPtr<FJsonObject> Layer0;
+    if (Recipe->TryGetArrayField(TEXT("layers"), Layers) && Layers && Layers->Num() == 1)
+    {
+        Layer0 = (*Layers)[0]->AsObject();
+    }
+    const TArray<TSharedPtr<FJsonValue>>* LayerFx = nullptr;
+    TestTrue(TEXT("an fx-less layer carries an explicit empty fx array"),
+        Layer0.IsValid() && Layer0->TryGetArrayField(TEXT("fx"), LayerFx) && LayerFx && LayerFx->Num() == 0);
+    const TSharedPtr<FJsonObject> Params = ObjectField(ObjectField(Layer0, TEXT("generator")), TEXT("params"));
+    TestTrue(TEXT("an unwritten default (osc phase) is materialized"),
+        Params.IsValid() && Params->HasField(TEXT("phase")));
+
+    FTestResponseCapture Regenerate;
+    const FString RoundTripId = Generate(Recipe, /*bAnalyze=*/false, Regenerate);
+    TestEqual(TEXT("re-generating the returned recipe converges onto the same candidate"),
+        RoundTripId, SourceId);
+    TestTrue(TEXT("...and says reused:true"), BoolField(Regenerate.Result, TEXT("reused")));
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAudioSynthGetRecipeRefusalsTest,
+    "PinWright.audio.synth.get_recipe.RefusesMissAndRecipelessCandidate",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAudioSynthGetRecipeRefusalsTest::RunTest(const FString& Parameters)
+{
+    using namespace PwSynthGenerateTestHelpers;
+
+    const auto GetRecipe = [](const FString& Id, FTestResponseCapture& Capture)
+    {
+        TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+        Payload->SetStringField(TEXT("candidateId"), Id);
+        InvokeHandlerWithCapture(TEXT("audio.synth.get_recipe"), Payload, Capture);
+    };
+
+    // A buffer registered without a recipe, the way render_metasound and audio.music stems do.
+    FPwCandidate Recipeless;
+    Recipeless.Buffer.SampleRate = TestSampleRate;
+    Recipeless.Buffer.Left.SetNumZeroed(64);
+    Recipeless.Buffer.Right.SetNumZeroed(64);
+    const FString RecipelessId = Registry().Add(MoveTemp(Recipeless));
+    {
+        FTestResponseCapture Capture;
+        GetRecipe(RecipelessId, Capture);
+        TestFalse(TEXT("a recipe-less candidate is refused, not answered with an empty document"),
+            Capture.bSuccess);
+        TestEqual(TEXT("...with UNSUPPORTED_OPERATION"),
+            Capture.ErrorCode, FString(ErrorCodes::ERR_UNSUPPORTED_OPERATION));
+    }
+
+    {
+        // The registry is non-empty (the candidate above), so this is the wrong-id case.
+        FTestResponseCapture Capture;
+        GetRecipe(TEXT("c999_dead"), Capture);
+        TestFalse(TEXT("an unknown id is an error"), Capture.bSuccess);
+        TestEqual(TEXT("an unknown id reports the registry's CANDIDATE_NOT_FOUND"),
+            Capture.ErrorCode, FString(ErrorCodes::ERR_CANDIDATE_NOT_FOUND));
+    }
+
+    Registry().Discard(RecipelessId);
+    return true;
+}
+
+// =================================================================================================
+// generate - master fades run after normalize. A fade over the peak the normalizer keyed on must
+// be published (render.normalize.outputDb) and named (render.normalize.warning) instead of leaving
+// gainDb to claim the target was hit (board B-synth-master-fade-runs-after-normalize-and-silently-
+// misses-the-target). The no-fade control proves the warning is not unconditional.
+// =================================================================================================
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAudioSynthFadeOverPeakTest,
+    "PinWright.audio.synth.generate.FadeOverPeakReportsOutputLevel",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAudioSynthFadeOverPeakTest::RunTest(const FString& Parameters)
+{
+    using namespace PwSynthGenerateTestHelpers;
+
+    // 100 Hz sine whose envelope dies within 20 ms, so the bus peak sits in the first quarter
+    // period (~2.4 ms) - inside a 10 ms master fade-in.
+    const auto MakeRecipe = [](int32 Seed, double FadeInMs)
+    {
+        const FString Layer = TEXT("{\"generator\":{\"kind\":\"osc\",\"params\":{\"waveform\":\"sine\",")
+            TEXT("\"frequencyHz\":100}},\"ampEnvelope\":[{\"timeMs\":0,\"value\":1},{\"timeMs\":20,\"value\":0}]}");
+        TSharedPtr<FJsonObject> Root = ParseJson(RecipeJson(Seed, 100.0, {Layer}));
+        if (Root.IsValid())
+        {
+            Root->GetObjectField(TEXT("master"))->SetNumberField(TEXT("fadeInMs"), FadeInMs);
+        }
+        return Root;
+    };
+
+    const auto RenderNormalize = [this](const TSharedPtr<FJsonObject>& Recipe, const TCHAR* Label)
+    {
+        FTestResponseCapture Capture;
+        const FString Id = Generate(Recipe, /*bAnalyze=*/false, Capture);
+        TestFalse(FString::Printf(TEXT("%s renders (%s: %s)"), Label, *Capture.ErrorCode, *Capture.Message),
+            Id.IsEmpty());
+        return ObjectField(ObjectField(Capture.Result, TEXT("render")), TEXT("normalize"));
+    };
+
+    const TSharedPtr<FJsonObject> Faded = RenderNormalize(MakeRecipe(4303, 10.0), TEXT("the faded recipe"));
+    const TSharedPtr<FJsonObject> Clean = RenderNormalize(MakeRecipe(4304, 0.0), TEXT("the unfaded control"));
+    if (!Faded.IsValid() || !Clean.IsValid())
+    {
+        AddError(TEXT("render.normalize missing from a generate response"));
+        return false;
+    }
+
+    TestTrue(TEXT("the faded render publishes outputDb"), Faded->HasField(TEXT("outputDb")));
+    const double FadedOut = DoubleField(Faded, TEXT("outputDb"), 0.0);
+    const double FadedIn = DoubleField(Faded, TEXT("inputDb"), 0.0);
+    const double FadedGain = DoubleField(Faded, TEXT("gainDb"), 0.0);
+    TestTrue(FString::Printf(TEXT("inputDb + gainDb still reconciles with the -1 target (%.2f + %.2f)"),
+        FadedIn, FadedGain), FMath::Abs(FadedIn + FadedGain + 1.0) < 0.02);
+    TestTrue(FString::Printf(TEXT("the fade drags the output peak well below the target (%.2f dBFS)"),
+        FadedOut), FadedOut < -2.0);
+    FString Warning;
+    TestTrue(TEXT("the miss is named in a warning"), Faded->TryGetStringField(TEXT("warning"), Warning));
+    TestTrue(FString::Printf(TEXT("the warning names the fade and the remedy (%s)"), *Warning),
+        Warning.Contains(TEXT("fadeInMs")) && Warning.Contains(TEXT("ampEnvelope")));
+
+    TestTrue(FString::Printf(TEXT("the unfaded control lands on the target (%.2f dBFS)"),
+        DoubleField(Clean, TEXT("outputDb"), 0.0)),
+        Clean->HasField(TEXT("outputDb")) && FMath::Abs(DoubleField(Clean, TEXT("outputDb"), 0.0) + 1.0) < 0.02);
+    TestFalse(TEXT("the unfaded control carries no warning"), Clean->HasField(TEXT("warning")));
+    return true;
+}

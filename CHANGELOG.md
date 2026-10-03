@@ -131,6 +131,21 @@
 - Added: `material.authoring.get_material_instance_info` and `asset.dump`'s `material_instance.json`
   carry `orphanedOverrides` (per type, the overrides whose parameter the instance's declared set no
   longer holds) and `orphanedOverrideCount`. `material_instance.json` aspect version 2 -> 3.
+- Added: `audio.synth.get_recipe {candidateId}` returns a resident candidate's canonical recipe (the
+  document `audio.synth.patch` pointers address) plus its `recipeDigest`; recipe-less candidates
+  (`render_metasound`, `audio.music`) are refused with `UNSUPPORTED_OPERATION`. Patch's
+  `VERIFICATION_FAILED` remedy now names it. **Behaviour change:** `audio.synth.list_candidates`
+  rejects an unknown `fields` entry (e.g. `"recipe"`) with `INVALID_PARAMS` instead of dropping it.
+- Fixed: the canonical synth recipe always carries an `fx` array on every layer and on the master
+  (`[]` when empty), so `add /layers/N/fx/-` works on a layer authored without effects. Canonical
+  JSON - and so `recipeDigest` - changes for every recipe with an empty chain.
+- Fixed: `audio.synth.describe_schema` no longer advertises unrenderable values: `ringmod.rateHz`
+  is published as 10..10000 Hz (the engine carrier window; **behaviour change:** rates outside it
+  now fail at parse time with a field path), and `filter`, `eq`, `modal`, `noise`, `formant`, `granular`
+  and `pitchshift` publish their render-time cross-field rules as `constraint`.
+- Fixed: `audio.synth.generate` / `patch` report `render.normalize.outputDb` (final peak, peak
+  mode) and a `warning` when a master fade, which runs after normalize, leaves the render below
+  its peak target.
 - Changed: `audio.synth.describe_schema` packs its `generators` / `effects` pages with the spill
   gate's own measurement (new `HttpResponseSpill::MeasureInlineCharacters`, one condensed copy)
   instead of a pretty print, so **pages can hold more kinds and `pageCount` may drop**. Handlers
