@@ -28,6 +28,12 @@ class FHandlerContext;
 #define DRIVE_WORLD_SELECTOR_PARAM \
     RPC_PARAM_OPT("world", "string", "Game surface: which PIE instance's viewport to walk, same grammar as editor.console_command: 'server', 'client', 'client:N' (1-based), 'pie:N' (raw PIEInstance). Omitted: the only PIE instance with a game viewport; TARGET_AMBIGUOUS when several have one (listen server + clients). Ignored on other surfaces.")
 
+// The web-surface CEF browser selector, single-sourced for every drive.* verb whose web body
+// reads it (observe, expect, wait_for and the six action verbs), so the dispatcher's param
+// allowlist accepts it (board B-drive-browser-index-param-unreachable).
+#define DRIVE_BROWSER_SELECTOR_PARAM \
+    RPC_PARAM_DEF("browser_index", "integer", "Web surface: the Nth live CEF browser (0-based, default 0), ordered by on-screen area, largest first, so an index can shift as browsers appear, disappear or resize. Out of range -> WEB_BROWSER_NOT_FOUND. Ignored on other surfaces.", "0")
+
 // Result of one journal delta query from the live tail, owned by PinWrightRecorder.
 struct FLiveTailDelta;
 

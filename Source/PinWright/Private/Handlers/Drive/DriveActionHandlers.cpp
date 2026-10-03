@@ -47,6 +47,7 @@
     RPC_PARAM_OPT("instance_name", "string", "Live UMG root selector: substring-matched against the backing widget name."), \
     RPC_PARAM_OPT("root_index", "integer", "Live UMG root selector: the Nth root (0-based). Takes precedence over instance_name."), \
     DRIVE_WORLD_SELECTOR_PARAM, \
+    DRIVE_BROWSER_SELECTOR_PARAM, \
     DRIVE_WINDOW_SELECTOR_PARAMS, \
     RPC_PARAM_DEF("stable_ticks", "number", "Consecutive stable ticks required before the UI is considered settled (default 2).", "2"), \
     RPC_PARAM_DEF("quiet_budget_ms", "number", "Budget for the no-change phase before reporting a clean quiet, in ms (default 500).", "500"), \

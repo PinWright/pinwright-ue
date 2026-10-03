@@ -1764,7 +1764,7 @@ namespace DeclaredParamCoverageTestLocal
     //     Guarding those reads with an `if` would NOT clear them: this scan is flow-insensitive by
     //     design, so only moving a read into a function the sibling alone calls removes a pair --
     //     which is what the renderer `index` split above did, and what these four would need.
-    //   * drive.* (31), game_framework.* (14), chooser.* (19), eqs.*/ai.* (43). Shared entry-point
+    //   * drive.* (10), game_framework.* (14), chooser.* (19), eqs.*/ai.* (43). Shared entry-point
     //     helpers whose callers declare different subsets. chooser is self-indicting: LoadChooser's
     //     own error text says "chooserPath, assetPath, tablePath, or path is required" and three of
     //     the four spellings it names are refused at the wire. game_framework's `path` is off this
@@ -1863,37 +1863,16 @@ namespace DeclaredParamCoverageTestLocal
             TEXT("chooser.set_result:chooserPath"),
             TEXT("chooser.set_result:tablePath"),
 
-            TEXT("drive.click:browser_index"),
-            TEXT("drive.click:instanceName"),
-            TEXT("drive.click:rootIndex"),
             TEXT("drive.click:wait_for_timeout_ms"),
-            TEXT("drive.drag:browser_index"),
             TEXT("drive.drag:instanceName"),
             TEXT("drive.drag:rootIndex"),
             TEXT("drive.drag:wait_for_timeout_ms"),
-            TEXT("drive.expect:browser_index"),
-            TEXT("drive.hover:browser_index"),
-            TEXT("drive.hover:instanceName"),
-            TEXT("drive.hover:rootIndex"),
             TEXT("drive.hover:wait_for_timeout_ms"),
-            TEXT("drive.key:browser_index"),
-            TEXT("drive.key:instanceName"),
-            TEXT("drive.key:rootIndex"),
             TEXT("drive.key:wait_for_timeout_ms"),
-            TEXT("drive.observe:browser_index"),
-            TEXT("drive.scroll:browser_index"),
-            TEXT("drive.scroll:instanceName"),
-            TEXT("drive.scroll:rootIndex"),
             TEXT("drive.scroll:wait_for_timeout_ms"),
-            TEXT("drive.type:browser_index"),
-            TEXT("drive.type:instanceName"),
-            TEXT("drive.type:rootIndex"),
             TEXT("drive.type:wait_for_timeout_ms"),
-            TEXT("drive.wait_for:browser_index"),
             TEXT("drive.wait_for:instanceName"),
             TEXT("drive.wait_for:rootIndex"),
-            TEXT("drive.wait_for:wait_for"),
-            TEXT("drive.wait_for:wait_for_timeout_ms"),
 
             TEXT("eqs.set_context_class:contextType"),
             TEXT("eqs.set_test_filter:filterType"),

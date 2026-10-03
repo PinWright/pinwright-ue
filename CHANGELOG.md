@@ -61,6 +61,10 @@
   parent); they now apply the editor factories' rule, `FKismetEditorUtilities::CanCreateBlueprintOfClass`.
   **Behaviour change:** a `NotBlueprintable` widget parent, previously accepted, is now refused
   `CLASS_NOT_INSTANTIABLE`, as the editor refuses it.
+- Fixed: every `surface=web` drive verb (`drive.observe`, `drive.expect`, `drive.wait_for`,
+  `drive.click`, `drive.hover`, `drive.scroll`, `drive.type`, `drive.key`, `drive.drag`) now
+  declares `browser_index` (integer, default 0). It was documented and read by the web handlers
+  but refused `UNKNOWN_PARAMS` at the dispatcher, so only browser 0 was reachable.
 - Added: `level.describe_offline` lists a map's actors (label, name, class, path, folder, tags,
   guid, world transform) by parsing the `.umap` on disk, in the `pinwright.actor-describe.v1`
   shape `asset.dump` writes. It never loads the map, never creates its package and never touches

@@ -95,9 +95,9 @@ namespace DriveWebHandlersLocal
     {
         Ctx.SendError(ErrorCodes::ERR_WEB_BROWSER_NOT_FOUND,
             FString::Printf(
-                TEXT("No live CEF web browser at browser_index %d. surface=web needs a running "
-                     "WebUI/CEF browser (e.g. a PIE HUD); none was discovered."),
-                BrowserIndex));
+                TEXT("No live CEF web browser at browser_index %d (%d discovered). surface=web needs a "
+                     "running WebUI/CEF browser (e.g. a PIE HUD) at that index."),
+                BrowserIndex, FDriveWebBridge::DiscoverBrowsers().Num()));
     }
 
     // What every web action verb reads from Ctx besides its own input params.
