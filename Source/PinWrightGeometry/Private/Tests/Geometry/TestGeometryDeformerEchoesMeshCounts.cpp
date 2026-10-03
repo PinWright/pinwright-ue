@@ -28,45 +28,15 @@
 #include "Dom/JsonObject.h"
 #include "Dispatch/RpcDispatcher.h"
 #include "Tests/TestSkipReporting.h"
+#include "Tests/TestWorldUtils.h"
 #include "Tests/Infra/DispatcherTestHelpers.h"
 
 #include "Editor.h"
 #include "Engine/World.h"
-#include "EngineUtils.h"
 #include "GameFramework/Actor.h"
 
 using DispatcherTestHelpers::MakeDispatcher;
 using DispatcherTestHelpers::Dispatch;
-
-namespace
-{
-    // Remove any actor whose label matches Label from the editor world so the
-    // test leaves no residue on the (mutated) fuzzing host.
-    void DestroyDeformerProbeActors(const FString& Label)
-    {
-        if (!GEditor)
-        {
-            return;
-        }
-        UWorld* World = GEditor->GetEditorWorldContext().World();
-        if (!IsValid(World))
-        {
-            return;
-        }
-        TArray<AActor*> ToDestroy;
-        for (TActorIterator<AActor> It(World); It; ++It)
-        {
-            if (It->GetActorLabel().Equals(Label))
-            {
-                ToDestroy.Add(*It);
-            }
-        }
-        for (AActor* Actor : ToDestroy)
-        {
-            World->DestroyActor(Actor);
-        }
-    }
-}
 
 // Each deformer/array/poke success response carries the post-op vertexCount and
 // triangleCount inline so the caller can confirm non-collapse in one call (no
@@ -86,6 +56,8 @@ bool FGeometryDeformerEchoesMeshCountsTest::RunTest(const FString& Parameters)
 
     const FString Suffix = FGuid::NewGuid().ToString(EGuidFormats::Digits);
     const FString Label = FString::Printf(TEXT("PW_DeformEchoProbe_%s"), *Suffix);
+    // Deselects and destroys the probe and restores the level's dirty flag on every exit.
+    FScopedEditorWorldActorGuard WorldGuard;
 
     DispatcherTestHelpers::FSinkPtr Sink;
     FRpcDispatcher Dispatcher;
@@ -103,7 +75,6 @@ bool FGeometryDeformerEchoesMeshCountsTest::RunTest(const FString& Parameters)
             TEXT("req-deform-echo-create"), CreateParams, bCreated, CreateErr);
         if (!TestTrue(TEXT("geometry.create_box spawned the probe DynamicMeshActor"), bCreated))
         {
-            DestroyDeformerProbeActors(Label);
             return true;
         }
     }
@@ -208,6 +179,5 @@ bool FGeometryDeformerEchoesMeshCountsTest::RunTest(const FString& Parameters)
     AssertVerbEchoesCounts(TEXT("geometry.array_radial"),
         [](TSharedPtr<FJsonObject>& P){ P->SetNumberField(TEXT("count"), 4); });
 
-    DestroyDeformerProbeActors(Label);
     return true;
 }

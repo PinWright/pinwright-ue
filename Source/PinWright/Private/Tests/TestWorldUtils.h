@@ -92,6 +92,35 @@ inline AStaticMeshActor* SpawnTransientCubeActor(UWorld* World, const FString& L
     return Actor;
 }
 
+// The one teardown step every test that removes a live editor-world actor routes
+// through (FScopedEditorWorldActorGuard below, GeometryTestHelpers::DestroyActorsWithLabel).
+// Deselect before destroying. EditorDestroyActor does not remove the actor from the
+// editor selection, so an actor that a test (or a handler like editor.focus_actor,
+// which calls GEditor->SelectActor) left selected keeps a stale typed-element handle in
+// USelection after it is gone. The next code path that walks the selection — e.g. the
+// transform-widget helper run during editor.save_all's content validation — then
+// dereferences the dead element and hits the fatal "Element type ID '0' has not been
+// registered!" assert.
+inline void DeselectAndDestroyEditorActor(UWorld* World, AActor* Actor)
+{
+    if (!World || !IsValid(Actor))
+    {
+        return;
+    }
+    if (USelection* SelectedActors = GEditor ? GEditor->GetSelectedActors() : nullptr)
+    {
+        SelectedActors->Deselect(Actor);
+    }
+    if (USelection* SelectedComponents = GEditor ? GEditor->GetSelectedComponents() : nullptr)
+    {
+        for (UActorComponent* Component : Actor->GetComponents())
+        {
+            SelectedComponents->Deselect(Component);
+        }
+    }
+    World->EditorDestroyActor(Actor, /*bShouldModifyLevel=*/false);
+}
+
 class FScopedEditorWorldActorGuard
 {
 public:
@@ -127,32 +156,9 @@ public:
                 SpawnedDuringTest.Add(*It);
             }
         }
-        // Deselect before destroying. EditorDestroyActor does not remove the actor
-        // from the editor selection, so an actor that a test (or a handler like
-        // editor.focus_actor, which calls GEditor->SelectActor) left selected keeps a
-        // stale typed-element handle in USelection after it is gone. The next code path
-        // that walks the selection — e.g. the transform-widget helper run during
-        // editor.save_all's content validation — then dereferences the dead element and
-        // hits the fatal "Element type ID '0' has not been registered!" assert.
-        USelection* SelectedActors = GEditor ? GEditor->GetSelectedActors() : nullptr;
-        USelection* SelectedComponents = GEditor ? GEditor->GetSelectedComponents() : nullptr;
         for (AActor* Actor : SpawnedDuringTest)
         {
-            if (IsValid(Actor))
-            {
-                if (SelectedActors)
-                {
-                    SelectedActors->Deselect(Actor);
-                }
-                if (SelectedComponents)
-                {
-                    for (UActorComponent* Component : Actor->GetComponents())
-                    {
-                        SelectedComponents->Deselect(Component);
-                    }
-                }
-                World->EditorDestroyActor(Actor, /*bShouldModifyLevel=*/false);
-            }
+            DeselectAndDestroyEditorActor(World, Actor);
         }
 
         // Destroying actors re-dirties the package, so restore the flag last.

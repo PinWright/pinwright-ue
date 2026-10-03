@@ -18,6 +18,7 @@
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "GameFramework/Actor.h"
+#include "Tests/TestWorldUtils.h"
 
 namespace GeometryTestHelpers
 {
@@ -48,7 +49,11 @@ namespace GeometryTestHelpers
     }
 
     // Remove any actor whose label matches Label from the editor world so the
-    // test leaves no residue on the (mutated) fuzzing host.
+    // test leaves no residue on the (mutated) fuzzing host. Routes through
+    // DeselectAndDestroyEditorActor (Tests/TestWorldUtils.h), the same step
+    // FScopedEditorWorldActorGuard uses, so a probe a handler left selected never
+    // leaves a stale USelection handle behind. It does NOT restore the level's
+    // dirty flag — a test that needs that declares FScopedEditorWorldActorGuard.
     inline void DestroyActorsWithLabel(const FString& Label)
     {
         if (!GEditor)
@@ -70,7 +75,7 @@ namespace GeometryTestHelpers
         }
         for (AActor* Actor : ToDestroy)
         {
-            World->DestroyActor(Actor);
+            DeselectAndDestroyEditorActor(World, Actor);
         }
     }
 }

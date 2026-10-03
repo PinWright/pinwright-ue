@@ -1145,3 +1145,116 @@ bool FRootedFixtureOwnershipContractTest::RunTest(const FString& Parameters)
     }
     return true;
 }
+
+// Geometry-module half of the editor-world teardown contract
+// (B-geometry-duplicate-mesh-teardown-guard). The scans above cover PinWright/Private/Tests
+// only; the PinWrightGeometry tests spawn DynamicMeshActors through geometry.create_* and
+// actor.duplicate into the same live editor world. No geometry test may destroy a live-world
+// actor itself: teardown goes through FScopedEditorWorldActorGuard or
+// GeometryTestHelpers::DestroyActorsWithLabel, both of which deselect first via
+// DeselectAndDestroyEditorActor. The two E2Es that used to roll a raw-destroy cleanup must
+// declare the guard before their first dispatch.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGeometryTestTeardownGuardContractTest,
+    "PinWright.infra.contract.EditorWorldSpawn.GeometryTeardownRoutesThroughGuard",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FGeometryTestTeardownGuardContractTest::RunTest(const FString& Parameters)
+{
+    using namespace FixtureOwnershipContractHelpers;
+
+    const TCHAR* const RawDestroyPattern =
+        TEXT("(?:\\b(?:Editor)?DestroyActor\\s*\\(|->\\s*Destroy\\s*\\()");
+    TestEqual(TEXT("Raw-destroy pattern catches World->DestroyActor, EditorDestroyActor and ->Destroy"),
+        CountPattern(TEXT("World->DestroyActor(A); W->EditorDestroyActor(A, false); A->Destroy();"),
+            RawDestroyPattern), 3);
+    TestEqual(TEXT("Raw-destroy pattern ignores the routed helpers"),
+        CountPattern(TEXT("DestroyActorsWithLabel(L); DeselectAndDestroyEditorActor(W, A);"),
+            RawDestroyPattern), 0);
+
+    const FString SourceRoot = ResolveSourceRoot();
+    if (!TestFalse(TEXT("Resolved the plugin Source root"), SourceRoot.IsEmpty()))
+    {
+        return false;
+    }
+
+    TArray<FString> Files;
+    const FString GeometryTestsRoot = SourceRoot / TEXT("PinWrightGeometry/Private/Tests");
+    IFileManager::Get().FindFilesRecursive(Files, *GeometryTestsRoot, TEXT("*.cpp"), true, false, false);
+    IFileManager::Get().FindFilesRecursive(Files, *GeometryTestsRoot, TEXT("*.h"), true, false, false);
+    const FString GeometryHelpers =
+        SourceRoot / TEXT("PinWright/Private/Tests/Geometry/GeometryTestHelpers.h");
+    Files.Add(GeometryHelpers);
+    if (!TestTrue(TEXT("Found PinWrightGeometry C++ test sources"), Files.Num() > 1))
+    {
+        return false;
+    }
+
+    TMap<FString, FString> SourceByRelative;
+    for (const FString& File : Files)
+    {
+        FString Contents;
+        if (!ReadNeutralizedSource(*this, File, Contents))
+        {
+            continue;
+        }
+        const FString Relative = MakeRelative(File, SourceRoot);
+        for (const int32 Position : FindPatternPositions(Contents, RawDestroyPattern))
+        {
+            AddError(FString::Printf(
+                TEXT("%s:%d destroys a live editor-world actor directly; declare "
+                     "FScopedEditorWorldActorGuard or use GeometryTestHelpers::DestroyActorsWithLabel "
+                     "so the actor is deselected first."),
+                *Relative, static_cast<int32>(Algo::Count(Contents.Left(Position), TEXT('\n'))) + 1));
+        }
+        SourceByRelative.Add(Relative, MoveTemp(Contents));
+    }
+
+    if (const FString* Helpers = SourceByRelative.Find(MakeRelative(GeometryHelpers, SourceRoot)))
+    {
+        TestTrue(TEXT("DestroyActorsWithLabel routes through DeselectAndDestroyEditorActor"),
+            CountPattern(*Helpers, TEXT("\\bDeselectAndDestroyEditorActor\\s*\\(")) >= 1);
+    }
+
+    struct FGuardedGeometryRunTest
+    {
+        const TCHAR* RelativePath;
+        const TCHAR* FunctionName;
+    };
+    const FGuardedGeometryRunTest GuardedRunTests[] = {
+        { TEXT("PinWrightGeometry/Private/Tests/Geometry/TestActorDuplicateMeshIntegrity.cpp"),
+          TEXT("FActorDuplicateNeverSilentlySubstitutesMeshTest") },
+        { TEXT("PinWrightGeometry/Private/Tests/Geometry/TestGeometryDeformerEchoesMeshCounts.cpp"),
+          TEXT("FGeometryDeformerEchoesMeshCountsTest") },
+    };
+    for (const FGuardedGeometryRunTest& Contract : GuardedRunTests)
+    {
+        const FString* Contents = SourceByRelative.Find(Contract.RelativePath);
+        TArray<FFunctionBody> Bodies;
+        const FFunctionBody* Body = nullptr;
+        if (Contents && ExtractRunTestBodies(*this, Contract.RelativePath, *Contents, Bodies))
+        {
+            Body = FindBodyByName(Bodies, Contract.FunctionName);
+        }
+        if (!Body)
+        {
+            AddError(FString::Printf(TEXT("Missing guarded geometry contract body %s::%s::RunTest"),
+                Contract.RelativePath, Contract.FunctionName));
+            continue;
+        }
+        const TArray<int32> DispatchCalls = FindPatternPositions(Body->Text, TEXT("\\bDispatch\\s*\\("));
+        TestTrue(FString::Printf(TEXT("%s::RunTest still dispatches a spawning verb"), Contract.FunctionName),
+            DispatchCalls.Num() > 0);
+        for (const int32 DispatchCall : DispatchCalls)
+        {
+            if (!HasActiveGuardBefore(Body->Text, DispatchCall))
+            {
+                AddError(FString::Printf(
+                    TEXT("%s:%d %s::RunTest dispatches before an active FScopedEditorWorldActorGuard."),
+                    Contract.RelativePath,
+                    Body->StartLine + static_cast<int32>(Algo::Count(Body->Text.Left(DispatchCall), TEXT('\n'))),
+                    Contract.FunctionName));
+            }
+        }
+    }
+    return true;
+}

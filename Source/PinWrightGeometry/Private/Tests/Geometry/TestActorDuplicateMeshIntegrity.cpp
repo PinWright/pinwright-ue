@@ -30,12 +30,12 @@
 
 #include "Tests/Geometry/GeometryTestHelpers.h"
 #include "Tests/TestSkipReporting.h"
+#include "Tests/TestWorldUtils.h"
 
 #include "Editor.h"
 #include "Engine/Engine.h"
 #include "Engine/Level.h"
 #include "Engine/World.h"
-#include "EngineUtils.h"
 #include "GameFramework/Actor.h"
 #include "HAL/IConsoleManager.h"
 #include "LevelUtils.h"
@@ -47,33 +47,6 @@ using DispatcherTestHelpers::Dispatch;
 
 namespace
 {
-    // Removes the probe actor and every duplicate UE auto-suffixed from its label
-    // (<Label>2, <Label>3, ...) so the mutated editor world is left clean.
-    void DestroyDuplicateMeshProbeActors(const FString& LabelPrefix)
-    {
-        if (!GEditor)
-        {
-            return;
-        }
-        UWorld* World = GEditor->GetEditorWorldContext().World();
-        if (!IsValid(World))
-        {
-            return;
-        }
-        TArray<AActor*> ToDestroy;
-        for (TActorIterator<AActor> It(World); It; ++It)
-        {
-            if (It->GetActorLabel().StartsWith(LabelPrefix))
-            {
-                ToDestroy.Add(*It);
-            }
-        }
-        for (AActor* Actor : ToDestroy)
-        {
-            World->DestroyActor(Actor);
-        }
-    }
-
     // Sets an int cvar and hands back its previous value, or MIN_int32 when the cvar does
     // not exist in this host (nothing to restore).
     int32 DupMeshSetIntCVarReturningPrevious(const TCHAR* Name, int32 NewValue)
@@ -121,7 +94,11 @@ bool FActorDuplicateNeverSilentlySubstitutesMeshTest::RunTest(const FString& Par
 
     const FString Label = FString::Printf(TEXT("PW_DupMeshIntegrity_%s"),
         *FGuid::NewGuid().ToString(EGuidFormats::Digits));
-    ON_SCOPE_EXIT { DestroyDuplicateMeshProbeActors(Label); };
+    // Declared before any handler can spawn: on every exit it deselects and destroys the
+    // probe and every duplicate actor.duplicate made (<Label>2, <Label>3, ...), then
+    // restores the level package's dirty flag. Constructed first so it is destroyed last,
+    // after the level-lock and cvar restores below.
+    FScopedEditorWorldActorGuard WorldGuard;
 
     DispatcherTestHelpers::FSinkPtr Sink;
     FRpcDispatcher Dispatcher;
