@@ -198,6 +198,8 @@ or `switch_string`.
 # Access: %cast.AsMyCharacter
 ```
 
+**Cast result accessor spelling.** The result pin is `As` + the class's *display name*, which UE derives from the class name without `_C` by turning `_` into spaces and splitting words: `cast<BPI_RecoilReceiver_C>` has the pin `AsBPI Recoil Receiver`. Spell it with the spaces removed, `%c.AsBPIRecoilReceiver`, or backtick-quoted with them, ``%c.`AsBPI Recoil Receiver` ``. The class name verbatim (`%c.AsBPI_RecoilReceiver_C`) does not resolve. Simpler still, the bare register `%c` resolves to the cast result anywhere a value is accepted, and `%c.Result` also works (§ `Array_Get` and accessor aliases). An unresolved `%ref.Pin` lists the outputs in the spelling that compiles: `Could not resolve value '%c.AsBPI_RecoilReceiver_C' for pin 'Target' (outputs of %c: AsBPIRecoilReceiver; the bare %c resolves to AsBPIRecoilReceiver)`.
+
 **Cast (RHS-expression form, pure):** `cast<T>(...)` is accepted on the right of `set` (`set $TypedRef = cast<Actor>($Source)`). It compiles to a pure `UK2Node_DynamicCast` (`SetPurity(true)`): no exec branches, labels, or bool-success pin; failure returns null. Use it when the receiver can handle null, and the statement form when success must branch. Inner `$` / `%` references pre-emit normally.
 
 ```
@@ -474,7 +476,7 @@ See `call("bpir.examples.array-ops")` for a worked array pattern.
 
 ## `Array_Get` and accessor aliases
 
-`call Array_Get(...)` (the BP `UK2Node_CallArrayFunction` / `UK2Node_GetArrayItem` node) returns one indexed element. Output names vary by UE version and node subclass, so BPIR accepts these case-insensitive aliases for the **sole non-exec output pin** when a literal name is absent:
+`call Array_Get(...)` (the BP `UK2Node_CallArrayFunction` / `UK2Node_GetArrayItem` node) returns one indexed element. Output names vary by UE version and node subclass, so BPIR accepts these case-insensitive aliases for the **sole visible non-exec output pin** when a literal name is absent. They apply to any node with one such output, including the statement-form cast, whose `bSuccess` pin is hidden:
 
 | Alias | Resolves to |
 |---|---|

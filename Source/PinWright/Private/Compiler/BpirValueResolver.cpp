@@ -1046,7 +1046,8 @@ UEdGraphPin* FBpirValueResolver::FindOutputPinByName(UEdGraphNode* Node, const F
     // sole non-exec output of array-getter / single-result K2Nodes whose real pin
     // name varies across UE versions (e.g. UK2Node_CallArrayFunction's "Output"
     // vs UK2Node_GetArrayItem's "Item"). Only applies when the exact-match and
-    // space-normalized passes failed AND there is exactly one non-exec output.
+    // space-normalized passes failed AND there is exactly one visible non-exec output
+    // (an impure cast's hidden bSuccess pin does not count).
     static const TCHAR* ArrayAccessorAliases[] = { TEXT("Item"), TEXT("Result"), TEXT("Value") };
     bool bIsAccessorAlias = false;
     for (const TCHAR* Alias : ArrayAccessorAliases)
@@ -1067,7 +1068,7 @@ UEdGraphPin* FBpirValueResolver::FindOutputPinByName(UEdGraphNode* Node, const F
             {
                 continue;
             }
-            if (Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_Exec)
+            if (Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_Exec || Pin->bHidden)
             {
                 continue;
             }

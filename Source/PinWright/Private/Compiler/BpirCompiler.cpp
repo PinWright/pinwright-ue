@@ -1283,6 +1283,48 @@ static void ReportMissingTargetInputPin(
             Context, *TargetNodeName, *RequestedPin, *AvailablePins)));
 }
 
+namespace BpirCompilerOutputAccessors
+{
+    // E-bpir-cast-accessor-spelling-undocumented: the `%ref.Pin` spelling of an output pin.
+    // A cast result pin is "As" + the class display name ("AsBPI Recoil Receiver"); the
+    // space-stripped form always resolves (FBpirValueResolver::FindOutputPinByName) and
+    // needs no backticks, so diagnostics print that instead of the raw engine pin name.
+    FString AccessorSpelling(const UEdGraphPin* Pin)
+    {
+        return Pin->PinName.ToString().Replace(TEXT(" "), TEXT(""));
+    }
+
+    // Comma-separated accessor spellings of the visible non-exec output pins on Node,
+    // capped so a typo on a wide break node does not print every member.
+    FString ListDataOutputAccessors(const UEdGraphNode* Node)
+    {
+        constexpr int32 MaxListed = 12;
+        TArray<FString> Names;
+        int32 Omitted = 0;
+        for (const UEdGraphPin* Pin : Node->Pins)
+        {
+            if (Pin->Direction != EGPD_Output || Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_Exec || Pin->bHidden)
+            {
+                continue;
+            }
+            if (Names.Num() < MaxListed)
+            {
+                Names.Add(AccessorSpelling(Pin));
+            }
+            else
+            {
+                ++Omitted;
+            }
+        }
+        FString List = FString::Join(Names, TEXT(", "));
+        if (Omitted > 0)
+        {
+            List += FString::Printf(TEXT(", ... (+%d more)"), Omitted);
+        }
+        return List;
+    }
+}
+
 // When CreateCallFunctionNode is called with a pure function, InOutExecPin becomes nullptr
 // (no exec pins found). This helper detects that and restores the exec chain so downstream
 // impure nodes still get wired. Also patches Inst.Opcode to Pure so WireExecPins skips it.
@@ -7863,8 +7905,12 @@ bool FBpirCompiler::WireDataPins(int32 InstructionIndex, FBpirInstruction& Inst,
                     // Self->self wiring is redundant (UE auto-wires self pins) — treat as warning only
                     bool bIsSelfToSelf = (SourcePin->PinName == UEdGraphSchema_K2::PN_Self
                         && TargetPin->PinName == UEdGraphSchema_K2::PN_Self);
+                    // A %ref source is named in its %ref.Pin spelling, which compiles as printed.
+                    const FString SourceName = Arg.Value.StartsWith(TEXT("%"))
+                        ? BpirCompilerOutputAccessors::AccessorSpelling(SourcePin)
+                        : SourcePin->PinName.ToString();
                     UE_LOG(LogBpirCompiler, Warning, TEXT("Line %d: TryCreateConnection failed wiring data '%s' -> '%s'%s"),
-                        Inst.SourceLine, *SourcePin->PinName.ToString(), *TargetPin->PinName.ToString(),
+                        Inst.SourceLine, *SourceName, *TargetPin->PinName.ToString(),
                         bIsSelfToSelf ? TEXT(" (redundant self wire, non-fatal)") : TEXT(""));
                     if (!bIsSelfToSelf)
                     {
@@ -7886,7 +7932,7 @@ bool FBpirCompiler::WireDataPins(int32 InstructionIndex, FBpirInstruction& Inst,
                             : TEXT("");
                         AccumulatedErrors.Add(FCompileError(Inst.SourceLine,
                             FString::Printf(TEXT("TryCreateConnection failed wiring data '%s' (%s) -> '%s' (%s)%s%s"),
-                                *SourcePin->PinName.ToString(), *UEdGraphSchema_K2::TypeToText(SourcePin->PinType).ToString(),
+                                *SourceName, *UEdGraphSchema_K2::TypeToText(SourcePin->PinType).ToString(),
                                 *TargetPin->PinName.ToString(), *UEdGraphSchema_K2::TypeToText(TargetPin->PinType).ToString(),
                                 *Reason, InterfaceHint)));
                         bAllWired = false;
@@ -7941,11 +7987,23 @@ bool FBpirCompiler::WireDataPins(int32 InstructionIndex, FBpirInstruction& Inst,
                 }
                 else
                 {
-                    UE_LOG(LogBpirCompiler, Warning, TEXT("Line %d: Could not resolve value '%s' for pin '%s'"),
-                        Inst.SourceLine, *Arg.Value, *Arg.PinName);
+                    FString DiagMsg = FString::Printf(TEXT("Could not resolve value '%s' for pin '%s'"), *Arg.Value, *Arg.PinName);
+                    // A misspelled %ref.Pin accessor: list the outputs it could have named.
+                    const FEmittedNodeInfo* RefEmit = EmitMap.Find(*RefIdx);
+                    if (DotIdx != INDEX_NONE && RefEmit && RefEmit->Node)
+                    {
+                        DiagMsg += FString::Printf(TEXT(" (outputs of %%%s: %s"),
+                            *RefName, *BpirCompilerOutputAccessors::ListDataOutputAccessors(RefEmit->Node));
+                        if (RefEmit->PrimaryOutputPin)
+                        {
+                            DiagMsg += FString::Printf(TEXT("; the bare %%%s resolves to %s"),
+                                *RefName, *BpirCompilerOutputAccessors::AccessorSpelling(RefEmit->PrimaryOutputPin));
+                        }
+                        DiagMsg += TEXT(")");
+                    }
+                    UE_LOG(LogBpirCompiler, Warning, TEXT("Line %d: %s"), Inst.SourceLine, *DiagMsg);
                     bAllWired = false;
-                    AccumulatedErrors.Add(FCompileError(Inst.SourceLine,
-                        FString::Printf(TEXT("Could not resolve value '%s' for pin '%s'"), *Arg.Value, *Arg.PinName)));
+                    AccumulatedErrors.Add(FCompileError(Inst.SourceLine, DiagMsg));
                 }
             }
             else

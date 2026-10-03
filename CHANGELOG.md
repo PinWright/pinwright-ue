@@ -23,6 +23,15 @@
   `frameSettled`, `settleChangedPixelFraction` and, when the frame never settled, `frameWarning`
   report the measurement. `asset.generate_thumbnail` on a mesh now waits on the same slot
   materials, and every thumbnail forces its textures' mips resident before waiting on them.
+- Changed: a BPIR `%ref.Pin` that does not resolve now lists the node's data outputs in a spelling
+  that compiles, plus what the bare `%ref` resolves to:
+  `Could not resolve value '%c.AsBPI_RecoilReceiver_C' for pin 'Target' (outputs of %c: AsBPIRecoilReceiver; the bare %c resolves to AsBPIRecoilReceiver)`.
+  A refused data wire from a `%ref` names its source pin with spaces removed (`'AsBPIRecoilReceiver'`,
+  not `'AsBPI Recoil Receiver'`). `bpir.instructions` §2.3 documents the cast-result accessor
+  spelling for multi-word class names.
+- Fixed: the BPIR `.Item` / `.Result` / `.Value` accessor aliases ignore hidden output pins, so
+  `%c.Result` on a statement-form `cast<T>(...)` resolves to the cast result. The cast's hidden
+  `bSuccess` pin used to count as a second output and the alias failed to resolve.
 - Fixed: the `property.set` wiki no longer claims the verb skips the construction-script rerun
   for every target. Skipping `PreEditChange` avoids it only for a component target. An actor-target
   write reruns that actor's construction script through `AActor::PostEditChangeProperty`, which

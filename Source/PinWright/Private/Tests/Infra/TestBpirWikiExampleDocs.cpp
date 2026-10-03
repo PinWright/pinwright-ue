@@ -171,3 +171,27 @@ bool FBlueprintCompileBpirStatesNoSaveDocTest::RunTest(const FString& Parameters
     TestTrue(TEXT("compile_bpir page names asset.save as the follow-up"), Text.Contains(TEXT("asset.save")));
     return true;
 }
+
+// E-bpir-cast-accessor-spelling-undocumented: §2.3's only cast example was single-word, so the
+// multi-word accessor spelling (display name, spaces stripped) was documented nowhere.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBpirCastAccessorSpellingDocTest,
+    "PinWright.infra.wiki_handler.Topic.BpirCastAccessorSpelling",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FBpirCastAccessorSpellingDocTest::RunTest(const FString& Parameters)
+{
+    FString Text;
+    if (!WikiDocTestHelpers::RenderOrFail(*this, TEXT("bpir.instructions"), Text))
+    {
+        return false;
+    }
+    TestTrue(TEXT("bpir.instructions shows a multi-word cast accessor, space-stripped"),
+        Text.Contains(TEXT("`%c.AsBPIRecoilReceiver`")));
+    TestTrue(TEXT("bpir.instructions shows the backtick-quoted spaced form"),
+        Text.Contains(TEXT("``%c.`AsBPI Recoil Receiver` ``")));
+    TestTrue(TEXT("bpir.instructions says the class name verbatim does not resolve"),
+        Text.Contains(TEXT("`%c.AsBPI_RecoilReceiver_C`) does not resolve")));
+    TestTrue(TEXT("bpir.instructions says the bare register is the cast result"),
+        Text.Contains(TEXT("the bare register `%c` resolves to the cast result")));
+    return true;
+}
