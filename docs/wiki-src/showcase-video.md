@@ -147,22 +147,26 @@ so pay for it once.
   `UMoviePipelineQueueSubsystem` — enumerate `GetQueue()->GetJobs()` and `DeleteJob` everything you
   did not just create. `B-mrq-shared-queue-no-management-verbs`.
 - **The MP4 writer emits an AAC track for a scene with no audio.** 48 kHz stereo, 192 kbit/s, and
-  digitally silent (`max_volume: -91.0 dB`). `mrq.run_jobs` measures the file it produced and never
-  looks inside it, so a silent deliverable must be gated on **stream count plus measured loudness**,
-  never on the job result — and `-an` is how you drop the track deliberately.
-  `B-mrq-artifact-report-omits-stream-count`.
+  digitally silent (`max_volume: -91.0 dB`) — its `bIncludeAudio` defaults to true. `mrq.run_jobs`
+  now lists each output file's `streams` (read off the container's track boxes) and warns when an
+  audio stream rides on a sequence with no audio track; turn it off at the source with
+  `encoder.includeAudio: false` (`mrq.set_preset_settings`), or drop it with `-an`. A stream's
+  presence is still not its loudness: gate a silent deliverable on stream count, and measure
+  loudness when a track is meant to be there. `B-mrq-artifact-report-omits-stream-count`.
 - **The encoder's default rate control has no lower bound.** A quality-targeted default collapses on
   smooth, low-detail footage while frame count, duration and resolution all stay correct. The
   threshold, the warning and the remedy (variable bit rate with an explicit average) are on
   [`mrq`](mrq.md); the response now publishes the bitrate that used to be invisible
   (`B-mrq-render-result-omits-bitrate-and-size`).
-- **You cannot read back what a preset carries.** No verb publishes the anti-aliasing sample counts
-  or warm-up frame counts that decide whether the frames converged, and `outputs[]` lists only file
-  writers (`B-mrq-config-readback-omits-sampling`). Record the settings you rendered with yourself,
-  beside the masters.
-- **No verb authors a preset.** `mrq.list_presets` enumerates and `mrq.create_job` consumes; a
-  project with no preset asset renders at engine defaults or drops to `python.execute`
-  (`F-mrq-preset-authoring`). Say which route made a preset when you document one.
+- **Read back what a preset carries before rendering.** `preflight.sampling` (on `mrq.create_job`,
+  `mrq.list_jobs` and the preset verbs) publishes the anti-aliasing sample and warm-up counts that
+  decide whether the frames converge, and `preflight.settings[]` lists every setting on the config —
+  `outputs[]` is only the file writers. An absent `sampling` means the config has no anti-aliasing
+  setting and MRQ will use a transient default; `mrq.run_jobs` repeats both on the finished job.
+- **Author the preset with `mrq.create_preset`, not by hand or `python.execute`.** It writes exactly
+  the settings, output, encoder and sampling values you name, refuses anything out of range, saves,
+  and answers with the same `preflight` block `mrq.create_job` will report; `mrq.set_preset_settings`
+  changes one later. A job queued with no `presetPath` still renders at engine CDO defaults.
 
 ## PNG Masters, Then One Encode
 

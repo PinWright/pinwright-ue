@@ -2,14 +2,14 @@
 
 Drive Movie Render Queue — Unreal's offline render pipeline for cinematics — by building and
 inspecting `UMoviePipelineExecutorJob` entries from `ULevelSequence` + map + optional preset,
-running selected queue jobs under `UMoviePipelinePIEExecutor`, and enumerating available
+running selected queue jobs under `UMoviePipelinePIEExecutor`, and enumerating and authoring
 `UMoviePipelinePrimaryConfig` presets.
 
 Use this namespace after authoring a sequence via `sequencer`; for live-viewport capture without offline rendering, prefer `render` instead.
 
 ## Availability and naming
 
-Conditional availability: the handler file `Handlers/MRQ/MRQHandler.cpp` is gated on `__has_include(<MoviePipelineQueueSubsystem.h>)` plus its sibling MRQ headers. When the engine's MovieRenderPipeline plugin is disabled in the target, all six methods are still registered but respond with `MRQ_NOT_AVAILABLE`: `create_job`, `run_jobs`, `list_jobs`, `remove_job`, `clear_queue` and `list_presets`. Builds opt the modules in through `TryAddConditionalModule` in `PinWright.Build.cs` for `MovieRenderPipelineCore` / `Editor` / `Settings` — there are no hard module dependencies to manage.
+Conditional availability: the handler file `Handlers/MRQ/MRQHandler.cpp` is gated on `__has_include(<MoviePipelineQueueSubsystem.h>)` plus its sibling MRQ headers. When the engine's MovieRenderPipeline plugin is disabled in the target, all eight methods are still registered but respond with `MRQ_NOT_AVAILABLE`: `create_job`, `run_jobs`, `list_jobs`, `remove_job`, `clear_queue`, `list_presets`, `create_preset` and `set_preset_settings` (the last two live in `Handlers/MRQ/MRQPresetHandler.cpp`). Builds opt the modules in through `TryAddConditionalModule` in `PinWright.Build.cs` for `MovieRenderPipelineCore` / `Editor` / `Settings` — there are no hard module dependencies to manage.
 
 Important UE 5.6 naming: the primary config class is `UMoviePipelinePrimaryConfig`, NOT `UMoviePipelineMasterConfig`. The rename landed in UE 5.2 and there is no back-compat alias. Older docs and tutorials still reference the master-config name; trust the header on disk.
 
@@ -94,12 +94,14 @@ Two defects lived on the queue path, and both were the ticket's shape one step e
 | `outputDirectory`, `fileNameFormat` | the same setting's format strings, published **unresolved** — MRQ expands `{project_dir}`, `{sequence_name}`, `{frame_number}` at render time, from state that does not exist at queue time |
 | `frameRateOverride` | present only when the config overrides the sequence's rate (`bUseCustomFrameRate`); omitted rather than guessed, since the sequence is not loaded here |
 | `outputs[]` | class path of every **enabled** file writer on the config. Empty means this job writes nothing |
-| `encoderRequested` | the same reflection read-back `mrq.run_jobs` publishes, off the resolved video output; absent when no video output is configured |
+| `settings[]` | class path of **every** enabled setting on the config — render passes, game overrides, anti-aliasing, writers and the output setting itself. `outputs[]` is the file-writer subset; this is the inventory |
+| `sampling` — `class`, `spatialSampleCount`, `temporalSampleCount`, `engineWarmUpCount`, `renderWarmUpCount`, `useCameraCutForWarmUp`, `renderWarmUpFrames`, `overrideAntiAliasing`, `antiAliasingMethod` | read by reflection off the config's `UMoviePipelineAntiAliasingSetting` — the counts that decide whether the frames converge. **Absent** when the config carries no such setting: MRQ then adds a transient default one at render time, and "no setting" is a different answer from "1 sample" |
+| `encoderRequested` | the same reflection read-back `mrq.run_jobs` publishes, off the resolved video output (`rateControl`, `constantRateFactor`, `averageBitrateMbps`, `maxBitrateMbps`, `includeAudio`); absent when no video output is configured |
 | `warnings[]` | present only when non-empty |
 
 Two warnings fire here, and both are cheaper here than after the render. A config with **no enabled output setting** will write no files at all while `mrq.run_jobs` still reports `success: true` for it. And a `rateControl` of `Quality` or `ConstantQP` is unbounded below — the same trap described in the next section, named before the minutes are spent rather than after.
 
-**Not implemented: the `minBitsPerPixel` / `minBitrateMbps` param** the ticket also proposed. It was judged out of scope, and deliberately so: rewriting a caller's resolved config to `VariableBitRate` at a bitrate PinWright derived from a floor would make the plugin the one applying settings nobody asked for — this ticket's own defect, inverted. Disclosure plus the warning gives a caller everything needed to change one property on the preset asset themselves.
+**Not implemented: the `minBitsPerPixel` / `minBitrateMbps` param** the ticket also proposed. It was judged out of scope, and deliberately so: rewriting a caller's resolved config to `VariableBitRate` at a bitrate PinWright derived from a floor would make the plugin the one applying settings nobody asked for — this ticket's own defect, inverted. Disclosure plus the warning gives a caller everything needed to change one property on the preset asset themselves — with `mrq.set_preset_settings`, or, when there is no preset at all, `mrq.create_preset` (see **Authoring presets** below).
 
 ## What the terminal result says about the artifact
 
@@ -113,14 +115,22 @@ The result now carries a `jobs` array, one entry per rendered job:
 | `outputFileCount`, `measuredFileCount`, `totalFileSizeBytes` | measured; `totalFileSizeBytes` omitted when nothing was stat'd |
 | `frameCount`, `frameRate`, `durationSeconds` | the shot's own `WorkMetrics` / `CachedFrameRate`, not the sequence asset |
 | `resolution` | the resolved `UMoviePipelineOutputSetting` |
-| `overallBitrateBps` = `totalFileSizeBytes * 8 / durationSeconds`, `bitsPerPixel` = bitrate / (w·h·fps) | derived from a measured size; **not demuxed** from the container |
-| `encoderRequested` — `class`, `rateControl`, `constantRateFactor`, `averageBitrateMbps`, `maxBitrateMbps` | read by reflection off the resolved video output setting — a **request**, not an outcome |
+| `overallBitrateBps` = `totalFileSizeBytes * 8 / durationSeconds` | derived from a measured size over the pipeline's frame count; a **whole-file** figure that includes any audio track |
+| `outputFiles[].streams[]` — `index`, `codecType` (`video` / `audio` / `subtitle` / `data`), `handlerType`, `codecTag`, `codecName`, `width`/`height` or `channels`/`sampleRate`, `durationSeconds`, `sampleCount`, `streamSizeBytes`, `bitrateBps` | **read off the container's own track boxes** for `.mp4` / `.mov` / `.m4v` / `.m4a` outputs: `hdlr`, `mdhd` (a demuxed per-stream duration), the first `stsd` sample entry and `stsz`. `codecName` is published only where the tag (plus the `esds` object type for `mp4a`/`mp4v`) names one codec |
+| `outputFiles[].streamsNotReadReason` | present instead of `streams` when the track list could not be read — the layout is **unknown**, never reported as empty |
+| `videoStreamCount`, `audioStreamCount` | per job, counted over the containers that were read; omitted when none was |
+| `videoBitrateBps` | the video stream's own bytes over its own duration, when the job has exactly one video stream |
+| `bitsPerPixel` = bitrate / (w·h·fps) | computed from `videoBitrateBps` when the container was read, else from `overallBitrateBps` |
+| `encoderRequested` — `class`, `rateControl`, `constantRateFactor`, `averageBitrateMbps`, `maxBitrateMbps`, `includeAudio` | read by reflection off the resolved video output setting — a **request**, not an outcome |
+| `sampling`, `settings[]` | the same config read-back as the `preflight` block above, off the config the job rendered with |
 | `shots[]` — `name`, `state` | each shot's own `ShotInfo.State` at the moment it reported its work finished |
 | `warnings[]` | present only when non-empty |
 
 Two rules the shape encodes. **Anything unmeasurable is omitted, never zeroed** — a path the pipeline reported but that is not on disk gets `exists: false` and no `fileSizeBytes`, and a render with no frame count publishes no `durationSeconds` or `overallBitrateBps`. And **measured is named plainly while requested is named `encoderRequested`**: on the engine's shipped default (`Quality`, CRF 20) the encoder settings place no lower bound on the achieved bitrate at all, because the Media Foundation quality branch sets an encode QP and never a mean or max bitrate.
 
-Two warnings are worth acting on. An encode below **0.04 bits/pixel/frame** (4.98 Mbps at 1080p60, 1.24 Mbps at 720p30, 19.9 Mbps at 4K30) is flagged as implausible — the delivered bad file measured 0.0093 bpp. And a `rateControl` of `Quality` or `ConstantQP` is flagged as unbounded below, which is the trap on fog, night, smoke, underwater and other smooth-gradient shots; set the video output to `VariableBitRate` with an explicit `AverageBitrateInMbps` for those.
+**An audio stream the scene never had is named.** The MP4 writer's `bIncludeAudio` defaults to true, so a render of a sequence with no audio track still carries an AAC track (measured: 48 kHz stereo, 192 kbit/s, digitally silent). When an output file carries an audio stream and the rendered sequence — sub-sequences included — has no audio track, or that could not be determined, a warning says so and names the fix: `encoder.includeAudio: false` through `mrq.set_preset_settings`, or dropping the track downstream. A stream's presence says nothing about its loudness either way.
+
+Two more warnings are worth acting on. An encode below **0.04 bits/pixel/frame** (4.98 Mbps at 1080p60, 1.24 Mbps at 720p30, 19.9 Mbps at 4K30) is flagged as implausible — the delivered bad file measured 0.0093 bpp. And a `rateControl` of `Quality` or `ConstantQP` is flagged as unbounded below, which is the trap on fog, night, smoke, underwater and other smooth-gradient shots; set the video output to `VariableBitRate` with an explicit `AverageBitrateInMbps` for those.
 
 `jobs` is **absent** — with `artifactWarning` in its place — when a non-PIE `executorClass` was requested, since `OnIndividualJobWorkFinished` is declared on `UMoviePipelinePIEExecutor` alone. An empty array would read as "the render wrote nothing", which is a different claim from "nothing was measured".
 
@@ -157,6 +167,19 @@ Per job, `shots[]` carries each shot's `name` and its pipeline `state` (`Uniniti
 ## No renderer (headless mode)
 
 `mrq.run_jobs` needs a GPU renderer. In an editor launched with `-NullRHI` (mode `headless`, or a commandlet) it refuses with `RENDERING_UNAVAILABLE` before reading any parameter; the error data carries `method` and `renderingModes: ["offscreen", "visible"]`. Relaunch in mode `offscreen` or `visible`. The queue verbs (`mrq.create_job`, `mrq.list_jobs`, ...) are unaffected.
+
+## Authoring presets
+
+`mrq.create_preset` makes and saves a new `UMoviePipelinePrimaryConfig` asset; `mrq.set_preset_settings` changes an existing one. Both write **exactly what the caller names** and nothing else — the explicit counterpart of the namespace's refusal to apply settings implicitly.
+
+- `settings` (create) / `addSettings` (edit): setting class paths to add, e.g. `/Script/MovieRenderPipelineRenderPasses.MoviePipelineDeferredPassBase`, `/Script/MovieRenderPipelineRenderPasses.MoviePipelineImageSequenceOutput_PNG`, `/Script/MovieRenderPipelineMP4Encoder.MoviePipelineMP4EncoderOutput`, `/Script/MovieRenderPipelineCore.MoviePipelineAntiAliasingSetting`. A create must name at least one file writer.
+- `output`: `{ width, height, outputDirectory, fileNameFormat, frameRate, frameRateDenominator }`. `frameRate` turns the custom frame-rate override on; `outputDirectory` gets the same checks `mrq.create_job` applies.
+- `encoder`: the `encoderRequested` vocabulary — `{ rateControl, constantRateFactor, averageBitrateMbps, maxBitrateMbps, includeAudio }`, written to the first video output.
+- `sampling`: the `preflight.sampling` vocabulary — `{ spatialSampleCount, temporalSampleCount, engineWarmUpCount, renderWarmUpCount, useCameraCutForWarmUp, renderWarmUpFrames, overrideAntiAliasing, antiAliasingMethod }`. Naming `antiAliasingMethod` (e.g. `AAM_TSR`) turns `overrideAntiAliasing` on, since the method is ignored without it.
+
+The words that write a value are the words that report it: the response's `preflight` block is read off the asset **after the save** by the same reader `mrq.create_job` uses, plus the save report (`saved`, `saveState`, `sizeBytes`). `mrq.set_preset_settings` also returns `previous`, the preflight block before the edit.
+
+**Refused, never adjusted, and always before the first change:** an unknown class or one a primary config does not accept (`CLASS_NOT_FOUND` / `INVALID_CLASS`); a count outside the engine's own `ClampMin`/`ClampMax` (e.g. `spatialSampleCount: 0`), a fractional count or an unknown enumerator (`INVALID_ARGUMENT`); an occupied path on create (`ASSET_ALREADY_EXISTS`). On edit, an `encoder` or `sampling` block whose setting the preset does not carry is `MRQ_SETTING_NOT_PRESENT` unless that class is listed in `addSettings` — the verb never creates a setting nobody asked for. A play session blocks every asset save, so both refuse `PIE_ACTIVE` up front; a save that is not durable is `SAVE_FAILED` carrying the full payload.
 
 ## See also
 

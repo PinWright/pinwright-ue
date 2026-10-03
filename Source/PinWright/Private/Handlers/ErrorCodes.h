@@ -1077,6 +1077,10 @@ namespace ErrorCodes
     // way (B-mrq-render-result-omits-bitrate-and-size).
     inline constexpr TCHAR ERR_MRQ_PRESET_NOT_LOADABLE[]                    = TEXT("MRQ_PRESET_NOT_LOADABLE");
     inline constexpr TCHAR ERR_MRQ_QUEUE_NULL[]                             = TEXT("MRQ_QUEUE_NULL");
+    // mrq.set_preset_settings was given a block (`encoder`, `sampling`) whose setting class the
+    // preset does not carry, and was not asked to add it. Nothing was changed; pass the class in
+    // `addSettings` to create the setting deliberately.
+    inline constexpr TCHAR ERR_MRQ_SETTING_NOT_PRESENT[]                    = TEXT("MRQ_SETTING_NOT_PRESENT");
     inline constexpr TCHAR ERR_MRQ_SUBSYSTEM_UNAVAILABLE[]                  = TEXT("MRQ_SUBSYSTEM_UNAVAILABLE");
     inline constexpr TCHAR ERR_MSIR_DECOMPILE_FAILED[]                      = TEXT("MSIR_DECOMPILE_FAILED");
     inline constexpr TCHAR ERR_MUTE_FAILED[]                                = TEXT("MUTE_FAILED");

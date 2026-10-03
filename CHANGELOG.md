@@ -77,6 +77,20 @@
   recipe now always carries `master.loopCrossfadeMs`, so recipe digests of existing candidates
   change. `audio.synth.cookbook` gains an "Ambience and loops" family. `audio.analysis` documents
   `startDiscontinuity`/`endDiscontinuity`.
+- Added: `mrq.create_preset` and `mrq.set_preset_settings` author `UMoviePipelinePrimaryConfig`
+  presets: setting classes plus `output` / `encoder` / `sampling` blocks in the readback's own
+  vocabulary, validated before any change (out-of-range counts refused, never clamped), saved, and
+  answered with the `preflight` block `mrq.create_job` uses. An edit block whose setting the preset
+  lacks is `MRQ_SETTING_NOT_PRESENT` unless the class is in `addSettings`.
+- Added: the `mrq` `preflight` block (create_job, list_jobs) and the `mrq.run_jobs` job report carry
+  `sampling` (anti-aliasing sample and warm-up counts; absent when the config has no such setting)
+  and `settings[]` (every enabled setting class); `encoderRequested` adds `includeAudio`.
+- Added: `mrq.run_jobs` reads each `.mp4`/`.mov`/`.m4v`/`.m4a` output's track boxes into
+  `outputFiles[].streams[]` (codec type/tag/name, dimensions or channels, demuxed duration, bytes,
+  bitrate), with `videoStreamCount`, `audioStreamCount` and `videoBitrateBps` per job and a warning
+  for an audio stream on a sequence with no audio. Changed: `bitsPerPixel` now uses the video
+  stream's bitrate when the container was read, so an audio track no longer inflates it;
+  `overallBitrateBps` stays the whole-file figure.
 - Added: `audio.list_active_sounds`, a read-only snapshot of the audio device's active sounds (one
   row per `FActiveSound`: `soundPath`, `location`, `playbackTimeSeconds`, `startWorldTimeSeconds`,
   `virtualized`, `playingAudio`, owning `audioComponentPath`). It sees fire-and-forget sounds

@@ -81,7 +81,39 @@ namespace PinWrightMRQ
         TOptional<int32> Height;
         // Read back off the resolved video output setting by ReadRequestedEncoderSettings.
         TSharedPtr<FJsonObject> RequestedEncoder;
+        // Read back off the resolved anti-aliasing setting by ReadSamplingSettings. Null when the
+        // config carries no such setting, which is itself the disclosure: published as an absent
+        // `sampling`, never as a block of defaults.
+        TSharedPtr<FJsonObject> Sampling;
+        // Class path of every enabled setting on the resolved config. Unset when the config was
+        // not available to read, which is a different fact from "it carries none".
+        TOptional<TArray<FString>> SettingClassPaths;
+        // Whether the rendered sequence (sub-sequences included) carries an audio track. Unset
+        // when that could not be determined; only consulted when an output carries audio.
+        TOptional<bool> SequenceHasAudio;
     };
+
+    // One wire key of a setting block and the engine property it is read from (and, for
+    // mrq.create_preset / mrq.set_preset_settings, written to). The tables below are the ONE
+    // vocabulary both directions use, so the readback always names a value the way the
+    // authoring verbs accept it (docs/rpc-design.md section 21). The JSON kind follows the
+    // property: bool -> boolean, numeric -> number, enum -> the enumerator's short name.
+    struct FSettingField
+    {
+        const TCHAR* Key;
+        const TCHAR* Property;
+    };
+
+    // `encoderRequested` keys, read off (or written to) a video output setting.
+    TConstArrayView<FSettingField> EncoderSettingFields();
+    // `sampling` keys, read off (or written to) UMoviePipelineAntiAliasingSetting.
+    TConstArrayView<FSettingField> SamplingSettingFields();
+
+    // Read the anti-aliasing setting's sample and warm-up counts by reflection, the same idiom
+    // as ReadRequestedEncoderSettings and for the same reason (no module dependency, any class
+    // carrying the same-named properties works). Returns null for a null object; a key whose
+    // property the class lacks is omitted.
+    TSharedPtr<FJsonObject> ReadSamplingSettings(const UObject* AntiAliasingSetting);
 
     // Plausibility floor in bits per pixel per frame — bitrate / (width * height * fps).
     // The delivered bad file measured 0.0093 bpp; its correct re-render measured 0.171 bpp. The
@@ -147,6 +179,13 @@ namespace PinWrightMRQ
         TArray<FString> OutputClassPaths;
         // Read back off the resolved video output, when the config carries one.
         TSharedPtr<FJsonObject> RequestedEncoder;
+        // Read back off the resolved anti-aliasing setting, when the config carries one. Absent
+        // means MRQ will add a transient default one at render time — a different answer from
+        // "1 sample", and the reason this is omitted rather than defaulted.
+        TSharedPtr<FJsonObject> Sampling;
+        // Class path of EVERY enabled setting on the resolved config — render passes, overrides,
+        // anti-aliasing, writers — so `outputs` (file writers only) is not the only inventory.
+        TArray<FString> SettingClassPaths;
     };
 
     // Build the `preflight` block plus the warnings mrq.create_job publishes beside it. Warnings

@@ -48,6 +48,15 @@
     // Pre-flight disclosure for mrq.create_job needs the base every file writer derives from, so
     // a config that writes an image sequence is disclosed as plainly as one that writes a movie.
     #include "MoviePipelineOutputBase.h"
+    // Sampling disclosure: the anti-aliasing setting carries the sample and warm-up counts that
+    // decide whether the frames converged (B-mrq-config-readback-omits-sampling).
+    #include "MoviePipelineAntiAliasingSetting.h"
+    // Whether the rendered sequence has any audio, so an audio stream in the produced file can be
+    // called what it is (B-mrq-artifact-report-omits-stream-count).
+    #include "MovieScene.h"
+    #include "Sections/MovieSceneSubSection.h"
+    #include "Tracks/MovieSceneAudioTrack.h"
+    #include "Handlers/MRQ/MRQConfigDisclosure.h"
     #define MCP_HAS_MRQ 1
 #else
     #define MCP_HAS_MRQ 0
@@ -56,6 +65,68 @@
 DEFINE_LOG_CATEGORY_STATIC(LogMRQHandler, Log, All);
 
 #if MCP_HAS_MRQ
+namespace PinWrightMRQHandlerLocal
+{
+    // True when the sequence, or any sequence it reaches through a sub-section (shots, subs),
+    // carries an audio track, root-level or bound. Unset when no sequence could be resolved.
+    bool SequenceHasAudioTrack(const UMovieSceneSequence* Sequence, TSet<const UMovieSceneSequence*>& Visited)
+    {
+        const UMovieScene* MovieScene = Sequence ? Sequence->GetMovieScene() : nullptr;
+        if (!MovieScene || Visited.Contains(Sequence))
+        {
+            return false;
+        }
+        Visited.Add(Sequence);
+
+        TArray<const UMovieSceneTrack*> Tracks(MovieScene->GetTracks());
+        for (const FMovieSceneBinding& Binding : MovieScene->GetBindings())
+        {
+            Tracks.Append(Binding.GetTracks());
+        }
+        for (const UMovieSceneTrack* Track : Tracks)
+        {
+            if (!Track)
+            {
+                continue;
+            }
+            if (Track->IsA<UMovieSceneAudioTrack>())
+            {
+                return true;
+            }
+            for (const UMovieSceneSection* Section : Track->GetAllSections())
+            {
+                const UMovieSceneSubSection* Sub = Cast<UMovieSceneSubSection>(Section);
+                if (Sub && SequenceHasAudioTrack(Sub->GetSequence(), Visited))
+                {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    // The two config facts both preflight and the run-time report publish beyond the encode.
+    void ReadSamplingAndSettings(const UMoviePipelinePrimaryConfig* Config,
+        TSharedPtr<FJsonObject>& OutSampling, TArray<FString>& OutSettingClassPaths)
+    {
+        if (!Config)
+        {
+            return;
+        }
+        // Enabled settings only, the same rule `outputs` follows: a disabled setting does nothing.
+        for (const UMoviePipelineSetting* Setting
+            : Config->FindSettingsByClass(UMoviePipelineSetting::StaticClass()))
+        {
+            if (Setting)
+            {
+                OutSettingClassPaths.Add(Setting->GetClass()->GetPathName());
+            }
+        }
+        OutSampling = PinWrightMRQ::ReadSamplingSettings(
+            Config->FindSettingByClass(UMoviePipelineAntiAliasingSetting::StaticClass()));
+    }
+}
+
 namespace
 {
     bool ValidateMRQAssetPath(const FString& RequestedPath, const TCHAR* FieldName,
@@ -304,6 +375,19 @@ namespace
                     Context.RequestedEncoder =
                         PinWrightMRQ::ReadRequestedEncoderSettings(VideoOutputs[0]);
                 }
+                TArray<FString> SettingClassPaths;
+                PinWrightMRQHandlerLocal::ReadSamplingAndSettings(
+                    Config, Context.Sampling, SettingClassPaths);
+                Context.SettingClassPaths = MoveTemp(SettingClassPaths);
+            }
+            // The sequence was loaded to be rendered, so resolving it costs nothing; unresolved
+            // leaves the fact unset rather than guessing "no audio".
+            if (const UMovieSceneSequence* RenderedSequence =
+                Cast<UMovieSceneSequence>(Job->Sequence.ResolveObject()))
+            {
+                TSet<const UMovieSceneSequence*> Visited;
+                Context.SequenceHasAudio =
+                    PinWrightMRQHandlerLocal::SequenceHasAudioTrack(RenderedSequence, Visited);
             }
         }
 
@@ -373,61 +457,6 @@ namespace
         return false;
     }
 
-    // Read the queued job's RESOLVED configuration into the pre-flight context mrq.create_job
-    // discloses. Everything here comes off the config the job now carries — after
-    // SetConfiguration copied the preset into it — never off the request, so the response stops
-    // depending on `presetPath` being a true claim about what will render.
-    //
-    // This is the extraction half; PinWrightMRQ::BuildPreflightReport is the reporting half, and
-    // the encoder read-back is the same PinWrightMRQ::ReadRequestedEncoderSettings that
-    // mrq.run_jobs uses on the finished render.
-    PinWrightMRQ::FPreflightContext ReadPreflightContext(const UMoviePipelineExecutorJob* Job)
-    {
-        PinWrightMRQ::FPreflightContext Context;
-        const UMoviePipelinePrimaryConfig* Config = Job ? Job->GetConfiguration() : nullptr;
-        if (!Config)
-        {
-            return Context;
-        }
-
-        // Always present: UMoviePipelinePrimaryConfig owns an OutputSetting subobject and
-        // GetUserSettings() appends it, so resolution and the path shape are disclosable even for
-        // a job queued with no preset at all.
-        if (const UMoviePipelineOutputSetting* OutputSetting =
-            Config->FindSetting<UMoviePipelineOutputSetting>())
-        {
-            Context.Width = OutputSetting->OutputResolution.X;
-            Context.Height = OutputSetting->OutputResolution.Y;
-            Context.OutputDirectory = OutputSetting->OutputDirectory.Path;
-            Context.FileNameFormat = OutputSetting->FileNameFormat;
-            // Only when the config overrides it. Without the override the rate comes from the
-            // sequence, which is not loaded here — so nothing is published rather than a guess.
-            if (OutputSetting->bUseCustomFrameRate && OutputSetting->OutputFrameRate.IsValid())
-            {
-                Context.FrameRateOverride = OutputSetting->OutputFrameRate.AsDecimal();
-            }
-        }
-
-        // Enabled file writers only: FindSettingsByClass drops disabled settings, and a disabled
-        // output writes nothing, so listing it would overstate what this job produces.
-        for (const UMoviePipelineSetting* Output
-            : Config->FindSettingsByClass(UMoviePipelineOutputBase::StaticClass()))
-        {
-            if (Output)
-            {
-                Context.OutputClassPaths.Add(Output->GetClass()->GetPathName());
-            }
-        }
-
-        const TArray<UMoviePipelineSetting*> VideoOutputs =
-            Config->FindSettingsByClass(UMoviePipelineVideoOutputBase::StaticClass());
-        if (VideoOutputs.Num() > 0)
-        {
-            Context.RequestedEncoder = PinWrightMRQ::ReadRequestedEncoderSettings(VideoOutputs[0]);
-        }
-        return Context;
-    }
-
     TSharedPtr<FJsonObject> MakeQueuedJobDisclosure(int32 Index,
         const UMoviePipelineExecutorJob* Job)
     {
@@ -462,7 +491,8 @@ namespace
         Entry->SetStringField(TEXT("configurationPath"),
             Configuration ? Configuration->GetPathName() : FString());
 
-        const PinWrightMRQ::FPreflightContext PreflightContext = ReadPreflightContext(Job);
+        const PinWrightMRQ::FPreflightContext PreflightContext =
+            PinWrightMRQ::ReadPreflightContext(Configuration);
         TArray<FString> UnusedWarnings;
         Entry->SetObjectField(TEXT("preflight"),
             PinWrightMRQ::BuildPreflightReport(PreflightContext, UnusedWarnings));
@@ -494,6 +524,75 @@ namespace
             }
         }
     }
+}
+
+// Read a RESOLVED configuration into the pre-flight context mrq.create_job discloses. For a queued
+// job this is the config the job now carries — after SetConfiguration copied the preset into it —
+// never the request, so the response stops depending on `presetPath` being a true claim about what
+// will render. mrq.create_preset / mrq.set_preset_settings read the saved preset through the same
+// function, so what they wrote is stated in the same words create_job will use.
+//
+// This is the extraction half; PinWrightMRQ::BuildPreflightReport is the reporting half, and the
+// encoder read-back is the same PinWrightMRQ::ReadRequestedEncoderSettings that mrq.run_jobs uses
+// on the finished render.
+PinWrightMRQ::FPreflightContext PinWrightMRQ::ReadPreflightContext(
+    const UMoviePipelinePrimaryConfig* Config)
+{
+    FPreflightContext Context;
+    if (!Config)
+    {
+        return Context;
+    }
+
+    // Always present: UMoviePipelinePrimaryConfig owns an OutputSetting subobject and
+    // GetUserSettings() appends it, so resolution and the path shape are disclosable even for
+    // a job queued with no preset at all.
+    if (const UMoviePipelineOutputSetting* OutputSetting =
+        Config->FindSetting<UMoviePipelineOutputSetting>())
+    {
+        Context.Width = OutputSetting->OutputResolution.X;
+        Context.Height = OutputSetting->OutputResolution.Y;
+        Context.OutputDirectory = OutputSetting->OutputDirectory.Path;
+        Context.FileNameFormat = OutputSetting->FileNameFormat;
+        // Only when the config overrides it. Without the override the rate comes from the
+        // sequence, which is not loaded here — so nothing is published rather than a guess.
+        if (OutputSetting->bUseCustomFrameRate && OutputSetting->OutputFrameRate.IsValid())
+        {
+            Context.FrameRateOverride = OutputSetting->OutputFrameRate.AsDecimal();
+        }
+    }
+
+    // Enabled file writers only: FindSettingsByClass drops disabled settings, and a disabled
+    // output writes nothing, so listing it would overstate what this job produces.
+    for (const UMoviePipelineSetting* Output
+        : Config->FindSettingsByClass(UMoviePipelineOutputBase::StaticClass()))
+    {
+        if (Output)
+        {
+            Context.OutputClassPaths.Add(Output->GetClass()->GetPathName());
+        }
+    }
+
+    const TArray<UMoviePipelineSetting*> VideoOutputs =
+        Config->FindSettingsByClass(UMoviePipelineVideoOutputBase::StaticClass());
+    if (VideoOutputs.Num() > 0)
+    {
+        Context.RequestedEncoder = ReadRequestedEncoderSettings(VideoOutputs[0]);
+    }
+    PinWrightMRQHandlerLocal::ReadSamplingAndSettings(
+        Config, Context.Sampling, Context.SettingClassPaths);
+    return Context;
+}
+
+bool PinWrightMRQ::ValidateOutputDirectory(const FString& RequestedPath, FString& OutError)
+{
+    return ValidateMRQOutputDirectory(RequestedPath, OutError);
+}
+
+bool PinWrightMRQ::ValidateAssetPath(const FString& RequestedPath, const TCHAR* FieldName,
+    FString& OutError)
+{
+    return ValidateMRQAssetPath(RequestedPath, FieldName, OutError);
 }
 #endif // MCP_HAS_MRQ
 
@@ -698,7 +797,8 @@ REGISTER_RPC_HANDLER("mrq.create_job", "mrq",
     // report it once the deliverable already exists.
     TArray<FString> PreflightWarnings;
     Resp->SetObjectField(TEXT("preflight"),
-        PinWrightMRQ::BuildPreflightReport(ReadPreflightContext(Job), PreflightWarnings));
+        PinWrightMRQ::BuildPreflightReport(
+            PinWrightMRQ::ReadPreflightContext(Job->GetConfiguration()), PreflightWarnings));
     if (QueuedJobs.Num() > 0)
     {
         PreflightWarnings.Add(FString::Printf(

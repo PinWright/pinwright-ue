@@ -563,6 +563,14 @@ bool FNestedParamKeyGateAdoptionRatchetTest::RunTest(const FString& Parameters)
         // New params, closed from their first release: TwoBoneIK locations are exactly {x,y,z}.
         TEXT("animation.authoring.add_two_bone_ik:effectorLocation"),
         TEXT("animation.authoring.add_two_bone_ik:jointTargetLocation"),
+        // New verbs, closed from their first release: MRQ preset value blocks. The encoder and
+        // sampling keys are the readback tables' keys (mrq.create_preset.BlockKeysAreTheReadbackVocabulary).
+        TEXT("mrq.create_preset:output"),
+        TEXT("mrq.create_preset:encoder"),
+        TEXT("mrq.create_preset:sampling"),
+        TEXT("mrq.set_preset_settings:output"),
+        TEXT("mrq.set_preset_settings:encoder"),
+        TEXT("mrq.set_preset_settings:sampling"),
         // The gate fixture in this file.
         TEXT("_test.nested_param_gate:grid"),
         TEXT("_test.nested_param_gate:states"),

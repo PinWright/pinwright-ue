@@ -13,6 +13,9 @@
 // the block below is not made entirely of file facts. See MRQFrameEvidence.h for why the size of
 // a PNG cannot see a half-void frame.
 #include "Handlers/MRQ/MRQFrameEvidence.h"
+// The container half: what streams a movie file holds, read off its own track boxes, so a
+// silent AAC track (or any stream nobody asked for) is a published fact, not a surprise.
+#include "Handlers/MRQ/MRQContainerProbe.h"
 #include "UObject/Class.h"
 #include "UObject/EnumProperty.h"
 #include "UObject/Object.h"
@@ -87,6 +90,75 @@ namespace
     }
 }
 
+namespace PinWrightMRQArtifactReportLocal
+{
+    bool TryReadBoolSettingProperty(const UObject* Object, const TCHAR* PropertyName, bool& OutValue)
+    {
+        const FBoolProperty* Property =
+            CastField<FBoolProperty>(FindSettingProperty(Object, PropertyName));
+        if (!Property)
+        {
+            return false;
+        }
+        OutValue = Property->GetPropertyValue(Property->ContainerPtrToValuePtr<void>(Object));
+        return true;
+    }
+
+    // One reader for every table row: the JSON kind follows the property's own type, so a key
+    // whose property is missing, or of a kind this reader does not publish, is simply omitted.
+    void ReadSettingFields(const UObject* Object, TConstArrayView<PinWrightMRQ::FSettingField> Fields,
+        const TSharedPtr<FJsonObject>& Out)
+    {
+        for (const PinWrightMRQ::FSettingField& Field : Fields)
+        {
+            bool bValue = false;
+            double Number = 0.0;
+            FString EnumName;
+            if (TryReadBoolSettingProperty(Object, Field.Property, bValue))
+            {
+                Out->SetBoolField(Field.Key, bValue);
+            }
+            else if (TryReadEnumPropertyName(Object, Field.Property, EnumName))
+            {
+                Out->SetStringField(Field.Key, EnumName);
+            }
+            else if (TryReadNumberProperty(Object, Field.Property, Number))
+            {
+                Out->SetNumberField(Field.Key, Number);
+            }
+        }
+    }
+}
+
+TConstArrayView<PinWrightMRQ::FSettingField> PinWrightMRQ::EncoderSettingFields()
+{
+    static const FSettingField Fields[] = {
+        { TEXT("rateControl"), TEXT("EncodingRateControl") },
+        { TEXT("constantRateFactor"), TEXT("ConstantRateFactor") },
+        { TEXT("averageBitrateMbps"), TEXT("AverageBitrateInMbps") },
+        { TEXT("maxBitrateMbps"), TEXT("MaxBitrateInMbps") },
+        // The MP4 writer's default is true, which is where a silent AAC track on a scene with no
+        // audio comes from (B-mrq-artifact-report-omits-stream-count).
+        { TEXT("includeAudio"), TEXT("bIncludeAudio") },
+    };
+    return Fields;
+}
+
+TConstArrayView<PinWrightMRQ::FSettingField> PinWrightMRQ::SamplingSettingFields()
+{
+    static const FSettingField Fields[] = {
+        { TEXT("spatialSampleCount"), TEXT("SpatialSampleCount") },
+        { TEXT("temporalSampleCount"), TEXT("TemporalSampleCount") },
+        { TEXT("engineWarmUpCount"), TEXT("EngineWarmUpCount") },
+        { TEXT("renderWarmUpCount"), TEXT("RenderWarmUpCount") },
+        { TEXT("useCameraCutForWarmUp"), TEXT("bUseCameraCutForWarmUp") },
+        { TEXT("renderWarmUpFrames"), TEXT("bRenderWarmUpFrames") },
+        { TEXT("overrideAntiAliasing"), TEXT("bOverrideAntiAliasing") },
+        { TEXT("antiAliasingMethod"), TEXT("AntiAliasingMethod") },
+    };
+    return Fields;
+}
+
 TSharedPtr<FJsonObject> PinWrightMRQ::ReadRequestedEncoderSettings(const UObject* VideoOutputSetting)
 {
     if (!VideoOutputSetting)
@@ -96,26 +168,21 @@ TSharedPtr<FJsonObject> PinWrightMRQ::ReadRequestedEncoderSettings(const UObject
 
     TSharedPtr<FJsonObject> Encoder = MakeShared<FJsonObject>();
     Encoder->SetStringField(TEXT("class"), VideoOutputSetting->GetClass()->GetPathName());
-
-    FString RateControl;
-    if (TryReadEnumPropertyName(VideoOutputSetting, TEXT("EncodingRateControl"), RateControl))
-    {
-        Encoder->SetStringField(TEXT("rateControl"), RateControl);
-    }
-    double Number = 0.0;
-    if (TryReadNumberProperty(VideoOutputSetting, TEXT("ConstantRateFactor"), Number))
-    {
-        Encoder->SetNumberField(TEXT("constantRateFactor"), Number);
-    }
-    if (TryReadNumberProperty(VideoOutputSetting, TEXT("AverageBitrateInMbps"), Number))
-    {
-        Encoder->SetNumberField(TEXT("averageBitrateMbps"), Number);
-    }
-    if (TryReadNumberProperty(VideoOutputSetting, TEXT("MaxBitrateInMbps"), Number))
-    {
-        Encoder->SetNumberField(TEXT("maxBitrateMbps"), Number);
-    }
+    PinWrightMRQArtifactReportLocal::ReadSettingFields(VideoOutputSetting, EncoderSettingFields(), Encoder);
     return Encoder;
+}
+
+TSharedPtr<FJsonObject> PinWrightMRQ::ReadSamplingSettings(const UObject* AntiAliasingSetting)
+{
+    if (!AntiAliasingSetting)
+    {
+        return nullptr;
+    }
+
+    TSharedPtr<FJsonObject> Sampling = MakeShared<FJsonObject>();
+    Sampling->SetStringField(TEXT("class"), AntiAliasingSetting->GetClass()->GetPathName());
+    PinWrightMRQArtifactReportLocal::ReadSettingFields(AntiAliasingSetting, SamplingSettingFields(), Sampling);
+    return Sampling;
 }
 
 bool PinWrightMRQ::RateControlIsUnboundedBelow(const FString& RateControlName)
@@ -153,6 +220,15 @@ TSharedPtr<FJsonObject> PinWrightMRQ::BuildArtifactReport(const TArray<FRendered
     }
     const TArray<int32> SampledOrdinals =
         SelectFrameSample(FrameSummary.StillImageCount, MaxAnalyzedFramesPerJob);
+
+    // What the movie containers hold, counted over the whole job. A file whose track list could
+    // not be read contributes to UnreadContainers and to no stream count: unknown, not empty.
+    int32 ReadContainers = 0;
+    int32 UnreadContainers = 0;
+    int32 VideoStreams = 0;
+    int32 AudioStreams = 0;
+    int32 FilesWithAudio = 0;
+    TOptional<double> VideoBitrateBps;
 
     for (int32 Index = 0; Index < Files.Num(); ++Index)
     {
@@ -225,6 +301,45 @@ TSharedPtr<FJsonObject> PinWrightMRQ::BuildArtifactReport(const TArray<FRendered
             AccumulateFrameEvidence(Evidence, File.Path, FrameSummary);
         }
 
+        // The container's own track list, from the same place the size was measured. Omitted
+        // (with the reason) rather than published empty when it could not be read.
+        if (bMeasured && PathIsIsoMediaContainer(File.Path))
+        {
+            TArray<FContainerStream> Streams;
+            FString NotReadReason;
+            if (ReadContainerStreams(File.Path, Streams, NotReadReason))
+            {
+                ++ReadContainers;
+                TArray<TSharedPtr<FJsonValue>> StreamEntries;
+                bool bFileHasAudio = false;
+                for (int32 StreamIndex = 0; StreamIndex < Streams.Num(); ++StreamIndex)
+                {
+                    const FContainerStream& Stream = Streams[StreamIndex];
+                    StreamEntries.Add(MakeShared<FJsonValueObject>(
+                        ContainerStreamToJson(Stream, StreamIndex)));
+                    const FString CodecType = Stream.CodecType();
+                    if (CodecType == TEXT("video"))
+                    {
+                        // Published only when it is THE video stream of the job; with two there
+                        // is no single number a bits-per-pixel check could honestly use.
+                        VideoBitrateBps = (++VideoStreams == 1) ? Stream.BitrateBps() : TOptional<double>();
+                    }
+                    else if (CodecType == TEXT("audio"))
+                    {
+                        ++AudioStreams;
+                        bFileHasAudio = true;
+                    }
+                }
+                FilesWithAudio += bFileHasAudio ? 1 : 0;
+                Entry->SetArrayField(TEXT("streams"), StreamEntries);
+            }
+            else
+            {
+                ++UnreadContainers;
+                Entry->SetStringField(TEXT("streamsNotReadReason"), NotReadReason);
+            }
+        }
+
         FileEntries.Add(MakeShared<FJsonValueObject>(Entry));
     }
 
@@ -242,6 +357,30 @@ TSharedPtr<FJsonObject> PinWrightMRQ::BuildArtifactReport(const TArray<FRendered
     if (MeasuredFiles > 0)
     {
         Report->SetNumberField(TEXT("totalFileSizeBytes"), static_cast<double>(TotalSizeBytes));
+    }
+    // Stream counts exist only as a measurement of at least one container that was read; with
+    // none read there is nothing to count, and a 0 would claim "no audio" about an unread file.
+    if (ReadContainers > 0)
+    {
+        Report->SetNumberField(TEXT("videoStreamCount"), VideoStreams);
+        Report->SetNumberField(TEXT("audioStreamCount"), AudioStreams);
+    }
+    if (VideoBitrateBps.IsSet())
+    {
+        Report->SetNumberField(TEXT("videoBitrateBps"), VideoBitrateBps.GetValue());
+    }
+    if (Context.Sampling.IsValid())
+    {
+        Report->SetObjectField(TEXT("sampling"), Context.Sampling);
+    }
+    if (Context.SettingClassPaths.IsSet())
+    {
+        TArray<TSharedPtr<FJsonValue>> SettingValues;
+        for (const FString& ClassPath : Context.SettingClassPaths.GetValue())
+        {
+            SettingValues.Add(MakeShared<FJsonValueString>(ClassPath));
+        }
+        Report->SetArrayField(TEXT("settings"), SettingValues);
     }
 
     // Ahead of the size/bitrate warnings on purpose: an unusable picture outranks an implausible
@@ -322,15 +461,18 @@ TSharedPtr<FJsonObject> PinWrightMRQ::BuildArtifactReport(const TArray<FRendered
             TEXT("and check it against ~0.04 bits/pixel/frame.")));
     }
 
+    // Bits per pixel is a statement about the PICTURE's encode, so it uses the video stream's own
+    // bitrate when the container was read; the whole-file figure also counts any audio track.
+    const TOptional<double> PictureBitrateBps = VideoBitrateBps.IsSet() ? VideoBitrateBps : BitrateBps;
     TOptional<double> BitsPerPixel;
-    if (BitrateBps.IsSet() && Context.Width.IsSet() && Context.Height.IsSet()
+    if (PictureBitrateBps.IsSet() && Context.Width.IsSet() && Context.Height.IsSet()
         && Context.FrameRate.IsSet()
         && Context.Width.GetValue() > 0 && Context.Height.GetValue() > 0
         && Context.FrameRate.GetValue() > 0.0)
     {
         const double PixelsPerSecond = static_cast<double>(Context.Width.GetValue())
             * static_cast<double>(Context.Height.GetValue()) * Context.FrameRate.GetValue();
-        BitsPerPixel = BitrateBps.GetValue() / PixelsPerSecond;
+        BitsPerPixel = PictureBitrateBps.GetValue() / PixelsPerSecond;
         Report->SetNumberField(TEXT("bitsPerPixel"), BitsPerPixel.GetValue());
     }
 
@@ -352,7 +494,7 @@ TSharedPtr<FJsonObject> PinWrightMRQ::BuildArtifactReport(const TArray<FRendered
             TEXT("smoke, underwater, flat gradients), which bands visibly while every other ")
             TEXT("reported number stays correct. Look at the file before shipping it."),
             BitsPerPixel.GetValue(),
-            BitrateBps.GetValue() / 1000000.0,
+            PictureBitrateBps.GetValue() / 1000000.0,
             Context.Width.GetValue(), Context.Height.GetValue(), Context.FrameRate.GetValue(),
             MinPlausibleBitsPerPixel / BitsPerPixel.GetValue(),
             MinPlausibleBitsPerPixel)));
@@ -368,6 +510,31 @@ TSharedPtr<FJsonObject> PinWrightMRQ::BuildArtifactReport(const TArray<FRendered
             TEXT("setting to VariableBitRate with an explicit AverageBitrateInMbps if the shot ")
             TEXT("is fog, night, smoke, underwater or otherwise mostly smooth gradients."),
             *RateControl)));
+    }
+
+    if (FilesWithAudio > 0 && !(Context.SequenceHasAudio.IsSet() && Context.SequenceHasAudio.GetValue()))
+    {
+        Warnings.Add(MakeShared<FJsonValueString>(FString::Printf(
+            TEXT("%d output file(s) carry an audio stream (%d in all; see `outputFiles[].streams`) ")
+            TEXT("while %s. That track is the encoder's own doing: the MP4 writer's `bIncludeAudio` ")
+            TEXT("(`encoderRequested.includeAudio`) defaults to true and writes a track whether or ")
+            TEXT("not anything is audible. If the deliverable must have no audio stream, set ")
+            TEXT("`encoder.includeAudio: false` with mrq.set_preset_settings and re-render, or drop ")
+            TEXT("the track downstream. A stream's presence says nothing about its loudness either ")
+            TEXT("way; measure that if it matters."),
+            FilesWithAudio, AudioStreams,
+            Context.SequenceHasAudio.IsSet()
+                ? TEXT("the rendered sequence carries no audio track")
+                : TEXT("whether the rendered sequence carries an audio track was not determined"))));
+    }
+    if (UnreadContainers > 0)
+    {
+        Warnings.Add(MakeShared<FJsonValueString>(FString::Printf(
+            TEXT("The track list of %d movie file(s) could not be read (see ")
+            TEXT("`outputFiles[].streamsNotReadReason`), so their stream layout is UNKNOWN, not ")
+            TEXT("empty: `streams` is omitted for them and they are not counted in ")
+            TEXT("`videoStreamCount` / `audioStreamCount`."),
+            UnreadContainers)));
     }
 
     // Emitted only when non-empty, matching the plugin's dominant `warnings` convention.
@@ -414,6 +581,20 @@ TSharedPtr<FJsonObject> PinWrightMRQ::BuildPreflightReport(const FPreflightConte
         OutputClasses.Add(MakeShared<FJsonValueString>(ClassPath));
     }
     Preflight->SetArrayField(TEXT("outputs"), OutputClasses);
+
+    TArray<TSharedPtr<FJsonValue>> SettingClasses;
+    SettingClasses.Reserve(Context.SettingClassPaths.Num());
+    for (const FString& ClassPath : Context.SettingClassPaths)
+    {
+        SettingClasses.Add(MakeShared<FJsonValueString>(ClassPath));
+    }
+    Preflight->SetArrayField(TEXT("settings"), SettingClasses);
+    // Absent when the config carries no anti-aliasing setting: MRQ then adds a transient default
+    // at render time, and "no setting" must not read as a block of numbers someone chose.
+    if (Context.Sampling.IsValid())
+    {
+        Preflight->SetObjectField(TEXT("sampling"), Context.Sampling);
+    }
 
     FString RateControl;
     if (Context.RequestedEncoder.IsValid())
