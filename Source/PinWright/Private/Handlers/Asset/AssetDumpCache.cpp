@@ -785,8 +785,9 @@ int32 GetAspectVersion(const FString& RelativeFile)
         { TEXT("metasound.json"),           3 },
         { TEXT("data_table.json"),          2 },
         // 2: sections, LOD0 slotUsage, UV channel counts, and light-map coordinate index added.
-        { TEXT("static_mesh.json"),         2 },
-        { TEXT("static_mesh.txt"),          2 },
+        // 3: boundingBox on every sections[] and slotUsage[] row.
+        { TEXT("static_mesh.json"),         3 },
+        { TEXT("static_mesh.txt"),          3 },
         { TEXT("level_sequence.json"),      3 },
         // 4: curves[] reads the data model instead of the runtime RawCurveData copy, which strips
         //    redundant keys on load (different keyCount) and can lag the model.

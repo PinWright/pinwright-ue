@@ -121,6 +121,27 @@ namespace
         }
     }
 
+    // One line: `boundingBox: min (x=.., y=.., z=..) max (x=.., y=.., z=..)`, or `None` when the
+    // JSON carries null (no triangles, or no resident CPU geometry).
+    void AppendBoundingBox(FString& Out, int32 Indent, const TSharedPtr<FJsonObject>& Object)
+    {
+        const TSharedPtr<FJsonValue> Value = Object.IsValid() ? Object->TryGetField(TEXT("boundingBox")) : nullptr;
+        if (!Value.IsValid())
+        {
+            return;
+        }
+        const TSharedPtr<FJsonObject> Box = Value->Type == EJson::Object ? Value->AsObject() : nullptr;
+        const TSharedPtr<FJsonObject>* Min = nullptr;
+        const TSharedPtr<FJsonObject>* Max = nullptr;
+        if (!Box.IsValid() || !Box->TryGetObjectField(TEXT("min"), Min) || !Box->TryGetObjectField(TEXT("max"), Max))
+        {
+            AppendScalar(Out, Indent, TEXT("boundingBox"), TEXT("None"));
+            return;
+        }
+        AppendScalar(Out, Indent, TEXT("boundingBox"), FString::Printf(TEXT("min %s max %s"),
+            *FormatVectorObject(*Min), *FormatVectorObject(*Max)));
+    }
+
     void AppendSections(FString& Out, const TSharedPtr<FJsonObject>& Root)
     {
         const TArray<TSharedPtr<FJsonValue>>* Sections = nullptr;
@@ -152,6 +173,7 @@ namespace
             AppendOptionalNumber(Out, 3, Section, TEXT("maxVertexIndex"));
             AppendOptionalBool(Out, 3, Section, TEXT("bEnableCollision"));
             AppendOptionalBool(Out, 3, Section, TEXT("bCastShadow"));
+            AppendBoundingBox(Out, 3, Section);
             AppendIndent(Out, 2);
             Out += TEXT("}\n");
         }
@@ -184,6 +206,7 @@ namespace
             AppendOptionalString(Out, 3, Slot, TEXT("materialSlotName"));
             AppendOptionalNumber(Out, 3, Slot, TEXT("lod0TriangleCount"));
             AppendOptionalNumber(Out, 3, Slot, TEXT("lod0TriangleFraction"));
+            AppendBoundingBox(Out, 3, Slot);
             AppendIndent(Out, 2);
             Out += TEXT("}\n");
         }

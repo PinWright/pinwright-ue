@@ -9,6 +9,7 @@
 #include "PhysicsEngine/BodySetup.h"
 #include "StaticMeshResources.h"
 #include "Handlers/Asset/MeshBoundsHelpers.h"
+#include "Handlers/Asset/StaticMeshSpatialExtent.h"
 #include "Handlers/Asset/StaticMeshTextEmitter.h"
 #include "Handlers/Asset/AssetDumpHandler.h"
 #include "Utils/JsonSidecarRegistry.h"
@@ -57,6 +58,8 @@ TSharedPtr<FJsonObject> StaticMeshDumpBuilder::BuildStaticMeshJson(const UStatic
     TArray<TSharedPtr<FJsonValue>> UvChannelsByLod;
     TArray<uint64> Lod0TrianglesByMaterial;
     Lod0TrianglesByMaterial.SetNumZeroed(StaticMaterials.Num());
+    TArray<FBox> Lod0BoxesByMaterial;
+    Lod0BoxesByMaterial.Init(FBox(ForceInit), StaticMaterials.Num());
     uint64 Lod0TriangleCount = 0;
     if (const FStaticMeshRenderData* RenderData = Mesh->GetRenderData())
     {
@@ -89,6 +92,8 @@ TSharedPtr<FJsonObject> StaticMeshDumpBuilder::BuildStaticMeshJson(const UStatic
                 Entry->SetNumberField(TEXT("maxVertexIndex"), Section.MaxVertexIndex);
                 Entry->SetBoolField(TEXT("bEnableCollision"), Section.bEnableCollision);
                 Entry->SetBoolField(TEXT("bCastShadow"), Section.bCastShadow);
+                const FBox SectionBox = StaticMeshSpatialExtent::ComputeSectionBox(LODResources, Section);
+                Entry->SetField(TEXT("boundingBox"), StaticMeshSpatialExtent::BoxToJsonValue(SectionBox));
                 Sections.Add(MakeShared<FJsonValueObject>(Entry));
 
                 if (LODIndex == 0)
@@ -97,6 +102,7 @@ TSharedPtr<FJsonObject> StaticMeshDumpBuilder::BuildStaticMeshJson(const UStatic
                     if (Lod0TrianglesByMaterial.IsValidIndex(Section.MaterialIndex))
                     {
                         Lod0TrianglesByMaterial[Section.MaterialIndex] += Section.NumTriangles;
+                        Lod0BoxesByMaterial[Section.MaterialIndex] += SectionBox;
                     }
                 }
             }
@@ -115,6 +121,7 @@ TSharedPtr<FJsonObject> StaticMeshDumpBuilder::BuildStaticMeshJson(const UStatic
         Entry->SetNumberField(TEXT("lod0TriangleFraction"), Lod0TriangleCount > 0
             ? static_cast<double>(Lod0TrianglesByMaterial[MaterialIndex]) / static_cast<double>(Lod0TriangleCount)
             : 0.0);
+        Entry->SetField(TEXT("boundingBox"), StaticMeshSpatialExtent::BoxToJsonValue(Lod0BoxesByMaterial[MaterialIndex]));
         SlotUsage.Add(MakeShared<FJsonValueObject>(Entry));
     }
     Root->SetArrayField(TEXT("slotUsage"), SlotUsage);

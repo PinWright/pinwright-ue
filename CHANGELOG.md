@@ -80,6 +80,14 @@
   `{assetPath, assetName, check, measurements}` per check that came back clean (capped at
   `maxFindings` rows, `cleanChecksTruncated` when clipped), so healthy assets can be measured.
 
+- Added: `static_mesh.describe` and the `static_mesh.json` / `static_mesh.txt` dump sidecars carry
+  a mesh-local `boundingBox` (`{min, max, size, center}`, `null` when the row has no triangles) on
+  every `sections[]` and `slotUsage[]` row, so a per-slot reach change is visible even when the
+  whole-mesh `bounds` does not move. `static_mesh.describe` takes opt-in `includeIslands` for
+  `islands[]` / `islandCount`: LOD0 connected components welded by exact vertex position, each
+  with `triangleCount`, `boundingBox` and `materialSlots[]`; rows are capped by `maxIslands`
+  (default 200, clamped 0..5000) with `islandsTruncated`, while `islandCount` stays exact. The static_mesh sidecar cache
+  version is bumped to 3, so cached dumps regenerate.
 - Fixed: `niagara.set_module_input` on an enum-typed input (e.g. `ENiagaraCoordinateSpace`)
   accepts the entry name, display name or integral index and writes an enum-typed override pin
   holding the entry name; it used to refuse names with `UNSUPPORTED_INPUT_VALUE` and write any

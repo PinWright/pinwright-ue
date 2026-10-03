@@ -73,9 +73,12 @@ Read `UStaticMesh` metadata live in the same JSON shape `asset.dump` writes to `
 Args:
 
 - `assetPath` (string, **required**) — the StaticMesh asset to read.
+- `includeIslands` (boolean, default `false`) — also return `islands` and `islandCount` (below). Opt-in because it is the one full LOD0 traversal here; it is not part of the dump shape, so `static_mesh.json` never carries it.
+- `maxIslands` (integer, default `200`, clamped to 0..5000) — with `includeIslands`, serialize at most this many island rows (largest first). The applied value is echoed as `maxIslands`.
 
 ```js
 call("static_mesh.describe", { assetPath: "/Game/Meshes/SM_Platform" })
+call("static_mesh.describe", { assetPath: "/Game/Meshes/SM_Platform", includeIslands: true })
 ```
 
 The mesh readout fields make material and UV review possible without spawning an actor:
@@ -83,9 +86,12 @@ The mesh readout fields make material and UV review possible without spawning an
 `StaticMeshDumpBuilder`; `static_mesh.txt` projects that same JSON, so these fields have one
 source of truth across the live read and both sidecars.
 
-- `sections` — the root array is flat, with one row per render section across every LOD. `lodIndex` plus `index` identifies the section; `materialIndex` and `materialSlotName` identify its slot; `firstIndex`, `numTriangles`, `minVertexIndex`, and `maxVertexIndex` locate its buffer range; `bEnableCollision` and `bCastShadow` report the section flags.
-- `slotUsage` — one row per material slot with `lod0TriangleCount` and `lod0TriangleFraction`. The fraction denominator is every LOD0 section triangle, including sections whose material index is invalid, so the fractions may sum below 1 when assignment is broken.
+- `sections` — the root array is flat, with one row per render section across every LOD. `lodIndex` plus `index` identifies the section; `materialIndex` and `materialSlotName` identify its slot; `firstIndex`, `numTriangles`, `minVertexIndex`, and `maxVertexIndex` locate its buffer range; `bEnableCollision` and `bCastShadow` report the section flags; `boundingBox` is the box over the vertices that section's triangles reference.
+- `slotUsage` — one row per material slot with `lod0TriangleCount`, `lod0TriangleFraction`, and `boundingBox` (the union of that slot's LOD0 section boxes). The fraction denominator is every LOD0 section triangle, including sections whose material index is invalid, so the fractions may sum below 1 when assignment is broken.
 - `uvChannelsByLod` — the usable, authored UV-channel count from `UStaticMesh::GetNumUVChannels()` for each render LOD, in LOD order. PinWright is an editor plugin, so this intentionally follows the asset's source MeshDescription; if that source is unavailable, the engine API reports zero rather than guessing from render-buffer capacity. It deliberately does not use the render vertex buffer's allocated texture-coordinate width, which can be `MAX_STATIC_TEXCOORDS` even when fewer channels are populated. `lightMapCoordinateIndex` is the channel selected by the asset; compare it with the matching count before trusting `lightmapResolution`.
+
+- `boundingBox` (on `sections` and `slotUsage` rows) — `{min, max, size, center}`, each `{x, y, z}`, in **mesh-local** units read from the compiled render data (for a Nanite mesh, its fallback mesh). Unlike the whole-mesh `bounds`, it moves when one slot's geometry moves, so "did this slot's reach change?" is a diff of two numbers. It is `null` when the row has no triangles or the LOD's CPU geometry copy is not resident.
+- `islands` / `islandCount` / `islandsTruncated` (only with `includeIslands: true`) — LOD0 connected components, the per-part answer when a part is neither a slot nor a section. Triangles are connected when they share a vertex **position** (exact match), so render vertices split at UV seams or hard edges are welded back and do not fracture an island; two parts that merely touch at a shared position are one island. Rows are sorted by `triangleCount` descending: `{index, triangleCount, boundingBox, materialSlots: [{materialIndex, materialSlotName}]}`. A mesh with no render data returns `islands: []`; if LOD0's CPU geometry is not resident, `islands` is `null` with `islandsUnavailableReason`. Only the first `maxIslands` rows are serialized: `islandCount` is always the full count and `islandsTruncated` is `true` when rows were cut, so a scatter or foliage mesh of thousands of separate cards reports its count without thousands of rows.
 
 Meshes without render data return empty `sections` and `uvChannelsByLod` arrays. Their material slots still appear in `slotUsage` with zero counts and fractions.
 

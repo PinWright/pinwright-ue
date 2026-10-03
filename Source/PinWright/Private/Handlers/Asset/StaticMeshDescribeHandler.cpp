@@ -4,6 +4,7 @@
 #include "Handlers/ParamSpec.h"
 #include "Handlers/HandlerContext.h"
 #include "Handlers/Asset/StaticMeshDumpBuilder.h"
+#include "Handlers/Asset/StaticMeshSpatialExtent.h"
 #include "Utils/MeshRenderConsumerScan.h"
 
 #include "Components/ActorComponent.h"
@@ -13,9 +14,11 @@
 #include "Dom/JsonValue.h"
 
 REGISTER_RPC_HANDLER("static_mesh.describe", "static_mesh",
-    "Return read-only StaticMesh metadata using the same JSON shape as static_mesh.json asset dumps: bounds, materials, per-LOD sections and UV counts, LOD0 slot usage, lightmap settings, and collision trace flag; plus rebuildRenderConsumers, the live components a rebuild of this mesh in place would have to quiesce first.",
+    "Return read-only StaticMesh metadata using the same JSON shape as static_mesh.json asset dumps: bounds, materials, per-LOD sections and UV counts, LOD0 slot usage, a mesh-local boundingBox per section and per slot, lightmap settings, and collision trace flag; plus rebuildRenderConsumers, the live components a rebuild of this mesh in place would have to quiesce first.",
     RPC_PARAMS(
-        RPC_PARAM_REQ("assetPath", "path", "Static mesh asset path")
+        RPC_PARAM_REQ("assetPath", "path", "Static mesh asset path"),
+        RPC_PARAM_OPT("includeIslands", "boolean", "Also return islands[] (LOD0 connected components, welded by exact vertex position: triangleCount, boundingBox, materialSlots per island) and islandCount. Default false; this is a full LOD0 traversal and is not part of the static_mesh.json dump shape."),
+        RPC_PARAM_DEF("maxIslands", "integer", "With includeIslands: serialize at most this many islands (largest first), clamped to 0..5000. islandCount stays the full count and islandsTruncated says whether rows were cut; maxIslands is echoed as applied.", "200")
     ))
 {
     FString AssetPath;
@@ -30,6 +33,27 @@ REGISTER_RPC_HANDLER("static_mesh.describe", "static_mesh",
     }
 
     TSharedPtr<FJsonObject> Result = StaticMeshDumpBuilder::BuildStaticMeshJson(Mesh);
+
+    if (Ctx.GetBool(TEXT("includeIslands")))
+    {
+        // A scatter/foliage mesh can have tens of thousands of islands; rows are capped, the count is not.
+        const int32 MaxIslands = FMath::Clamp(Ctx.GetInt(TEXT("maxIslands"), 200), 0, 5000);
+        TArray<TSharedPtr<FJsonValue>> Islands;
+        int32 IslandCount = 0;
+        FString UnavailableReason;
+        Result->SetNumberField(TEXT("maxIslands"), MaxIslands);
+        if (StaticMeshSpatialExtent::BuildLod0Islands(Mesh, MaxIslands, Islands, IslandCount, UnavailableReason))
+        {
+            Result->SetNumberField(TEXT("islandCount"), IslandCount);
+            Result->SetBoolField(TEXT("islandsTruncated"), IslandCount > Islands.Num());
+            Result->SetArrayField(TEXT("islands"), Islands);
+        }
+        else
+        {
+            Result->SetField(TEXT("islands"), MakeShared<FJsonValueNull>());
+            Result->SetStringField(TEXT("islandsUnavailableReason"), UnavailableReason);
+        }
+    }
 
     // A model.compile onto an occupied path rebuilds the mesh IN PLACE, and the rebuild guard
     // refuses that with MESH_REBUILD_CONSUMER_NOT_QUIESCABLE when a live component's scene
