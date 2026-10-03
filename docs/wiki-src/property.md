@@ -4,7 +4,7 @@ Reflection-based UPROPERTY accessors (`set`, `reset`, `get`, `list`) on any UObj
 
 ## Cross-cluster overlap
 
-The target object is resolved by path (`/Game/...` for assets, level-relative for actors). For Blueprint asset properties, pass the Blueprint asset path directly; `property.list`, `property.get`, and `property.set` resolve `UBlueprint` paths to the Class Default Object (CDO), so callers see configured defaults instead of `UBlueprint` internals. The explicit `Default__` inner-object path still works when you need to target the CDO yourself.
+The target object is resolved by path (`/Game/...` for assets, level-relative for actors). For Blueprint asset properties, pass the Blueprint asset path directly; `property.list`, `property.get`, and `property.set` resolve `UBlueprint` paths to the Class Default Object (CDO), so callers see configured defaults instead of `UBlueprint` internals. The generated-class path `/Game/.../BP_Foo.BP_Foo_C` resolves to the same CDO, and so does a native class path such as `/Script/Engine.Actor` (a class path used to land on the `UClass`, which holds no member values, and answer `PROPERTY_NOT_FOUND`), and the explicit `/Game/.../BP_Foo.Default__BP_Foo_C` inner-object path still works. A subobject path under `_C` (`BP_Foo.BP_Foo_C:WidgetTree.Foo`) is unaffected.
 
 For whole placed-actor inspection, prefer `call("actor.describe")` over hand-stitching `property.list` + per-component reads; it returns the actor plus all component modified-property state in the same compact shape used by map dump `actors/*.json`. But if you are deliberately staying on the `property.*` route, note that the fields you want often live on a **component**, not the actor — and `property.list` on the actor never lists its component subobjects. See the `property.list` and `property.set` sections below for the `actor.get_components` discovery recipe.
 
@@ -113,7 +113,7 @@ Use `property.reset` when the goal is "reset to class default", not "set the sam
 
 Required params:
 
-- `objectPath` — UObject path or actor name. Blueprint asset paths resolve to the generated class CDO, matching `property.set` and `property.get`.
+- `objectPath` — UObject path or actor name. Blueprint asset paths and `…BP_Foo.BP_Foo_C` generated-class paths resolve to the generated class CDO, matching `property.set` and `property.get`.
 - `propertyName` — reflected property name, including dotted nested paths (struct/object hops and array-element subscripts `Foo[N]` / `Foo.N.field`; see `property.set`).
 
 Optional params:
@@ -189,7 +189,8 @@ Both may be combined; a property must satisfy both to be returned. Unlike [`acto
 call("property.list", { objectPath: "/Game/MyGame/Modes/B_MyGameMode" })
   -> returns CDO properties like DefaultPawnData, Actions, etc.
 
-# Read a single CDO property:
+# Read a single CDO property (".../B_MyGameMode.B_MyGameMode_C" and
+# ".../B_MyGameMode.Default__B_MyGameMode_C" reach the same CDO):
 call("property.get", { objectPath: "/Game/MyGame/Modes/B_MyGameMode",
                         propertyName: "DefaultPawnData" })
 

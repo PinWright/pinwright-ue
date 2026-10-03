@@ -191,6 +191,14 @@ static UObject* ResolveObjectForProperty(FHandlerContext& Ctx, const FString& Ob
         }
     }
 
+    // Class path (`…/BP_Foo.BP_Foo_C`, `/Script/Engine.Actor`) → CDO too. The UClass
+    // itself holds no member values, so callers asking for "the class default object"
+    // via a class path got PROPERTY_NOT_FOUND (E-property-cdo-path-trap-docs).
+    if (UClass* AsClass = Cast<UClass>(Resolved))
+    {
+        return AsClass->GetDefaultObject();
+    }
+
     return Resolved;
 }
 
@@ -1145,7 +1153,7 @@ static TSharedPtr<FJsonValue> ExportPropertyToJsonValueWithOversizedOmission(
 // ===========================================================================
 REGISTER_RPC_HANDLER("property.set", "property", "Set a UPROPERTY value on a UObject by name using property reflection. Generic counterpart to typed setters; works on actors, components, asset CDOs, and arbitrary UObjects. A write that leaves a component's bAutoActivate false is disclosed in 'warnings' - it is a level override that outlives the session.",
     RPC_PARAMS(
-        RPC_PARAM_REQ("objectPath", "path", "Object path or actor name"),
+        RPC_PARAM_REQ("objectPath", "path", "Object path or actor name. A Blueprint asset path (/Game/X/BP_Foo), its generated-class path (BP_Foo.BP_Foo_C) and BP_Foo.Default__BP_Foo_C all target the class default object; so does a native class path (/Script/Engine.Actor)"),
         RPC_PARAM_REQ("propertyName", "string", "Property name (supports nested paths with dots)"),
         RPC_PARAM_REQ("value", "any", "Value to set"),
         RPC_PARAM_OPT("markDirty", "boolean", "Mark package dirty (default true)")
@@ -1524,7 +1532,7 @@ REGISTER_RPC_HANDLER("property.set", "property", "Set a UPROPERTY value on a UOb
 // ===========================================================================
 REGISTER_RPC_HANDLER("property.reset", "property", "Reset a UPROPERTY to its class default and clear explicit override metadata.",
     RPC_PARAMS(
-        RPC_PARAM_REQ("objectPath", "path", "Object path or actor name"),
+        RPC_PARAM_REQ("objectPath", "path", "Object path or actor name. A Blueprint asset path (/Game/X/BP_Foo), its generated-class path (BP_Foo.BP_Foo_C) and BP_Foo.Default__BP_Foo_C all target the class default object; so does a native class path (/Script/Engine.Actor)"),
         RPC_PARAM_REQ("propertyName", "string", "Property name (supports nested paths with dots)"),
         RPC_PARAM_OPT("markDirty", "boolean", "Mark package dirty (default true)")
     ))
@@ -1765,7 +1773,7 @@ REGISTER_RPC_HANDLER("property.reset", "property", "Reset a UPROPERTY to its cla
 // ===========================================================================
 REGISTER_RPC_HANDLER("property.get", "property", "Read a UPROPERTY value from a UObject by name and return it as JSON. Read-side counterpart to property.set.",
     RPC_PARAMS(
-        RPC_PARAM_REQ("objectPath", "path", "Object path or actor name"),
+        RPC_PARAM_REQ("objectPath", "path", "Object path or actor name. A Blueprint asset path (/Game/X/BP_Foo), its generated-class path (BP_Foo.BP_Foo_C) and BP_Foo.Default__BP_Foo_C all target the class default object; so does a native class path (/Script/Engine.Actor)"),
         RPC_PARAM_REQ("propertyName", "string", "Property name (supports nested paths with dots)"),
         RPC_PARAM_OPT("includeDefault", "boolean", "Include class default value in response (default false)"),
         RPC_PARAM_OPT("includeOverrideState", "boolean", "Include isOverridden/hasDefaultValue in response (default false)"),
@@ -2082,7 +2090,7 @@ REGISTER_RPC_HANDLER("property.get", "property", "Read a UPROPERTY value from a 
 // ===========================================================================
 REGISTER_RPC_HANDLER("property.list", "property", "List properties on a UObject with current/default/override state",
     RPC_PARAMS(
-        RPC_PARAM_REQ("objectPath", "path", "Object path or actor name"),
+        RPC_PARAM_REQ("objectPath", "path", "Object path or actor name. A Blueprint asset path (/Game/X/BP_Foo), its generated-class path (BP_Foo.BP_Foo_C) and BP_Foo.Default__BP_Foo_C all target the class default object; so does a native class path (/Script/Engine.Actor)"),
         RPC_PARAM_OPT("includeAll", "boolean", "Deprecated alias: include all reflected properties (now default true; kept for back-compat)"),
         RPC_PARAM_OPT("editableOnly", "boolean", "Restrict to instance-editable properties (CPF_Edit||CPF_BlueprintVisible). Default false."),
         RPC_PARAM_OPT("includeReadOnly", "boolean", "Include non-instance-editable properties (default false)"),

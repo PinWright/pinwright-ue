@@ -23,6 +23,14 @@
   `frameSettled`, `settleChangedPixelFraction` and, when the frame never settled, `frameWarning`
   report the measurement. `asset.generate_thumbnail` on a mesh now waits on the same slot
   materials, and every thumbnail forces its textures' mips resident before waiting on them.
+- Fixed: `property.get` / `list` / `set` / `reset` (and the `container.*` verbs sharing their
+  resolver) resolve a class path, a Blueprint's generated class (`/Game/.../BP_Foo.BP_Foo_C`) or a
+  native class (`/Script/Engine.Actor`), to its class default object, the same object the bare
+  asset path and `BP_Foo.Default__BP_Foo_C` reach. It used to land on the `UClass` and answer
+  `PROPERTY_NOT_FOUND` for every member property. **Behaviour change:** `property.list` on a class
+  path now lists the CDO's properties instead of the class object's, so no `property.*` path
+  reaches the class object's own properties any more; use `blueprint.inspect` for the
+  construction script and component templates.
 - Changed: `asset.dump_folder` no longer re-freezes the editor on an asset whose dump never
   returned. The sweep journals the asset it enters in `<dump root>/.dump-inflight.tmp`; a marker
   left behind because the editor stopped inside that dump (froze, crashed or was killed, including

@@ -18,6 +18,7 @@
 #include "Engine/BlueprintGeneratedClass.h"
 #include "GameFramework/Actor.h"
 #include "Compat/EngineVersionCompat.h"
+#include "Misc/ScopeExit.h"
 // FOverridableManager (Overridable Serialization) arrived in UE 5.4; the header is absent on
 // 5.3. The override-clearing test below is gated to engines that ship the manager.
 #if __has_include("UObject/OverridableManager.h")
@@ -664,6 +665,87 @@ bool FPropertyListBlueprintCDOResolutionTest::RunTest(const FString& Parameters)
                 ClassName.Contains(TEXT("TestBP_CDOResolution")));
         }
     }
+
+    return true;
+}
+
+// ============================================================================
+// property.get — a class path (`BP_Foo.BP_Foo_C`, `/Script/Engine.Actor`) resolves to
+// the CDO (E-property-cdo-path-trap-docs). It used to land on the UClass and answer
+// PROPERTY_NOT_FOUND for every member property.
+// ============================================================================
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPropertyGetGeneratedClassPathResolvesToCDOTest,
+    "PinWright.property.get.GeneratedClassPathResolvesToCDO",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FPropertyGetGeneratedClassPathResolvesToCDOTest::RunTest(const FString& Parameters)
+{
+    UBlueprint* BP = FKismetEditorUtilities::CreateBlueprint(
+        AActor::StaticClass(),
+        GetTransientPackage(),
+        MakeUniqueObjectName(GetTransientPackage(), UBlueprint::StaticClass(), TEXT("TestBP_GenClassCDO")),
+        BPTYPE_Normal,
+        UBlueprint::StaticClass(),
+        UBlueprintGeneratedClass::StaticClass());
+    ON_SCOPE_EXIT
+    {
+        // CreateBlueprint sets RF_Standalone; release the fixture so it does not live
+        // in the transient package until editor exit.
+        if (BP)
+        {
+            if (UClass* GenClass = BP->GeneratedClass)
+            {
+                GenClass->ClearFlags(RF_Standalone);
+                GenClass->MarkAsGarbage();
+            }
+            BP->ClearFlags(RF_Standalone);
+            BP->MarkAsGarbage();
+        }
+    };
+    if (!TestTrue(TEXT("fixture Blueprint has a generated class"), BP && BP->GeneratedClass))
+    {
+        return false;
+    }
+
+    AActor* CDO = CastChecked<AActor>(BP->GeneratedClass->GetDefaultObject());
+    CDO->InitialLifeSpan = 42.5f;
+
+    const FString ClassPath = BP->GeneratedClass->GetPathName();
+    if (!TestTrue(TEXT("fixture path is the _C generated-class path"), ClassPath.EndsWith(TEXT("_C"))))
+    {
+        return false;
+    }
+
+    FTestResponseCapture Capture;
+    TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+    Payload->SetStringField(TEXT("objectPath"), ClassPath);
+    Payload->SetStringField(TEXT("propertyName"), TEXT("InitialLifeSpan"));
+
+    TestTrue(TEXT("Handler found"), InvokeHandlerWithCapture(TEXT("property.get"), Payload, Capture));
+    if (!Capture.bSuccess || !Capture.Result.IsValid())
+    {
+        AddError(FString::Printf(TEXT("property.get on the _C path failed: [%s] %s"),
+            *Capture.ErrorCode, *Capture.Message));
+        return false;
+    }
+
+    double Value = 0.0;
+    TestTrue(TEXT("value is the CDO's InitialLifeSpan"),
+        Capture.Result->TryGetNumberField(TEXT("value"), Value) && FMath::IsNearlyEqual(Value, 42.5));
+
+    // Native class path: same redirect, reaches /Script/Engine.Default__Actor.
+    FTestResponseCapture NativeCapture;
+    TSharedPtr<FJsonObject> NativePayload = MakeShared<FJsonObject>();
+    NativePayload->SetStringField(TEXT("objectPath"), TEXT("/Script/Engine.Actor"));
+    NativePayload->SetStringField(TEXT("propertyName"), TEXT("InitialLifeSpan"));
+    InvokeHandlerWithCapture(TEXT("property.get"), NativePayload, NativeCapture);
+    double NativeValue = -1.0;
+    TestTrue(FString::Printf(TEXT("property.get on /Script/Engine.Actor reads the native CDO ([%s] %s)"),
+            *NativeCapture.ErrorCode, *NativeCapture.Message),
+        NativeCapture.bSuccess && NativeCapture.Result.IsValid() &&
+        NativeCapture.Result->TryGetNumberField(TEXT("value"), NativeValue) &&
+        FMath::IsNearlyEqual(NativeValue, (double)GetDefault<AActor>()->InitialLifeSpan));
 
     return true;
 }
