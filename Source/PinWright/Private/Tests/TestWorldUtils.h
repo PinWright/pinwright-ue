@@ -185,10 +185,19 @@ private:
 // original world was an untitled one with no package on disk to reload, opens an
 // equivalent blank world instead. Sibling of FScopedEditorWorldActorGuard, which
 // restores only spawned actors, not a full map swap.
+//
+// A restore that does not happen is an ERROR on the owning test (the one passed to the
+// constructor), never a silent pass: level.load can refuse the restore through its
+// preconditions (DIRTY_WORLD_BLOCKS_MAP_SWAP, EDITOR_NOT_READY), the blank-world fallback
+// can be blocked by the same survivor probe, and either leaves the rest of the run on the
+// wrong world. Without this the red lands on whichever unrelated test runs next
+// (B-map-guard-drops-restore-result). Restoring by a raw FEditorFileUtils::LoadMap to dodge
+// those preconditions is deliberately NOT done: they guard against process-killing fatals.
 class FScopedEditorWorldMapGuard
 {
 public:
-    FScopedEditorWorldMapGuard()
+    explicit FScopedEditorWorldMapGuard(FAutomationTestBase& InTest)
+        : Test(InTest)
     {
         OriginalWorld = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
         OriginalMapPath = (OriginalWorld && OriginalWorld->GetOutermost())
@@ -214,7 +223,26 @@ public:
         {
             TSharedPtr<FJsonObject> RestorePayload = MakeShared<FJsonObject>();
             RestorePayload->SetStringField(TEXT("levelPath"), OriginalMapPath);
-            InvokeHandler(TEXT("level.load"), RestorePayload);
+            // Shared capture + pump: on a stack that is not a safe point level.load parks the
+            // swap on the core ticker (RunAtSafePoint) and returns with the map NOT restored,
+            // so "the map is back on destruction" only holds once that hop has run.
+            TSharedRef<FTestResponseCapture> Capture = MakeShared<FTestResponseCapture>();
+            InvokeHandlerWithSharedCapture(TEXT("level.load"), RestorePayload, Capture);
+            // Pumping the core ticker here assumes the guard lives inside RunTest (a safe stack).
+            PumpUntilCaptured(*Capture, 120.0);
+            // Assert the outcome, not just the response: the active world must be the original.
+            const UWorld* const RestoredWorld = GEditor->GetEditorWorldContext().World();
+            const FString RestoredMapPath = (RestoredWorld && RestoredWorld->GetOutermost())
+                ? RestoredWorld->GetOutermost()->GetName()
+                : FString();
+            if (!Capture->bSuccess || RestoredMapPath != OriginalMapPath)
+            {
+                ReportRestoreFailure(FString::Printf(
+                    TEXT("level.load restore %s [%s] %s; active world is '%s'"),
+                    Capture->bWasCalled ? (Capture->bSuccess ? TEXT("succeeded") : TEXT("refused"))
+                                        : TEXT("never responded"),
+                    *Capture->ErrorCode, *Capture->Message, *RestoredMapPath));
+            }
             return;
         }
 
@@ -233,9 +261,20 @@ public:
             PinWrightMapSwapGuard::ProbeResidentWorldSurvivors(
                 FString(), /*bTransactionBufferWillBeCleared=*/false);
         // An unavailable probe measured nothing and is not "clear to swap".
-        if (!Probe.bProbeUnavailable && !Probe.IsBlocked())
+        if (Probe.bProbeUnavailable)
         {
-            GEditor->NewMap(/*bIsPartitionedWorld=*/false);
+            ReportRestoreFailure(FString::Printf(
+                TEXT("blank-world restore skipped, survivor probe unavailable: %s"),
+                *Probe.UnavailableReason));
+        }
+        else if (Probe.IsBlocked())
+        {
+            ReportRestoreFailure(FString::Printf(TEXT("blank-world restore refused: %s"),
+                *PinWrightMapSwapGuard::DescribeSurvivorRefusal(Probe)));
+        }
+        else if (!GEditor->NewMap(/*bIsPartitionedWorld=*/false))
+        {
+            ReportRestoreFailure(TEXT("blank-world restore failed: NewMap returned no world"));
         }
     }
 
@@ -246,6 +285,17 @@ public:
     UWorld* GetOriginalWorld() const { return OriginalWorld; }
 
 private:
+    // Lands on the owning test (the destructor runs inside its RunTest at every call site).
+    // AddError only: the automation controller already writes it to the log, and a second
+    // UE_LOG Error would report every failure twice.
+    void ReportRestoreFailure(const FString& Detail) const
+    {
+        Test.AddError(FString::Printf(
+            TEXT("FScopedEditorWorldMapGuard failed to restore '%s': %s. Later tests in this run "
+                 "are on the wrong editor world."), *OriginalMapPath, *Detail));
+    }
+
+    FAutomationTestBase& Test;
     UWorld* OriginalWorld = nullptr;
     FString OriginalMapPath;
 };

@@ -97,7 +97,7 @@ bool FWorldCreateDatalayerEchoesNonTransientPathTest::RunTest(const FString& Par
     // The suite runs on a blank non-partitioned world (aa_suite_start), where the handler exits
     // NOT_PARTITIONED before it builds a package. Swap in a throwaway World Partition world behind
     // the shared pre-swap probe; MapGuard rebuilds the blank world on scope exit.
-    FScopedEditorWorldMapGuard MapGuard;
+    FScopedEditorWorldMapGuard MapGuard(*this);
     const PinWrightMapSwapGuard::FWorldSurvivorProbeResult Probe =
         PinWrightMapSwapGuard::ProbeResidentWorldSurvivors(
             FString(), /*bTransactionBufferWillBeCleared=*/false);

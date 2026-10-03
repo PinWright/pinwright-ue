@@ -82,7 +82,7 @@ inline void AssertLoadMethodRespondsSynchronously(
 
     // Snapshot the open map and auto-restore it on scope exit (the guard reloads
     // it through level.load if this test's load swaps the active world).
-    FScopedEditorWorldMapGuard MapGuard;
+    FScopedEditorWorldMapGuard MapGuard(Test);
 
     // Find a real map asset that is not the currently-open world so the handler
     // takes the actual load path (not the alreadyLoaded short-circuit).
@@ -315,7 +315,8 @@ namespace
     {
         // bWantPartition: pass true to request a World-Partition world (sets
         // bCreateWorldPartition:true), false for a plain non-partitioned active world.
-        FScopedProbeWorld(const TCHAR* NamePrefix, bool bWantPartition)
+        FScopedProbeWorld(FAutomationTestBase& Test, const TCHAR* NamePrefix, bool bWantPartition)
+            : MapGuard(Test)
         {
             // On UE 5.3 the staging body is compiled out (the create+destroy round-trip
             // crashes inside a TVariant); reference the params so they are not "unused" there.
@@ -435,7 +436,7 @@ bool FLevelCreateProducesNonPartitionedWorldTest::RunTest(const FString& Paramet
     // ON_SCOPE_EXIT so its destructor (the original-map restore) runs BEFORE DiscardProbeMapPackage
     // — that ordering leaves the probe map non-active when the discard runs, so the discard takes
     // its full rename+GC cleanup path rather than the file-only fallback.
-    FScopedEditorWorldMapGuard MapGuard;
+    FScopedEditorWorldMapGuard MapGuard(*this);
     UWorld* const OriginalWorld = MapGuard.GetOriginalWorld();
 
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
@@ -513,7 +514,7 @@ bool FLightingCreateLevelReportsHonestPersistenceTest::RunTest(const FString& Pa
 
     // The handler calls GEditor->NewMap(), swapping the active editor world; restore the
     // originally-open map on scope exit so later tests in the run aren't polluted.
-    FScopedEditorWorldMapGuard MapGuard;
+    FScopedEditorWorldMapGuard MapGuard(*this);
 
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
     Payload->SetStringField(TEXT("path"), LevelPath);
@@ -1062,9 +1063,9 @@ inline void AssertGetterReportsUnloadedOnDiskMap(
     // DoesPackageExist probe once and reuse it — these getters never swap the map,
     // so the open-map exclusion stays valid for the whole suite. The guard supplies
     // the open-map package name the same way the sibling load tests do.
-    static const FString UnloadedMapPath = []()
+    static const FString UnloadedMapPath = [&Test]()
     {
-        FScopedEditorWorldMapGuard MapGuard;
+        FScopedEditorWorldMapGuard MapGuard(Test);
         return FindAlternateOnDiskMap(MapGuard.GetOriginalMapPath());
     }();
 
@@ -1409,7 +1410,7 @@ bool FLevelStructureCreateLevelAttachesWorldPartitionTest::RunTest(const FString
     // E-create-level-save-false-world-not-active), so this probe run swaps the active
     // world out from under the rest of the suite. Declared FIRST so it destructs LAST
     // (after the probe world is destroyed/discarded below) and reloads the original map.
-    FScopedEditorWorldMapGuard MapGuard;
+    FScopedEditorWorldMapGuard MapGuard(*this);
 
     // Unique throwaway package path so a stale on-disk/in-memory world can't trip the
     // LEVEL_ALREADY_EXISTS guard. save:false keeps it purely in-memory.
@@ -1532,7 +1533,7 @@ bool FLevelStructureCreateLevelMakesWorldActiveTest::RunTest(const FString& Para
     // create_level now makes the created world the ACTIVE editor world, which swaps the
     // active world out from under the rest of the suite. Declared FIRST so it destructs
     // LAST (after the probe world is destroyed/discarded below) and reloads the original map.
-    FScopedEditorWorldMapGuard MapGuard;
+    FScopedEditorWorldMapGuard MapGuard(*this);
 
     // Snapshot the active world BEFORE the call so we can prove the handler actually
     // changed it (and is not just confirming a world that was already current).
@@ -2419,7 +2420,7 @@ bool FLevelStructureGetLevelStructureInfoEnumeratesDataLayersTest::RunTest(const
     // Stage a partitioned world and make it the active editor world via the shared
     // create+teardown scaffold (FScopedProbeWorld owns the 5.3 gate, the create_level call,
     // and the DestroyWorld-then-discard-then-restore teardown — see its definition).
-    FScopedProbeWorld ProbeWorld(TEXT("__EARG_DLEnumProbe"), /*bWantPartition=*/true);
+    FScopedProbeWorld ProbeWorld(*this, TEXT("__EARG_DLEnumProbe"), /*bWantPartition=*/true);
 #if !UE_VERSION_OLDER_THAN(5, 4, 0)
     // The found-assert is only meaningful where FScopedProbeWorld actually invokes
     // create_level. On UE 5.3 the scaffold's staging body (including the handler call) is

@@ -155,7 +155,7 @@ bool FLevelLoadDefersMapSwapToSafePointTest::RunTest(const FString& Parameters)
     }
 
     // Safety net for every exit path, including a check macro that aborts mid-body.
-    FScopedEditorWorldMapGuard MapGuard;
+    FScopedEditorWorldMapGuard MapGuard(*this);
 
     // Leave the original map so level.load has a genuine swap to perform (it
     // early-outs with alreadyLoaded when the requested map is already active, which

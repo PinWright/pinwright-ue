@@ -277,7 +277,7 @@ bool FLevelSaveWritesToProjectContentNotDriveRootTest::RunTest(const FString& Pa
 
     // level.create calls GEditor->NewMap(), swapping the active editor world; restore the
     // originally-open map on scope exit so later tests in the run aren't polluted.
-    FScopedEditorWorldMapGuard MapGuard;
+    FScopedEditorWorldMapGuard MapGuard(*this);
 
     // On the pre-fix path level.save's honest re-gate logs an Error (no .umap landed), and a
     // save that cannot write at all makes McpSafeLevelSave log its all-attempts-failed Error.
@@ -388,7 +388,7 @@ bool FLevelSaveRewritesExistingUmapTest::RunTest(const FString& Parameters)
 
     // Declared BEFORE MapGuard — see the ordering note on the sibling test above.
     ON_SCOPE_EXIT { DiscardLevelSaveProbeMap(LevelPath); };
-    FScopedEditorWorldMapGuard MapGuard;
+    FScopedEditorWorldMapGuard MapGuard(*this);
 
     // Same optional expected-error declarations as the sibling test: the pre-fix save path logs
     // Errors that the automation framework would otherwise turn into opaque failures.
@@ -503,7 +503,7 @@ bool FLevelCreateVerifiesUmapOnDiskTest::RunTest(const FString& Parameters)
 
     // Declared BEFORE MapGuard — see the ordering note on the first test in this file.
     ON_SCOPE_EXIT { DiscardLevelSaveProbeMap(LevelPath); };
-    FScopedEditorWorldMapGuard MapGuard;
+    FScopedEditorWorldMapGuard MapGuard(*this);
 
     // A save that cannot write at all makes McpSafeLevelSave log its all-attempts-failed Error,
     // which the automation framework would capture as an opaque failure. Optional occurrences:

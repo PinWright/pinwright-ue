@@ -296,6 +296,8 @@ Same limitation as the suite-end gate: a **scoped** run whose filter does not se
 
 Consequence for `FScopedEditorWorldMapGuard`: the map it snapshots is now untitled, so `FPackageName::DoesPackageExist` on it is false and the `level.load` restore cannot fire. Doing nothing there is not "leave it as found" — the maps those tests swap in are throwaway probes their own teardown deletes moments later, which would leave the editor world context on a destroyed world. The guard therefore falls back to opening an equivalent blank world (same `NewMap`, same probe) when the original has no package on disk.
 
+The guard takes the owning test (`FScopedEditorWorldMapGuard MapGuard(*this);`) and a restore that does not happen is one `AddError` on that test (no separate log line; the automation controller logs it): a `level.load` refusal (its code and message), a restore that left a different world active, a blocked or unavailable survivor probe, or a failed `NewMap`. A deferred `level.load` (safe-point hop) is pumped to completion before the destructor returns. A refused restore is a real red, not a skip: the rest of the run would otherwise execute against the wrong world and the failure would land on some later, unrelated test (`B-map-guard-drops-restore-result`). Covered by `PinWright.infra.map_guard.*`.
+
 ---
 
 ## Suite Memory Containment

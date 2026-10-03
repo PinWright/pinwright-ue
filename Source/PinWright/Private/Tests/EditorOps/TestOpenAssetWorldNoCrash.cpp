@@ -123,7 +123,7 @@ bool FEditorOpenAssetWorldNoCrashTest::RunTest(const FString& Parameters)
     // Declared BEFORE the resolve: the resolve opens a real on-disk map over the untitled
     // world the suite runs on, and this guard is what puts a blank world back afterwards
     // so that map is not left ambient for every test that sorts after this one.
-    FScopedEditorWorldMapGuard MapGuard;
+    FScopedEditorWorldMapGuard MapGuard(*this);
 
     UWorld* ActiveWorld = ResolveActiveOnDiskMapWorldForOpenAssetTest(Subsystem);
     if (!ActiveWorld)
