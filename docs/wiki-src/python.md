@@ -174,6 +174,10 @@ An **EndPIE warning** in the `LogPinWrightPythonCallbacks` category names every 
 
 **Write scripts that do not need any of this.** Keep the handle in a module you can `import` again so a later call can reach its `stop()`, unregister in a `finally`, have the callback unregister itself on its first exception, and never register from a script that ends before PIE does.
 
+## Enum values Python cannot represent
+
+**Reading an enum property whose current value is a hidden entry raises mid-script.** The Python enum wrappers are generated once, at editor startup, from the entries visible then. `EPhysicalSurface` is the common case: until a project names `SurfaceTypeN` (see [`physics`](physics.md)), that entry is hidden, and names registered later in the session do not regenerate `unreal.PhysicalSurface`. Then `pm.get_editor_property('surface_type')` on a `PhysicalMaterial` set to such an index raises `TypeError: PythonizeEnumEntry: Cannot pythonize '<n>' (int64) as 'PhysicalSurface'`, and `unreal.PhysicalSurface.cast(n)` raises `Cannot cast type 'int'`. The exception stops the script at that line after earlier statements have already committed, so a save loop that logs the value dies on its first iteration having saved one asset. Read and write such properties through `property.get` / `property.set`, which use the enum name as a string (`"SurfaceType3"`), or restart the editor after registering the names.
+
 ### python.execute
 
 Pass `code` as either inline Python source or an absolute path to a `.py` file. Inline code is convenient for one-shots; file execution is better when the script is large or you want to version it. `mode` defaults to `execute_file`; use `execute_statement` for one statement and `evaluate_statement` when you need the expression result. `scope` defaults to `private`; `public` shares the UE Python console globals across calls.

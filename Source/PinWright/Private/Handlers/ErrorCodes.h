@@ -1554,6 +1554,7 @@ namespace ErrorCodes
     // caller really does want their own point treated as the surface. The verb used to take that
     // fallback silently and answer placed:true, which is how props ended up beyond the map edge.
     inline constexpr TCHAR ERR_SURFACE_TRACE_MISSED[]                       = TEXT("SURFACE_TRACE_MISSED");
+    inline constexpr TCHAR ERR_SURFACE_TYPE_IN_USE[]                        = TEXT("SURFACE_TYPE_IN_USE");
     inline constexpr TCHAR ERR_SYSTEM_NOT_COMPILED[]                        = TEXT("SYSTEM_NOT_COMPILED");
     inline constexpr TCHAR ERR_SYSTEM_NOT_FOUND[]                           = TEXT("SYSTEM_NOT_FOUND");
     inline constexpr TCHAR ERR_SYSTEM_VIEW_MODEL_UNAVAILABLE[]              = TEXT("SYSTEM_VIEW_MODEL_UNAVAILABLE");

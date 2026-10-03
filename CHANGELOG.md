@@ -9,6 +9,15 @@
   reports `bindingRemoved` as read back from the invocation list. `pauseOnFire` pauses PIE inside
   the broadcast that completes the count, so a capture can show a short-lived effect. New error
   code `DISPATCHER_NOT_FOUND`, whose `available[]` lists the dispatchers the object has.
+- Added: `physics.get_project_settings`, `physics.set_project_settings` and
+  `physics.set_surface_types`, the typed surface for `UPhysicsSettings` (DefaultEngine.ini
+  `[/Script/Engine.PhysicsSettings]`). `set_surface_types` names `EPhysicalSurface` entries
+  (index 1..62, unique names, upsert or `replace`), refuses `SURFACE_TYPE_IN_USE` when a removal
+  would orphan a `UPhysicalMaterial`, refreshes the enum's display metadata (`enumRefreshed`) and
+  returns `previous`. Every writer reports `configFile` / `configSection` and claims `savedTo` only
+  after each written property reloads from config with the requested value; otherwise
+  `SAVE_FAILED`. `physics.set_project_settings` rejects `PhysicalSurfaces` in favour of the typed
+  verb.
 - Added: `editor.standalone_status` observes a process started by `editor.launch_standalone`:
   OS-measured `running`, the real `exitCode` once it exits, the tail of its log, and with
   `capture: true` a PNG of its largest window (Linux/X11 only, via `XGetImage`; reports
