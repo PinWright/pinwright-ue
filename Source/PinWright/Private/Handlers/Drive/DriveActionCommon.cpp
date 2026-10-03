@@ -165,6 +165,14 @@ TSharedPtr<FJsonObject> FDriveActionCommon::WriteSettleResult(FDriveSettleResult
     Resp->SetNumberField(TEXT("ticks"), Result.Ticks);
     // Compact summary by default; full handle lists only when full_diff was set.
     Resp->SetObjectField(TEXT("diff"), bFullDiff ? FDriveJson::WriteDiffFull(Diff) : FDriveJson::WriteDiffSummary(Diff));
+    // The quiet budget only proves nothing changed while it ran: a click whose screen
+    // transition starts later reads exactly like a click that did nothing. Say so, and name
+    // the cheap way to tell them apart.
+    if (Result.Outcome == EDriveSettleOutcome::NoChangeWithinBudget)
+    {
+        Resp->SetStringField(TEXT("hint"),
+            TEXT("The input was injected, but the UI did not change before quiet_budget_ms ran out. A transition that starts later (screen navigation, menu animation, level load) is not seen, so this does not prove the action was ignored. To check, call drive.wait_for on the expected result (e.g. widget_present) instead of repeating the action; next time pass wait_for to the action or raise quiet_budget_ms."));
+    }
     return Resp;
 }
 

@@ -269,6 +269,11 @@ bool FDriveSettleDriverRowChurnAgreesWithDiffTest::RunTest(const FString& Parame
     const TSharedPtr<FJsonObject> Quiet = FDriveActionCommon::WriteSettleResult(Result, FDriveDiff(), false);
     TestFalse(TEXT("empty diff keeps changed:false"), Quiet->GetBoolField(TEXT("changed")));
     TestEqual(TEXT("empty diff keeps no_change"), Quiet->GetStringField(TEXT("outcome")), FString(TEXT("no_change_within_budget")));
+    // A late-onset transition reads like a no-op; the quiet result must say so and steer to wait_for.
+    FString Hint;
+    TestTrue(TEXT("no_change carries a hint"), Quiet->TryGetStringField(TEXT("hint"), Hint));
+    TestTrue(TEXT("hint names wait_for"), Hint.Contains(TEXT("drive.wait_for")));
+    TestFalse(TEXT("settled_changed carries no hint"), Resp->HasField(TEXT("hint")));
 
     return true;
 }

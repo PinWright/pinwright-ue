@@ -104,7 +104,8 @@ public:
     // in place or a value-only edit is "no change" to the loop but not to the diff. A non-empty
     // Diff therefore forces changed=true, and a quiet no_change_within_budget becomes
     // settled_changed (the shape held still the whole budget), so outcome, changed and diff
-    // never contradict. Pure, like IsActionable.
+    // never contradict. A no_change_within_budget result also carries a `hint`: the quiet budget
+    // cannot tell a late-onset transition from an ignored action. Pure, like IsActionable.
     static TSharedPtr<FJsonObject> WriteSettleResult(FDriveSettleResult Result, const FDriveDiff& Diff, bool bFullDiff);
 
     // A GetElements sampler bound to one surface/root; returns an empty list on

@@ -62,6 +62,10 @@
   request, reports `actorEnableCollision`, and adds a `warnings` entry when the read-back differs
   from the request. **Behaviour change** for callers that pointed it at holder actors: use
   `actor.set_component_properties {actorName, componentName, properties:{BodyInstance:{CollisionEnabled:"NoCollision"}}}`.
+- Changed: a drive action (`drive.click`, `drive.type`, ...) that returns `no_change_within_budget`
+  now carries a `hint`: the quiet budget only proves the UI did not change while it ran, so a
+  click whose screen transition starts later reads the same as an ignored one. The hint points to
+  `drive.wait_for` on the expected result, the action's `wait_for`, or a larger `quiet_budget_ms`.
 - Changed: the PinWright Setup screen no longer opens at launch in an `-unattended` editor (the
   automation suite, offscreen/headless `editor_start`), even with `bShowSetupScreenOnLaunch` or a
   port-conflict alert; the conflict is still logged. On a real display its window covered the
