@@ -148,6 +148,12 @@ namespace PinWrightCaptureSubjectNiagara
             return AdvanceToTime(*Live, TimeSeconds, DefaultTickDeltaSeconds, LiveState->LastStep,
                 ErrorCode, ErrorMessage);
         };
+        // No StateCheckpointer, deliberately: there is no engine API to snapshot a particle
+        // simulation, and re-simulating to the instant is a replay, not a restore.
+        Out.StateCheckpointUnavailableReason =
+            TEXT("a Niagara system's particle simulation state cannot be snapshotted; re-simulating ")
+            TEXT("to the instant reproduces it only when the system is deterministic under a fixed ")
+            TEXT("tick, which is not verified (see subject.reproducibilityWarning)");
 
         // ---- the subject-coverage seam ----
         //

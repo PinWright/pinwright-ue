@@ -66,6 +66,20 @@ namespace PinWrightPoseCapture
     using FSubjectTimeSetter =
         TFunction<bool(double TimeSeconds, FString& OutErrCode, FString& OutErrMsg)>;
 
+    // ---- the subject state checkpoint seam ----
+    //
+    // Snapshot the subject's current state and hand back a restorer that puts it back there
+    // WITHOUT advancing it. The same types as PinWrightCaptureSubject's, declared here for the
+    // layering reason FSubjectTimeSetter gives above.
+    //
+    // WHY IT EXISTS. A time setter is not required to be idempotent (a Niagara advance runs from
+    // the current state), so the pose-0 repeatability control cannot replay the setter. A
+    // checkpoint is the only way to return to the exact pose-0 state, and a kind that cannot take
+    // one leaves the checkpointer unbound and says why - the control is then reported unmeasured.
+    using FSubjectStateRestorer = TFunction<bool(FString& OutErrCode, FString& OutErrMsg)>;
+    using FSubjectStateCheckpointer = TFunction<bool(
+        FSubjectStateRestorer& OutRestore, FString& OutErrCode, FString& OutErrMsg)>;
+
     // One camera. No notion of a target, a pivot or a subject - that is the generator's job.
     struct FCameraPose
     {
@@ -190,6 +204,15 @@ namespace PinWrightPoseCapture
         // idempotent, so a second application for the same pose is not a free extra safety - it is
         // a second, unequal application of something that may not repeat.
         FSubjectTimeSetter SubjectTimeSetter;
+
+        // Used ONLY by the pose-0 repeatability control of a set that drove subject time: one
+        // checkpoint immediately before pose 0's real shot, one at the end of the set, a rewind to
+        // the first for the control frame, then a restore of the second - so the control never
+        // re-runs the time setter and the subject leaves the set exactly where the set left it.
+        // Unbound means the kind cannot checkpoint; the reason below is published verbatim as
+        // poseRepeatability.subjectCheckpoint.unavailableReason.
+        FSubjectStateCheckpointer SubjectStateCheckpointer;
+        FString SubjectStateCheckpointUnavailableReason;
 
         // ---- the subject coverage seam ----
         //
@@ -327,6 +350,17 @@ namespace PinWrightPoseCapture
         int32 PoseRepeatabilityMaxDelta = 0;
         double PoseRepeatabilityChangedPixelFraction = 0.0;
         int32 PoseRepeatabilityChannelThreshold = 1;
+        // The control on a time-driven set, through the checkpoint seam. Published as
+        // poseRepeatability.subjectCheckpoint only when bPoseRepeatabilitySubjectTimeDriven.
+        bool bPoseRepeatabilitySubjectTimeDriven = false;
+        bool bSubjectCheckpointAvailable = false;
+        FString SubjectCheckpointUnavailableReason;
+        // The subject was rewound to the pose-0 checkpoint and the control frame was drawn there.
+        bool bSubjectRewoundForControl = false;
+        // A rewind was attempted, so the end-of-set state had to be put back; whether it was.
+        bool bSubjectRestoreAttempted = false;
+        bool bSubjectRestoredAfterControl = false;
+        FString SubjectRestoreError;
     };
 
     // Draw ONE frame. The step that needs a viewport, a world and a GPU, and the only one -

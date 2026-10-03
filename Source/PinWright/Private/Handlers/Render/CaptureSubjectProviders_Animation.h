@@ -192,6 +192,13 @@ namespace PinWrightCaptureSubjectAnimation
     // typed code instead of dereferencing a stale pointer.
     FSubjectTimeSetter MakeScrubTimeSetter(USkeletalMeshComponent& Component);
 
+    // The checkpoint seam for a scrubbed preview (CaptureSubject.h, FSubjectStateCheckpointer).
+    // A PAUSED single-node instance's pose is a pure function of its position, so the position is
+    // the whole state and restoring it is a scrub, which never advances anything. Refuses while
+    // the instance is playing: a playing preview has no fixed state to return to.
+    PinWrightCaptureSubject::FSubjectStateCheckpointer MakeScrubStateCheckpointer(
+        USkeletalMeshComponent& Component);
+
     // ---- Preview instance state --------------------------------------------------------------
 
     // Everything this kind changes on the preview component, so it can be put back. A review verb

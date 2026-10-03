@@ -23,6 +23,16 @@
   not loaded in this editor. Malformed or crafted name / import / export tables and property data
   are refused with `PARSE_FAILED` rather than reaching an engine assert (the package summary is
   still read by the engine's own serializer).
+- Added: time-driven pose sets (`render.capture_asset_preview` with `times`,
+  `render.capture_animation_preview`, `camera.animation_shots`) now measure
+  `poseSet.poseRepeatability` through a subject state checkpoint: the subject is rewound to its
+  pose-0 state for the control frame (the time setter is never replayed) and put back where the
+  set left it afterwards. New `poseRepeatability.subjectCheckpoint {available, unavailableReason,
+  rewoundForControl, restoredAfterControl, restoreWarning}`. Scrubbed animations and Level
+  Sequence playheads are checkpointable (the playhead rewind and put-back always jump, even under
+  `updateMethod:'play'`, so they never fire event tracks); Niagara is not and still reports `measured:false`, now
+  with a `notMeasuredReason` that names why. Behaviour change: these sets take one extra
+  discarded control frame.
 - Fixed: CRIR `comment` attributes are a closed schema. An unknown key (`colour=`), a bare flag,
   a duplicate, or a `size=` / `color=` that is not an exact tuple of 2 / 4 finite numbers now
   fails the parse with `CRIR_BAD_COMMENT_ATTR` on that line; it used to be dropped and replaced

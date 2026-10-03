@@ -177,6 +177,8 @@ FResolvedSubject::FResolvedSubject(FResolvedSubject&& Other)
     , BoundsWarning(MoveTemp(Other.BoundsWarning))
     , ReproducibilityWarning(MoveTemp(Other.ReproducibilityWarning))
     , ProviderState(MoveTemp(Other.ProviderState))
+    , StateCheckpointer(MoveTemp(Other.StateCheckpointer))
+    , StateCheckpointUnavailableReason(MoveTemp(Other.StateCheckpointUnavailableReason))
     , ReleaseFunc(MoveTemp(Other.ReleaseFunc))
     , bReleased(Other.bReleased)
 {
@@ -214,6 +216,8 @@ FResolvedSubject& FResolvedSubject::operator=(FResolvedSubject&& Other)
         BoundsWarning = MoveTemp(Other.BoundsWarning);
         ReproducibilityWarning = MoveTemp(Other.ReproducibilityWarning);
         ProviderState = MoveTemp(Other.ProviderState);
+        StateCheckpointer = MoveTemp(Other.StateCheckpointer);
+        StateCheckpointUnavailableReason = MoveTemp(Other.StateCheckpointUnavailableReason);
         ReleaseFunc = MoveTemp(Other.ReleaseFunc);
         bReleased = Other.bReleased;
 

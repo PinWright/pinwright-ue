@@ -558,6 +558,8 @@ namespace PinWrightCaptureSubjectMesh
                 Component->MarkRenderDynamicDataDirty();
                 return true;
             };
+            OutSubject.StateCheckpointer =
+                PinWrightCaptureSubjectAnimation::MakeScrubStateCheckpointer(*PreviewComponent);
         }
 
         return true;

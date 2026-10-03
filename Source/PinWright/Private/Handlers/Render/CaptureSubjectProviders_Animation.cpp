@@ -513,6 +513,50 @@ namespace PinWrightCaptureSubjectAnimation
         };
     }
 
+    PinWrightCaptureSubject::FSubjectStateCheckpointer MakeScrubStateCheckpointer(
+        USkeletalMeshComponent& Component)
+    {
+        TWeakObjectPtr<USkeletalMeshComponent> WeakComponent(&Component);
+        return [WeakComponent](PinWrightCaptureSubject::FSubjectStateRestorer& OutRestore,
+            FString& OutErrCode, FString& OutErrMsg) -> bool
+        {
+            USkeletalMeshComponent* Live = WeakComponent.Get();
+            UAnimSingleNodeInstance* SingleNode = Live ? Live->GetSingleNodeInstance() : nullptr;
+            if (!SingleNode)
+            {
+                OutErrCode = ErrorCodes::ERR_PREVIEW_NOT_FOUND;
+                OutErrMsg = TEXT("The preview component or its single-node animation instance went ")
+                            TEXT("away, so its pose could not be checkpointed.");
+                return false;
+            }
+            if (SingleNode->IsPlaying())
+            {
+                OutErrCode = ErrorCodes::ERR_CAPTURE_FAILED;
+                OutErrMsg = TEXT("The preview animation is playing, so its pose is not a function of ")
+                            TEXT("one position and there is no fixed state to return to.");
+                return false;
+            }
+            const double SavedSeconds = static_cast<double>(SingleNode->GetCurrentTime());
+            OutRestore = [WeakComponent, SavedSeconds](FString& RestoreErrCode, FString& RestoreErrMsg) -> bool
+            {
+                USkeletalMeshComponent* Restored = WeakComponent.Get();
+                if (!Restored)
+                {
+                    RestoreErrCode = ErrorCodes::ERR_PREVIEW_NOT_FOUND;
+                    RestoreErrMsg = TEXT("The preview component went away before its checkpointed pose ")
+                                    TEXT("could be restored.");
+                    return false;
+                }
+                // Recreate the proxy as well: queued dynamic-data updates for two scrubs inside one
+                // engine frame can coalesce and draw the previous pose (the reason
+                // render.capture_animation_preview does the same before every capture).
+                Restored->MarkRenderStateDirty();
+                return ScrubToTimeSeconds(*Restored, SavedSeconds, RestoreErrCode, RestoreErrMsg);
+            };
+            return true;
+        };
+    }
+
     // ---------------------------------------------------------------------------------------
     // Preview instance state
 
@@ -694,6 +738,7 @@ namespace PinWrightCaptureSubjectAnimation
         SingleNode->SetPlaying(false);
 
         OutTimeSetter = MakeScrubTimeSetter(*PreviewComponent);
+        OutSubject.StateCheckpointer = MakeScrubStateCheckpointer(*PreviewComponent);
         return true;
     }
 

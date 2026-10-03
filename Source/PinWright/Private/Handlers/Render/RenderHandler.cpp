@@ -1563,6 +1563,10 @@ REGISTER_RPC_HANDLER("render.capture_asset_preview", "render", "Open an asset ed
         // coverage by binding FResolvedSubject::VisibilitySetter, not by editing a handler.
         PoseRequest.bMeasureSubjectCoverage = Ctx.GetBool(TEXT("measureCoverage"), true);
         PoseRequest.SubjectVisibilitySetter = Resolved.VisibilitySetter;
+        // The provider's own checkpoint, never the wrapped time setter above: rewinding for the
+        // repeatability control must not advance InstantDriveCursor or re-run a simulation.
+        PoseRequest.SubjectStateCheckpointer = Resolved.StateCheckpointer;
+        PoseRequest.SubjectStateCheckpointUnavailableReason = Resolved.StateCheckpointUnavailableReason;
 
         PinWrightPoseCapture::FPoseListCaptureOutput PoseResult;
         if (!PinWrightPoseCapture::CaptureCameraPoses(*Resolved.ViewportClient, Resolved.SceneViewport,

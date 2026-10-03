@@ -98,8 +98,8 @@ So: pick one size at the start of a session and stay on it. If a capture came ou
 `FSceneViewport::ResizeViewport` calls `Draw()` synchronously after rebuilding the viewport
 (`SceneViewport.cpp:1988-1995`). The capture context therefore establishes fixed exposure,
 TemporalAA suppression, and primary/secondary screen-percentage pinning before the first positive
-`SetFixedViewportSize`. One context survives the warm-up, all requested poses, and, for
-non-time-driven sets, the final repeatability control; unchanged shots do not resize. It restores
+`SetFixedViewportSize`. One context survives the warm-up, all requested poses, and the final
+repeatability control; unchanged shots do not resize. It restores
 the original viewport size and fixed-size state while
 the three pins still cover any synchronous hand-back draw. Direct single captures use the same
 ordering through a local one-call context.
@@ -215,9 +215,25 @@ measured. A renderer state cycle can put both endpoints in the same phase (for e
 cycle on a set whose endpoint spacing is a multiple of four), so a small delta can alias a real
 variation in the intermediate shots. Read `measured:true` as "these two buffers matched"; use
 consecutive captures or vary the set length/phase when investigating periodic drift. Time-driven
-sets instead report `measured:false` and `notMeasuredReason`: replaying an animation or simulation
-setter is not guaranteed to restore identical subject state, so such a control would mix subject
-motion into the render-stability signal.
+sets never replay the time setter for the control (a setter is not required to be idempotent: a
+Niagara advance runs from the current state). They go through a **subject state checkpoint**
+instead: the subject's state is snapshotted immediately before pose 0's real shot and again at the
+end of the set, the subject is rewound to the pose-0 snapshot for the control frame, and the
+end-of-set snapshot is put back afterwards on every exit, a failed control included. A
+time-driven set adds `poseRepeatability.subjectCheckpoint`:
+
+| key | meaning |
+| --- | --- |
+| `available` | the subject kind can snapshot and restore its state without advancing it |
+| `unavailableReason` | only when `available` is false; the kind's own explanation |
+| `rewoundForControl` | the control frame was drawn at the restored pose-0 state |
+| `restoredAfterControl` | only when a rewind was attempted; the subject is back where the set left it |
+| `restoreWarning` | only when `restoredAfterControl` is false; the subject may not be where the set left it (at pose 0's state after a successful rewind, otherwise wherever the failed rewind left it) |
+
+Checkpointable kinds: a scrubbed animation or skeletal-mesh preview (the paused position is the
+whole pose) and a Level Sequence subject (the paused playhead; anything in the level the sequence
+does not drive stays in the delta). A Niagara system is not checkpointable (a particle simulation
+cannot be snapshotted), so its sets report `measured:false` with `notMeasuredReason` naming why.
 
 The per-shot `framing` block follows the same rule: written only when a framing verdict was actually measured, absent otherwise.
 

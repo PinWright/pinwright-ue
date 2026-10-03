@@ -849,6 +849,9 @@ REGISTER_RPC_HANDLER("camera.animation_shots", "camera",
     // each pose's instant exactly once — including once for pose 0 BEFORE the warm-up frame, so
     // the throwaway shot pages in the content the set actually shows at the moment it shows it.
     PoseRequest.SubjectTimeSetter = SubjectTimeSetter;
+    // The playhead checkpoint, so the pose-0 repeatability control rewinds instead of re-driving.
+    PoseRequest.SubjectStateCheckpointer = Resolved.StateCheckpointer;
+    PoseRequest.SubjectStateCheckpointUnavailableReason = Resolved.StateCheckpointUnavailableReason;
     // The bounds the per-shot `framing` verdict is measured against: from the static union, never
     // from the posed subject at that shot's instant. Bounds that moved between shots would make
     // "the subject left the frame" and "the bounds grew" the same reading.

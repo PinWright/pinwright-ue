@@ -78,6 +78,13 @@ bool RunPoseListCapture(
     OutResult.PoseRepeatabilityMeanAbsDelta = 0.0;
     OutResult.PoseRepeatabilityMaxDelta = 0;
     OutResult.PoseRepeatabilityChangedPixelFraction = 0.0;
+    OutResult.bPoseRepeatabilitySubjectTimeDriven = false;
+    OutResult.bSubjectCheckpointAvailable = false;
+    OutResult.SubjectCheckpointUnavailableReason.Reset();
+    OutResult.bSubjectRewoundForControl = false;
+    OutResult.bSubjectRestoreAttempted = false;
+    OutResult.bSubjectRestoredAfterControl = false;
+    OutResult.SubjectRestoreError.Reset();
     // Wall time of the whole sequence, every extra frame included, so msPerShot is what one shot of
     // THIS set really cost (board F-multi-shot-ceiling-not-settable: the shot bound is a cost
     // argument, and a cost nobody publishes cannot be checked).
@@ -106,6 +113,25 @@ bool RunPoseListCapture(
         OutResult.PoseRepeatabilityNotMeasuredReason =
             TEXT("the set ended before its final repeatability control shot");
     }
+    // A set that drives subject time cannot replay pose 0 through the setter (it is not required
+    // to be idempotent), so its control goes through the checkpoint seam instead.
+    bool bAnySubjectTime = false;
+    for (int32 Index = 0; Request.bMeasurePoseRepeatability && Index < CaptureCount; ++Index)
+    {
+        bAnySubjectTime |= Request.Poses[Index].SubjectTimeSeconds.IsSet();
+    }
+    const bool bCheckpointSubject = bAnySubjectTime && static_cast<bool>(Request.SubjectStateCheckpointer);
+    OutResult.bPoseRepeatabilitySubjectTimeDriven = bAnySubjectTime;
+    OutResult.bSubjectCheckpointAvailable = bCheckpointSubject;
+    if (bAnySubjectTime && !bCheckpointSubject)
+    {
+        OutResult.SubjectCheckpointUnavailableReason =
+            Request.SubjectStateCheckpointUnavailableReason.IsEmpty()
+            ? FString(TEXT("this subject kind provides no state checkpoint"))
+            : Request.SubjectStateCheckpointUnavailableReason;
+    }
+    FSubjectStateRestorer PoseZeroRestore;
+    FString PoseZeroCheckpointError;
     ON_SCOPE_EXIT
     {
         if (Request.bMeasurePoseRepeatability && !Request.bRetainPixels
@@ -340,6 +366,22 @@ bool RunPoseListCapture(
         Frame.bRetainPixels = Request.bRetainPixels || bReferenceDrawn
             || (Request.bMeasurePoseRepeatability && Index == 0);
 
+        // The pose-0 checkpoint, taken as late as possible: after the time drive and the coverage
+        // reference, immediately before the frame the control will be compared against.
+        if (Index == 0 && bCheckpointSubject)
+        {
+            FString CheckpointErrorCode;
+            if (!Request.SubjectStateCheckpointer(PoseZeroRestore, CheckpointErrorCode,
+                    PoseZeroCheckpointError) || !PoseZeroRestore)
+            {
+                PoseZeroRestore = nullptr;
+                if (PoseZeroCheckpointError.IsEmpty())
+                {
+                    PoseZeroCheckpointError = TEXT("the checkpointer gave no reason");
+                }
+            }
+        }
+
         PinWrightRenderCapture::FViewportCaptureOutput Capture;
         if (!CaptureFrame(Frame, /*bWarmupFrame=*/false, Capture, OutErrorCode, OutErrorMessage))
         {
@@ -405,25 +447,68 @@ bool RunPoseListCapture(
     }
 
     // ---- same-pose set control ----
-    // Re-shoot pose 0 only when the subject did not move on a time axis. Subject setters are not
-    // required to be idempotent (a Niagara setter may advance from current state), so replaying
-    // pose 0 after the set could create the very difference this control is meant to detect.
-    bool bAnySubjectTime = false;
-    for (int32 Index = 0; Request.bMeasurePoseRepeatability && Index < CaptureCount; ++Index)
-    {
-        bAnySubjectTime |= Request.Poses[Index].SubjectTimeSeconds.IsSet();
-    }
+    // A set with no time axis simply re-shoots pose 0. A time-driven set may not replay pose 0
+    // through the setter (not required to be idempotent: a Niagara advance runs from the current
+    // state, so a replay could create the very difference this control is meant to detect). It
+    // rewinds to the pose-0 checkpoint instead, and puts the end-of-set state back afterwards so
+    // the control is invisible to the caller. A kind with no checkpoint is reported unmeasured.
+    FSubjectStateRestorer EndOfSetRestore;
+    bool bControlReady = Request.bMeasurePoseRepeatability;
     if (!Request.bMeasurePoseRepeatability)
     {
         // Only injected sequence tests use this path. Every real viewport pose set enables the
         // control in CaptureCameraPoses below.
     }
+    else if (bAnySubjectTime && !bCheckpointSubject)
+    {
+        bControlReady = false;
+        OutResult.PoseRepeatabilityNotMeasuredReason = FString::Printf(
+            TEXT("the set drove subject time and cannot rewind pose 0 without advancing it: %s"),
+            *OutResult.SubjectCheckpointUnavailableReason);
+    }
+    else if (bAnySubjectTime && !PoseZeroRestore)
+    {
+        bControlReady = false;
+        OutResult.PoseRepeatabilityNotMeasuredReason = FString::Printf(
+            TEXT("the pose-0 subject checkpoint could not be taken: %s"), *PoseZeroCheckpointError);
+    }
     else if (bAnySubjectTime)
     {
-        OutResult.PoseRepeatabilityNotMeasuredReason =
-            TEXT("the set drove subject time and cannot safely replay pose 0 without changing simulation state");
+        bControlReady = false;
+        FString EndErrorCode;
+        FString EndErrorMessage;
+        if (!Request.SubjectStateCheckpointer(EndOfSetRestore, EndErrorCode, EndErrorMessage)
+            || !EndOfSetRestore)
+        {
+            // No rewind without a way back: the subject would be left at pose 0, not where the
+            // set left it.
+            EndOfSetRestore = nullptr;
+            OutResult.PoseRepeatabilityNotMeasuredReason = FString::Printf(
+                TEXT("the end-of-set subject state could not be checkpointed, so the subject was ")
+                TEXT("not rewound to pose 0: %s"),
+                EndErrorMessage.IsEmpty() ? TEXT("the checkpointer gave no reason") : *EndErrorMessage);
+        }
+        else
+        {
+            OutResult.bSubjectRestoreAttempted = true;
+            FString RewindErrorCode;
+            FString RewindErrorMessage;
+            if (PoseZeroRestore(RewindErrorCode, RewindErrorMessage))
+            {
+                OutResult.bSubjectRewoundForControl = true;
+                bControlReady = true;
+            }
+            else
+            {
+                OutResult.PoseRepeatabilityNotMeasuredReason = FString::Printf(
+                    TEXT("the subject could not be rewound to the pose-0 checkpoint: %s"),
+                    RewindErrorMessage.IsEmpty() ? TEXT("the restorer gave no reason")
+                                                 : *RewindErrorMessage);
+            }
+        }
     }
-    else if (OutResult.Captures.Num() > 0)
+
+    if (bControlReady && OutResult.Captures.Num() > 0)
     {
         PinWrightRenderCapture::FViewportCaptureRequest ControlFrame =
             MakeFrameRequest(Request, Request.Poses[0]);
@@ -472,6 +557,23 @@ bool RunPoseListCapture(
         }
     }
 
+    // Put the end-of-set state back whenever a rewind was attempted, including after a failed
+    // rewind or a failed control frame: the set's last pose is where the caller expects it.
+    if (EndOfSetRestore)
+    {
+        FString RestoreErrorCode;
+        OutResult.bSubjectRestoredAfterControl =
+            EndOfSetRestore(RestoreErrorCode, OutResult.SubjectRestoreError);
+        if (OutResult.bSubjectRestoredAfterControl)
+        {
+            OutResult.SubjectRestoreError.Reset();
+        }
+        else if (OutResult.SubjectRestoreError.IsEmpty())
+        {
+            OutResult.SubjectRestoreError = TEXT("the restorer gave no reason");
+        }
+    }
+
     return true;
 }
 
@@ -495,8 +597,8 @@ bool CaptureCameraPoses(
     PinWrightRenderCapture::FViewportCaptureRestoreReceipt ViewportRestoreReceipt;
     bool bCaptureSucceeded = false;
     {
-        // One rig lifetime for warm-up, every requested pose, and, for non-time-driven sets, the
-        // final same-pose control. Individual captures only measure the rig; they do not restore it.
+        // One rig lifetime for warm-up, every requested pose, and the final same-pose control.
+        // Individual captures only measure the rig; they do not restore it.
         PinWrightPreviewSceneRig::FScopedPreviewSceneRig RigScope(
             ViewportClient, Request.PreviewSceneRig);
         PinWrightRenderCapture::FViewportCaptureSetContext ViewportCaptureSetContext(
@@ -594,6 +696,36 @@ TSharedPtr<FJsonObject> MakePoseSetInfoObject(const FPoseListCaptureOutput& Resu
         {
             Repeatability->SetStringField(TEXT("notMeasuredReason"),
                 Result.PoseRepeatabilityNotMeasuredReason);
+        }
+        // Only on a set that drove subject time: that is the only set whose control needs one.
+        if (Result.bPoseRepeatabilitySubjectTimeDriven)
+        {
+            TSharedPtr<FJsonObject> Checkpoint = MakeShared<FJsonObject>();
+            Checkpoint->SetBoolField(TEXT("available"), Result.bSubjectCheckpointAvailable);
+            if (!Result.bSubjectCheckpointAvailable)
+            {
+                Checkpoint->SetStringField(TEXT("unavailableReason"),
+                    Result.SubjectCheckpointUnavailableReason);
+            }
+            Checkpoint->SetBoolField(TEXT("rewoundForControl"), Result.bSubjectRewoundForControl);
+            if (Result.bSubjectRestoreAttempted)
+            {
+                Checkpoint->SetBoolField(TEXT("restoredAfterControl"),
+                    Result.bSubjectRestoredAfterControl);
+                if (!Result.bSubjectRestoredAfterControl)
+                {
+                    Checkpoint->SetStringField(TEXT("restoreWarning"), Result.bSubjectRewoundForControl
+                        ? FString::Printf(
+                            TEXT("The subject was rewound to pose 0 for the control frame and could not ")
+                            TEXT("be put back where the set left it (%s), so it is now at pose 0's ")
+                            TEXT("state, not the last pose's."), *Result.SubjectRestoreError)
+                        : FString::Printf(
+                            TEXT("The rewind to pose 0 failed and the put-back failed too (%s); the ")
+                            TEXT("subject's state is whatever the failed rewind left."),
+                            *Result.SubjectRestoreError));
+                }
+            }
+            Repeatability->SetObjectField(TEXT("subjectCheckpoint"), Checkpoint);
         }
         Info->SetObjectField(TEXT("poseRepeatability"), Repeatability);
     }

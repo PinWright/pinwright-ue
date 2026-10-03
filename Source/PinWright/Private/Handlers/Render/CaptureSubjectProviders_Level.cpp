@@ -326,6 +326,49 @@ namespace PinWrightCaptureSubjectLevel
                     DisplayTime, UpdateMethod, CanonicalMethod, bForceUpdate);
                 return true;
             };
+            // The checkpoint is the paused playhead: Sequencer evaluates authored data at a frame,
+            // so putting the playhead back re-evaluates the same state without advancing anything.
+            // What the sequence does not drive (a simulation placed in the level) is not covered
+            // and stays in the repeatability delta, where it belongs.
+            // The playhead APIs address whichever sequence Sequencer has open, so both halves
+            // refuse once that is no longer this subject's sequence instead of moving another one.
+            const TWeakObjectPtr<ULevelSequence> WeakSeq(LevelSeq);
+            const auto IsSubjectSequenceOpen = [WeakSeq](FString& ErrCode, FString& ErrMsg) -> bool
+            {
+                if (WeakSeq.IsValid()
+                    && ULevelSequenceEditorBlueprintLibrary::GetCurrentLevelSequence() == WeakSeq.Get())
+                {
+                    return true;
+                }
+                ErrCode = ErrorCodes::ERR_SEQUENCE_NOT_OPEN;
+                ErrMsg = TEXT("The subject's level sequence is no longer the one open in Sequencer");
+                return false;
+            };
+            OutSubject.StateCheckpointer = [IsSubjectSequenceOpen, bForceUpdate](
+                PinWrightCaptureSubject::FSubjectStateRestorer& OutRestore,
+                FString& CheckpointErrCode, FString& CheckpointErrMsg) -> bool
+            {
+                if (!IsSubjectSequenceOpen(CheckpointErrCode, CheckpointErrMsg))
+                {
+                    return false;
+                }
+                const FFrameTime Saved = SequencePlayheadUtils::GetPlayheadPosition();
+                // Always Jump, never the caller's method: the rewind and the put-back are not
+                // animation steps, and a Play sweep across the range would fire event tracks --
+                // breaking the restore-WITHOUT-advancing contract in CaptureSubject.h.
+                OutRestore = [IsSubjectSequenceOpen, Saved, bForceUpdate](
+                    FString& RestoreErrCode, FString& RestoreErrMsg) -> bool
+                {
+                    if (!IsSubjectSequenceOpen(RestoreErrCode, RestoreErrMsg))
+                    {
+                        return false;
+                    }
+                    SequencePlayheadUtils::ApplyPlayheadPosition(
+                        Saved, EUpdatePositionMethod::Jump, TEXT("jump"), bForceUpdate);
+                    return true;
+                };
+                return true;
+            };
             OutSubject.bTimeSupported = true;
             // A Level Sequence scrub is a deterministic evaluation of authored data: the same frame
             // yields the same pose on every run. This is the property a Niagara subject does NOT

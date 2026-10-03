@@ -1074,6 +1074,10 @@ REGISTER_RPC_HANDLER("render.capture_animation_preview", "render",
             OutErrMsg.Reset();
             return true;
         };
+        // The pose-0 repeatability control rewinds through this checkpoint instead of re-driving
+        // ApplyInstant, which would advance SubjectDriveCursor and re-sample pose evidence.
+        PoseRequest.SubjectStateCheckpointer =
+            PinWrightCaptureSubjectAnimation::MakeScrubStateCheckpointer(*PreviewComponent);
     }
 
     PoseRequest.Poses.Reserve(TotalShots);

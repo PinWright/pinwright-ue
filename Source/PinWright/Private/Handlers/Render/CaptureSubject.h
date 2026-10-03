@@ -159,6 +159,15 @@ namespace PinWrightCaptureSubject
     using FSubjectVisibilitySetter =
         TFunction<bool(bool bVisible, FString& OutErrCode, FString& OutErrMsg)>;
 
+    // Snapshot the subject's state; the restorer puts it back there WITHOUT advancing it. The same
+    // types as PinWrightPoseCapture::FSubjectStateCheckpointer, which is where they are consumed
+    // (the pose-0 repeatability control of a time-driven set). UNBOUND IS A LEGAL ANSWER: a kind
+    // whose state cannot be snapshotted leaves it unbound and fills
+    // FResolvedSubject::StateCheckpointUnavailableReason.
+    using FSubjectStateRestorer = TFunction<bool(FString& OutErrCode, FString& OutErrMsg)>;
+    using FSubjectStateCheckpointer = TFunction<bool(
+        FSubjectStateRestorer& OutRestore, FString& OutErrCode, FString& OutErrMsg)>;
+
     struct FResolvedSubject
     {
         // ---- §2.2, frozen; do not rename or retype ----
@@ -222,6 +231,12 @@ namespace PinWrightCaptureSubject
         // capability. A member is additive - a provider that binds nothing keeps every existing
         // caller byte-identical.
         FSubjectVisibilitySetter VisibilitySetter;
+
+        // Bound by a provider whose time state can be snapshotted and restored exactly (a scrubbed
+        // animation, a Sequencer playhead); otherwise unbound with the reason filled. Additive for
+        // the same reason VisibilitySetter is a member.
+        FSubjectStateCheckpointer StateCheckpointer;
+        FString StateCheckpointUnavailableReason;
 
         // Installed by Resolve from the provider that acquired this subject. Held here rather
         // than looked up by Kind so that a provider supplied directly to ResolveWithProvider -
