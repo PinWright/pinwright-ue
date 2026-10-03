@@ -9,15 +9,15 @@
                        "5.7",
                        "5.8"
                    ],
-    "operations":  1270,
-    "operationsRounded":  "1,200+",
+    "operations":  1309,
+    "operationsRounded":  "1,300+",
     "namespaceCount":  68,
     "namespacesRounded":  "60+",
     "namespaces":  [
                        {
                            "slug":  "actor",
                            "tier":  "core",
-                           "methods":  39
+                           "methods":  41
                        },
                        {
                            "slug":  "ai",
@@ -32,7 +32,7 @@
                        {
                            "slug":  "animation",
                            "tier":  "core",
-                           "methods":  77
+                           "methods":  80
                        },
                        {
                            "slug":  "asset",
@@ -42,7 +42,7 @@
                        {
                            "slug":  "audio",
                            "tier":  "core",
-                           "methods":  96
+                           "methods":  99
                        },
                        {
                            "slug":  "behavior_tree",
@@ -52,7 +52,7 @@
                        {
                            "slug":  "blueprint",
                            "tier":  "core",
-                           "methods":  84
+                           "methods":  88
                        },
                        {
                            "slug":  "camera",
@@ -87,12 +87,12 @@
                        {
                            "slug":  "drive",
                            "tier":  "core",
-                           "methods":  12
+                           "methods":  13
                        },
                        {
                            "slug":  "editor",
                            "tier":  "core",
-                           "methods":  43
+                           "methods":  45
                        },
                        {
                            "slug":  "effect",
@@ -107,7 +107,7 @@
                        {
                            "slug":  "eqs",
                            "tier":  "core",
-                           "methods":  6
+                           "methods":  8
                        },
                        {
                            "slug":  "foliage",
@@ -137,7 +137,7 @@
                        {
                            "slug":  "geometry",
                            "tier":  "core",
-                           "methods":  92
+                           "methods":  93
                        },
                        {
                            "slug":  "image",
@@ -167,7 +167,7 @@
                        {
                            "slug":  "level",
                            "tier":  "core",
-                           "methods":  37
+                           "methods":  38
                        },
                        {
                            "slug":  "lighting",
@@ -182,7 +182,7 @@
                        {
                            "slug":  "material",
                            "tier":  "core",
-                           "methods":  76
+                           "methods":  77
                        },
                        {
                            "slug":  "misc",
@@ -197,7 +197,7 @@
                        {
                            "slug":  "mrq",
                            "tier":  "core",
-                           "methods":  6
+                           "methods":  8
                        },
                        {
                            "slug":  "navigation",
@@ -212,7 +212,7 @@
                        {
                            "slug":  "niagara",
                            "tier":  "core",
-                           "methods":  54
+                           "methods":  59
                        },
                        {
                            "slug":  "object",
@@ -232,7 +232,7 @@
                        {
                            "slug":  "physics",
                            "tier":  "core",
-                           "methods":  3
+                           "methods":  6
                        },
                        {
                            "slug":  "pipeline",
@@ -267,7 +267,7 @@
                        {
                            "slug":  "render",
                            "tier":  "core",
-                           "methods":  11
+                           "methods":  12
                        },
                        {
                            "slug":  "rendering",
@@ -277,7 +277,7 @@
                        {
                            "slug":  "sequencer",
                            "tier":  "core",
-                           "methods":  53
+                           "methods":  56
                        },
                        {
                            "slug":  "session",
@@ -287,7 +287,7 @@
                        {
                            "slug":  "skeleton",
                            "tier":  "core",
-                           "methods":  45
+                           "methods":  46
                        },
                        {
                            "slug":  "source_control",
@@ -322,7 +322,7 @@
                        {
                            "slug":  "texture",
                            "tier":  "core",
-                           "methods":  25
+                           "methods":  27
                        },
                        {
                            "slug":  "ui",
@@ -347,7 +347,7 @@
                        {
                            "slug":  "widget",
                            "tier":  "core",
-                           "methods":  30
+                           "methods":  32
                        },
                        {
                            "slug":  "world_partition",
@@ -355,8 +355,8 @@
                            "methods":  4
                        }
                    ],
-    "tests":  5408,
-    "testsRounded":  "5,400+",
+    "tests":  5839,
+    "testsRounded":  "5,800+",
     "clientsOneClick":  [
                             "Claude Code",
                             "Codex CLI",
