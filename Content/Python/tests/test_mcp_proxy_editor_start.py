@@ -917,6 +917,24 @@ class ProxyEditorStartTest(unittest.TestCase):
         self.assertEqual(result["structuredContent"]["probeState"], "unresponsive")
         self.assertIn("answered but could not complete X", result["content"][0]["text"])
 
+    def test_gpu_crashed_editor_fails_fast_instead_of_polling_to_the_timeout(self):
+        # The proxy ceiling is 60 s; a GPU-crashed editor never recovers, so the wait must
+        # return EDITOR_UNRESPONSIVE on the first probe rather than EDITOR_START_TIMEOUT.
+        with tempfile.TemporaryDirectory() as temp:
+            proxy = self._proxy(uproject=self._project(temp), start_timeout=60.0)
+            crashed = GpuCrashedStallProbeTest._stall_ping(True)
+            with mock.patch.object(proxy, "_editor_process_guard", return_value=None), \
+                    mock.patch.object(proxy, "_post", return_value=crashed), \
+                    mock.patch("mcp_proxy.resolve_editor",
+                               return_value=("C:\\UE_5.8", "Editor.exe")), \
+                    mock.patch("mcp_proxy.subprocess.Popen", return_value=_BlockedProcess()):
+                began = time.monotonic()
+                result = proxy._editor_start(_start_args())
+                elapsed = time.monotonic() - began
+        self.assertEqual(result["structuredContent"]["error"], "EDITOR_UNRESPONSIVE")
+        self.assertIn("The editor is dead", result["content"][0]["text"])
+        self.assertLess(elapsed, 5.0)
+
     def test_default_timeout_is_the_proxy_ceiling(self):
         with tempfile.TemporaryDirectory() as temp:
             proxy = self._proxy(uproject=self._project(temp), start_timeout=0.0)
@@ -1483,6 +1501,16 @@ class ProxyEditorRestartTest(unittest.TestCase):
             result = proxy._editor_restart(_start_args(mode="offscreen", allow_build=True))
         self.assertEqual(result["structuredContent"],
                          {"error": "INVALID_ARGUMENTS", "param": "allow_build"})
+
+    def test_wedged_editor_refusal_carries_the_probe_diagnostic(self):
+        proxy = self._proxy()
+        with mock.patch.object(proxy, "_probe_state",
+                               return_value=("unresponsive", "GPU crash: the editor is dead")), \
+                mock.patch.object(proxy, "_request_editor_quit",
+                                  side_effect=AssertionError("must not quit")):
+            result = proxy._editor_restart(_start_args())
+        self.assertEqual(result["structuredContent"]["error"], "EDITOR_UNRESPONSIVE")
+        self.assertIn("GPU crash: the editor is dead", result["content"][0]["text"])
 
     def test_invalid_timeout_is_refused_before_the_quit(self):
         proxy = self._proxy()
@@ -2795,6 +2823,46 @@ class BlockedOnModalProbeTest(unittest.TestCase):
             guard = proxy._editor_process_guard()
         self.assertIsNotNone(guard)
         self.assertEqual(guard["structuredContent"]["error"], "EDITOR_BLOCKED_ON_MODAL")
+
+
+class GpuCrashedStallProbeTest(unittest.TestCase):
+    """A game-thread stall on a crashed GPU never drains. Mapping it to the retryable
+    not_ready state told every queued caller to wait for an editor that was already dead
+    (B-editor-not-ready-blames-benign-work-when-gpu-is-removed)."""
+
+    def _proxy(self):
+        return BlockedOnModalProbeTest._proxy(self)
+
+    @staticmethod
+    def _stall_ping(gpu_crashed):
+        result = {
+            "editorReady": False,
+            "retryable": not gpu_crashed,
+            "error": "EDITOR_GAME_THREAD_STALLED",
+            "message": "game thread has not completed a tick for 269 s",
+            "gameThreadStalled": True,
+            "stalledSeconds": 269.0,
+        }
+        if gpu_crashed:
+            result["gpuCrashed"] = True
+            result["message"] += " ... the engine has flagged a GPU crash ... The editor is dead"
+        return {"jsonrpc": "2.0", "id": "_proxy_probe", "result": result}
+
+    def test_gpu_crashed_stall_is_terminal_not_retryable(self):
+        proxy = self._proxy()
+        with mock.patch.object(proxy, "_post", return_value=self._stall_ping(True)):
+            state, detail = proxy._probe_state(proxy.url)
+        self.assertEqual(state, "unresponsive")
+        self.assertIn("GPU crash", detail)
+        result = proxy._editor_unavailable_result("EDITOR_UNRESPONSIVE", detail=detail)
+        self.assertFalse(result["structuredContent"]["retryable"])
+        self.assertIn("The editor is dead", result["content"][0]["text"])
+
+    def test_plain_stall_stays_retryable_not_ready(self):
+        proxy = self._proxy()
+        with mock.patch.object(proxy, "_post", return_value=self._stall_ping(False)):
+            state, _ = proxy._probe_state(proxy.url)
+        self.assertEqual(state, "not_ready")
 
 
 class ClientIdentityHeaderTest(unittest.TestCase):

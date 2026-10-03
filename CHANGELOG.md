@@ -42,6 +42,13 @@
   `INVALID_ARGUMENTS` on offscreen / headless, which never compile at startup) restores the engine's
   choice, and the result's `startupCompile` reads `skipped` or `allowed`. **Behaviour change:** edit
   C++ then `editor_start` no longer builds it; run `editor_build` first.
+- Fixed: a game-thread stall on a crashed GPU (`GIsGPUCrashed`, set on device removal/loss) is
+  reported as terminal: `ping` adds `gpuCrashed: true` and `retryable: false`, the message names the
+  GPU crash and says to restart instead of listing benign causes and advising a wait, and
+  `tools/call` is refused immediately. The stdio proxy reports it as `EDITOR_UNRESPONSIVE`.
+  **Behaviour change:** such a stall used to be retryable and to queue `tools/call`; the plain-stall
+  message no longer says the condition "clears by itself" and explains that a rising
+  `stalledSeconds` means no tick completed in between.
 - Added: `editor_start` and `editor_restart` take `timeout` (seconds, above 0, at most 3600), the
   `wait: "ready"` ceiling for that call; default stays the proxy's `--start-timeout` (180).
   `EDITOR_START_TIMEOUT` now carries `timeoutSeconds` and `probeState` (`not_ready`, `unresponsive`

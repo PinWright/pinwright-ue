@@ -23,6 +23,10 @@
 
 DEFINE_LOG_CATEGORY(LogSocketHttp);
 
+// Defined in CoreGlobals.cpp but declared in no public header; every RHI that sets it
+// (D3D11/D3D12/Vulkan/Metal) declares it this same way.
+extern CORE_API bool GIsGPUCrashed;
+
 namespace
 {
     constexpr int32 kMaxConnections = 64;
@@ -962,6 +966,10 @@ void FSocketHttpServer::HandleCompleteRequest(const TSharedPtr<FConnection>& Con
         {
             RequestConfig.bGameThreadStalled = true;
             RequestConfig.GameThreadStalledSeconds = ModalStateProbe::GameThreadStalledSeconds();
+            // Set by the D3D11/D3D12/Vulkan/Metal RHIs on their device-removed/lost path
+            // (OpenGL and NullRHI never set it). A plain cross-thread read, as the engine's
+            // own ThreadHeartBeat.cpp hang detector does.
+            RequestConfig.bGpuCrashed = GIsGPUCrashed;
             ModalStateProbe::GetInFlightRpc(RequestConfig.InFlightMethod,
                                             RequestConfig.InFlightRequestId,
                                             RequestConfig.InFlightSeconds);

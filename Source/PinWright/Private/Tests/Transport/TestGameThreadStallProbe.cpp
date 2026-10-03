@@ -365,6 +365,13 @@ bool FGameThreadStallPingNoInFlightTest::RunTest(const FString& Parameters)
     TestTrue(TEXT("message present"), Result->TryGetStringField(TEXT("message"), Message));
     TestTrue(TEXT("message attributes the stall to engine-internal work"),
         Message.Contains(TEXT("engine-internal")));
+    // The counter is monotone during a wedge; the message must tell the caller how to
+    // read that, and must not promise the condition clears on its own.
+    TestTrue(TEXT("message explains a rising counter means no tick in between"),
+        Message.Contains(TEXT("not draining")));
+    TestFalse(TEXT("message no longer promises the stall clears by itself"),
+        Message.Contains(TEXT("clears by itself")));
+    TestFalse(TEXT("no GPU claim while the GPU is healthy"), Result->HasField(TEXT("gpuCrashed")));
 
     return true;
 }
@@ -563,6 +570,111 @@ bool FGameThreadStallNotReadyDetailsAgreeTest::RunTest(const FString& Parameters
                 Text.StartsWith(
                     FString::Printf(TEXT("[%s]"), ErrorCodes::ERR_EDITOR_GAME_THREAD_STALLED)));
         }
+    }
+
+    return true;
+}
+
+// ============================================================================
+// A stall on a crashed GPU (GIsGPUCrashed) never drains. The benign enumeration
+// ("asset compile, map load, package save") and the wait advice were exactly
+// wrong for it, and `retryable: true` fed every queued caller's retry loop
+// (B-editor-not-ready-blames-benign-work-when-gpu-is-removed).
+// ============================================================================
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGameThreadStallCrashedGpuPingTest,
+    "PinWright.transport.liveness.Ping.StalledOnCrashedGpuIsTerminal",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FGameThreadStallCrashedGpuPingTest::RunTest(const FString& Parameters)
+{
+    using namespace PinWrightStallProbeTest;
+
+    McpRequestCore::FRequestConfig Config = HealthyConfig();
+    Config.bGameThreadStalled = true;
+    Config.GameThreadStalledSeconds = 269.0;
+    Config.bGpuCrashed = true;
+
+    TSharedPtr<FJsonObject> Result = Ping(Config, 13);
+    if (!TestTrue(TEXT("ping produced a result object"), Result.IsValid())) return true;
+
+    TestEqual(TEXT("still the stall error code"),
+        Result->GetStringField(TEXT("error")),
+        FString(ErrorCodes::ERR_EDITOR_GAME_THREAD_STALLED));
+    bool bRetryable = true;
+    TestTrue(TEXT("retryable reported"), Result->TryGetBoolField(TEXT("retryable"), bRetryable));
+    TestFalse(TEXT("a stall on a dead GPU is not retryable"), bRetryable);
+    bool bGpuCrashed = false;
+    TestTrue(TEXT("gpuCrashed reported"), Result->TryGetBoolField(TEXT("gpuCrashed"), bGpuCrashed));
+    TestTrue(TEXT("gpuCrashed is true"), bGpuCrashed);
+
+    FString Message;
+    TestTrue(TEXT("message present"), Result->TryGetStringField(TEXT("message"), Message));
+    TestTrue(TEXT("message names the GPU crash"), Message.Contains(TEXT("GPU crash")));
+    TestTrue(TEXT("message gives the terminal verdict"), Message.Contains(TEXT("The editor is dead")));
+    TestFalse(TEXT("benign enumeration is gone"), Message.Contains(TEXT("asset compile")));
+    TestFalse(TEXT("no wait advice"), Message.Contains(TEXT("Wait only if")));
+
+    // Contrast: the same stall on a healthy GPU stays retryable.
+    Config.bGpuCrashed = false;
+    TSharedPtr<FJsonObject> Healthy = Ping(Config, 14);
+    if (!TestTrue(TEXT("healthy-GPU ping produced a result object"), Healthy.IsValid())) return true;
+    bool bHealthyRetryable = false;
+    Healthy->TryGetBoolField(TEXT("retryable"), bHealthyRetryable);
+    TestTrue(TEXT("a healthy-GPU stall stays retryable"), bHealthyRetryable);
+
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGameThreadStallCrashedGpuGatesToolsCallTest,
+    "PinWright.transport.liveness.ToolsCall.CrashedGpuStallGatesDispatch",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FGameThreadStallCrashedGpuGatesToolsCallTest::RunTest(const FString& Parameters)
+{
+    using namespace PinWrightStallProbeTest;
+
+    McpRequestCore::FRequestConfig Config = HealthyConfig();
+    Config.bGameThreadStalled = true;
+    Config.GameThreadStalledSeconds = 300.0;
+    Config.bGpuCrashed = true;
+
+    McpRequestCore::FRequestDecision Out;
+    McpRequestCore::ProcessRequestBody(
+        ToolsCallEnvelope(15, TEXT("system.status")), FString(), Out, Config);
+    TestEqual(TEXT("a dead-GPU stall answers tools/call immediately instead of queueing it"),
+        Out.Kind, McpRequestCore::FRequestDecision::EKind::ImmediateResponse);
+
+    TSharedPtr<FJsonObject> ToolResult = ResultOf(Out.ImmediateBody);
+    if (!TestTrue(TEXT("tool result present"), ToolResult.IsValid())) return true;
+    const TArray<TSharedPtr<FJsonValue>>* Content = nullptr;
+    if (TestTrue(TEXT("content array present"),
+            ToolResult->TryGetArrayField(TEXT("content"), Content)
+            && Content && Content->Num() > 0))
+    {
+        const TSharedPtr<FJsonObject> Block = (*Content)[0]->AsObject();
+        if (TestTrue(TEXT("content[0] is an object"), Block.IsValid()))
+        {
+            const FString Text = Block->GetStringField(TEXT("text"));
+            TestTrue(TEXT("visible text carries the stall code"),
+                Text.StartsWith(
+                    FString::Printf(TEXT("[%s]"), ErrorCodes::ERR_EDITOR_GAME_THREAD_STALLED)));
+            TestTrue(TEXT("visible text names the GPU crash"), Text.Contains(TEXT("GPU crash")));
+        }
+    }
+    const TSharedPtr<FJsonObject>* Details = nullptr;
+    if (TestTrue(TEXT("structured details present"),
+            ToolResult->TryGetObjectField(TEXT("structuredContent"), Details)
+            && Details && (*Details).IsValid()))
+    {
+        bool bRetryable = true;
+        TestTrue(TEXT("structured retryable reported"),
+            (*Details)->TryGetBoolField(TEXT("retryable"), bRetryable));
+        TestFalse(TEXT("structured retryable is false"), bRetryable);
+        bool bGpuCrashed = false;
+        TestTrue(TEXT("structured gpuCrashed reported"),
+            (*Details)->TryGetBoolField(TEXT("gpuCrashed"), bGpuCrashed));
+        TestTrue(TEXT("structured gpuCrashed is true"), bGpuCrashed);
     }
 
     return true;

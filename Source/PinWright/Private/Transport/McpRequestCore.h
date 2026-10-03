@@ -80,6 +80,12 @@ namespace McpRequestCore
         FString AwaitingRequestId;
         double AwaitingSeconds = 0.0;
 
+        // GIsGPUCrashed, read only while bGameThreadStalled: the D3D11/D3D12/Vulkan/Metal
+        // RHI declared the GPU device removed/lost (OpenGL and NullRHI never set it). A stall on a dead device never drains, so it flips the
+        // stall to NON-retryable, gates tools/call, and replaces the wait advice
+        // (B-editor-not-ready-blames-benign-work-when-gpu-is-removed).
+        bool bGpuCrashed = false;
+
         PINWRIGHT_API static FRequestConfig FromSettings();
     };
 

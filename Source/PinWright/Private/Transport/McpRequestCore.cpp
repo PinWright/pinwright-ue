@@ -365,17 +365,41 @@ FString GameThreadStalledMessage(const McpRequestCore::FRequestConfig& Config)
                  "parked) behind whatever owns the thread, so the thread is not inside its "
                  "handler call."),
             *Config.AwaitingMethod, *Config.AwaitingRequestId, Config.AwaitingSeconds)
-        : FString(TEXT("No PinWright RPC is in flight, so the stall is engine-internal work "
-                       "(asset compile, map load, package save) rather than a PinWright call."));
+        : FString(TEXT("No PinWright RPC is in flight, so the stall is engine-internal: "
+                       "long engine work (asset compile, map load, package save) or an "
+                       "engine hang, not a PinWright call."));
+
+    // A dead GPU device is the one stall cause the engine itself has already proven
+    // fatal. The benign enumeration and the wait advice are exactly wrong for it, so
+    // it gets its own verdict (B-editor-not-ready-blames-benign-work-when-gpu-is-removed).
+    if (Config.bGpuCrashed)
+    {
+        return FString::Printf(
+            TEXT("The Unreal editor's game thread has not completed a tick for %.0f s, and "
+                 "the engine has flagged a GPU crash (GIsGPUCrashed: the RHI declared the "
+                 "device removed or lost, e.g. DXGI_ERROR_DEVICE_HUNG or "
+                 "VK_ERROR_DEVICE_LOST). The editor is dead: a removed device does not come "
+                 "back, so the thread will not drain and waiting or retrying cannot help. "
+                 "Kill and restart the editor (unsaved work is lost), and release any shared "
+                 "world lock you hold now rather than spend it polling. The removal reason is "
+                 "in the editor log (search 'GPU crash' / 'Device Removed' / 'DEVICE_LOST'); "
+                 "this reply comes from the socket I/O thread, which is the only part still "
+                 "alive."),
+            Config.GameThreadStalledSeconds);
+    }
 
     return FString::Printf(
         TEXT("The Unreal editor's game thread has not completed a tick for %.0f s. Every "
              "PinWright RPC runs on that thread, so nothing can execute until it returns - "
              "this reply comes from the socket I/O thread, which is the only part still "
              "alive. %s PinWright cannot interrupt a wedged game thread, so this is a "
-             "diagnosis, not a recovery: wait if the operation is expected to be this long, "
-             "otherwise kill and restart the editor (unsaved work is lost). Retrying is "
-             "harmless - the condition clears by itself if the thread drains."),
+             "diagnosis, not a recovery. The figure is the age of the last completed tick: "
+             "if a later call reports a larger one, not a single tick completed in between "
+             "and the thread is not draining. Wait only if an operation this long is "
+             "expected; otherwise check the editor log for a fatal error and kill and "
+             "restart the editor (unsaved work is lost). Retrying costs the editor nothing "
+             "but does not shorten the stall - in a shared editor, do not hold a world lock "
+             "while polling it."),
         Config.GameThreadStalledSeconds, *CauseClause);
 }
 
@@ -388,12 +412,15 @@ TSharedPtr<FJsonObject> BuildPingResult(const McpRequestCore::FRequestConfig& Co
     // exists to close, so the stall must fold into bReady.
     const bool bReady = IsEditorOperational(Config) && !Config.bBlockedOnModal
                         && !Config.bGameThreadStalled;
+    // A stall on a crashed GPU never drains, so it is as terminal as a modal.
+    const bool bStalledOnDeadGpu = Config.bGameThreadStalled && Config.bGpuCrashed;
     Result->SetBoolField(TEXT("editorReady"), bReady);
     // A modal block is the one not-ready condition that polling cannot clear, so it
     // must break the retry loop rather than feed it. EDITOR_NOT_READY is documented
     // retryable and a well-behaved client polls it - which is exactly what burns a
     // 600 s watchdog while a human never sees the dialog.
-    Result->SetBoolField(TEXT("retryable"), !bReady && !Config.bBlockedOnModal);
+    Result->SetBoolField(TEXT("retryable"),
+                         !bReady && !Config.bBlockedOnModal && !bStalledOnDeadGpu);
     Result->SetBoolField(TEXT("editorLoadingPackage"), Config.bEditorLoadingPackage);
     Result->SetBoolField(TEXT("editorSelectionSetAvailable"),
                          Config.bEditorSelectionSetAvailable);
@@ -415,12 +442,18 @@ TSharedPtr<FJsonObject> BuildPingResult(const McpRequestCore::FRequestConfig& Co
         // Ranked below the modal branch on purpose. A modal stops the core ticker
         // too, so past 90 s both probes are true and both are correct - but the
         // modal is the more specific explanation of the same physical fact AND the
-        // non-retryable one, so it must win. `retryable` needs no special case:
-        // !bReady && !bBlockedOnModal is already true here and false there.
+        // non-retryable one, so it must win. `retryable` above is true here except
+        // when bStalledOnDeadGpu: a stall on a crashed GPU never drains.
         Result->SetStringField(TEXT("error"), ErrorCodes::ERR_EDITOR_GAME_THREAD_STALLED);
         Result->SetStringField(TEXT("message"), GameThreadStalledMessage(Config));
         Result->SetBoolField(TEXT("gameThreadStalled"), true);
         Result->SetNumberField(TEXT("stalledSeconds"), Config.GameThreadStalledSeconds);
+        // Omitted when false, like the other stall fields, so healthy-GPU stalls are
+        // byte-identical to before it existed.
+        if (bStalledOnDeadGpu)
+        {
+            Result->SetBoolField(TEXT("gpuCrashed"), true);
+        }
         // Omitted rather than emitted empty when the thread stalled outside any
         // dispatch - "" would read as an unnamed RPC instead of no RPC.
         if (!Config.InFlightMethod.IsEmpty())
@@ -458,7 +491,8 @@ TSharedPtr<FJsonObject> BuildEditorNotReadyToolResult(
                             *BlockedOnModalMessage(Config)),
             Details);
     }
-    // A stall does NOT open this gate - reaching here means the readiness snapshot
+    // A stall does NOT open this gate unless the GPU crashed (see the tools/call
+    // gate) - otherwise reaching here means the readiness snapshot
     // was already negative on its own. But that snapshot is written by the thread
     // that stopped, so when both are true the stall is the honest explanation, and
     // the visible text must agree with the `error` field BuildPingResult just put
@@ -624,7 +658,10 @@ bool McpRequestCore::ProcessRequestBody(const FString& Body,
         // Requests already in flight when the modal opened stay stuck - nothing can
         // rescue those, because the completion-timeout sweep runs on the blocked
         // thread too.
-        if (!IsEditorOperational(Config) || Config.bBlockedOnModal)
+        // A stall on a crashed GPU is the one stall that IS proof, not a heuristic:
+        // the request could only queue behind a thread that never runs again.
+        if (!IsEditorOperational(Config) || Config.bBlockedOnModal
+            || (Config.bGameThreadStalled && Config.bGpuCrashed))
         {
             return Immediate(Out,
                 JsonRpc::BuildResponse(Env.Id, BuildEditorNotReadyToolResult(Config)),

@@ -2074,6 +2074,12 @@ def build_editor_command(exe, uproject, mode, extra_args, unattended_script=Fals
     return argv
 
 
+class _GpuCrashedDetail(str):
+    """The diagnostic _probe_state returns for a GPU-crashed editor. The state stays
+    `unresponsive` for every consumer; the type is what lets editor_start's readiness wait tell
+    a dead editor (fail fast) from a slow ping (keep polling)."""
+
+
 def _startup_modal_hint(cmdline):
     """Extra sentence for a readiness timeout when the launch could still be sitting on a
     startup modal. The proxy cannot SEE such a dialog: the in-editor modal probe only reports
@@ -2917,6 +2923,16 @@ class Proxy:
                 "A human must dismiss it in the editor window."
             )
 
+        # A game-thread stall on a crashed GPU (the plugin reads GIsGPUCrashed) never
+        # drains, so it must not be the retryable not_ready state: the editor is still
+        # bound to the port but dead, which is exactly what `unresponsive` means to every
+        # consumer (do not spawn, do not poll as a slow start).
+        if isinstance(result, dict) and result.get("gpuCrashed") is True:
+            return "unresponsive", _GpuCrashedDetail(result.get("message") or (
+                "The Unreal editor's GPU device was removed and its game thread is stalled; "
+                "it will not recover. Kill and restart the editor."
+            ))
+
         # editorReady PRESENT but not True -> a responsive editor still completing
         # startup. Transient: the bit flips to True when the boundary clears, so this
         # stays the retryable not_ready state. Unchanged behaviour.
@@ -3541,7 +3557,7 @@ class Proxy:
 
         stopped = False
         url = self._resolve_url()
-        state = self._probe_state(url)[0] if url is not None else "not_running"
+        state, detail = self._probe_state(url) if url is not None else ("not_running", None)
 
         if state != "not_running":
             if state != "alive":
@@ -3553,7 +3569,7 @@ class Proxy:
                     {"blocked_on_modal": "EDITOR_BLOCKED_ON_MODAL",
                      "protocol_stale": "EDITOR_PLUGIN_OUTDATED",
                      "not_ready": "EDITOR_NOT_READY"}.get(state, "EDITOR_UNRESPONSIVE"),
-                    url=url,
+                    url=url, detail=detail,
                 )
 
             quit_failure = self._request_editor_quit(url, save, discard)
@@ -4227,6 +4243,12 @@ class Proxy:
                     # a slow start and hide the one actionable fact.
                     return self._editor_unavailable_result(
                         "EDITOR_BLOCKED_ON_MODAL", url=url, detail=wait_detail
+                    )
+                if isinstance(wait_detail, _GpuCrashedDetail):
+                    # Fail fast: a GPU-crashed editor never recovers, and with a caller's
+                    # timeout of up to an hour this poll would otherwise wait on a dead editor.
+                    return self._editor_unavailable_result(
+                        "EDITOR_UNRESPONSIVE", url=url, detail=wait_detail
                     )
                 if wait_state == "alive":
                     elapsed = round(time.monotonic() - start, 1)

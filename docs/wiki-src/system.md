@@ -173,7 +173,9 @@ requests already in flight remain stuck.
 A handler that never returns is more common than a modal. Past 90 s without a liveness heartbeat,
 `ping` returns `error: "EDITOR_GAME_THREAD_STALLED"` with `retryable: true`, `stalledSeconds`, and
 `inFlightMethod` / `inFlightRequestId`. It does not gate `tools/call`; the work may finish. PinWright
-cannot interrupt a wedged game thread, so this is diagnosis, not recovery.
+cannot interrupt a wedged game thread, so this is diagnosis, not recovery. When the engine has
+flagged a GPU crash the stall carries `gpuCrashed: true`, is not retryable and does gate `tools/call`:
+the editor is dead and must be restarted (see `call("unattended")`).
 
 The common trigger is a `python.execute` loop; one incident held an editor for 168+ minutes.
 `call("python")` has the detail and the typed C++ RPCs that avoid doing those sweeps on the game thread.
