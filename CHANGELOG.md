@@ -17,6 +17,13 @@
   that shape (as `position`), but `location` was declared an untyped alias of the `array` param
   `locations`, so the type gate refused the object with `PARAM_TYPE_MISMATCH` before the handler
   ran. `location` is now a typed alias declared `array|object`.
+- Fixed: after a `drive.key` gamepad key switched a CommonUI host's player to the `Gamepad`
+  input type, Slate-path mouse injection (`drive.click`, `drive.hover`, `drive.drag`,
+  `drive.scroll`, `editor.simulate_input` mouse events) left it there, because CommonInput's
+  preprocessor ignores a synthetic pointer event whose player viewport is outside the focus path.
+  Mouse injection now switches the player whose viewport is under the pointer from `Gamepad`
+  back to `MouseAndKeyboard`, as a real mouse does. **Behaviour change:** a Slate mouse injection
+  over a player's viewport resets its `Gamepad` input type.
 - Fixed: `drive.type` types only into a target that holds keyboard focus. A target already
   focused is no longer clicked first, so a `drive.key` ctrl+A selection survives and the text
   replaces it instead of being appended at the click point. **Behaviour change:** when the

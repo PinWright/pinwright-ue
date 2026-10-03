@@ -4,6 +4,11 @@
 
 #include "Containers/Ticker.h"
 #include "Editor.h"
+#include "Engine/Engine.h"
+#include "Engine/GameInstance.h"
+#include "Engine/GameViewportClient.h"
+#include "Engine/LocalPlayer.h"
+#include "Engine/World.h"
 #include "Framework/Application/SlateApplication.h"
 #include "GenericPlatform/GenericApplication.h"
 #include "GenericPlatform/GenericWindow.h"
@@ -12,6 +17,7 @@
 #include "InputCoreTypes.h"
 #include "Layout/WidgetPath.h"
 #include "Misc/ScopeExit.h"
+#include "Widgets/SViewport.h"
 #include "Widgets/SWindow.h"
 
 #if PLATFORM_LINUX
@@ -176,6 +182,98 @@ FDriveCharKeyMapping FDriveInput::MapCharToKey(TCHAR Char)
 // Private Slate helpers
 // ────────────────────────────────────────────────────────────────────────────
 
+// CommonInput (an optional plugin, so reached by reflection) keeps one input type per local
+// player. A gamepad key (drive.key Gamepad_*) switches it to Gamepad, which also swaps the Slate
+// cursor user onto a faux cursor that a warp of the platform cursor does not move. A real mouse
+// switches it back through FCommonInputPreprocessor, but that preprocessor drops a synthetic event
+// unless the player's game viewport is in the Slate user's focus path (RefreshCurrentInputMethod,
+// PIE) and the move has a non-zero delta. Board B-drive-click-dead-after-gamepad-key.
+DEFINE_LOG_CATEGORY_STATIC(LogPinWrightDriveInput, Log, All);
+
+namespace DriveInputCommonInput
+{
+    // ECommonInputType (CommonInputTypeEnum.h): MouseAndKeyboard = 0, Gamepad = 1, Touch = 2.
+    constexpr uint8 MouseAndKeyboard = 0;
+    constexpr uint8 Gamepad = 1;
+
+    struct FReflected
+    {
+        UClass* SubsystemClass = nullptr;
+        UFunction* GetType = nullptr;
+        UFunction* SetType = nullptr;
+    };
+
+    // Resolved once CommonInput's class exists; retried while it does not.
+    const FReflected& Reflected()
+    {
+        static FReflected Cached;
+        if (!Cached.SubsystemClass)
+        {
+            UClass* SubsystemClass = FindObject<UClass>(nullptr, TEXT("/Script/CommonInput.CommonInputSubsystem"));
+            UFunction* GetType = SubsystemClass ? SubsystemClass->FindFunctionByName(TEXT("GetCurrentInputType")) : nullptr;
+            UFunction* SetType = SubsystemClass ? SubsystemClass->FindFunctionByName(TEXT("SetCurrentInputType")) : nullptr;
+            // Each takes or returns exactly one ECommonInputType, so a uint8 is the whole parameter block.
+            if (GetType && SetType && GetType->ParmsSize == sizeof(uint8) && SetType->ParmsSize == sizeof(uint8))
+            {
+                Cached = FReflected{ SubsystemClass, GetType, SetType };
+            }
+        }
+        return Cached;
+    }
+
+    // The switch a real mouse event at ScreenPos makes: only for the local player that
+    // FCommonInputPreprocessor would treat as the event's owner, i.e. whose game viewport the
+    // pointer is over and whose (PIE-remapped) ControllerId is the mouse's Slate user. Gamepad goes
+    // back to MouseAndKeyboard; Touch (mouse-for-touch) is left alone, as a real mouse leaves it.
+    void ReturnGamepadPlayerToMouse(FSlateApplication& SlateApp, const FVector2D& ScreenPos)
+    {
+        const FReflected& R = Reflected();
+        if (!R.SubsystemClass || !GEngine)
+        {
+            return;
+        }
+        const FWidgetPath Path = SlateApp.LocateWindowUnderMouse(ScreenPos, SlateApp.GetInteractiveTopLevelWindows());
+        if (!Path.IsValid())
+        {
+            return;
+        }
+        const int32 MouseUser = SlateApp.GetUserIndexForMouse();
+        for (const FWorldContext& Context : GEngine->GetWorldContexts())
+        {
+            const UWorld* World = Context.World();
+            if (!Context.OwningGameInstance || !World || !World->IsGameWorld())
+            {
+                continue;
+            }
+            for (ULocalPlayer* Player : Context.OwningGameInstance->GetLocalPlayers())
+            {
+                UGameViewportClient* ViewportClient = Player ? Player->ViewportClient.Get() : nullptr;
+                const TSharedPtr<SViewport> ViewportWidget = ViewportClient ? ViewportClient->GetGameViewportWidget() : nullptr;
+                if (!ViewportWidget.IsValid() || !Path.ContainsWidget(ViewportWidget.Get()))
+                {
+                    continue;
+                }
+                int32 ControllerId = Player->GetControllerId();
+                GEngine->RemapGamepadControllerIdForPIE(ViewportClient, ControllerId);
+                UObject* Subsystem = Player->GetSubsystemBase(R.SubsystemClass);
+                if (ControllerId != MouseUser || !Subsystem)
+                {
+                    continue;
+                }
+                uint8 Current = MouseAndKeyboard;
+                Subsystem->ProcessEvent(R.GetType, &Current);
+                if (Current == Gamepad)
+                {
+                    uint8 NewType = MouseAndKeyboard;
+                    Subsystem->ProcessEvent(R.SetType, &NewType);
+                    UE_LOG(LogPinWrightDriveInput, Log, TEXT("CommonInput input type of %s was Gamepad; switched to MouseAndKeyboard for mouse input over its viewport."),
+                        *Player->GetName());
+                }
+            }
+        }
+    }
+}
+
 void FDriveInput::DispatchMouseMove(FSlateApplication& SlateApp, const FVector2D& ScreenPos)
 {
     const FVector2D LastPos(SlateApp.GetLastCursorPos());
@@ -185,6 +283,9 @@ void FDriveInput::DispatchMouseMove(FSlateApplication& SlateApp, const FVector2D
     {
         Cursor->SetPosition(FMath::RoundToInt(ScreenPos.X), FMath::RoundToInt(ScreenPos.Y));
     }
+
+    // Before the event, as CommonInput's preprocessor switches before routing.
+    DriveInputCommonInput::ReturnGamepadPlayerToMouse(SlateApp, ScreenPos);
 
     // ProcessMouseMoveEvent directly: bypasses the IsFakingTouchEvents guard and
     // the LastPlatformCursorPosition dedup that silently drop synthetic moves.
