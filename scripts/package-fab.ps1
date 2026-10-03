@@ -515,7 +515,7 @@ function Assert-StagedTextIsPublic {
 function Assert-ProductFactsConsistent {
     # Every number this plugin publishes - version, operation count, namespace count, UE
     # range - has exactly one source: product-facts.json at the plugin root, written by
-    # scripts\gen-product-facts.ps1 from the live handler registry, the descriptor and the
+    # scripts\gen_product_facts.py from the live handler registry, the descriptor and the
     # engine version list in that script. This gate fails the package when staged copy
     # states a different one.
     # It exists because hand-maintained copies published "1,300+ operations" against a real
@@ -529,10 +529,10 @@ function Assert-ProductFactsConsistent {
     $factsPath = Join-Path (Get-FullPath $PluginRoot) 'product-facts.json'
     if (-not (Test-Path -LiteralPath $factsPath)) {
         if ($ValidateOnly -or $DryRun) {
-            Write-Warning "Published-number consistency was NOT validated: $factsPath is absent. Run scripts\gen-product-facts.ps1 (it needs a registry.json from one editor launch). A real package run fails instead of warning."
+            Write-Warning "Published-number consistency was NOT validated: $factsPath is absent. Run scripts\gen_product_facts.py (it needs a registry.json from one editor launch). A real package run fails instead of warning."
             return
         }
-        throw "Cannot package: $factsPath is missing, so no staged number can be checked against the single source of truth. Launch the editor once to write registry.json, then run scripts\gen-product-facts.ps1."
+        throw "Cannot package: $factsPath is missing, so no staged number can be checked against the single source of truth. Launch the editor once to write registry.json, then run scripts\gen_product_facts.py."
     }
 
     $facts = Read-JsonFile $factsPath
@@ -544,7 +544,7 @@ function Assert-ProductFactsConsistent {
     $factTestsRounded = [int](($facts.testsRounded -replace '[^0-9]', ''))
     $factUeRange = [string]$facts.ueRange
     # The README namespace list states the public-tier subset ("All 67 public namespaces (1269
-    # operations)"), not the totals: gen-product-facts.ps1 omits internal-tier namespaces and
+    # operations)"), not the totals: gen_product_facts.py omits internal-tier namespaces and
     # names them beside the list. Its figures come from the same tiered namespaces array.
     $factPublic = @($facts.namespaces | Where-Object { $_.tier -ne 'internal' })
     $factPublicOperations = 0
@@ -556,7 +556,7 @@ function Assert-ProductFactsConsistent {
     # (including a -VersionName override, which Update-StagedDescriptor already applied).
     $stagedDescriptor = Read-JsonFile (Join-Path $StagePluginRoot 'PinWright.uplugin')
     if ([string]$stagedDescriptor.VersionName -ne [string]$facts.version) {
-        throw "Staged PinWright.uplugin VersionName is '$($stagedDescriptor.VersionName)' but product-facts.json says '$($facts.version)'. Re-run scripts\gen-product-facts.ps1 so the published copy matches the version being shipped."
+        throw "Staged PinWright.uplugin VersionName is '$($stagedDescriptor.VersionName)' but product-facts.json says '$($facts.version)'. Re-run scripts\gen_product_facts.py so the published copy matches the version being shipped."
     }
 
     # All four UE-range spellings in circulation after an explicit UE/Unreal Engine
@@ -605,7 +605,7 @@ function Assert-ProductFactsConsistent {
         # patterns below do not read it as a product-total claim.
         foreach ($match in $publicSummaryPattern.Matches($text)) {
             if ([int]$match.Groups['ns'].Value -ne $factPublic.Count -or [int]($match.Groups['ops'].Value -replace ',', '') -ne $factPublicOperations) {
-                throw "Staged text states '$($match.Value)' in $relative, but product-facts.json lists $($factPublic.Count) public namespaces with $factPublicOperations operations. Re-run scripts\gen-product-facts.ps1."
+                throw "Staged text states '$($match.Value)' in $relative, but product-facts.json lists $($factPublic.Count) public namespaces with $factPublicOperations operations. Re-run scripts\gen_product_facts.py."
             }
         }
         $text = $publicSummaryPattern.Replace($text, '')
@@ -626,7 +626,7 @@ function Assert-ProductFactsConsistent {
                 }
                 $expected = if ($match.Groups['plus'].Value -eq '+') { $claim.Rounded } else { $claim.Exact }
                 if ($number -ne $expected) {
-                    throw "Staged text states $($claim.Label) '$($match.Value)' in $relative, but product-facts.json says $($claim.Exact) (published as $($claim.Rounded)+). Re-run scripts\gen-product-facts.ps1 and update the text."
+                    throw "Staged text states $($claim.Label) '$($match.Value)' in $relative, but product-facts.json says $($claim.Exact) (published as $($claim.Rounded)+). Re-run scripts\gen_product_facts.py and update the text."
                 }
             }
         }

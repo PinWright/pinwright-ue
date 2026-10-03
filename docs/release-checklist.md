@@ -56,7 +56,7 @@ operation count, namespace count, version, engine range. They drift unless regen
 one source in the same release. Do all of these, in order:
 
 1. Regenerate the fact source against the live registry and commit it:
-   `powershell -ExecutionPolicy Bypass -File scripts/gen-product-facts.ps1` → `product-facts.json`.
+   `python3 scripts/gen_product_facts.py` (Windows: `py scripts\gen_product_facts.py`) → `product-facts.json`.
    The same run rewrites the README namespace list between the `<!-- namespaces:begin -->` and
    `<!-- namespaces:end -->` markers from the generated wiki (internal-tier namespaces are named
    there but not listed) and the overview sentence's operation, namespace and test totals;

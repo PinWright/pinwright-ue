@@ -443,7 +443,7 @@ either direction:
 | `CLAUDE.md` (overview, *UE version compat*) | 5.3-5.8 | Links here. |
 | `README.md` (Requirements) | 5.3-5.8, Windows or Linux | Links here. The end-user-facing statement. |
 | `.polyskill/skills/mcp-version-matrix/` | candidates `5.3`…`5.8` | The local verification loop; the version to test is an argument, so a narrowed claim means narrowing the candidate list. |
-| `product-facts.json` (`ueRange`, `ueVersions`) | `5.3-5.8` | **Generated** by `scripts/gen-product-facts.ps1` from the `$ueVersions` list in that script — editing the JSON alone is discarded. Changing the advertised range therefore means changing that list. |
+| `product-facts.json` (`ueRange`, `ueVersions`) | `5.3-5.8` | **Generated** by `scripts/gen_product_facts.py` from the `ue_versions` list in that script — editing the JSON alone is discarded. Changing the advertised range therefore means changing that list. |
 | `PinWright.uplugin` | — | Carries **no** `EngineVersion` key, so it advertises nothing and needs no edit. |
 | `docs/arch.md:146,586` | "UE 5.3-5.8 compat" | Describes what `Misc/EngineVersionComparison.h` is for, not a support claim. |
 | `CLAUDE.md` (Architecture → transport) | `SocketHttpServer` is "uniform across UE 5.3-5.8" | True of that file — it needs no guards on any of the six. A claim about one implementation, not about the plugin; left alone. |
