@@ -62,6 +62,7 @@
 #include "K2Node_FormatText.h"
 #include "K2Node_AsyncAction.h"
 #include "Kismet/BlueprintAsyncActionBase.h"
+#include "Kismet/KismetSystemLibrary.h"
 #include "UObject/UObjectIterator.h"
 #include "K2Node_ConstructObjectFromClass.h"
 #include "K2Node_ConvertAsset.h"
@@ -7676,6 +7677,42 @@ void FBpirCompiler::WireCreateDelegateForBindNode(
 #endif
 }
 
+// B-bpir-const-ref-fname-literal-dropped: a by-reference input (a `const T&` parameter
+// without AutoCreateRefTerm) cannot carry a pin default. The editor hides the field and the
+// Blueprint compiler rejects any literal there ("by ref" params expect a valid input), so a
+// literal aimed at such a pin is fed through a UKismetSystemLibrary::MakeLiteral* node.
+namespace BpirCompilerByRefLiteral
+{
+    // Same predicate UEdGraphSchema_K2::IsPinDefaultValid applies before it rejects a default.
+    static bool PinRequiresWiredInput(const UEdGraphPin* Pin)
+    {
+        return Pin && Pin->Direction == EGPD_Input
+            && Pin->PinType.bIsReference
+            && !Pin->PinType.IsContainer()
+            && !Pin->GetOwningNode()->IsA<UK2Node_FunctionResult>()
+            && !GetDefault<UEdGraphSchema_K2>()->IsAutoCreateRefTerm(Pin);
+    }
+
+    // The MakeLiteral* function returning the pin's type, or nullptr when none exists
+    // (structs, objects, classes, enums).
+    static UFunction* FindMakeLiteralFunction(const FEdGraphPinType& Type)
+    {
+        const FName& Category = Type.PinCategory;
+        const TCHAR* FunctionName =
+            Category == UEdGraphSchema_K2::PC_Boolean ? TEXT("MakeLiteralBool")
+            : Category == UEdGraphSchema_K2::PC_Int ? TEXT("MakeLiteralInt")
+            : Category == UEdGraphSchema_K2::PC_Int64 ? TEXT("MakeLiteralInt64")
+            : Category == UEdGraphSchema_K2::PC_Real
+                ? (Type.PinSubCategory == UEdGraphSchema_K2::PC_Float ? TEXT("MakeLiteralFloat") : TEXT("MakeLiteralDouble"))
+            : Category == UEdGraphSchema_K2::PC_Name ? TEXT("MakeLiteralName")
+            : Category == UEdGraphSchema_K2::PC_String ? TEXT("MakeLiteralString")
+            : Category == UEdGraphSchema_K2::PC_Text ? TEXT("MakeLiteralText")
+            : (Category == UEdGraphSchema_K2::PC_Byte && !Type.PinSubCategoryObject.IsValid()) ? TEXT("MakeLiteralByte")
+            : nullptr;
+        return FunctionName ? UKismetSystemLibrary::StaticClass()->FindFunctionByName(FunctionName) : nullptr;
+    }
+}
+
 // ----------------------------------------------------------------------------
 // WireDataPins() — Pass 3: wire data pins for one instruction
 // ----------------------------------------------------------------------------
@@ -7755,9 +7792,52 @@ bool FBpirCompiler::WireDataPins(int32 InstructionIndex, FBpirInstruction& Inst,
         auto ApplyDefaultValueToTargetPin = [&](const FString& DefaultValue) -> bool
         {
             FString DefaultError;
-            if (FCodePinResolver::SetPinDefaultValue(TargetPin, DefaultValue, &DefaultError))
+            UEdGraphPin* DefaultPin = TargetPin;
+            UK2Node_CallFunction* LiteralNode = nullptr;
+            if (BpirCompilerByRefLiteral::PinRequiresWiredInput(TargetPin))
             {
-                return true;
+                // Only a const ref is a pure input; a non-const ref (UPARAM(ref)) is written
+                // through, so feeding it a MakeLiteral temporary would silently drop the write.
+                const bool bConstRef = TargetPin->PinType.bIsConst;
+                UFunction* MakeLiteral = bConstRef
+                    ? BpirCompilerByRefLiteral::FindMakeLiteralFunction(TargetPin->PinType)
+                    : nullptr;
+                if (!MakeLiteral)
+                {
+                    const FString TypeText = UEdGraphSchema_K2::TypeToText(TargetPin->PinType).ToString();
+                    const FString ErrorMsg = bConstRef
+                        ? FString::Printf(
+                            TEXT("Pin '%s' is a by-reference parameter (const %s&): Unreal requires a wired ")
+                            TEXT("input there and ignores a typed default, and no MakeLiteral node exists for ")
+                            TEXT("this type. Build the value first (a Make node, a variable or a call result) ")
+                            TEXT("and pass that instead of the literal '%s'."),
+                            *Arg.PinName, *TypeText, *DefaultValue)
+                        : FString::Printf(
+                            TEXT("Pin '%s' is a by-reference in/out parameter (%s&): the function writes ")
+                            TEXT("through it, so the literal '%s' has nowhere to land. Pass a variable instead."),
+                            *Arg.PinName, *TypeText, *DefaultValue);
+                    UE_LOG(LogBpirCompiler, Warning, TEXT("Line %d: %s"), Inst.SourceLine, *ErrorMsg);
+                    AccumulatedErrors.Add(FCompileError(Inst.SourceLine, ErrorMsg));
+                    bAllWired = false;
+                    return false;
+                }
+                UEdGraphPin* NoExec = nullptr;
+                LiteralNode = NodeEmitter->CreateCallFunctionNode(MakeLiteral, NoExec);
+                DefaultPin = LiteralNode ? LiteralNode->FindPin(TEXT("Value"), EGPD_Input) : nullptr;
+            }
+            if (FCodePinResolver::SetPinDefaultValue(DefaultPin, DefaultValue, &DefaultError))
+            {
+                if (!LiteralNode)
+                {
+                    return true;
+                }
+                UEdGraphPin* LiteralOut = LiteralNode->GetReturnValuePin();
+                if (LiteralOut && TargetPin->GetSchema()->TryCreateConnection(LiteralOut, TargetPin))
+                {
+                    return true;
+                }
+                DefaultError = FString::Printf(TEXT("Could not wire a %s node into by-reference pin '%s'"),
+                    *LiteralNode->GetTargetFunction()->GetName(), *Arg.PinName);
             }
 
             const FString ErrorMsg = DefaultError.IsEmpty()

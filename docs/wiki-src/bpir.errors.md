@@ -68,6 +68,19 @@ call PrintString(InString: %b.X)
 call PrintString(InString: %v.X)
 ```
 
+**Interface variables take an interface value, not a plain object** — `set Receiver = %actor` into an `interface<…>` variable fails with `TryCreateConnection failed wiring data … An object connects to an interface pin only when its class implements the interface`. The K2 schema has no object-to-interface conversion node (the editor refuses the same drag). Convert at runtime with the pure cast, which yields null when the object does not implement it:
+
+```
+set Receiver = cast<BPI_MyInterface_C>(%actor)
+```
+
+**By-reference parameters get literals through a MakeLiteral node** — A `const T&` parameter without `AutoCreateRefTerm` (e.g. every `UBlackboardComponent` `KeyName`) cannot hold a typed default: the editor hides the field and the Blueprint compiler rejects it. For bool, int, int64, float/double, name, string, text and plain byte pins the compiler feeds the literal through `UKismetSystemLibrary::MakeLiteral*` automatically, so `KeyName: "TargetActor"` compiles to a `MakeLiteralName` node wired into the pin; decompiling shows that node as its own `%n = pure MakeLiteralName(...)` line, so the round trip is stable but not byte-identical to the source. Any other type (structs, objects, classes, enums) fails with `Pin '<name>' is a by-reference parameter …`: build the value first and pass the reference. A non-const `UPARAM(ref)` in/out parameter (e.g. `ReplaceInline`'s `SourceString`) never takes a literal: the function writes through it, so it fails with `… is a by-reference in/out parameter`; pass a variable.
+
+```
+%v = call MakeVector(X: 1.0, Y: 2.0, Z: 3.0)
+%t = call FTruncVector(InVector: %v)
+```
+
 ## See also
 
 - `call("bpir")` — language overview, sigils, quick reference

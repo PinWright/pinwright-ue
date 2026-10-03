@@ -26,6 +26,16 @@
   seeded `CLAUDE.md`/`AGENTS.md` name the `source.fileMd5` check; all are create-if-missing, so an
   existing dump root keeps its old files until they are deleted. Dump core version 4: every cached aspect regenerates once.
 
+- Fixed: a BPIR literal on a by-reference parameter (`const T&` without `AutoCreateRefTerm`, e.g.
+  `UBlackboardComponent` `KeyName`) was written as a pin default the Blueprint compiler then
+  rejected ("by ref" params expect a valid input). Bool, int, int64, real, name, string, text and
+  plain byte literals are now fed through a `MakeLiteral*` node. **Behaviour change:** a literal of
+  any other type on such a pin (struct, object, class, enum) fails `compile_bpir` at the BPIR layer
+  with `Pin '<name>' is a by-reference parameter …` instead of `BLUEPRINT_COMPILE_FAILED`, and any
+  literal on a non-const `UPARAM(ref)` in/out parameter fails with `… is a by-reference in/out parameter`.
+- Changed: a failed BPIR data wire from an object into an interface pin now says the object must
+  implement the interface and names `cast<InterfaceClass>(...)` as the route.
+
 - Fixed: BPIR decompilation of an InputKey node with both `Pressed` and `Released` wired emitted
   only a `key_released` entry and dropped the Pressed body without a warning. It now emits a
   `key_pressed` and a `key_released` entry, each with its own body (`bpir.txt` aspect 12).

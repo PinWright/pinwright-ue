@@ -23,6 +23,10 @@ mcdelegate<OwnerHint, SignatureName>  # Multi-cast delegate with signature-owner
 wildcard                    # Wildcard (generic)
 ```
 
+An `interface<…>` variable or pin is a valid `set` target, but it only accepts an interface value or an object whose class implements the interface. Assign any other object through the pure cast, `set Receiver = cast<BPI_MyInterface_C>(%obj)` (null when the object does not implement it); a plain object RHS fails to wire, as it does in the editor.
+
+By-reference parameters (`const T&` without `AutoCreateRefTerm`) cannot hold a pin default; see `call("bpir.errors")` → Common Pitfalls for how literals reach them.
+
 Delegate typed forms use the comma form `delegate<OwnerHint, SignatureName>` and `mcdelegate<OwnerHint, SignatureName>` when the signature owner matters. `OwnerHint` is only a lookup hint for the signature owner; compilation must resolve `SignatureName` to the real `UFunction` signature, including package-owned native delegate signatures, and write that function into `PinSubCategoryMemberReference`. Decompilation emits a parser-safe class, module, or package owner hint when the member reference is populated so the text can compile back to the same delegate signature.
 
 **Note:** `set<T>` and `map<K, V>` are fully supported on both the compile and
