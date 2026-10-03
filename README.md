@@ -890,6 +890,7 @@ Not listed: internal plumbing namespaces, not intended for direct use - `pipelin
 | `level.build_navigation` | Build the navigation mesh (recast) for the active world. |
 | `level.create` | Create a new empty (non-World-Partition) level asset. |
 | `level.delete` | Delete a level package from the content browser. |
+| `level.describe_offline` | List a map's actors (label, class, transform, ...) by reading its .umap from disk, never loading it. |
 | `level.duplicate` | Duplicate an existing level package to a new location without modifying the source. |
 | `level.export` | Export a level to a text-format .t3d file on disk. |
 | `level.get_actors` | List every actor that belongs to the named level (not the entire world). |

@@ -11,6 +11,10 @@ for active-editor summaries; [`asset-audit`](asset-audit.md), [`safe-mutation-sa
 and [`visual-review`](visual-review.md) cover audit/edit loops. Build from scratch with
 [`level-building`](level-building.md), then use [`level-review`](level-review.md).
 
+To see what a map contains **without loading it** — another caller holds the world, or you are
+planning edits before taking it — use [`level.describe_offline`](level.describe_offline.md): it
+parses the `.umap` file and never touches the active world.
+
 ## Guarding a mutating sequence against world swaps
 
 Every mutating `level.*` call accepts optional `expectWorld`. Pass the `world` returned by the
@@ -129,6 +133,50 @@ quality and `EditorBuild` rebuilds options from the ini. Omitting `quality` uses
 other options (selection, current level, visibility, error coloring) come from that same block.
 
 The bake is still an async job — see the ticket/poll gotcha above.
+
+### level.describe_offline
+
+Reads the map's `.umap` file directly: summary, name/import/export tables, then each actor's saved
+properties. **It never loads the map, never creates its package in memory, and never changes the
+active editor world** — there is no load call anywhere in the verb — so it is safe to call while
+another caller holds the world lock, and it works on a map nobody has open.
+
+Each `actors[]` entry is `pinwright.actor-describe.v1` with `storage:"embedded"`, so it diffs
+directly against `asset.dump`'s `actors/*.json` and `actor.describe`: `name`, `label`, `path`,
+`class`, `level`, `folder`, `guid`, `tags`, `transform` (world), plus `transformExact` and
+`tagsExact` (below). The `properties` and `components`
+blocks are not emitted — they need a live object. Envelope: `levelPath`, `packageFile`,
+`worldPath`, `source {fileMd5, unsavedChanges}`, `usesExternalActors`, `embeddedActorCount`,
+`externalActorReferenceCount`, `externalActors[]`, and `warnings[]` when present. The read is of
+the file: when the map is also loaded with unsaved changes, `source.unsavedChanges` is true and a
+warning says the editor's copy has moved past what this describes.
+
+What the file cannot tell you, and how the response says so:
+
+- **Unsaved values.** The editor writes a property only when it differs from the archetype. For a
+  native actor class the archetype is in memory and fills the gap exactly. For a Blueprint class
+  it is a template that would have to be loaded, so a missing transform field falls back to the
+  component class default and the actor carries `transformExact:false` plus a
+  `transformCaveats[]` line. A socket attachment (offset not applied) and a parent outside the
+  package are reported the same way.
+- **Tags.** `Tags` is saved only when it differs from the archetype too. A native-class actor with
+  no saved `Tags` reads its class default exactly; an actor whose class is a Blueprint, or is not
+  loaded in this editor (a disabled plugin's class), reads `[]` with `tagsExact:false`, because
+  those default tags are not readable without a load.
+- **Labels.** `label` is the saved `ActorLabel`. An actor saved without one reads `""` here, where
+  a loaded read generates one from the class name.
+- **Folders.** `folder` is the saved `FolderPath`. A level that stores folders as actor-folder
+  objects reads `None` for every actor, and a `warnings[]` line says so.
+- **External actors** (One File Per Actor / World Partition) live in their own packages and are
+  listed under `externalActors[]` as `{storage:"external-reference", package, name, class}` from
+  the asset registry — listed, not resolved. A `warnings[]` line says when the registry is still
+  scanning.
+
+Errors: `ASSET_NOT_FOUND` (no `.umap` at that path — including a map saved only in text format,
+which has no `.umap`), `NOT_A_MAP` (a `.uasset`, or a package with no world), `PARSE_FAILED`
+(cooked, unversioned, truncated or otherwise malformed file — the verb never returns a partial
+list for a file it could not parse, and a corrupt header is refused before any read leaves the
+file).
 
 ### level.duplicate
 

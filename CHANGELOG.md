@@ -13,6 +13,16 @@
   tick. **Behaviour change:** it now runs at the next safe point instead of inline, its schema
   gains the optional `expectWorld` precondition (refused with `WORLD_MISMATCH` on mismatch), and a
   successful response carries `world` (the current world object path) besides `success`.
+- Added: `level.describe_offline` lists a map's actors (label, name, class, path, folder, tags,
+  guid, world transform) by parsing the `.umap` on disk, in the `pinwright.actor-describe.v1`
+  shape `asset.dump` writes. It never loads the map, never creates its package and never touches
+  the active editor world, so it is usable while another caller holds the world. External
+  (One File Per Actor) actors are listed from the asset registry, not resolved;
+  `transformExact:false` + `transformCaveats` mark transforms that depend on data the file does
+  not hold, and `tagsExact:false` marks unsaved tags of an actor whose class is a Blueprint or is
+  not loaded in this editor. Malformed or crafted name / import / export tables and property data
+  are refused with `PARSE_FAILED` rather than reaching an engine assert (the package summary is
+  still read by the engine's own serializer).
 - Added: asset-dump `meta.json` carries `source: {fileMd5, unsavedChanges}` (MD5 of the package
   file the dump was taken from, `null` when it has no file; `true` when the package was dirty),
   and each external-reference entry in a level's `actors/manifest.json` carries the same stamp
