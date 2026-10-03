@@ -19,6 +19,13 @@ namespace PinWrightScreenshotUtils
         FIntPoint OutputSize = FIntPoint::ZeroValue;
         bool bPinExposure = false;
         float ExposureEv100 = 0.0f;
+        // Draw a frame through an observe-only view extension and report the exposure the view
+        // resolved, without changing it (an explicit {mode:"auto"}). Implied by a pin or an aim.
+        bool bObserveExposure = false;
+        // Draw-scoped override of the local player's view point (ISceneViewExtension::
+        // SetupViewPoint). Unset halves keep the player camera's value. Nothing persistent moves.
+        TOptional<FVector> AimLocation;
+        TOptional<FRotator> AimRotation;
     };
 
     struct FGameViewportCaptureMetadata
@@ -34,6 +41,17 @@ namespace PinWrightScreenshotUtils
         bool bExposureApplied = false;
         bool bExposureRestored = false;
         int32 ExposureViewCount = 0;
+        // Read off the last drawn view, after every extension (ours runs last). The family's
+        // fixed-exposure override as the renderer receives it, and the view state's last
+        // eye-adaptation readback (a linear gain, lagging a few frames; 0 when none completed).
+        bool bFamilyExposureFixed = false;
+        float FamilyFixedEv100 = 0.0f;
+        float ReadbackExposureGain = 0.0f;
+        // Aim: the pose the view was actually built from, and whether it matches the request.
+        bool bAimRequested = false;
+        bool bAimApplied = false;
+        FVector ViewLocation = FVector::ZeroVector;
+        FRotator ViewRotation = FRotator::ZeroRotator;
         // FlushBeforeReadback ran on this capture. See its declaration for what that does and
         // does not establish.
         bool bReadbackFlushed = false;

@@ -4,6 +4,7 @@
 
 #include "Compat/EngineVersionCompat.h"
 #include "Handlers/ErrorCodes.h"
+#include "Camera/CameraTypes.h" // FMinimalViewInfo, the aimed view point
 #include "Engine/Engine.h"
 #include "Engine/GameViewportClient.h"
 #include "Engine/Scene.h"
@@ -13,6 +14,7 @@
 #include "ImageUtils.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
+#include "Misc/ScopeExit.h"
 #include "PinWrightSubsystem.h" // LogPinWrightSubsystem
 #include "Rendering/SlateRenderer.h"
 #include "RenderingThread.h"
@@ -82,14 +84,20 @@ namespace
             && Actual.AutoExposureBiasCurve == Expected.AutoExposureBiasCurve;
     }
 
+    // Draw-scoped view extension for the game viewport: pins exposure (when asked), overrides the
+    // view point (when aimed), and in every case records what the drawn view actually carried.
     class FGameViewportExposureViewExtension final : public FSceneViewExtensionBase
     {
     public:
         FGameViewportExposureViewExtension(const FAutoRegister& AutoRegister,
-            FViewport* InViewport, float InEv100)
+            FViewport* InViewport, bool bInPin, float InEv100,
+            const TOptional<FVector>& InAimLocation, const TOptional<FRotator>& InAimRotation)
             : FSceneViewExtensionBase(AutoRegister)
             , Viewport(InViewport)
+            , bPin(bInPin)
             , Ev100(InEv100)
+            , AimLocation(InAimLocation)
+            , AimRotation(InAimRotation)
         {
         }
 
@@ -101,12 +109,30 @@ namespace
                 bAllApplied = true;
                 bFamilyApplied = false;
                 ViewCount = 0;
+                if (!bPin)
+                {
+                    return;
+                }
                 // This is the renderer's authoritative fixed-exposure path. Unlike selecting
                 // AEM_Manual alone, it cannot be replaced by r.EyeAdaptation.MethodOverride.
                 InViewFamily.ExposureSettings.bFixed = true;
                 InViewFamily.ExposureSettings.FixedEV100 = Ev100;
                 bFamilyApplied = InViewFamily.ExposureSettings.bFixed
                     && FMath::IsNearlyEqual(InViewFamily.ExposureSettings.FixedEV100, Ev100);
+            }
+        }
+
+        // ULocalPlayer::GetViewPoint runs this after the player camera manager, before the view
+        // (and its culling) is built, so the whole frame is drawn from the aimed pose.
+        virtual void SetupViewPoint(APlayerController* Player, FMinimalViewInfo& InViewInfo) override
+        {
+            if (AimLocation.IsSet())
+            {
+                InViewInfo.Location = AimLocation.GetValue();
+            }
+            if (AimRotation.IsSet())
+            {
+                InViewInfo.Rotation = AimRotation.GetValue();
             }
         }
 
@@ -117,10 +143,27 @@ namespace
                 return;
             }
 
-            FPostProcessSettings Expected = InView.FinalPostProcessSettings;
-            ApplyFixedEv100ToPostProcessSettings(Expected, Ev100);
-            ApplyFixedEv100ToPostProcessSettings(InView.FinalPostProcessSettings, Ev100);
-            bAllApplied &= ExposureFieldsMatch(InView.FinalPostProcessSettings, Expected);
+            if (bPin)
+            {
+                FPostProcessSettings Expected = InView.FinalPostProcessSettings;
+                ApplyFixedEv100ToPostProcessSettings(Expected, Ev100);
+                ApplyFixedEv100ToPostProcessSettings(InView.FinalPostProcessSettings, Ev100);
+                bAllApplied &= ExposureFieldsMatch(InView.FinalPostProcessSettings, Expected);
+            }
+            if ((AimLocation.IsSet() || AimRotation.IsSet()) && !bCameraCutSent)
+            {
+                // The aimed pose is a jump from the live camera: drop temporal history (TAA/TSR,
+                // motion blur) on the first aimed view instead of smearing the old pose into it.
+                InView.bCameraCut = true;
+                bCameraCutSent = true;
+            }
+            // Measured off the view, not echoed from the request. This extension runs last, so the
+            // family override and the view pose are what the renderer receives.
+            bFamilyFixed = InViewFamily.ExposureSettings.bFixed;
+            FamilyFixedEv100 = InViewFamily.ExposureSettings.FixedEV100;
+            ReadbackGain = InView.GetLastEyeAdaptationExposure();
+            ViewLocation = InView.ViewLocation;
+            ViewRotation = InView.ViewRotation;
             bObserved = true;
             ++ViewCount;
         }
@@ -140,7 +183,28 @@ namespace
         {
             return bObserved && bAllApplied && bFamilyApplied && ViewCount > 0;
         }
+        bool WasObserved() const { return bObserved && ViewCount > 0; }
         int32 GetViewCount() const { return ViewCount; }
+        bool IsFamilyFixed() const { return bFamilyFixed; }
+        float GetFamilyFixedEv100() const { return FamilyFixedEv100; }
+        float GetReadbackGain() const { return ReadbackGain; }
+        const FVector& GetViewLocation() const { return ViewLocation; }
+        const FRotator& GetViewRotation() const { return ViewRotation; }
+
+        // The view was built from the requested pose: 0.1 cm and 0.01 degree tolerances.
+        bool WasAimApplied() const
+        {
+            if (!WasObserved())
+            {
+                return false;
+            }
+            const bool bLocationOk = !AimLocation.IsSet()
+                || ViewLocation.Equals(AimLocation.GetValue(), 0.1);
+            const bool bRotationOk = !AimRotation.IsSet()
+                || FMath::RadiansToDegrees(ViewRotation.Quaternion().AngularDistance(
+                    AimRotation.GetValue().Quaternion())) <= 0.01;
+            return bLocationOk && bRotationOk;
+        }
 
     protected:
         virtual bool IsActiveThisFrame_Internal(
@@ -151,11 +215,20 @@ namespace
 
     private:
         FViewport* Viewport = nullptr;
+        bool bPin = false;
         float Ev100 = 0.0f;
+        TOptional<FVector> AimLocation;
+        TOptional<FRotator> AimRotation;
         bool bObserved = false;
         bool bAllApplied = true;
         bool bFamilyApplied = false;
+        bool bCameraCutSent = false;
         int32 ViewCount = 0;
+        bool bFamilyFixed = false;
+        float FamilyFixedEv100 = 0.0f;
+        float ReadbackGain = 0.0f;
+        FVector ViewLocation = FVector::ZeroVector;
+        FRotator ViewRotation = FRotator::ZeroRotator;
     };
 
     class FScopedGameViewportSize
@@ -553,13 +626,21 @@ namespace
         }
 
         TSharedPtr<FGameViewportExposureViewExtension, ESPMode::ThreadSafe> ExposureScope;
-        if (CaptureOptions.bPinExposure)
+        const bool bAimRequested = CaptureOptions.AimLocation.IsSet() || CaptureOptions.AimRotation.IsSet();
+        if (CaptureOptions.bPinExposure || CaptureOptions.bObserveExposure || bAimRequested)
         {
             ExposureScope = FSceneViewExtensions::NewExtension<FGameViewportExposureViewExtension>(
-                Viewport, CaptureOptions.ExposureEv100);
+                Viewport, CaptureOptions.bPinExposure, CaptureOptions.ExposureEv100,
+                CaptureOptions.AimLocation, CaptureOptions.AimRotation);
         }
 
         FScopedGameViewportSize SizeScope(SceneViewport, CaptureOptions.OutputSize);
+        // Declared after SizeScope so it runs first: on every exit path the extension is released
+        // before the viewport restore redraws, so that redraw is neither pinned nor aimed.
+        ON_SCOPE_EXIT
+        {
+            ExposureScope.Reset();
+        };
         if (bFixedSizeRequested && !SizeScope.WasApplied())
         {
             OutErrorCode = ErrorCodes::ERR_FIXED_SIZE_CAPTURE_UNAVAILABLE;
@@ -627,10 +708,10 @@ namespace
         }
         else
         {
-            if (CaptureOptions.bPinExposure)
+            if (ExposureScope.IsValid())
             {
                 // The native-size path normally reads the last presented back buffer. A scoped
-                // exposure request must first draw one frame while its post-process blend is live.
+                // exposure/aim request must first draw one frame while its extension is live.
                 Viewport->Draw();
             }
 
@@ -679,6 +760,17 @@ namespace
         const int32 ExposureViewCount = ExposureScope.IsValid()
             ? ExposureScope->GetViewCount()
             : 0;
+        const bool bViewObserved = ExposureScope.IsValid() && ExposureScope->WasObserved();
+        const bool bAimApplied = bAimRequested && ExposureScope.IsValid() && ExposureScope->WasAimApplied();
+        FGameViewportCaptureMetadata Metadata;
+        if (bViewObserved)
+        {
+            Metadata.bFamilyExposureFixed = ExposureScope->IsFamilyFixed();
+            Metadata.FamilyFixedEv100 = ExposureScope->GetFamilyFixedEv100();
+            Metadata.ReadbackExposureGain = ExposureScope->GetReadbackGain();
+            Metadata.ViewLocation = ExposureScope->GetViewLocation();
+            Metadata.ViewRotation = ExposureScope->GetViewRotation();
+        }
         // Releasing the only strong reference removes the draw-scoped extension. It changed only
         // the finalized FSceneView settings, so there is no camera or viewport state to restore.
         ExposureScope.Reset();
@@ -693,8 +785,15 @@ namespace
             OutErrorCode = ErrorCodes::ERR_EXPOSURE_PIN_FAILED;
             return false;
         }
+        if (bAimRequested && !bAimApplied)
+        {
+            // No frame from the live camera passed off as the aimed one.
+            OutErrorCode = ErrorCodes::ERR_CAPTURE_CAMERA_NOT_APPLIED;
+            return false;
+        }
 
-        FGameViewportCaptureMetadata Metadata;
+        Metadata.bAimRequested = bAimRequested;
+        Metadata.bAimApplied = bAimApplied;
         Metadata.OriginalViewportSize = SizeScope.GetOriginalSize();
         Metadata.bViewportWasFixed = SizeScope.WasOriginallyFixed();
         Metadata.bViewportRestored = bViewportRestored;

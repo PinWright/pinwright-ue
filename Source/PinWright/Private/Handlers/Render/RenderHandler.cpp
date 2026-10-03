@@ -3,6 +3,7 @@
 #include "Handlers/HandlerRegistration.h"
 #include "Handlers/HandlerContext.h"
 #include "Handlers/ErrorCodes.h"
+#include "Handlers/Editor/PieWorldSelector.h" // GatherPieContexts, for pieWorldWarning
 #include "Handlers/Material/MaterialShaderState.h"
 #include "Handlers/PackagePathCompose.h"
 #include "Handlers/Render/CameraShotPlanUtils.h"
@@ -1926,6 +1927,21 @@ PinWrightOpenLevelCapture::EvaluateViewportWorldMatch(
     return Decision;
 }
 
+FString PinWrightOpenLevelCapture::MakePieWorldWarning(bool bCapturedPieWorld, int32 LivePieWorldCount)
+{
+    if (bCapturedPieWorld || LivePieWorldCount <= 0)
+    {
+        return FString();
+    }
+    return FString::Printf(
+        TEXT("%d PIE world(s) are running but this capture is of the EDITOR world, so no live PIE "
+             "actor is in this frame. allowPieWorld only permits a Level Editor viewport that is "
+             "already bound to a PIE world (after eject); it does not switch worlds. Eject first "
+             "and check capturedPieWorld:true, or use editor.screenshot (location/rotation aim it) "
+             "for game-viewport pixels."),
+        LivePieWorldCount);
+}
+
 bool PinWrightOpenLevelCapture::Handle(FHandlerContext& Ctx)
 {
     const PinWrightRenderCapture::FViewportCaptureHooks Hooks;
@@ -2221,6 +2237,12 @@ bool PinWrightOpenLevelCapture::Handle(FHandlerContext& Ctx,
     Result->SetBoolField(TEXT("allowPieWorld"), bAllowPieWorld);
     Result->SetBoolField(TEXT("capturedPieWorld"), WorldMatch.bViewportIsPieWorld);
     Result->SetBoolField(TEXT("pieWorldSameMap"), WorldMatch.bMapsMatch);
+    const FString PieWorldWarning = MakePieWorldWarning(
+        WorldMatch.bViewportIsPieWorld, PieWorldSelector::GatherPieContexts().Num());
+    if (!PieWorldWarning.IsEmpty())
+    {
+        Result->SetStringField(TEXT("pieWorldWarning"), PieWorldWarning);
+    }
     AddWorldFields(EditorWorld, ViewportWorld, Result);
     if (DecorateSuccess)
     {

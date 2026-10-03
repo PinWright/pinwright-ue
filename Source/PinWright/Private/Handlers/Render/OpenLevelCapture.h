@@ -29,6 +29,10 @@ namespace PinWrightOpenLevelCapture
     FWorldMatchDecision EvaluateViewportWorldMatch(
         const UWorld* EditorWorld, const UWorld* ViewportWorld, bool bAllowPieWorld);
 
+    // The `pieWorldWarning` text: non-empty only when PIE worlds are live and this capture was of
+    // the EDITOR world, so none of the live PIE actors are in the frame.
+    FString MakePieWorldWarning(bool bCapturedPieWorld, int32 LivePieWorldCount);
+
     bool Handle(FHandlerContext& Ctx);
     bool Handle(FHandlerContext& Ctx,
         const PinWrightRenderCapture::FViewportCaptureHooks& Hooks,

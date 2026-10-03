@@ -195,6 +195,18 @@
   gate's own measurement (new `HttpResponseSpill::MeasureInlineCharacters`, one condensed copy)
   instead of a pretty print, so **pages can hold more kinds and `pageCount` may drop**. Handlers
   that budget their own response should measure with that helper.
+- Added: `editor.screenshot` takes `location` / `rotation`. On the game/PIE viewport they override
+  the local player's view point for the capture draw only (nothing persistent moves) and the
+  response carries a measured `aim` block; a view not drawn from the pose fails
+  `CAPTURE_CAMERA_NOT_APPLIED`. Combined with `exposure`, one call now gives an exposed, aimed PIE
+  frame. On the Level Editor fallback they set the capture camera, which is restored afterwards.
+- Fixed: `editor.screenshot {exposure:{mode:"auto"}}` on the game/PIE viewport reports
+  `viewCount >= 1` and `adaptedMeasured` / `adapted` / `ev100Equivalent` / `adaptedSource` from the
+  drawn view (it returned `viewCount:0` and no measurement). **Behaviour change:** the game-branch
+  `exposure.ev100` is now the fixed EV100 read off the view family, not an echo of the request;
+  the request is `ev100Requested`, and `fixed` is new. An explicit auto request now draws one frame.
+- Added: `render.capture_open_level` emits `pieWorldWarning` when a PIE world is live and the
+  capture was of the editor world.
 - Changed: the `LEVEL_NOT_LOADED` error from `level.get_info` / `get_actors` / `get_bounds` names
   the non-mutating readers first: `level.describe_offline({"levelPath":...})` and
   `asset.dump({"assetPath":...})` both read the unopened map without touching the active world.

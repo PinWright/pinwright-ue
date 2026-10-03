@@ -91,6 +91,8 @@ static bool CaptureActiveLevelViewportToScreenshot(
     const FString &RequestedFilename,
     const FIntPoint &RequestedSize,
     const PinWrightRenderCapture::FExposurePin &Exposure,
+    const TOptional<FVector> &AimLocation,
+    const TOptional<FRotator> &AimRotation,
     PinWrightRenderCapture::FViewportCaptureOutput &OutCapture,
     FString &OutErrorCode,
     FString &OutErrorMessage,
@@ -145,8 +147,10 @@ static bool CaptureActiveLevelViewportToScreenshot(
   // cameraRotation becomes one that round-trips into spatial.raycast_screen.
   const PinWrightRenderCapture::FEffectiveViewPose EffectivePose =
       PinWrightRenderCapture::MeasureEffectiveViewPose(ViewportClient);
-  Request.Location = EffectivePose.Location;
-  Request.Rotation = EffectivePose.Rotation;
+  // An explicit aim (editor.screenshot location/rotation) replaces either half; the capture
+  // restores the user's camera afterwards.
+  Request.Location = AimLocation.Get(EffectivePose.Location);
+  Request.Rotation = AimRotation.Get(EffectivePose.Rotation);
   Request.Fov = ViewportClient.ViewFOV;
   // FViewportCaptureRequest::OrthoWidth is world centimetres, not the raw editor zoom.
   Request.OrthoWidth = PinWrightRenderCapture::ComputeOrthoWorldWidthFromZoom(
@@ -717,7 +721,9 @@ REGISTER_RPC_HANDLER("editor.screenshot", "editor", "Capture a PNG screenshot in
         RPC_PARAM_OPT("filename", "filepath", "Output filename inside Saved/Screenshots/. Auto-generated as 'Screenshot_<timestamp>.png' when empty. The .png extension is appended if missing."),
         RPC_PARAM_OPT("width", "number", "Exact output width in pixels. Must be supplied together with height; omit both for the live viewport size."),
         RPC_PARAM_OPT("height", "number", "Exact output height in pixels. Must be supplied together with width; omit both for the live viewport size."),
-        RPC_PARAM_OPT("exposure", "object|number", PINWRIGHT_EXPOSURE_PARAM_DESC)
+        RPC_PARAM_OPT("exposure", "object|number", PINWRIGHT_EXPOSURE_PARAM_DESC),
+        RPC_PARAM_OPT("location", "object", "Camera location {x, y, z} for this shot only. On the game/PIE viewport it replaces the local player's view point for the capture draw (nothing persistent moves); on the Level Editor fallback it is the capture camera, restored afterwards. Omitted: the current camera's location."),
+        RPC_PARAM_OPT("rotation", "object", "Camera rotation {pitch, yaw, roll} for this shot only, with the same scope as location. Omitted: the current camera's rotation.")
     ))
 {
   if (!PinWrightRendering::RequireRenderer(Ctx))
@@ -766,6 +772,31 @@ REGISTER_RPC_HANDLER("editor.screenshot", "editor", "Capture a PNG screenshot in
       return true;
   }
 
+  TOptional<FVector> AimLocation;
+  TOptional<FRotator> AimRotation;
+  if (Payload.IsValid()
+      && ((Payload->HasField(TEXT("location")) && !Payload->HasTypedField<EJson::Object>(TEXT("location")))
+          || (Payload->HasField(TEXT("rotation")) && !Payload->HasTypedField<EJson::Object>(TEXT("rotation")))))
+  {
+      Ctx.SendError(ErrorCodes::ERR_INVALID_ARGUMENT,
+          TEXT("location must be an object {x, y, z} and rotation an object {pitch, yaw, roll}"));
+      return true;
+  }
+  if (Payload.IsValid() && Payload->HasField(TEXT("location")))
+  {
+      AimLocation = Ctx.GetVector(TEXT("location"));
+  }
+  if (Payload.IsValid() && Payload->HasField(TEXT("rotation")))
+  {
+      AimRotation = Ctx.GetRotator(TEXT("rotation"));
+  }
+  if ((AimLocation.IsSet() && AimLocation->ContainsNaN())
+      || (AimRotation.IsSet() && AimRotation->ContainsNaN()))
+  {
+      Ctx.SendError(ErrorCodes::ERR_INVALID_ARGUMENT, TEXT("location and rotation must be finite"));
+      return true;
+  }
+
   FString Filename;
   const FString OutPath = PinWrightScreenshotUtils::MakeScreenshotOutputPath(
       RequestedFilename, TEXT("Screenshot"), FString(), Filename);
@@ -779,7 +810,7 @@ REGISTER_RPC_HANDLER("editor.screenshot", "editor", "Capture a PNG screenshot in
   Args.bCompletesInBind = true;
 
   Args.BindNativeDelegate =
-      [OutPath, RequestedFilename, RequestedSize, Exposure](FJobOnComplete OnComplete)
+      [OutPath, RequestedFilename, RequestedSize, Exposure, AimLocation, AimRotation](FJobOnComplete OnComplete)
   {
       // The readback preamble's shared state. Both branches fill it immediately before their own
       // readback -- never at handler entry, where the pose that queues the compiles has not been
@@ -824,8 +855,8 @@ REGISTER_RPC_HANDLER("editor.screenshot", "editor", "Capture a PNG screenshot in
           FString ErrorCode;
           FString ErrorMessage;
           if (CaptureActiveLevelViewportToScreenshot(
-                  RequestedFilename, RequestedSize, Exposure, Capture, ErrorCode, ErrorMessage,
-                  &GatedHooks))
+                  RequestedFilename, RequestedSize, Exposure, AimLocation, AimRotation, Capture,
+                  ErrorCode, ErrorMessage, &GatedHooks))
           {
               auto R = MakeShared<FJsonObject>();
               R->SetNumberField(TEXT("width"),  Capture.Width);
@@ -863,11 +894,16 @@ REGISTER_RPC_HANDLER("editor.screenshot", "editor", "Capture a PNG screenshot in
       CaptureOptions.OutputSize = RequestedSize;
       CaptureOptions.bPinExposure = Exposure.WantsPin();
       CaptureOptions.ExposureEv100 = Exposure.Ev100;
+      CaptureOptions.bObserveExposure =
+          Exposure.Mode == PinWrightRenderCapture::EExposureRequestMode::Auto;
+      CaptureOptions.AimLocation = AimLocation;
+      CaptureOptions.AimRotation = AimRotation;
 
-      // Immediately before the readback: nothing on this branch draws or moves a camera between
-      // here and CaptureGameViewportToPngFile, so this IS the last point before the pixels are
-      // asked for. The flush half runs inside that call, at the last point before its three
-      // readback branches, and comes back on the metadata.
+      // Before the readback, but sampled at the LIVE pose: an aimed capture (location/rotation)
+      // moves the view inside CaptureGameViewportToPngFile, after this drain, so materials first
+      // seen from the aimed pose are not gated here and the aimed frame gets no warm-up. The flush
+      // half runs inside that call, at the last point before its three readback branches, and
+      // comes back on the metadata.
       *Readiness = PinWrightCaptureReadiness::DrainBeforeReadback();
       if (Readiness->ShouldRefuseReadback())
       {
@@ -918,11 +954,58 @@ REGISTER_RPC_HANDLER("editor.screenshot", "editor", "Capture a PNG screenshot in
           ExposureInfo->SetBoolField(TEXT("pinned"), Metadata.bExposureApplied);
           ExposureInfo->SetBoolField(TEXT("restored"), Metadata.bExposureRestored);
           ExposureInfo->SetNumberField(TEXT("viewCount"), Metadata.ExposureViewCount);
+          if (Metadata.ExposureViewCount > 0)
+          {
+              // Read off the drawn view (the family override the renderer received and the view
+              // state's eye-adaptation readback), never echoed from the request. Same field
+              // contract as the level path's viewport.exposure block.
+              ExposureInfo->SetBoolField(TEXT("fixed"), Metadata.bFamilyExposureFixed);
+              float AdaptedGain = 0.0f;
+              const TCHAR* AdaptedSource = TEXT("readback");
+              if (Metadata.bFamilyExposureFixed)
+              {
+                  ExposureInfo->SetNumberField(TEXT("ev100"), Metadata.FamilyFixedEv100);
+                  AdaptedGain = PinWrightRenderCapture::Ev100ToExposureGain(Metadata.FamilyFixedEv100);
+                  AdaptedSource = TEXT("fixedPin");
+              }
+              else
+              {
+                  AdaptedGain = Metadata.ReadbackExposureGain;
+              }
+              const bool bAdaptedMeasured = AdaptedGain > 0.0f;
+              ExposureInfo->SetBoolField(TEXT("adaptedMeasured"), bAdaptedMeasured);
+              if (bAdaptedMeasured)
+              {
+                  ExposureInfo->SetNumberField(TEXT("adapted"), AdaptedGain);
+                  ExposureInfo->SetNumberField(TEXT("ev100Equivalent"),
+                      PinWrightRenderCapture::ExposureGainToEv100(AdaptedGain));
+                  ExposureInfo->SetStringField(TEXT("adaptedSource"), AdaptedSource);
+              }
+              else
+              {
+                  ExposureInfo->SetStringField(TEXT("adaptedReadbackPending"),
+                      TEXT("The game viewport's view state has no completed eye-adaptation "
+                           "readback yet, so no measured `adapted` / `ev100Equivalent` is "
+                           "available. Let PIE draw a few frames and capture again."));
+              }
+          }
           if (Exposure.WantsPin())
           {
-              ExposureInfo->SetNumberField(TEXT("ev100"), Exposure.Ev100);
+              ExposureInfo->SetNumberField(TEXT("ev100Requested"), Exposure.Ev100);
           }
           R->SetObjectField(TEXT("exposure"), ExposureInfo);
+          if (Metadata.bAimRequested)
+          {
+              // Measured on the view the frame was drawn from; a miss already failed the capture
+              // with CAPTURE_CAMERA_NOT_APPLIED.
+              TSharedPtr<FJsonObject> Aim = MakeShared<FJsonObject>();
+              Aim->SetBoolField(TEXT("applied"), Metadata.bAimApplied);
+              Aim->SetObjectField(TEXT("location"),
+                  PinWrightRenderCapture::MakeVectorObject(Metadata.ViewLocation));
+              Aim->SetObjectField(TEXT("rotation"),
+                  PinWrightRenderCapture::MakeRotatorObject(Metadata.ViewRotation));
+              R->SetObjectField(TEXT("aim"), Aim);
+          }
 
           // The game/PIE path publishes no FViewportCaptureOutput, so it carries the two
           // frame-state blocks on a `viewport` object of its own: what was still compiling when
