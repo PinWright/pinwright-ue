@@ -33,6 +33,7 @@
 #include "HAL/FileManager.h"
 #include "Internationalization/Regex.h"
 #include "Interfaces/IPluginManager.h"
+#include "Tests/TestUtils.h"
 
 // Named (not anonymous) namespace: under the plugin's Unity build these file-local
 // scaffold helpers would otherwise ODR-collide with the identically-named anonymous
@@ -273,23 +274,20 @@ namespace NoParamHandlerScan
     void ScanFile(const FString& File, const FString& Contents,
         int32& FlaggedCount, int32& OffenderCount, TArray<FString>& Failures)
     {
-        static const FString Token(TEXT("REGISTER_RPC_HANDLER("));
-        const int32 TokenLen = Token.Len();
         int32 SearchStart = 0;
         while (true)
         {
-            const int32 Idx = Contents.Find(Token, ESearchCase::CaseSensitive,
-                ESearchDir::FromStart, SearchStart);
+            // Every registration spelling (plain, mutating, tick-unsafe), not only the plain one.
+            int32 OpenParen = INDEX_NONE;
+            const int32 Idx = FindNextRpcRegistration(Contents, SearchStart, &OpenParen);
             if (Idx == INDEX_NONE)
             {
                 break;
             }
-            // The token ends in '(', so the open paren is its last character.
-            const int32 OpenParen = Idx + TokenLen - 1;
             const int32 CloseParen = MatchDelimiter(Contents, OpenParen, TEXT('('), TEXT(')'));
             if (CloseParen == INDEX_NONE)
             {
-                SearchStart = Idx + TokenLen;
+                SearchStart = OpenParen + 1;
                 continue;
             }
             SearchStart = CloseParen + 1;

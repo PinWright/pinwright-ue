@@ -135,7 +135,7 @@ Toggle Game View on the active level viewport — the `G` key. It swaps the view
 
 ### editor.jump_to_bookmark
 
-Move the viewport camera to a previously stored `editor.create_bookmark` slot. Like `set_camera` / `focus_actor` it returns only `{success:true}` and does not echo the restored transform; read it back numerically with `system.inspect.get_viewport_info` (`cameraLocation` / `cameraRotation` / `fov`).
+Move the viewport camera to a previously stored `editor.create_bookmark` slot. It is tick-unsafe (it redraws the viewport), so it runs at the next safe point and, like other mutating verbs, takes `expectWorld` and returns `{success:true, world}`. It does not echo the restored transform; read it back numerically with `system.inspect.get_viewport_info` (`cameraLocation` / `cameraRotation` / `fov`).
 
 ### editor.play
 

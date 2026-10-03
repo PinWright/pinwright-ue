@@ -38,6 +38,7 @@
 #include "Handlers/ParamSpec.h"
 #include "Tests/Infra/DispatcherTestHelpers.h"
 #include "Tests/Infra/ParamSpecTestHelpers.h"
+#include "Tests/TestUtils.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "Compat/EngineVersionCompat.h"
@@ -220,22 +221,30 @@ namespace ParamTypeGateTests
         }
     }
 
-    bool TryGetRegisteredMethod(const FString& Line, FString& OutMethod)
+    // Every registration spelling (plain, mutating, tick-unsafe). A registration whose method
+    // literal sits on the next line sets bInOutAwaitingName, and that next line yields the name.
+    bool TryGetRegisteredMethod(const FString& Line, FString& OutMethod, bool& bInOutAwaitingName)
     {
-        const FString Prefix(TEXT("REGISTER_RPC_HANDLER(\""));
-        const int32 Start = Line.Find(Prefix, ESearchCase::CaseSensitive);
-        if (Start == INDEX_NONE)
+        if (bInOutAwaitingName)
+        {
+            bInOutAwaitingName = false;
+            OutMethod = RpcRegistrationMethod(TEXT("(") + Line, 0);
+            if (!OutMethod.IsEmpty())
+            {
+                return true;
+            }
+        }
+        int32 OpenParen = INDEX_NONE;
+        if (FindNextRpcRegistration(Line, 0, &OpenParen) == INDEX_NONE)
         {
             return false;
         }
-        const int32 MethodStart = Start + Prefix.Len();
-        const int32 MethodEnd = Line.Find(TEXT("\""), ESearchCase::CaseSensitive,
-            ESearchDir::FromStart, MethodStart);
-        if (MethodEnd == INDEX_NONE)
+        OutMethod = RpcRegistrationMethod(Line, OpenParen);
+        if (OutMethod.IsEmpty())
         {
+            bInOutAwaitingName = Line.Mid(OpenParen + 1).TrimStartAndEnd().IsEmpty();
             return false;
         }
-        OutMethod = Line.Mid(MethodStart, MethodEnd - MethodStart);
         return true;
     }
 
@@ -300,10 +309,11 @@ namespace ParamTypeGateTests
             Source.ParseIntoArrayLines(Lines);
             FString CurrentMethod;
             FString PendingFirstOf;
+            bool bAwaitingRegisteredName = false;
             for (const FString& Line : Lines)
             {
                 FString RegisteredMethod;
-                if (TryGetRegisteredMethod(Line, RegisteredMethod))
+                if (TryGetRegisteredMethod(Line, RegisteredMethod, bAwaitingRegisteredName))
                 {
                     CurrentMethod = RegisteredMethod;
                     PendingFirstOf.Empty();

@@ -218,24 +218,11 @@ namespace HandlerTickSafetyRatchet
         const TCHAR* Verb,
         FString& OutRegistrationBlock)
     {
-        const FString Needle = FString::Printf(
-            TEXT("REGISTER_RPC_HANDLER(\"%s\""), Verb);
-        const int32 Start = Source.Find(Needle);
-        if (Start == INDEX_NONE)
+        OutRegistrationBlock = FindRpcRegistrationBlock(Source, Verb);
+        if (OutRegistrationBlock.IsEmpty())
         {
             return false;
         }
-
-        int32 End = Source.Find(
-            TEXT("REGISTER_RPC_HANDLER("),
-            ESearchCase::CaseSensitive,
-            ESearchDir::FromStart,
-            Start + Needle.Len());
-        if (End == INDEX_NONE)
-        {
-            End = Source.Len();
-        }
-        OutRegistrationBlock = Source.Mid(Start, End - Start);
 
         return OutRegistrationBlock.Contains(TEXT("AddCompileDiagnosticsToJson("))
             || OutRegistrationBlock.Contains(TEXT("HandleBlueprintInterfaceMutation("))

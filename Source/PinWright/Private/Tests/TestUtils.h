@@ -1070,3 +1070,102 @@ inline FString NeutralizeSourceText(const FString& In)
     }
     return Out;
 }
+
+// Every macro that registers an RPC verb (Handlers/HandlerRegistration.h). A source scanner
+// that knows only the plain spelling silently drops the mutating and tick-unsafe verbs and
+// lets the previous verb's block run on into them, so scanners find registrations through
+// FindNextRpcRegistration rather than a literal "REGISTER_RPC_HANDLER(" needle.
+inline const TArray<FString>& RpcRegistrationMacroNames()
+{
+    static const TArray<FString> Names = {
+        TEXT("REGISTER_RPC_HANDLER"),
+        TEXT("REGISTER_RPC_MUTATING_HANDLER"),
+        TEXT("REGISTER_RPC_HANDLER_TICK_UNSAFE"),
+    };
+    return Names;
+}
+
+// Offset of the first registration-macro use at or after From, or INDEX_NONE. Whitespace may
+// separate the macro name from its '(' (OutOpenParen receives the '('); a longer identifier
+// that merely starts with a macro name (the _INNER helpers) is not a use.
+inline int32 FindNextRpcRegistration(const FString& Text, int32 From, int32* OutOpenParen = nullptr)
+{
+    const auto IsIdent = [](TCHAR C) { return FChar::IsAlnum(C) || C == TEXT('_'); };
+    int32 Best = INDEX_NONE;
+    int32 BestParen = INDEX_NONE;
+    for (const FString& Name : RpcRegistrationMacroNames())
+    {
+        int32 Search = From;
+        while (true)
+        {
+            const int32 At = Text.Find(Name, ESearchCase::CaseSensitive, ESearchDir::FromStart, Search);
+            if (At == INDEX_NONE)
+            {
+                break;
+            }
+            const int32 End = At + Name.Len();
+            int32 P = End;
+            while (P < Text.Len() && FChar::IsWhitespace(Text[P]))
+            {
+                ++P;
+            }
+            if ((At == 0 || !IsIdent(Text[At - 1])) && (End >= Text.Len() || !IsIdent(Text[End])) &&
+                P < Text.Len() && Text[P] == TEXT('('))
+            {
+                if (Best == INDEX_NONE || At < Best)
+                {
+                    Best = At;
+                    BestParen = P;
+                }
+                break;
+            }
+            Search = At + 1;
+        }
+    }
+    if (OutOpenParen)
+    {
+        *OutOpenParen = BestParen;
+    }
+    return Best;
+}
+
+// The method literal a registration names: its first macro argument when that is a string
+// literal, which may sit on the line after the '('. Empty for anything else (the #define).
+inline FString RpcRegistrationMethod(const FString& Text, int32 OpenParen)
+{
+    int32 P = OpenParen + 1;
+    while (P < Text.Len() && FChar::IsWhitespace(Text[P]))
+    {
+        ++P;
+    }
+    if (P >= Text.Len() || Text[P] != TEXT('"'))
+    {
+        return FString();
+    }
+    const int32 Close = Text.Find(TEXT("\""), ESearchCase::CaseSensitive, ESearchDir::FromStart, P + 1);
+    return Close == INDEX_NONE ? FString() : Text.Mid(P + 1, Close - P - 1);
+}
+
+// The source region of Method's registration, from its macro to the next registration of ANY
+// spelling (or end of text). Empty when Method is not registered in Text.
+inline FString FindRpcRegistrationBlock(const FString& Text, const FString& Method)
+{
+    if (!Text.Contains(TEXT("\"") + Method + TEXT("\""), ESearchCase::IgnoreCase))
+    {
+        return FString();
+    }
+    int32 OpenParen = INDEX_NONE;
+    int32 At = FindNextRpcRegistration(Text, 0, &OpenParen);
+    while (At != INDEX_NONE)
+    {
+        int32 NextParen = INDEX_NONE;
+        const int32 Next = FindNextRpcRegistration(Text, OpenParen + 1, &NextParen);
+        if (RpcRegistrationMethod(Text, OpenParen) == Method)
+        {
+            return Text.Mid(At, (Next == INDEX_NONE ? Text.Len() : Next) - At);
+        }
+        At = Next;
+        OpenParen = NextParen;
+    }
+    return FString();
+}

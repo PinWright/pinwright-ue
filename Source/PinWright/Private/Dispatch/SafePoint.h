@@ -396,14 +396,18 @@ inline void DeferJobToSafePoint(const FHandlerContext& Ctx, const TCHAR* Reason,
 // ---------------------------------------------------------------------------
 
 // True for a registered RPC method whose handler body must not run inside
-// UWorld::Tick. FRpcDispatcher::ProcessRequest consults this and re-queues such a
+// UWorld::Tick: one registered with REGISTER_RPC_HANDLER_TICK_UNSAFE
+// (FHandlerRegistration::bTickUnsafe, the preferred declaration for new verbs) or
+// one still named in SafePoint.cpp's legacy table. Game thread only (and static init):
+// both functions below lazily fold new registrations into function-local statics.
+// FRpcDispatcher::ProcessRequest consults this and re-queues such a
 // request onto its PendingQueue, which UPinWrightSubsystem::Tick drains from the
 // core ticker (PinWrightSubsystem.cpp:303) - i.e. from a proven safe point.
 //
 // This route exists because the alternative - hand-writing the IsSafeNow() /
 // DeferToSafePoint split into every victim handler - is precisely what let four
-// level verbs and the entire capture family ship ungated. Adding a verb here is a
-// one-line change with no response-path surgery: the handler runs later on a safe
+// level verbs and the entire capture family ship ungated. Gating a verb is a
+// macro-name change with no response-path surgery: the handler runs later on a safe
 // stack with its ORIGINAL FHandlerContext, so text formatters, job tickets and
 // test captures all behave exactly as before.
 //
@@ -424,7 +428,8 @@ inline void DeferJobToSafePoint(const FHandlerContext& Ctx, const TCHAR* Reason,
 // cross-dispatch caller can arrive on an ungated stack.
 PINWRIGHT_API bool IsTickUnsafeMethod(const FString& Method);
 
-// The table itself, sorted, for tests and diagnostics.
+// Every tick-unsafe method - the legacy table plus registration-declared verbs -
+// sorted, for tests and diagnostics.
 PINWRIGHT_API const TArray<FString>& GetTickUnsafeMethods();
 
 // ---------------------------------------------------------------------------

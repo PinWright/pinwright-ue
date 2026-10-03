@@ -3,8 +3,15 @@
 // Out-of-line half of Dispatch/SafePoint.h: the log category and the tick-unsafe
 // method table. The table lives here rather than in the header so Unity builds
 // materialise it exactly once and adding a verb does not recompile every handler.
+//
+// The table is the LEGACY declaration site. New tick-unsafe verbs register with
+// REGISTER_RPC_HANDLER_TICK_UNSAFE, from Handlers/HandlerRegistration.h, which puts the
+// declaration on the handler, so there is no second spelling of the method name to
+// drift; the read API below answers for both. Migrating an entry = switch that verb's macro and delete
+// its line here in the same change.
 
 #include "Dispatch/SafePoint.h"
+#include "Handlers/HandlerRegistration.h"
 
 DEFINE_LOG_CATEGORY(LogPinWrightSafePoint);
 
@@ -669,6 +676,27 @@ namespace
         static const TSet<FString> Methods(BuildTickUnsafeMethodList());
         return Methods;
     }
+
+    // Methods registered with REGISTER_RPC_HANDLER_TICK_UNSAFE. Every handler TU, and any
+    // integration module loaded later, appends to the append-only registry during its own
+    // static init - after this may first have been asked (FAutoRegisterHandler's
+    // constructor asks it for every registration) - so each call folds in only the
+    // registrations added since the last one. Game thread only: it mutates statics.
+    const TSet<FString>& DeclaredTickUnsafeMethodSet()
+    {
+        static TSet<FString> Methods;
+        static int32 ScannedRegistrations = 0;
+        const TArray<FHandlerRegistration>& Registrations =
+            FAutoRegisterHandler::GetPendingRegistrations();
+        for (; ScannedRegistrations < Registrations.Num(); ++ScannedRegistrations)
+        {
+            if (Registrations[ScannedRegistrations].bTickUnsafe)
+            {
+                Methods.Add(Registrations[ScannedRegistrations].MethodName);
+            }
+        }
+        return Methods;
+    }
 }
 
 bool IsTickUnsafeMethod(const FString& Method)
@@ -678,11 +706,25 @@ bool IsTickUnsafeMethod(const FString& Method)
     {
         return true;
     }
-    return TickUnsafeMethodSet().Contains(Method);
+    return TickUnsafeMethodSet().Contains(Method) ||
+        DeclaredTickUnsafeMethodSet().Contains(Method);
 }
 
 const TArray<FString>& GetTickUnsafeMethods()
 {
-    return BuildTickUnsafeMethodList();
+    static TArray<FString> Methods;
+    static int32 BuiltForRegistrations = INDEX_NONE;
+    const int32 RegistrationCount = FAutoRegisterHandler::GetPendingRegistrations().Num();
+    if (BuiltForRegistrations != RegistrationCount)
+    {
+        BuiltForRegistrations = RegistrationCount;
+        Methods = BuildTickUnsafeMethodList();
+        for (const FString& Declared : DeclaredTickUnsafeMethodSet())
+        {
+            Methods.AddUnique(Declared);
+        }
+        Methods.Sort();
+    }
+    return Methods;
 }
 }

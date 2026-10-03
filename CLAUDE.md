@@ -263,6 +263,7 @@ Use `Saved/Logs/<HostProject>.log` (the log filename follows the host project na
 Handlers use a static auto-registration macro instead of manual registration:
 
 **`Handlers/HandlerRegistration.h`** — `REGISTER_RPC_HANDLER(Method, Category, Summary, Params)` macro. Uses `__COUNTER__` for Unity build safety. At static init, pushes `FHandlerRegistration` records into a function-local static array. At subsystem init, `DrainAutoRegistrations()` moves them into the dispatch TMap.
+`REGISTER_RPC_MUTATING_HANDLER` marks a world-mutating verb; `REGISTER_RPC_HANDLER_TICK_UNSAFE` marks a verb whose body must not run inside `UWorld::Tick` (`FHandlerRegistration::bTickUnsafe`; the dispatcher parks it until a safe point, see `docs/rpc-design.md` tick safety). The older `Dispatch/SafePoint.cpp` name table is still read alongside the flag; new verbs use the macro.
 
 **`Handlers/ParamSpec.h`** — Parameter schema macros:
 - `RPC_PARAM_REQ(Name, Type, Desc)` — required parameter

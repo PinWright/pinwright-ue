@@ -1351,7 +1351,11 @@ REGISTER_RPC_HANDLER("editor.create_bookmark", "editor", "Save the current viewp
 }
 
 // ---- editor.jump_to_bookmark ----
-REGISTER_RPC_HANDLER("editor.jump_to_bookmark", "editor", "Move the viewport camera to a previously stored bookmark slot (0..9). Fails if the slot is empty.",
+// Tick-unsafe for the reason editor.set_camera / editor.set_game_view are listed in
+// Dispatch/SafePoint.cpp (family B): EditorHandlerUtils::ForceRedrawViewportClient draws the
+// viewport synchronously (Viewport->Draw()) on the handler's stack. Found by
+// PinWright.infra.tick_safety.HazardReachingVerbsAreGated.
+REGISTER_RPC_HANDLER_TICK_UNSAFE("editor.jump_to_bookmark", "editor", "Move the viewport camera to a previously stored bookmark slot (0..9). Fails if the slot is empty.",
     RPC_PARAMS(
         RPC_PARAM_OPT("index", "integer", "Bookmark slot 0..9; clamped to that range. Defaults to 0.")
     ))

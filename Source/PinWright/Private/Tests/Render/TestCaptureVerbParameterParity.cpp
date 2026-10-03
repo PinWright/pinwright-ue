@@ -253,7 +253,13 @@ namespace CaptureVerbParameterParityTest
         IFileManager::Get().FindFilesRecursive(Files, *Dir, TEXT("*.cpp"), true, false, false);
         Files.Sort();
 
-        const FRegexPattern RegisterPattern(TEXT("REGISTER_RPC_HANDLER\\s*\\(\\s*\"([^\"]+)\""));
+        // Every registration spelling (plain, mutating, tick-unsafe); the method literal may sit
+        // on the line after the macro's '('.
+        const TCHAR* const RegisterMacro =
+            TEXT("\\b(?:REGISTER_RPC_HANDLER|REGISTER_RPC_MUTATING_HANDLER|REGISTER_RPC_HANDLER_TICK_UNSAFE)\\s*\\(\\s*");
+        const FRegexPattern RegisterPattern(FString(RegisterMacro) + TEXT("\"([^\"]+)\""));
+        const FRegexPattern RegisterOpenPattern(FString(RegisterMacro) + TEXT("$"));
+        const FRegexPattern MethodOnNextLinePattern(TEXT("^\\s*\"([^\"]+)\""));
 
         for (const FString& File : Files)
         {
@@ -275,6 +281,17 @@ namespace CaptureVerbParameterParityTest
                 {
                     RegisterLines.Add(Index + 1);
                     RegisterMethods.Add(Matcher.GetCaptureGroup(1));
+                    continue;
+                }
+                FRegexMatcher OpenMatcher(RegisterOpenPattern, Stripped[Index]);
+                if (OpenMatcher.FindNext() && Index + 1 < Lines.Num())
+                {
+                    FRegexMatcher NextLine(MethodOnNextLinePattern, StripComment(Lines[Index + 1]));
+                    if (NextLine.FindNext())
+                    {
+                        RegisterLines.Add(Index + 1);
+                        RegisterMethods.Add(NextLine.GetCaptureGroup(1));
+                    }
                 }
             }
 

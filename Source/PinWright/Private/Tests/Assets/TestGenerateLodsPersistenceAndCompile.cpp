@@ -44,25 +44,9 @@ namespace GenerateLodsPersistenceAndCompileTests
         }
 
         Source = NeutralizeSourceText(Source);
-        const FString Registration = TEXT("REGISTER_RPC_HANDLER(\"asset.generate_lods\"");
-        const int32 Start = Source.Find(Registration);
-        int32 End = Start == INDEX_NONE
-            ? INDEX_NONE
-            : Source.Find(TEXT("REGISTER_RPC_HANDLER("), ESearchCase::CaseSensitive,
-                ESearchDir::FromStart, Start + Registration.Len());
-        if (End == INDEX_NONE && Start != INDEX_NONE)
-        {
-            End = Source.Len();
-        }
-
-        if (!Test.TestTrue(TEXT("asset.generate_lods source region is bounded"),
-                Start != INDEX_NONE && End > Start))
-        {
-            return false;
-        }
-
-        OutBlock = Source.Mid(Start, End - Start);
-        return true;
+        OutBlock = FindRpcRegistrationBlock(Source, TEXT("asset.generate_lods"));
+        return Test.TestFalse(TEXT("asset.generate_lods source region is bounded"),
+            OutBlock.IsEmpty());
     }
 
     bool LoadMeshRebuildGuardSource(FAutomationTestBase& Test, FString& OutSource)

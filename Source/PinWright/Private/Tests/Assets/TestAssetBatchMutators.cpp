@@ -27,22 +27,8 @@ namespace AssetBatchMutatorTests
     inline bool ExtractHandlerBlock(const FString& Source, const FString& Method,
                                     FString& OutBlock)
     {
-        const FString Needle = FString::Printf(
-            TEXT("REGISTER_RPC_HANDLER(\"%s\""), *Method);
-        const int32 Start = Source.Find(Needle);
-        if (Start == INDEX_NONE)
-        {
-            return false;
-        }
-
-        int32 End = Source.Find(TEXT("REGISTER_RPC_HANDLER("),
-            ESearchCase::CaseSensitive, ESearchDir::FromStart, Start + Needle.Len());
-        if (End == INDEX_NONE)
-        {
-            End = Source.Len();
-        }
-        OutBlock = Source.Mid(Start, End - Start);
-        return true;
+        OutBlock = FindRpcRegistrationBlock(Source, Method);
+        return !OutBlock.IsEmpty();
     }
 
     inline const FParamSpec* FindParam(const FHandlerRegistration& Registration,

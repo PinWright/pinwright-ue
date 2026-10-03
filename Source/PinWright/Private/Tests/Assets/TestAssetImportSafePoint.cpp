@@ -39,22 +39,8 @@ namespace AssetImportSafePointTests
         }
         Source = NeutralizeSourceText(Source);
 
-        const FString RegistrationNeedle = TEXT("REGISTER_RPC_HANDLER(\"asset.import\"");
-        const int32 Start = Source.Find(RegistrationNeedle);
-        if (Start == INDEX_NONE)
-        {
-            return false;
-        }
-
-        int32 End = Source.Find(
-            TEXT("REGISTER_RPC_HANDLER("), ESearchCase::CaseSensitive,
-            ESearchDir::FromStart, Start + RegistrationNeedle.Len());
-        if (End == INDEX_NONE)
-        {
-            End = Source.Len();
-        }
-        OutBlock = Source.Mid(Start, End - Start);
-        return true;
+        OutBlock = FindRpcRegistrationBlock(Source, TEXT("asset.import"));
+        return !OutBlock.IsEmpty();
     }
 }
 

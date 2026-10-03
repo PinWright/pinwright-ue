@@ -17,6 +17,7 @@ struct PINWRIGHT_API FHandlerRegistration
     FString Summary;                  // "Spawn an actor in the world"
     TArray<FParamSpec> Params;        // Parameter schemas
     bool bMutating = false;           // Shared dispatcher effect policy
+    bool bTickUnsafe = false;         // REGISTER_RPC_HANDLER_TICK_UNSAFE: dispatcher defers it out of UWorld::Tick
     FRpcHandlerFunc Func;
 };
 
@@ -25,7 +26,8 @@ struct PINWRIGHT_API FAutoRegisterHandler
 {
     FAutoRegisterHandler(const TCHAR* Method, const TCHAR* Category,
                          const TCHAR* Summary, TArray<FParamSpec> Params,
-                         FRpcHandlerFunc Func, bool bExplicitMutating = false);
+                         FRpcHandlerFunc Func, bool bExplicitMutating = false,
+                         bool bTickUnsafe = false);
 
     // Returns the global pending registrations array
     static TArray<FHandlerRegistration>& GetPendingRegistrations();
@@ -61,3 +63,21 @@ struct PINWRIGHT_API FAutoRegisterHandler
 
 #define REGISTER_RPC_MUTATING_HANDLER(Method, Category, Summary, Params) \
     REGISTER_RPC_MUTATING_HANDLER_INNER(Method, Category, Summary, Params, __COUNTER__)
+
+// Tick-unsafe registration: the handler body must not run inside UWorld::Tick, so
+// FRpcDispatcher::ProcessRequest parks it until the next safe point. This is the
+// declaration-site form of an entry in Dispatch/SafePoint.cpp's legacy name table;
+// PinWrightSafePoint::IsTickUnsafeMethod() answers true for either. Implies
+// bMutating (except the read-only probes HandlerRegistration.cpp names). New verbs
+// use this macro; migrating a table entry means switching its macro and deleting the
+// table line in the same change. The cross-dispatch limit in SafePoint.h still applies.
+#define REGISTER_RPC_HANDLER_TICK_UNSAFE_INNER(Method, Category, Summary, Params, Id) \
+    static bool EARG_PP_CAT3(AutoTickUnsafeHandler_, Id, _)(FHandlerContext& Ctx); \
+    static FAutoRegisterHandler EARG_PP_CAT3(AutoTickUnsafeReg_, Id, _)( \
+        TEXT(Method), TEXT(Category), TEXT(Summary), \
+        Params, \
+        &EARG_PP_CAT3(AutoTickUnsafeHandler_, Id, _), false, true); \
+    static bool EARG_PP_CAT3(AutoTickUnsafeHandler_, Id, _)(FHandlerContext& Ctx)
+
+#define REGISTER_RPC_HANDLER_TICK_UNSAFE(Method, Category, Summary, Params) \
+    REGISTER_RPC_HANDLER_TICK_UNSAFE_INNER(Method, Category, Summary, Params, __COUNTER__)

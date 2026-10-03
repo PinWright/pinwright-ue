@@ -2,6 +2,17 @@
 
 ## 1.0.0
 
+- Added (contributors): `REGISTER_RPC_HANDLER_TICK_UNSAFE` (`Handlers/HandlerRegistration.h`)
+  declares a verb tick-unsafe on its own registration, so the dispatcher defers it out of
+  `UWorld::Tick` without an entry in `Dispatch/SafePoint.cpp`'s name table (now the legacy site,
+  still honoured; do not add to it). Such a verb also counts as mutating. The new contract test
+  `PinWright.infra.tick_safety.HazardReachingVerbsAreGated` fails any registered verb whose body,
+  or a helper it calls, reaches a known tick hazard (`CollectGarbage`, `FlushRenderingCommands`,
+  `Viewport->Draw`, Blueprint compile, ...) without being gated.
+- Fixed: `editor.jump_to_bookmark` no longer draws the viewport synchronously inside the world
+  tick. **Behaviour change:** it now runs at the next safe point instead of inline, its schema
+  gains the optional `expectWorld` precondition (refused with `WORLD_MISMATCH` on mismatch), and a
+  successful response carries `world` (the current world object path) besides `success`.
 - Added: graph layout keeps comment boxes. Every PinWright layout (BPIR / MGIR / AGIR compiles,
   `material.authoring.auto_layout`) records each comment's members from the rects before it runs;
   a comment around unmoved nodes is an obstacle the moved nodes stay out of, and a comment with

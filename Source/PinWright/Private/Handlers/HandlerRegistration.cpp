@@ -32,15 +32,16 @@ TArray<FHandlerRegistration>& FAutoRegisterHandler::GetPendingRegistrations()
 FAutoRegisterHandler::FAutoRegisterHandler(
     const TCHAR* Method, const TCHAR* Category,
     const TCHAR* Summary, TArray<FParamSpec> Params,
-    FRpcHandlerFunc Func, const bool bExplicitMutating)
+    FRpcHandlerFunc Func, const bool bExplicitMutating, const bool bTickUnsafe)
 {
     FHandlerRegistration Reg;
     Reg.MethodName = Method;
     Reg.Category = Category;
     Reg.Summary = Summary;
     Reg.Params = MoveTemp(Params);
+    Reg.bTickUnsafe = bTickUnsafe;
     Reg.bMutating = bExplicitMutating ||
-        (PinWrightSafePoint::IsTickUnsafeMethod(Reg.MethodName) &&
+        ((bTickUnsafe || PinWrightSafePoint::IsTickUnsafeMethod(Reg.MethodName)) &&
             !IsReadOnlySafePointProbe(Reg.MethodName));
     Reg.Func = Func;
     GetPendingRegistrations().Add(MoveTemp(Reg));
