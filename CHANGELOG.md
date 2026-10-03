@@ -27,6 +27,15 @@
   for every target. Skipping `PreEditChange` avoids it only for a component target. An actor-target
   write reruns that actor's construction script through `AActor::PostEditChangeProperty`, which
   destroys and rebuilds its construction-built components. No behaviour change.
+- Changed: `python.execute` runs every script with Python's cyclic collector disabled and
+  restores the previous `gc.isenabled()` state afterwards. This mitigates, but does not fix, the
+  editor crash in the engine's pre-GC hook: a UFUNCTION that collects garbage synchronously
+  (`recompile_material`, `obj gc`) no longer makes that hook run `gc.collect` inside the live
+  script. The pass moves to the first collect after the script, and the same pass has also
+  faulted with no script running. Scripts that read `gc.isenabled()` now see `False`, and objects
+  held only by Python cycles survive collects inside the script. The response's `log` carries a
+  `Warning` when a synchronous collect ran during the script, or when the collector could not be
+  re-enabled afterwards.
 - Fixed: `property.get` / `list` / `set` / `reset` (and the `container.*` verbs sharing their
   resolver) resolve a class path, a Blueprint's generated class (`/Game/.../BP_Foo.BP_Foo_C`) or a
   native class (`/Script/Engine.Actor`), to its class default object, the same object the bare

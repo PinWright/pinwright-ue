@@ -13,6 +13,7 @@
 #include "State/ActiveProgressSink.h"
 #include "State/JobRegistry.h"
 #include "State/PluginState.h"
+#include "UObject/UObjectGlobals.h"
 #include "Utils/PieState.h"
 #include "Utils/PythonCallbackRegistry.h"
 
@@ -102,6 +103,34 @@ namespace
         TEXT("    sys.modules.update(_pinwright_before)\n")
         TEXT("    del _pinwright_before\n")
         TEXT("del _pinwright_snapshots\n");
+
+    // A UFUNCTION the script calls can run CollectGarbage() synchronously (recompile_material
+    // via BuildTextureStreamingData, `obj gc`), and the engine's pre-GC hook then runs a full
+    // Python gc pass (FPythonScriptPlugin::OnPreGarbageCollect -> PyGC_Collect) inside the
+    // live script; one editor death faulted inside that pass. PyGC_Collect returns at once
+    // while gc is disabled, so the script runs with the cyclic collector off and the prior
+    // state is restored afterwards: the pass moves to the first collect after the script.
+    // A mitigation, not a fix (board: B-python-execute-reentrant-gc-crash). The prior state
+    // lives in the caller's C++ frame, so nested calls need no Python-side stack, and both
+    // statements bind nothing in the console globals.
+    namespace PythonExecuteGcGuard
+    {
+        bool IsCyclicGcEnabled(IPythonScriptPlugin& Python)
+        {
+            FPythonCommandEx Cmd;
+            Cmd.Command = TEXT("__import__('gc').isenabled()");
+            Cmd.ExecutionMode = EPythonCommandExecutionMode::EvaluateStatement;
+            return Python.ExecPythonCommandEx(Cmd) && Cmd.CommandResult == TEXT("True");
+        }
+
+        void SetCyclicGcEnabled(IPythonScriptPlugin& Python, bool bEnabled)
+        {
+            FPythonCommandEx Cmd;
+            Cmd.Command = bEnabled ? TEXT("__import__('gc').enable()") : TEXT("__import__('gc').disable()");
+            Cmd.ExecutionMode = EPythonCommandExecutionMode::ExecuteStatement;
+            Python.ExecPythonCommandEx(Cmd);
+        }
+    }
 
     // Runs one of the two scripts above on its own FPythonCommandEx, so neither one's
     // output can reach the caller's log array. ExecuteFile with literal source (never a
@@ -263,19 +292,35 @@ REGISTER_RPC_HANDLER("python.execute", "python", "Execute Python code or a .py f
                       bCallbackTrackingReady, bUsesIsBound, &RequestId]() -> TSharedPtr<FJsonObject>
     {
         const bool bPieActiveBeforeExecution = PinWrightPieState::IsPlayInEditorActive();
+        const bool bGcWasEnabled = PythonExecuteGcGuard::IsCyclicGcEnabled(*Python);
+        if (bGcWasEnabled)
+        {
+            PythonExecuteGcGuard::SetCyclicGcEnabled(*Python, false);
+        }
+        const bool bGcOffForScript = !PythonExecuteGcGuard::IsCyclicGcEnabled(*Python);
         const bool bSnapshotted = bIsolateModules && RunModuleTableScript(*Python, SnapshotModulesScript);
 
         // Anything the script registers on this stack is attributed to this call, so the
         // response can say what the call left behind rather than leaving it to be found
         // later by whoever the leaked callback starts throwing at.
         PinWright::PythonCallbacks::FScopedRequestSlot RegisteringSlot(RequestId);
+        int32 GarbageCollectionsDuringScript = 0;
+        const FDelegateHandle PreGcHandle = FCoreUObjectDelegates::GetPreGarbageCollectDelegate().AddLambda(
+            [&GarbageCollectionsDuringScript]() { ++GarbageCollectionsDuringScript; });
         const bool bSuccess = Python->ExecPythonCommandEx(Cmd);
+        FCoreUObjectDelegates::GetPreGarbageCollectDelegate().Remove(PreGcHandle);
         const bool bPieActiveDuringExecution =
             bPieActiveBeforeExecution || PinWrightPieState::IsPlayInEditorActive();
 
         // Unconditional on the script's own verdict: a script that raised has still
         // imported whatever it imported before it raised.
         const bool bRestored = !bSnapshotted || RunModuleTableScript(*Python, RestoreModulesScript);
+        bool bGcRestored = true;
+        if (bGcWasEnabled)
+        {
+            PythonExecuteGcGuard::SetCyclicGcEnabled(*Python, true);
+            bGcRestored = PythonExecuteGcGuard::IsCyclicGcEnabled(*Python);
+        }
 
         // Read BEFORE the temp file is dealt with, because the answer decides its fate.
         const int32 LeakedCallbacks =
@@ -315,6 +360,36 @@ REGISTER_RPC_HANDLER("python.execute", "python", "Execute Python code or a .py f
                 TEXT("PinWright could not isolate sys.modules for this private call, so modules ")
                 TEXT("imported by earlier calls are still cached. Call importlib.reload on any ")
                 TEXT("helper module you edited on disk."));
+            LogArray.Add(MakeShared<FJsonValueObject>(LogEntry));
+        }
+
+        // The collect itself cannot be deferred, so the caller is told it happened: a
+        // script that forces garbage collection is the shape behind the recorded crash.
+        if (GarbageCollectionsDuringScript > 0)
+        {
+            TSharedPtr<FJsonObject> LogEntry = MakeShared<FJsonObject>();
+            LogEntry->SetStringField(TEXT("type"), LexToString(EPythonLogOutputType::Warning));
+            LogEntry->SetStringField(TEXT("output"), FString::Printf(
+                TEXT("A synchronous garbage collection ran %d time(s) while this script was running. %s ")
+                TEXT("A collection inside a script has crashed the editor; for MaterialEditingLibrary.recompile_material ")
+                TEXT("use material.authoring.compile_material instead."),
+                GarbageCollectionsDuringScript,
+                bGcOffForScript
+                    ? TEXT("Python's cyclic collector was disabled for the script, so the engine's pre-GC hook skipped its gc pass; call gc.collect() before a forced collection if the script needs cycle-held objects released.")
+                    : TEXT("Python's cyclic collector could NOT be disabled for this call, so the engine's pre-GC hook ran its gc pass inside the live script.")));
+            LogArray.Add(MakeShared<FJsonValueObject>(LogEntry));
+        }
+
+        // Left disabled, every later script and pre-GC hook in this editor would run without
+        // cyclic collection, so a failed restore is reported rather than assumed.
+        if (!bGcRestored)
+        {
+            TSharedPtr<FJsonObject> LogEntry = MakeShared<FJsonObject>();
+            LogEntry->SetStringField(TEXT("type"), LexToString(EPythonLogOutputType::Warning));
+            LogEntry->SetStringField(TEXT("output"),
+                TEXT("PinWright could not re-enable Python's cyclic garbage collector after this script, so it ")
+                TEXT("is still disabled for the whole editor. Run import gc; gc.enable() through python.execute ")
+                TEXT("or restart the editor."));
             LogArray.Add(MakeShared<FJsonValueObject>(LogEntry));
         }
 
