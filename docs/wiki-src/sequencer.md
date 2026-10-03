@@ -88,6 +88,10 @@ The Control Rig loop has four authoring verbs (`add_controlrig_track`, `list_con
 - [`mrq`](mrq.md) for queueing and rendering authored Level Sequences offline via Movie Render Queue.
 - [`level-review`](level-review.md) — sampling motion rather than assuming it, using `sequencer.set_playhead` for deterministic scrubbing.
 
+### sequencer.set_display_rate
+
+`frameRate` accepts a positive whole number (`30` or `"30"`), `"30fps"`, or a `"num/den"` rational (`"24000/1001"`, optionally with the `fps` suffix). Every numeric token must be a whole positive integer: malformed text (`"oopsfps"`, `"24/not-a-number"`, `"30 fps"`), zero, negatives, a zero denominator and fractional numbers (`29.97`) are refused with `INVALID_ARGUMENT` and nothing is written. Spell NTSC rates as rationals (`"30000/1001"`), never as decimals. The response's `displayRate` is the rate read back off the movie scene after the write, as pretty text (`"30 fps"`, `"23.976 fps"`); `sequencer.get_properties` returns the exact `frameRate: {numerator, denominator}`.
+
 ### sequencer.add_camera
 
 Spawn an `ACameraActor`, bind it to the sequence as a possessable, and return the binding plus the spawned actor's path. Use this to seed a camera before cutting to it.

@@ -44,6 +44,13 @@
   that shape (as `position`), but `location` was declared an untyped alias of the `array` param
   `locations`, so the type gate refused the object with `PARAM_TYPE_MISMATCH` before the handler
   ran. `location` is now a typed alias declared `array|object`.
+- Fixed: `sequencer.set_display_rate` parses `frameRate` strictly and refuses a malformed, zero,
+  negative or fractional rate with `INVALID_ARGUMENT` before writing (it used to store `0/1` for
+  `"oopsfps"` and an invalid `24/0` for `"24/not-a-number"` and report success). The slot is now
+  typed `string`, so the documented `'30fps'` and `'24000/1001'` forms reach the handler instead
+  of being refused by the param gate. **Behaviour change:** a fractional number such as `29.97`
+  is refused instead of rounded to 30 (pass `"30000/1001"`); `displayRate` echoes the rate read
+  back off the movie scene.
 - Fixed: after a `drive.key` gamepad key switched a CommonUI host's player to the `Gamepad`
   input type, Slate-path mouse injection (`drive.click`, `drive.hover`, `drive.drag`,
   `drive.scroll`, `editor.simulate_input` mouse events) left it there, because CommonInput's

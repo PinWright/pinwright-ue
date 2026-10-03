@@ -537,10 +537,58 @@ REGISTER_RPC_HANDLER("sequencer.create", "Sequencer", "Create a new level sequen
 // ============================================================================
 // sequencer.set_display_rate
 // ============================================================================
+namespace SequenceHandlerDisplayRate
+{
+    // Strict display-rate parse. Every numeric token must be a whole positive int32 literal,
+    // so "oopsfps" (was Atoi -> 0/1), "24/not-a-number" (was 24/0, an invalid FFrameRate),
+    // "0", "-24" and 29.97 (was silently rounded to 30) are refused instead of written.
+    // Accepted: a JSON integer, "30", "30fps", "24000/1001", "24000/1001fps".
+    bool TryParse(const TSharedPtr<FJsonValue>& Value, FFrameRate& OutRate)
+    {
+        auto ParsePositive = [](const TSharedPtr<FJsonValue>& Token, int32& Out)
+        {
+            int64 Parsed = 0;
+            FString Ignored;
+            if (!TryParseStrictJsonInteger(Token, 1, TNumericLimits<int32>::Max(), Parsed, Ignored))
+            {
+                return false;
+            }
+            Out = static_cast<int32>(Parsed);
+            return true;
+        };
+
+        int32 Num = 0;
+        int32 Den = 1;
+        if (Value.IsValid() && Value->Type == EJson::String)
+        {
+            FString Text = Value->AsString();
+            Text.RemoveFromEnd(TEXT("fps"));
+            FString NumStr = Text;
+            FString DenStr;
+            if (Text.Split(TEXT("/"), &NumStr, &DenStr)
+                && !ParsePositive(MakeShared<FJsonValueString>(DenStr), Den))
+            {
+                return false;
+            }
+            if (!ParsePositive(MakeShared<FJsonValueString>(NumStr), Num))
+            {
+                return false;
+            }
+        }
+        else if (!ParsePositive(Value, Num))
+        {
+            return false;
+        }
+
+        OutRate = FFrameRate(Num, Den);
+        return OutRate.IsValid();
+    }
+}
+
 REGISTER_RPC_HANDLER("sequencer.set_display_rate", "Sequencer", "Set the display rate (FPS) of a level sequence",
     RPC_PARAMS(
         RPC_PARAM_OPT("path", "path", "Sequence asset path"),
-        RPC_PARAM_REQ("frameRate", "number", "Frame rate (e.g. '30fps', '24000/1001', or numeric)")
+        RPC_PARAM_REQ("frameRate", "string", "Positive whole frame rate: an integer (30), '30fps', or a 'num/den' rational ('24000/1001'). Malformed, fractional, zero or negative values are refused with INVALID_ARGUMENT before anything is written")
     ))
 {
     auto Payload = Ctx.GetRawPayload();
@@ -563,52 +611,21 @@ REGISTER_RPC_HANDLER("sequencer.set_display_rate", "Sequencer", "Set the display
     {
         if (UMovieScene* MovieScene = LevelSeq->GetMovieScene())
         {
-            FString FrameRateStr;
-            double FrameRateVal = 0.0;
             FFrameRate NewRate;
-            bool bRateFound = false;
-
-            if (LocalPayload->TryGetStringField(TEXT("frameRate"), FrameRateStr))
+            if (!SequenceHandlerDisplayRate::TryParse(LocalPayload->TryGetField(TEXT("frameRate")), NewRate))
             {
-                if (FrameRateStr.EndsWith(TEXT("fps")))
-                {
-                    FrameRateStr.RemoveFromEnd(TEXT("fps"));
-                    NewRate = FFrameRate(FCString::Atoi(*FrameRateStr), 1);
-                    bRateFound = true;
-                }
-                else if (FrameRateStr.Contains(TEXT("/")))
-                {
-                    FString NumStr, DenomStr;
-                    if (FrameRateStr.Split(TEXT("/"), &NumStr, &DenomStr))
-                    {
-                        NewRate = FFrameRate(FCString::Atoi(*NumStr), FCString::Atoi(*DenomStr));
-                        bRateFound = true;
-                    }
-                }
-                else if (FrameRateStr.IsNumeric())
-                {
-                    NewRate = FFrameRate(FCString::Atoi(*FrameRateStr), 1);
-                    bRateFound = true;
-                }
-            }
-            else if (LocalPayload->TryGetNumberField(TEXT("frameRate"), FrameRateVal))
-            {
-                NewRate = FFrameRate(FMath::RoundToInt(FrameRateVal), 1);
-                bRateFound = true;
-            }
-
-            if (bRateFound)
-            {
-                MovieScene->SetDisplayRate(NewRate);
-                MovieScene->Modify();
-                TSharedPtr<FJsonObject> Resp = MakeShared<FJsonObject>();
-                Resp->SetStringField(TEXT("displayRate"), NewRate.ToPrettyText().ToString());
-                AddAssetVerification(Resp, LevelSeq);
-                Ctx.SendSuccess(Resp);
+                Ctx.SendError(ErrorCodes::ERR_INVALID_ARGUMENT,
+                    "Invalid frameRate; expected a positive whole number (30), '30fps', or a positive 'num/den' rational ('24000/1001')");
                 return true;
             }
 
-            Ctx.SendError(ErrorCodes::ERR_INVALID_ARGUMENT, "Invalid frameRate format");
+            MovieScene->SetDisplayRate(NewRate);
+            MovieScene->Modify();
+            TSharedPtr<FJsonObject> Resp = MakeShared<FJsonObject>();
+            // Echo the value read back off the movie scene, not the parsed request.
+            Resp->SetStringField(TEXT("displayRate"), MovieScene->GetDisplayRate().ToPrettyText().ToString());
+            AddAssetVerification(Resp, LevelSeq);
+            Ctx.SendSuccess(Resp);
             return true;
         }
     }
