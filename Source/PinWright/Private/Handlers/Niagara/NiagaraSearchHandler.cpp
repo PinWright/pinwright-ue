@@ -8,11 +8,17 @@
 #include "Handlers/ErrorCodes.h"
 #include "Handlers/Niagara/NiagaraEditTypes.h"
 #include "Handlers/Niagara/NiagaraOpCatalog.h"
+#include "Handlers/Niagara/NiagaraJsonHelpers.h"
+#include "Handlers/Niagara/NiagaraParameterTypeResolver.h"
 
 #include "NiagaraEditorCommon.h"
 #include "NiagaraNode.h"
 #include "NiagaraCommon.h"
 #include "NiagaraScript.h"
+#include "NiagaraGraph.h"
+#include "NiagaraNodeOutput.h"
+#include "NiagaraEditorUtilities.h"
+#include "EdGraphSchema_Niagara.h"
 #include "UObject/UObjectIterator.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
@@ -444,6 +450,33 @@ int32 ScoreModuleMatch(const FString& Query,
     return Score;
 }
 
+// The value type a Dynamic Input script returns: the single input pin of its single output node,
+// the same pin UNiagaraStackFunctionInput::GetAvailableDynamicInputs reads to decide which dynamic
+// inputs the stack offers for an input. Loads the script. False when the graph is not that shape.
+bool GetDynamicInputOutputType(const FAssetData& AssetData, FName& OutName, FNiagaraTypeDefinition& OutType)
+{
+    const UNiagaraGraph* Graph = NiagaraJsonHelpers::GetGraphFromScript(Cast<UNiagaraScript>(AssetData.GetAsset()));
+    if (!Graph)
+    {
+        return false;
+    }
+    TArray<UNiagaraNodeOutput*> OutputNodes;
+    Graph->GetNodesOfClass<UNiagaraNodeOutput>(OutputNodes);
+    if (OutputNodes.Num() != 1)
+    {
+        return false;
+    }
+    TArray<UEdGraphPin*> InputPins;
+    OutputNodes[0]->GetInputPins(InputPins);
+    if (InputPins.Num() != 1)
+    {
+        return false;
+    }
+    OutName = InputPins[0]->PinName;
+    OutType = UEdGraphSchema_Niagara::PinToTypeDefinition(InputPins[0]);
+    return true;
+}
+
 } // namespace NiagaraSearch (module-search additions)
 
 // ---------------------------------------------------------------------------
@@ -458,7 +491,7 @@ REGISTER_RPC_HANDLER(
         RPC_PARAM_OPT("query",        "string", "Search query"),
         RPC_PARAM_REQ("usage",        "string", "Usage filter: Module|DynamicInput|Function|..."),
         RPC_PARAM_OPT("stage",        "string", "Stage filter: ParticleSpawn|ParticleUpdate|EmitterSpawn|EmitterUpdate|SystemSpawn|SystemUpdate"),
-        RPC_PARAM_OPT("inputType",    "string", "Input type filter for DynamicInput usage"),
+        RPC_PARAM_OPT("inputType",    "string", "DynamicInput only: keep scripts whose output can drive an input of this Niagara type (set_parameter type spellings, e.g. float, vector). Loads each candidate; fills each row's outputs. Without query/sourceFilter it loads every Dynamic Input script (slow)."),
         RPC_PARAM_OPT("sourceFilter", "string", "engine|plugin|project|any (default any)"),
         RPC_PARAM_OPT("limit",        "integer", "Max results (default 50; must be >= 0; 0 returns no rows; values above 500 clamp to 500)")))
 {
@@ -482,6 +515,32 @@ REGISTER_RPC_HANDLER(
     if (SourceFilter.IsEmpty())
     {
         SourceFilter = TEXT("any");
+    }
+
+    // ---- Resolve inputType (if provided) ----
+    // A Dynamic Input's output type is not in the asset registry, so this filter loads every
+    // candidate that survives the cheap tag filters. It is refused for any other usage rather than
+    // silently ignored (B-niagara-search-inputtype-ignored).
+    const FString InputTypeStr = Ctx.GetString(TEXT("inputType"));
+    const bool bFilterInputType = !InputTypeStr.IsEmpty();
+    FNiagaraTypeDefinition RequestedInputType;
+    if (bFilterInputType)
+    {
+        if (!Usage.Equals(TEXT("DynamicInput"), ESearchCase::IgnoreCase))
+        {
+            Ctx.SendError(ErrorCodes::ERR_INVALID_ARGUMENT,
+                FString::Printf(TEXT("inputType filters Dynamic Inputs only; usage is '%s'. Pass usage 'DynamicInput' or omit inputType."), *Usage));
+            return true;
+        }
+        PinWrightNiagara::FNiagaraResolvedParameterType ResolvedType;
+        if (!PinWrightNiagara::ResolveNiagaraParameterType(InputTypeStr, ResolvedType))
+        {
+            Ctx.SendError(ErrorCodes::ERR_INVALID_PARAMETER_TYPE,
+                FString::Printf(TEXT("inputType '%s' is not a Niagara value type. Accepted spellings: %s."),
+                    *InputTypeStr, *FString::Join(PinWrightNiagara::GetNiagaraParameterTypeAliases(), TEXT(", "))));
+            return true;
+        }
+        RequestedInputType = ResolvedType.Definition;
     }
 
     // ---- Decode stage to enum (if provided) ----
@@ -510,6 +569,8 @@ REGISTER_RPC_HANDLER(
         FString    Description;
         FString    Keywords;
         FString    Source;
+        FName      OutputName;
+        FNiagaraTypeDefinition OutputType;
     };
 
     TArray<FScoredAsset> Filtered;
@@ -560,7 +621,18 @@ REGISTER_RPC_HANDLER(
             continue;
         }
 
-        Filtered.Add({ Score, AssetData, Description, Keywords, Source });
+        // inputType last: it is the only filter that loads the asset. Same assignability rule as
+        // the stack's dynamic-input picker (Position and Vector interchange unless strict types).
+        FName OutputName;
+        FNiagaraTypeDefinition OutputType;
+        if (bFilterInputType
+            && (!NiagaraSearch::GetDynamicInputOutputType(AssetData, OutputName, OutputType)
+                || !FNiagaraEditorUtilities::AreTypesAssignable(OutputType, RequestedInputType)))
+        {
+            continue;
+        }
+
+        Filtered.Add({ Score, AssetData, Description, Keywords, Source, OutputName, OutputType });
     }
 
     // ---- totalMatches (before limit) ----
@@ -621,9 +693,18 @@ REGISTER_RPC_HANDLER(
         Item->SetStringField(TEXT("description"), Description);
         Item->SetStringField(TEXT("usage"),       UsageTag);
         Item->SetArrayField(TEXT("validStages"),  ValidStagesArr);
-        // inputs/outputs deferred (requires per-asset load) — left as empty arrays for v1
+        // inputs stay empty (requires per-asset load). outputs is filled only when inputType loaded
+        // the script, so a caller can see the type the filter matched on.
+        TArray<TSharedPtr<FJsonValue>> OutputsArr;
+        if (bFilterInputType)
+        {
+            TSharedPtr<FJsonObject> OutputObj = MakeShared<FJsonObject>();
+            OutputObj->SetStringField(TEXT("name"), Entry.OutputName.ToString());
+            OutputObj->SetStringField(TEXT("type"), Entry.OutputType.GetName());
+            OutputsArr.Add(MakeShared<FJsonValueObject>(OutputObj));
+        }
         Item->SetArrayField(TEXT("inputs"),  TArray<TSharedPtr<FJsonValue>>());
-        Item->SetArrayField(TEXT("outputs"), TArray<TSharedPtr<FJsonValue>>());
+        Item->SetArrayField(TEXT("outputs"), OutputsArr);
         Item->SetStringField(TEXT("source"),      Source);
         Item->SetNumberField(TEXT("score"),        Entry.Score);
 

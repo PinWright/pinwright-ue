@@ -203,6 +203,16 @@
   still resolves when `memberClass` names the Blueprint's own class, and variable-node refusals no
   longer open a transaction.
 
+- Fixed: `niagara.search_modules` applies `inputType` (usage `DynamicInput` only; it loads each
+  candidate and fills `outputs[{name, type}]`) instead of accepting and ignoring it; other usages
+  are refused `INVALID_ARGUMENT`, unknown types `INVALID_PARAMETER_TYPE`.
+- Fixed: `niagara.graph.create_node` refuses an unknown Input `usage` or `staticSwitchType`
+  (`INVALID_ARGUMENT`), an Enum switch without a loadable `enumPath` (`INVALID_ARGUMENT` /
+  `ENUM_NOT_FOUND`), and a non-`graph` `target.kind` (`INVALID_TARGET_KIND`) instead of keeping
+  defaults and reporting success.
+- Fixed: `niagara.graph.remove_node` runs in an editor transaction, so `editor.undo` restores the
+  node and its links.
+
 - Added: graph layout keeps comment boxes. Every PinWright layout (BPIR / MGIR / AGIR compiles,
   `material.authoring.auto_layout`) records each comment's members from the rects before it runs;
   a comment around unmoved nodes is an obstacle the moved nodes stay out of, and a comment with

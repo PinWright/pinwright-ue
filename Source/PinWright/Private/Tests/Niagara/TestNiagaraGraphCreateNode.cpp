@@ -21,6 +21,8 @@
 #include "NiagaraNodeAssignment.h"
 #include "Dom/JsonObject.h"
 #include "UObject/Package.h"
+#include "Editor.h"
+#include "Editor/Transactor.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     FNiagaraGraphCreateNodeTest,
@@ -250,6 +252,8 @@ bool FNiagaraGraphCreateNodeRefusalLeavesPackageCleanTest::RunTest(const FString
     Params->SetNumberField(TEXT("y"), 0.0);
     Params->SetObjectField(TEXT("payload"), NodePayload);
 
+    const int32 UndoQueueBefore = GEditor && GEditor->Trans ? GEditor->Trans->GetQueueLength() : 0;
+
     NiagaraEditTestUtils::InvokeExpectError(
         *this,
         TEXT("niagara.graph.create_node"),
@@ -259,6 +263,15 @@ bool FNiagaraGraphCreateNodeRefusalLeavesPackageCleanTest::RunTest(const FString
     TestFalse(
         TEXT("a refused niagara.graph.create_node leaves the package clean"),
         Package->IsDirty());
+
+    // The refusal cancels its transaction: no undo entry for an edit that did not happen.
+    if (GEditor && GEditor->Trans)
+    {
+        TestEqual(TEXT("a refused create_node adds no undo entry"),
+            GEditor->Trans->GetQueueLength(), UndoQueueBefore);
+        TestNotEqual(TEXT("the top undo entry is not the refused create_node"),
+            GEditor->Trans->GetUndoContext().Title.ToString(), FString(TEXT("MCP: niagara.graph.create_node")));
+    }
 
     Package->SetDirtyFlag(false);
     Package->SetFlags(RF_Transient);

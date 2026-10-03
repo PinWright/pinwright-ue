@@ -348,6 +348,8 @@ would be ignored rather than honoured.
 
 Searches Niagara module scripts by usage, stage, and keywords. The optional `limit` defaults to 50 and follows PinWright's integer coercion (numeric strings and booleans are accepted; fractional numbers truncate toward zero). The resulting integer must be non-negative. A limit of `0` returns no rows while preserving `totalMatches`; values above 500 are clamped to 500. Negative values are rejected with `INVALID_ARGUMENT` before the Asset Registry is walked.
 
+`inputType` (usage `DynamicInput` only) keeps the Dynamic Inputs whose output can drive an input of that type, by the same assignability rule as the editor's dynamic-input picker (Position and Vector interchange unless strict stack types are enabled). It takes the `niagara.set_parameter` type spellings (`float`, `vector`, `NiagaraPosition`, ...). The output type is not an Asset Registry tag, so every candidate surviving the other filters is loaded; narrow with `query` / `sourceFilter` first. Matching rows carry `outputs: [{name, type}]`, the type it matched on; without `inputType` `outputs` stays empty. Refusals: `INVALID_ARGUMENT` for any other usage, `INVALID_PARAMETER_TYPE` for an unknown type. Previously the parameter was accepted and ignored.
+
 ### niagara.inspect
 
 A full `niagara.inspect` of a real system serializes every aspect (system/emitter/renderer props, the whole parameter set, the stack, all graphs, and the compile summary) and routinely exceeds the ~10k inline display budget, so it spills to a `Saved/.../HttpResponses/*.json` file you then have to Read off disk. To keep a **parameter readback inline**, narrow it instead of dumping everything:

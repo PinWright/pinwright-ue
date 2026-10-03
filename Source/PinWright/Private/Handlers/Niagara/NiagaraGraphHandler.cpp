@@ -629,7 +629,14 @@ REGISTER_RPC_HANDLER("niagara.graph.remove_node", "niagara.graph", "Delete a nod
             return true;
         }
 
-        TargetGraph->RemoveNode(TargetNode);
+        {
+            // UEdGraph::RemoveNode Modify()s the graph and, through BreakAllNodeLinks, every
+            // linked node, but those records land only while a transaction is open. Without one
+            // editor.undo cannot bring the node or its links back (B-niagara-graph-no-transaction).
+            FScopedTransaction Transaction(FText::FromString(TEXT("MCP: niagara.graph.remove_node")));
+            TargetNode->Modify();
+            TargetGraph->RemoveNode(TargetNode);
+        }
         TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
         AddAssetVerification(Result, System);
         Result->SetStringField(TEXT("scriptUsage"), GraphUsage);
@@ -859,6 +866,14 @@ namespace NiagaraGraphCreate
                     {
                         InputNode->Usage = ENiagaraInputNodeUsage::RapidIterationParameter;
                     }
+                    else
+                    {
+                        // Only an omitted usage keeps the default; a typo must not create a node of
+                        // a different usage than the one asked for (B-niagara-create-payload-defaults).
+                        return FNiagaraEditError::Make(ErrorCodes::ERR_INVALID_ARGUMENT,
+                            FString::Printf(TEXT("Unknown Input-node usage '%s'. Valid values: Parameter, Attribute, RapidIterationParameter."),
+                                *UsageStr));
+                    }
                 }
 
                 double SortPriority = 0.0;
@@ -923,16 +938,29 @@ namespace NiagaraGraphCreate
                     }
                     else if (SwitchTypeStr.Equals(TEXT("Enum"), ESearchCase::IgnoreCase))
                     {
-                        SwitchNode->SwitchTypeData.SwitchType = ENiagaraStaticSwitchType::Enum;
-
+                        // An Enum switch without its enum has no cases to branch on, so the enum is
+                        // required and must load.
                         FString EnumPath;
-                        if (Payload->TryGetStringField(TEXT("enumPath"), EnumPath) && !EnumPath.IsEmpty())
+                        Payload->TryGetStringField(TEXT("enumPath"), EnumPath);
+                        if (EnumPath.IsEmpty())
                         {
-                            if (UEnum* Enum = LoadObject<UEnum>(nullptr, *EnumPath))
-                            {
-                                SwitchNode->SwitchTypeData.Enum = Enum;
-                            }
+                            return FNiagaraEditError::Make(ErrorCodes::ERR_INVALID_ARGUMENT,
+                                TEXT("staticSwitchType 'Enum' requires payload.enumPath naming a UEnum."));
                         }
+                        UEnum* Enum = LoadObject<UEnum>(nullptr, *EnumPath, nullptr, LOAD_NoWarn | LOAD_Quiet);
+                        if (!Enum)
+                        {
+                            return FNiagaraEditError::Make(ErrorCodes::ERR_ENUM_NOT_FOUND,
+                                FString::Printf(TEXT("Could not load enum '%s' for the Enum static switch."), *EnumPath));
+                        }
+                        SwitchNode->SwitchTypeData.SwitchType = ENiagaraStaticSwitchType::Enum;
+                        SwitchNode->SwitchTypeData.Enum = Enum;
+                    }
+                    else
+                    {
+                        return FNiagaraEditError::Make(ErrorCodes::ERR_INVALID_ARGUMENT,
+                            FString::Printf(TEXT("Unknown staticSwitchType '%s'. Valid values: Bool, Integer, Enum."),
+                                *SwitchTypeStr));
                     }
                 }
             }
@@ -991,9 +1019,13 @@ REGISTER_RPC_HANDLER("niagara.graph.create_node", "niagara.graph",
     {
         const TSharedPtr<FJsonObject>& TargetObj = *TargetObjPtr;
         FString KindStr;
-        if (TargetObj->TryGetStringField(TEXT("kind"), KindStr) && !KindStr.IsEmpty())
+        if (TargetObj->TryGetStringField(TEXT("kind"), KindStr) && !KindStr.IsEmpty()
+            && !KindStr.Equals(TEXT("graph"), ESearchCase::IgnoreCase))
         {
-            // Only "graph" is supported by this handler; leave default.
+            // Only "graph" is supported; any other kind was a request this verb cannot honour.
+            Ctx.SendError(ErrorCodes::ERR_INVALID_TARGET_KIND,
+                FString::Printf(TEXT("niagara.graph.create_node only accepts target.kind 'graph'; got '%s'."), *KindStr));
+            return true;
         }
         TargetObj->TryGetStringField(TEXT("emitter"), TargetSpec.EmitterName);
         if (TargetSpec.EmitterName.IsEmpty())
@@ -1115,6 +1147,8 @@ REGISTER_RPC_HANDLER("niagara.graph.create_node", "niagara.graph",
         {
             GraphPackage->SetDirtyFlag(false);
         }
+        // Net-zero edit: drop the transaction too, so a refusal leaves no undo entry behind.
+        Transaction.Cancel();
         Ctx.SendError(*PayloadError.Code, PayloadError.Message);
         return true;
     }

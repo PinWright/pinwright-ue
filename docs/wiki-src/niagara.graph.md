@@ -52,6 +52,13 @@ exists, because pin allocation depends on the applied fields; the node is finali
 removed, leaving the same net-zero result. `ResolveNiagaraSubclassByPath` accepts any `UNiagaraNode`
 subclass, so the class gate is what separates a resolvable class from a supported one.
 
+Class-specific discriminators are validated, not defaulted: only an omitted field keeps the node's
+default. An Input node's `usage` must be `Parameter`, `Attribute` or `RapidIterationParameter`, and a
+static switch's `staticSwitchType` must be `Bool`, `Integer` or `Enum` (case-insensitive); anything
+else is `INVALID_ARGUMENT`. `staticSwitchType: "Enum"` requires `enumPath` (`INVALID_ARGUMENT` when
+missing, `ENUM_NOT_FOUND` when it does not load). `target.kind` may only be `graph`; any other kind is
+`INVALID_TARGET_KIND` before the asset is resolved. These used to be accepted and silently ignored.
+
 ### niagara.graph.connect_pins
 
 `assetPath` may also be a standalone Niagara Script. Its one graph is used, and `emitterName` /
@@ -68,5 +75,7 @@ A refused wire returns `CONNECTION_DISALLOWED`, the schema reason (for example, 
 ### niagara.graph.remove_node
 
 Removes one node from the selected script graph by its GUID. It uses the same optional `scriptType` contract as `niagara.graph.connect_pins`: omitted or empty means `Spawn`, `Spawn` and `Update` are accepted case-insensitively, and every other supplied value returns `TARGET_NOT_FOUND` with the requested value plus valid candidates `Spawn` and `Update` before the node is resolved or removed. Pass the node GUID returned by the graph read; names and display titles are not accepted by this verb. A successful response includes canonical `scriptUsage` and the removed node's canonical `nodeId` GUID.
+
+The removal runs in one editor transaction (`MCP: niagara.graph.remove_node`), so `editor.undo` restores the node and its incident links, and redo removes them again.
 
 GUID removal uses the same output-reachability scope as `connect_pins`. Shared nodes are removable through either matching target and disconnected nodes remain admissible; a node owned by another reachable usage returns `TARGET_NOT_FOUND` with the requested and actual usage list before removal or graph notification.

@@ -27,6 +27,9 @@
 #include "NiagaraSystem.h"
 #include "NiagaraTypes.h"
 #include "UObject/Package.h"
+#include "Editor.h"
+#include "Editor/Transactor.h"
+#include "Misc/ScopeExit.h"
 
 
 namespace
@@ -1718,6 +1721,99 @@ bool FNiagaraGraphRemoveNodeReturnsCanonicalIdentityTest::RunTest(const FString&
     }
 
     System->RemoveFromRoot();
+    return true;
+}
+
+// ============================================================================
+// niagara.graph.remove_node is one undoable transaction (B-niagara-graph-no-transaction).
+// UEdGraph::RemoveNode Modify()s the graph and the linked nodes, but those records only land
+// while a transaction is open. Counterfactual: drop the FScopedTransaction in remove_node and the
+// undo-stack title check fails (the top of the stack is some earlier, unrelated transaction).
+// ============================================================================
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FNiagaraGraphRemoveNodeUndoRedoTest,
+    "PinWright.niagara.graph.remove_node.RemovalIsUndoableAndRedoable",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FNiagaraGraphRemoveNodeUndoRedoTest::RunTest(const FString& Parameters)
+{
+    FString ObjectPath;
+    UNiagaraSystem* System = NewTransientHandlerTestSystem(ObjectPath);
+    if (!TestNotNull(TEXT("Transient Niagara system created"), System))
+    {
+        return false;
+    }
+    ON_SCOPE_EXIT
+    {
+        System->RemoveFromRoot();
+    };
+
+    FSharedHandlerTestSystemGraph Graphs;
+    if (!TestTrue(TEXT("shared Spawn and Update graph created"), AttachSharedHandlerTestSystemGraph(System, Graphs))
+        || !TestNotNull(TEXT("Spawn from-node"), Graphs.SpawnFromNode)
+        || !TestNotNull(TEXT("Spawn to-node"), Graphs.SpawnToNode)
+        || !TestNotNull(TEXT("Spawn from-pin"), Graphs.SpawnFromPin)
+        || !TestNotNull(TEXT("Spawn to-pin"), Graphs.SpawnToPin)
+        || !TestNotNull(TEXT("editor transaction buffer available"), GEditor ? GEditor->Trans.Get() : nullptr))
+    {
+        return false;
+    }
+
+    UNiagaraGraph* Graph = Graphs.SpawnGraph;
+    UEdGraphNode* Removed = Graphs.SpawnFromNode;
+    UEdGraphNode* Survivor = Graphs.SpawnToNode;
+    TestTrue(TEXT("fixture graph is transactional"), Graph->HasAnyFlags(RF_Transactional));
+    TestTrue(TEXT("fixture node is transactional"), Removed->HasAnyFlags(RF_Transactional));
+
+    // The pins are found by name after each undo step: undo re-serializes a node's pins, so a
+    // pointer taken before it is not guaranteed to survive.
+    const FName FromPinName(TEXT("OutFloat"));
+    const FName ToPinName(TEXT("InFloat"));
+    auto IsLinked = [&]() -> bool
+    {
+        UEdGraphPin* From = Removed->FindPin(FromPinName);
+        UEdGraphPin* To = Survivor->FindPin(ToPinName);
+        return From && To && From->LinkedTo.Contains(To) && To->LinkedTo.Contains(From);
+    };
+
+    Graphs.SpawnFromPin->MakeLinkTo(Graphs.SpawnToPin);
+    TestTrue(TEXT("before: node is in the graph"), Graph->Nodes.Contains(Removed));
+    TestTrue(TEXT("before: OutFloat -> InFloat is linked"), IsLinked());
+    const int32 NodeCountBefore = Graph->Nodes.Num();
+
+    TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+    Payload->SetStringField(TEXT("assetPath"), ObjectPath);
+    Payload->SetStringField(TEXT("nodeId"), Removed->NodeGuid.ToString());
+
+    FTestResponseCapture Capture;
+    TestTrue(TEXT("niagara.graph.remove_node handler found"),
+        InvokeHandlerWithCapture(TEXT("niagara.graph.remove_node"), Payload, Capture));
+    if (!TestTrue(TEXT("remove_node succeeds"), Capture.bSuccess))
+    {
+        AddError(FString::Printf(TEXT("remove_node error: %s %s"), *Capture.ErrorCode, *Capture.Message));
+        return false;
+    }
+    TestFalse(TEXT("after: node left the graph"), Graph->Nodes.Contains(Removed));
+    TestEqual(TEXT("after: graph lost exactly one node"), Graph->Nodes.Num(), NodeCountBefore - 1);
+    UEdGraphPin* SurvivorPin = Survivor->FindPin(ToPinName);
+    TestTrue(TEXT("after: the survivor's incident link was broken"), SurvivorPin && SurvivorPin->LinkedTo.Num() == 0);
+
+    // Undo only our own transaction: without it the next undo would revert an unrelated one.
+    if (!TestEqual(TEXT("remove_node is the transaction on top of the undo stack"),
+            GEditor->Trans->GetUndoContext().Title.ToString(), FString(TEXT("MCP: niagara.graph.remove_node"))))
+    {
+        return false;
+    }
+
+    TestTrue(TEXT("undo succeeds"), GEditor->UndoTransaction(/*bCanRedo=*/true));
+    TestTrue(TEXT("after undo: node is back in the graph"), Graph->Nodes.Contains(Removed));
+    TestEqual(TEXT("after undo: node count restored"), Graph->Nodes.Num(), NodeCountBefore);
+    TestTrue(TEXT("after undo: OutFloat -> InFloat is linked again"), IsLinked());
+
+    TestTrue(TEXT("redo succeeds"), GEditor->RedoTransaction());
+    TestFalse(TEXT("after redo: node left the graph again"), Graph->Nodes.Contains(Removed));
+    SurvivorPin = Survivor->FindPin(ToPinName);
+    TestTrue(TEXT("after redo: the incident link is broken again"), SurvivorPin && SurvivorPin->LinkedTo.Num() == 0);
     return true;
 }
 
