@@ -284,7 +284,8 @@ tree to read. See *Four instance counts* above for why this is a different layer
 `locations[]` entries require **all three** of `x`, `y` and `z`. An entry missing any of them is
 reported in `skipped[]` (`{index, reason}`, capped at 32, true total in `skippedCount`) instead of
 being placed at the world origin, and so is any entry that is not an object. While projecting, the
-supplied `z` only says where the ground probe starts.
+supplied `z` only says where the ground probe starts. `location` is an alternate spelling in either
+shape: an array is read as `locations`, a single `{x,y,z}` object as `position`.
 
 `foliage.add_instances` is the richer literal-placement verb (per-instance rotation and scale) and
 does not project at all.

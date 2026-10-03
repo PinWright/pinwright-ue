@@ -13,6 +13,10 @@
   tick. **Behaviour change:** it now runs at the next safe point instead of inline, its schema
   gains the optional `expectWorld` precondition (refused with `WORLD_MISMATCH` on mismatch), and a
   successful response carries `world` (the current world object path) besides `success`.
+- Fixed: `foliage.paint` accepts `location` as a single `{x,y,z}` object. The handler always read
+  that shape (as `position`), but `location` was declared an untyped alias of the `array` param
+  `locations`, so the type gate refused the object with `PARAM_TYPE_MISMATCH` before the handler
+  ran. `location` is now a typed alias declared `array|object`.
 - Fixed: the `{Key=Value,...}` text `widget.export_xml` emits is accepted back unedited.
   `widget.set` (and every other `ApplyJsonValueToProperty` caller: `property.set`,
   `blueprint.set_default`) now reads a brace-form struct string (`Brush`, `ColorAndOpacity`, `Font`)
