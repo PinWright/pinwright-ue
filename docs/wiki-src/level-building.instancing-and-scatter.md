@@ -7,20 +7,34 @@ How to place thousands of repeating meshes without thousands of actors: instance
 Never spawn thousands of `StaticMeshActor`s for a repeating mesh — a forest of 8000 trees built that way is 8000 actors in the outliner and `.umap`. Choose either instanced route:
 
 - `foliage.add_instances {foliageTypePath, transforms}` — typed, no documented cap, and `foliageTypePath` accepts a static-mesh path (the `UFoliageType` is auto-created). Instances land in the level's foliage actor, so they are not addressable by your own actor prefix.
-- **A HISM component you own** — one actor per mesh variant, named with your layer's prefix, deletable and rebuildable as a unit. There is no typed verb; drive it from `python.execute`:
+- **A HISM component you own** — one actor per mesh variant, named with your layer's prefix, deletable and rebuildable as a unit. Spawn the holder from `python.execute`, then add the component with `actor.add_component` and fill it with `actor.add_instances`:
 
 ```python
-a = unreal.EditorActorSubsystem().spawn_actor_from_class(unreal.Actor, unreal.Vector(0, 0, 0))
+# 1. python.execute: the holder, spawned AT the layer's anchor. The editor's empty-actor
+#    factory gives it a DefaultSceneRoot, and that root is what carries the anchor.
+anchor = unreal.Vector(x=120000.0, y=-45000.0, z=0.0)
+a = unreal.EditorActorSubsystem().spawn_actor_from_class(unreal.Actor, anchor)
 a.set_actor_label('FO_Trees_Oak'); a.set_folder_path('MyLevel/Trees')
-comp = unreal.new_object(unreal.HierarchicalInstancedStaticMeshComponent, a, 'HISM_Trees_Oak')
-a.set_editor_property('root_component', comp)          # without this the component is not the root
-comp.set_static_mesh(unreal.load_asset('/Game/MyLevel/Meshes/SM_Tree_Oak'))
-comp.add_instances(instance_transforms=transforms, should_return_indices=False,
-                   world_space=False, update_navigation=False)
-assert comp.get_instance_count() == len(transforms)
+print(a.get_path_name())   # labels are not unique: address the holder by this path below
 ```
 
-`add_instances`' Python signature has changed across 5.x — if the keyword form raises, use `add_instance(t, False)` per transform. Instances serialise into the `.umap`; `level.save` persists a HISM layer like any actor, and rebuilding rewrites the map package.
+```js
+const holder = "<path printed by step 1>";
+// 2. The component: built, attached under the existing root and registered from C++.
+call("actor.add_component", { actorName: holder, componentName: "HISM_Trees_Oak",
+  componentType: "HierarchicalInstancedStaticMeshComponent", meshPath: "/Game/MyLevel/Meshes/SM_Tree_Oak" })
+// 3. Fill it. space: "local" means relative to the holder; the verb's default is "world".
+//    Rows are {location: {x, y, z}, rotation?: {pitch, yaw, roll}, scale?: {x, y, z}}.
+call("actor.add_instances", { actorName: holder, component: "HISM_Trees_Oak", space: "local",
+  expectedCount: 0, transforms })                    // -> added == transforms.length
+call("actor.get_transform", { actorName: holder })   // -> location is still the anchor
+```
+
+**Never make the HISM the root: `a.set_editor_property('root_component', comp)` moves the whole layer to the world origin.** An actor stores no transform of its own. `get_actor_location()` reads the root component, and the anchor lives on the `DefaultSceneRoot`. A component from `unreal.new_object` sits at identity, so pointing the root at it moves the holder to `(0, 0, 0)`. Every instance stored relative to the holder moves with it, and nothing fails: one layer built that way landed about 17 km from where it was authored, and `spatial.ground_instances` then seated it there. The reflection write also skips `AActor::SetRootComponent`, so neither component gets `NotifyIsRootComponentChanged` and the old `DefaultSceneRoot` stays registered. An instance count cannot catch any of this, because it does not say where the instances are. The `actor.get_transform` read-back does catch it: a location of `[0, 0, 0]` means the root was replaced. For the same reason, do not build the holder with `actor.spawn {classPath: "Actor"}`: that verb skips the editor factory, so the bare actor has no root to hold its `location`.
+
+Instances serialise into the `.umap`; `level.save` persists a HISM layer like any actor, and rebuilding rewrites the map package.
+
+**To rebuild, pass `replace: true` to step 3** (with `expectedCount` set to the current count). The verb validates every row *before* it clears, then clears and refills in one editor transaction, and echoes the old scatter in `removedInstances[]`. Do not hand-roll `clear_instances()` followed by a refill in one `python.execute` script — when the refill raises (a missing required argument is enough), the clear has already run and the scatter is gone.
 
 **`mark_render_state_dirty` is a parameter, never a method.** There is no `comp.mark_render_state_dirty()` on UE 5.8 — `UActorComponent::MarkRenderStateDirty()` carries no `UFUNCTION`, so it never reaches Python and the obvious call is an `AttributeError`. The flag rides on the instance-write verbs instead, defaulting to `False` on every one:
 
@@ -40,7 +54,7 @@ for i, t in enumerate(new_transforms):
 
 `add_instance` / `add_instances` / `remove_instance` / `clear_instances` carry no such parameter — the flag exists only on the update and custom-data verbs above.
 
-**`register_component()` and `is_registered()` do not exist in Python either — same family, same cause.** `UActorComponent::RegisterComponent()` and `IsRegistered()` carry no `UFUNCTION` on UE 5.8, and `AActor::AddComponentByClass` is marked `ScriptNoExport`, so all three natural spellings after `unreal.new_object` raise `AttributeError`. Do not write them and do not write a registration read-back around them. The recipe above needs neither: `set_editor_property('root_component', comp)` on a spawned actor is what puts the component in the level, and `get_instance_count()` is the read-back that proves the write landed. If you need a component that is registered by C++ at creation time, use `call("actor.add_component")` instead of building it from Python.
+**`register_component()` and `is_registered()` do not exist in Python either — same family, same cause.** `UActorComponent::RegisterComponent()` and `IsRegistered()` carry no `UFUNCTION` on UE 5.8, and `AActor::AddComponentByClass` is marked `ScriptNoExport`, so all three natural spellings after `unreal.new_object` raise `AttributeError`. Do not write them and do not write a registration read-back around them. The recipe above needs neither: `actor.add_component` registers the component from C++, and `actor.add_instances` reads back every instance it adds. Being listed by `get_components_by_class` does not prove a component is registered. That list holds every component the actor owns from construction on, registered or not.
 
 ## Running A PCG Graph
 

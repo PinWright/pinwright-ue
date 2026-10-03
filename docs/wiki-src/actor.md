@@ -245,7 +245,7 @@ Adds an *instance* component to one placed actor, not its BP class; recompiling 
 
 Use it for one-off level tweaks. For "every instance of this BP must have this component," call `blueprint.scs.add_component` on the BP asset.
 
-`StaticMeshComponent`s auto-load `meshPath`; lights are forced to `Movable`. A property failure is reported in `warnings` without failing the call, and so is a `properties` map that leaves the new component with `bAutoActivate:false` — see the same note under `actor.set_component_properties`.
+`StaticMeshComponent`s and their subclasses (`InstancedStaticMeshComponent`, `HierarchicalInstancedStaticMeshComponent`) auto-load `meshPath`; lights are forced to `Movable`. A scene component is attached under the actor's existing root and never becomes the root, so the actor keeps its placement; on an actor with no root it is left unattached. A property failure is reported in `warnings` without failing the call, and so is a `properties` map that leaves the new component with `bAutoActivate:false` — see the same note under `actor.set_component_properties`.
 
 ### actor.add_instances
 

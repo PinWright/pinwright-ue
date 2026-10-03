@@ -80,7 +80,7 @@ REGISTER_RPC_HANDLER("actor.add_component", "actor", "Add an instance-level comp
         RPC_PARAM_REQ("actorName", "string", "Display label or name of the target actor in the level."),
         RPC_PARAM_REQ("componentType", "classref", "UClass name (e.g. 'PointLightComponent') or full class path (e.g. '/Script/Engine.PointLightComponent'); must derive from UActorComponent."),
         RPC_PARAM_OPT("componentName", "string", "Identifier for the new component; auto-generated as <ClassName>_<rand> when omitted."),
-        RPC_PARAM_OPT("meshPath", "path", "Asset path of a static mesh; only used when componentType is StaticMeshComponent."),
+        RPC_PARAM_OPT("meshPath", "path", "Asset path of a static mesh; only used when componentType is StaticMeshComponent or a subclass (InstancedStaticMeshComponent, HierarchicalInstancedStaticMeshComponent)."),
         RPC_PARAM_OPT("properties", "object", "Map of UPROPERTY names to JSON values applied after construction; failures returned in 'warnings' array, as is a write that leaves bAutoActivate false.")
     ))
 {

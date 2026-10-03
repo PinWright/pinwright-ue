@@ -33,6 +33,13 @@
   `frameSettled`, `settleChangedPixelFraction` and, when the frame never settled, `frameWarning`
   report the measurement. `asset.generate_thumbnail` on a mesh now waits on the same slot
   materials, and every thumbnail forces its textures' mips resident before waiting on them.
+- Fixed: the owned-HISM recipe on `level-building.instancing-and-scatter` no longer makes the HISM
+  the holder's root with `set_editor_property('root_component', comp)`. That write moved the whole
+  layer to the world origin, because the spawn location lives on the root it replaced. The recipe
+  now adds the HISM with `actor.add_component`, which attaches it under the existing root, fills
+  it with `actor.add_instances` in `space: "local"`, and reads the holder back with
+  `actor.get_transform`. `actor.add_component`'s `meshPath` description now
+  says it also reaches ISM/HISM components. No behaviour change.
 - Changed: a BPIR `%ref.Pin` that does not resolve now lists the node's data outputs in a spelling
   that compiles, plus what the bare `%ref` resolves to:
   `Could not resolve value '%c.AsBPI_RecoilReceiver_C' for pin 'Target' (outputs of %c: AsBPIRecoilReceiver; the bare %c resolves to AsBPIRecoilReceiver)`.
