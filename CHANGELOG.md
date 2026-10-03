@@ -2,6 +2,13 @@
 
 ## 1.0.0
 
+- Added: `texture.create_text_texture` renders text with a real font (any runtime `UFont` or
+  `UFontFace`, Roboto by default) via FreeType at a pixel `size`, with `typeface`, `align`,
+  `color` and a `backgroundColor` that defaults to fully transparent (coverage as alpha), and
+  reports measured `inkBounds`, `clipped` and `missingCharacters`. `texture.create_from_pixels`
+  creates a texture from base64 raw `RGBA8` / `Gray8` bytes whose length must match exactly. Both
+  refuse an existing asset with `ASSET_ALREADY_EXISTS`. `text` is capped at 4096 characters, and an
+  auto-sized canvas fits each line's ink as well as its advance. The main module now links FreeType2.
 - Added: `blueprint.record_dispatcher` observes a Blueprint Event Dispatcher (or any dynamic
   multicast delegate) firing on a live object, which Python cannot do. It runs as a job: it binds
   a recorder, records up to `count` broadcasts with their parameters and timestamps, and removes

@@ -125,6 +125,11 @@ public class PinWright : ModuleRules
         // OpenSSL RAND_bytes backs the gateway auth token; FGenericPlatformMisc::CreateGuid is not a CSPRNG on all platforms.
         AddEngineThirdPartyPrivateStaticDependencies(Target, "OpenSSL");
 
+        // FreeType2: texture.create_text_texture rasterises real font glyphs (UFont / UFontFace bytes)
+        // on the CPU (Handlers/Material/TextureAuthorHandler.cpp). The same static dependency
+        // SlateCore and the engine's Text3D plugin take; present on every editor target 5.3-5.8.
+        AddEngineThirdPartyPrivateStaticDependencies(Target, "FreeType2");
+
         // FInstancedStruct / FStructView live in the standalone StructUtils plugin module
         // in UE 5.4 (STRUCTUTILS_API). From UE 5.5 on they were folded into CoreUObject, so
         // the separate module must NOT be linked there. Link it only on 5.4 and earlier.

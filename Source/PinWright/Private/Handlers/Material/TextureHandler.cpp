@@ -12,6 +12,7 @@
 #include "Handlers/Asset/TextureDumpBuilder.h"
 #include "Handlers/Asset/TexturePixelStats.h"
 #include "Handlers/Asset/TextureSourceMipLock.h"
+#include "Handlers/Material/TextureAssetHelpers.h"
 #include "Utils/JsonBuilders.h"
 #include "PinWrightSubsystem.h"
 #include "PinWrightHelpers.h"
@@ -33,6 +34,10 @@
 // TextureCompressorModule removed in UE 5.7
 #include "Engine/TextureRenderTarget2D.h"
 #include "Kismet/KismetRenderingLibrary.h"
+
+// Defined below, shared with TextureAuthorHandler.cpp through TextureAssetHelpers.h.
+using PinWrightTextureAssets::CreateEmptyTexture;
+using PinWrightTextureAssets::McpSaveTextureToDisk;
 
 // Helper macro for error responses
 #define TEXTURE_ERROR_RESPONSE(Msg) \
@@ -68,7 +73,7 @@ static float Rec709Luma(uint8 R, uint8 G, uint8 B)
 // the registry at every site). bForce=true writes unconditionally: freshly created texture
 // packages are not left dirty, so a dirty-only save would report "already saved" and write
 // nothing, leaving the asset in memory only (the metasound create lesson).
-static void McpSaveTextureToDisk(const TSharedPtr<FJsonObject>& Response, UObject* Texture, bool bSave)
+void PinWrightTextureAssets::McpSaveTextureToDisk(const TSharedPtr<FJsonObject>& Response, UObject* Texture, bool bSave)
 {
     bool bSavedToDisk = false;
     if (bSave && Texture)
@@ -80,7 +85,7 @@ static void McpSaveTextureToDisk(const TSharedPtr<FJsonObject>& Response, UObjec
 }
 
 // Helper to create a texture with given dimensions
-static UTexture2D* CreateEmptyTexture(const FString& PackagePath, const FString& TextureName, int32 Width, int32 Height, bool bHDR)
+UTexture2D* PinWrightTextureAssets::CreateEmptyTexture(const FString& PackagePath, const FString& TextureName, int32 Width, int32 Height, bool bHDR)
 {
     // Guard the composition, not the result. TWO engine calls below log at **Fatal** - a
     // verbosity that is not compiled out in any configuration and ends the PROCESS, taking every

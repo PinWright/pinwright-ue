@@ -1,6 +1,6 @@
 # texture
 
-Inspect, transform, and configure texture assets, plus create render targets and procedural patterns — compression, LOD bias, streaming, filtering, wrapping, and channel operations. Use this for texture asset data and settings; use `call("material")` when wiring textures into shader graphs or material instances.
+Inspect, transform, and configure texture assets, plus create render targets, procedural patterns, font-rendered text and caller-supplied pixel images — compression, LOD bias, streaming, filtering, wrapping, and channel operations. Use this for texture asset data and settings; use `call("material")` when wiring textures into shader graphs or material instances.
 
 ## Generic texture read
 
@@ -82,6 +82,39 @@ off, and enough of that overflows the accumulation to infinity, which normalises
 compression; `hdr: false` (the default) produces the sRGB `BGRA8` byte texture. The format the pixels
 were actually written in comes back on the response as `hdr` — read off the source, not echoed from
 the request.
+
+### texture.create_text_texture
+
+Renders `text` with a **real font** — any runtime `UFont` (composite font) or `UFontFace`, default
+`/Engine/EngineFonts/Roboto.Roboto` — rasterised on the CPU by FreeType at `size` pixels (the em
+size, 1..1024). Use it for labels, markings, serial numbers and stencil sources; it is not the 3x5
+annotation font `image.annotate` draws.
+
+- **Background:** `backgroundColor` defaults to fully transparent `{0,0,0,0}`. The text colour is then
+  carried on every pixel and the glyph coverage is the alpha, so the texture is directly usable as a
+  masked / translucent decal or as a stencil (sample A). An opaque `backgroundColor` gives a flat
+  plate. Colours are `{r,g,b,a}` in 0..1, stored without a colour-space conversion, like the other
+  creators.
+- **Typeface:** `typeface` picks an entry of a composite font's default typeface (Roboto: `Regular`,
+  `Bold`, `Italic`, `Bold Italic`, `Light`); default is the font's first entry, echoed back as
+  `typeface`. An unknown name is refused with the available list. Offline (bitmap-cache) `UFont`s
+  are refused — they carry no outline data.
+- **Layout:** `'\n'` starts a new line; each line is aligned by `align` (`Left` / `Center` / `Right`),
+  the block of lines is centred vertically. Kerning comes from the font's legacy `kern` table only
+  (fonts that kern solely through OpenType GPOS draw unkerned); there is **no complex-script shaping**
+  (Latin, Cyrillic, Greek and similar render correctly; Arabic or Indic do not). `text` is capped at
+  4096 characters; longer is refused with `INVALID_ARGUMENT`.
+- **Size:** omit `width`/`height` to fit the canvas to the widest line and the line block. A line's
+  width is its advance plus any ink outside it (an italic overhang, a leading `j`'s negative bearing),
+  and alignment places that whole box, so an auto-sized canvas loses no coverage horizontally. Pass
+  `width`/`height` for a fixed canvas (1..4096). Glyph coverage that falls outside the canvas is counted, not
+  silently dropped: `clipped` / `clippedPixels`.
+
+Measured, not echoed: `inkPixels` and `inkBounds` (`{x, y, width, height}`, absent when nothing was
+inked, e.g. all-space text) are read off the rendered coverage, and `missingCharacters` lists the code
+points (`U+XXXX`) the font has no glyph for — those draw the font's `.notdef` box. As with
+`create_from_pixels`, an existing asset is refused with `ASSET_ALREADY_EXISTS` and the response carries
+`pixelStats`.
 
 ### texture.get_pixel_stats
 
