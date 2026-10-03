@@ -801,7 +801,9 @@ int32 GetAspectVersion(const FString& RelativeFile)
         // 12: an InputKey node with Pressed and Released both wired emits both entries; a pure
         //    binding read from another block moves to the entry top; a warning marker after a
         //    graph body starts on its own line instead of sharing the closing `}`. Entries
-        //    tied on graph and NodePosY keep graph node order instead of an unstable sort's.
+        //    tied on graph and NodePosY keep graph node order instead of an unstable sort's. A generic
+        //    Break Struct node on a HasNativeBreak struct prints `break<FTransform>` (F-prefixed
+        //    form, so it recompiles to the generic node) instead of `break<Transform>`.
         { TEXT("bpir.txt"),                 12 },
         // 2: level_bp.txt is BuildBpirText output for a map's level Blueprint, so it carries the
         //    bpir.txt 12 changes. First row this aspect has had -- it was served at

@@ -209,6 +209,17 @@ Compiler gotcha: the cast source pin must be wired through the K2 schema (`TryCr
 
 > **Pin aliases:** The compiler accepts `cond`, `condition`, and `Index` for the condition pin of `select`, `branch`, and `switch` nodes. The decompiler always outputs `Index:`.
 
+The option and result type comes from what the select is wired to, as in the editor. When
+nothing typed reaches it — every option is a literal, or the only links run to other such
+selects — the compiler infers it after wiring from the option literals: decimal numbers give
+`int` (`real` if any is fractional), `true`/`false` give `bool`, plain quoted strings give
+`string`, and a chain of selects takes the type of its typed neighbour. Mixed literal kinds
+(or `nullptr`, hex, enum and struct literals) are not inferred; annotate the result instead:
+`%i: int = select(cond: %f, true: 3, false: -1)`. A select a typed consumer reaches keeps the
+consumer's type (`set FloatVar = select(..., true: 1, false: 0)` is a `real` select, no
+conversion node). Inside an `entry macro` body plain number, bool and string literals are not
+used for inference: a select nothing typed reaches stays wildcard, typed by each macro instance.
+
 ## 2.4 Macros (DoOnce, Gate, FlipFlop, MultiGate)
 
 See `call("bpir.examples.do-once-flipflop")` and `call("bpir.examples.multigate")` for worked patterns.
@@ -285,10 +296,23 @@ group.
 See `call("bpir.examples.struct-make-break")` for a worked pattern.
 
 ```
-%broken = break<HitResult>(%hit.OutHit)        # Break struct
+%m = break<Margin>(%margin)                    # Break struct (no native break function)
 %vec = make<Vector>(X: 1.0, Y: 2.0, Z: 3.0)   # Make struct
-# Access break results: %broken.Location, %broken.Normal, etc.
+%b = call BreakHitResult(Hit: %hit.OutHit)     # Native-break struct: call its break function
+# Access break results: %m.Left, %b.BoneName, %b.Location, etc.
 ```
+
+On a struct with `HasNativeBreak` metadata (`HitResult`, `Rotator`, `Vector`, `Transform`, ...),
+`break<T>` emits that native break function — `break<Rotator>(%r)` is the same node as
+`call BreakRotator(InRot: %r)` — because the Blueprint compiler warns on a generic Break Struct
+node for such a struct, and `HitResult`'s has no member pins at all. Member names are then the
+function's output pins (`%b.HitBoneName`, `%b.Location`; `BreakTransform` gives `Location` /
+`Rotation` / `Scale`), and a decompile prints the `call Break...` form. The F-prefixed
+spelling (`break<FVector>`) keeps the literal Break Struct node, like `make<FVector>`, and so
+still draws the Blueprint compiler's "cannot be broken using generic 'break' node" warning; the
+decompiler prints an existing generic Break Struct node on such a struct in that F form, so it
+round-trips to the same node and member names (`break<FTransform>(%t)` -> `%b.Translation`).
+Dotted access off the struct pin (`%hit.OutHit.BoneName`) routes through the same function.
 
 A **split** struct pin is the same operation authored inline on the node, and its decompile
 form depends on direction. Split **inputs** become generated `make<Struct>(...)` values ahead
@@ -458,7 +482,7 @@ See `call("bpir.examples.array-ops")` for a worked array pattern.
 
 Aliases apply only when the literal pin name is missing; explicit names such as `%el.MyActor` still work. `foreach`'s `%loop.ArrayElement` is unaffected: `ForEachLoop` owns that stable pin and its notification.
 
-**End-to-end wiring:** `call Array_Get(...)` followed by `cast<T>(%h.Item)` now compiles cleanly. Previously wildcard propagation lagged behind downstream wiring, so `TryCreateConnection` failed with `wiring data 'Item' -> 'Object'`. The compiler now calls `NotifyPinConnectionListChanged` after wiring `TargetArray`, resolving the element type before later instructions use the output.
+**End-to-end wiring:** `call Array_Get(...)` followed by `cast<T>(%h.Item)` compiles cleanly. Every function with `ArrayParm` metadata (`Array_Get`, `Array_Find`, `Array_Contains`, `Array_Add`, `Array_AddUnique`, `Array_RemoveItem`, `Array_Set`, ...) is emitted as a `UK2Node_CallArrayFunction`, so wiring `TargetArray` gives the element pins (`Item`, `ItemToFind`, `NewItem`) the array's element type, as in the editor. Wire `TargetArray` first: the item pin then accepts the element type or a subclass, and a base class is refused (a `Pawn` into an array of `Character` is a downcast). Note `GetAllActorsOfClass(ActorClass: X)` types `OutActors` as an array of `X`, not of `Actor`. A refused data wire names both pin types and the schema's reason: `TryCreateConnection failed wiring data 'Probe' (Pawn Object Reference) -> 'ItemToFind' (Character Object Reference (by ref)): Pawn Object Reference is not compatible with Character Object Reference (by ref).`.
 
 ## 2.12 Self Reference
 

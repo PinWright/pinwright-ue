@@ -68,6 +68,21 @@
   gate's own measurement (new `HttpResponseSpill::MeasureInlineCharacters`, one condensed copy)
   instead of a pretty print, so **pages can hold more kinds and `pageCount` may drop**. Handlers
   that budget their own response should measure with that helper.
+- Fixed: `blueprint.compile_bpir` — **`break<T>` on a struct with a native break function
+  (`Rotator`, `Vector`, `HitResult`, `Transform`, ...) now emits that function** (`BreakRotator`,
+  `BreakHitResult`, ...) instead of a generic Break Struct node the Blueprint compiler warned on
+  (and which had no member pins for `HitResult`); members are the function's output pins and a
+  decompile prints `call Break...`. `break<FVector>` (F-prefixed) keeps the Break Struct node, and
+  the decompiler now prints an existing generic Break Struct node on a native-break struct in that
+  F form so it round-trips unchanged. **Breaking for hand-written `break<Transform>`:** it now
+  yields `BreakTransform`, whose members are `Location` / `Rotation` / `Scale` (was `Translation`
+  / `Rotation` / `Scale3D`), and `.Rotation` is a Rotator instead of a Quat — write
+  `break<FTransform>` to keep the old node and members. A
+  `select` whose options are only literals (or chain into other such selects) gets its type
+  inferred instead of failing the Blueprint compile with "type of Option 0 is undetermined"
+  (not inside a macro body, where such a select stays wildcard). A
+  refused data wire now names both pin types and the schema's reason.
+
 - Added: graph layout keeps comment boxes. Every PinWright layout (BPIR / MGIR / AGIR compiles,
   `material.authoring.auto_layout`) records each comment's members from the rects before it runs;
   a comment around unmoved nodes is an obstacle the moved nodes stay out of, and a comment with

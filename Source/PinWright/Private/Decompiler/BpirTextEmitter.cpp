@@ -2881,6 +2881,13 @@ FString FBpirTextEmitter::EmitBreakStruct(
     if (BreakNode && BreakNode->StructType)
     {
         StructName = BreakNode->StructType->GetName();
+        // The compiler routes bare `break<T>` on a HasNativeBreak struct to its native break
+        // function, whose pins differ (BreakTransform: Location/Rotation(Rotator)/Scale vs
+        // Translation/Rotation(Quat)/Scale3D). The F-prefixed form keeps this generic node.
+        if (BreakNode->StructType->HasMetaData(TEXT("HasNativeBreak")))
+        {
+            StructName = TEXT("F") + StructName;
+        }
     }
 
     // Find the struct input pin

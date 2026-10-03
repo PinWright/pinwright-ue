@@ -203,6 +203,17 @@ static const TCHAR* BpirOpcodeName(EBpirOpcode Opcode)
     return TEXT("<unknown>");
 }
 
+// The UFunction a struct's HasNativeMake / HasNativeBreak metadata names, or null.
+static UFunction* FindStructNativeFunction(const UScriptStruct* Struct, const TCHAR* MetaKey)
+{
+    const FString FunctionPath = Struct->GetMetaData(MetaKey);
+#if UE_VERSION_NEWER_THAN_OR_EQUAL(5, 7, 0)
+    return FindObject<UFunction>(nullptr, *FunctionPath, EFindObjectFlags::ExactClass);
+#else
+    return FindObject<UFunction>(nullptr, *FunctionPath, true);
+#endif
+}
+
 static bool IsSelectIndexArgName(const FString& PinName)
 {
     const FString LowerName = NormalizeBpirNameToken(PinName).ToLower();
@@ -397,6 +408,176 @@ static void PreTypeSelectPins(UK2Node_Select* SelectNode, const FEdGraphPinType&
             && Pin->PinName != FName(TEXT("Index")))
         {
             Pin->PinType = PinType;
+        }
+    }
+}
+
+// Literal-only Select inference (B-bpir-select-literal-options-stay-wildcard): every
+// non-index option must be a literal of one kind — decimal numbers (int, or real when
+// any of them is fractional), bools, or plain quoted strings. Any reference or other
+// literal kind returns false.
+static bool InferSelectTypeFromOptionLiterals(const FBpirInstruction& Inst, FEdGraphPinType& OutType)
+{
+    FName Category;
+    for (const FBpirArg& Arg : Inst.Args)
+    {
+        if (IsSelectIndexArgName(Arg.PinName))
+        {
+            continue;
+        }
+
+        const FString& Value = Arg.Value;
+        FName ArgCategory;
+        if (Value.StartsWith(TEXT("\"")))
+        {
+            ArgCategory = UEdGraphSchema_K2::PC_String;
+        }
+        else if (Value == TEXT("true") || Value == TEXT("false"))
+        {
+            ArgCategory = UEdGraphSchema_K2::PC_Boolean;
+        }
+        else if (FBpirValueResolver::IsLiteral(Value)
+            && Value != TEXT("nullptr")
+            && !Value.Contains(TEXT("::"))
+            && !Value.Contains(TEXT("("))
+            && !Value.StartsWith(TEXT("/"))
+            && !Value.Contains(TEXT("0x"))
+            && !Value.Contains(TEXT("0X")))
+        {
+            // What IsLiteral accepts past those exclusions is a decimal number.
+            const FString Digits = Value.StartsWith(TEXT("-")) ? Value.Mid(1) : Value;
+            bool bAllDigits = true;
+            for (const TCHAR Ch : Digits)
+            {
+                bAllDigits &= FChar::IsDigit(Ch);
+            }
+            ArgCategory = bAllDigits ? UEdGraphSchema_K2::PC_Int : UEdGraphSchema_K2::PC_Real;
+        }
+        else
+        {
+            return false;
+        }
+
+        if (Category.IsNone() || Category == ArgCategory)
+        {
+            Category = ArgCategory;
+            continue;
+        }
+        const bool bBothNumeric =
+            (Category == UEdGraphSchema_K2::PC_Int || Category == UEdGraphSchema_K2::PC_Real)
+            && (ArgCategory == UEdGraphSchema_K2::PC_Int || ArgCategory == UEdGraphSchema_K2::PC_Real);
+        if (!bBothNumeric)
+        {
+            return false;
+        }
+        Category = UEdGraphSchema_K2::PC_Real;
+    }
+
+    if (Category.IsNone())
+    {
+        return false;
+    }
+    OutType = FEdGraphPinType();
+    OutType.PinCategory = Category;
+    if (Category == UEdGraphSchema_K2::PC_Real)
+    {
+        OutType.PinSubCategory = UEdGraphSchema_K2::PC_Double;
+    }
+    return true;
+}
+
+// Type every Select this block emitted that is still wildcard after Pass 3a.
+//
+// The engine types a Select only when a typed pin connects to it, so a Select whose
+// options are all literals — or whose only links run to other such Selects — stays
+// wildcard and fails the Blueprint compile with "The type of Option 0 is undetermined".
+// In the editor, typing into an option pin resolves it; BPIR has no such gesture, so this
+// pass infers the type: from a typed pin linked to the Return Value or an option (a
+// neighbour this pass just typed), else from the option literals. It iterates to a fixed
+// point so chains of Selects resolve in any order. It runs after wiring, so it only
+// touches Selects that would otherwise fail: one a typed consumer reached is left alone.
+// In a macro graph a wildcard Select is legitimately generic (the instance types it), so
+// there only typing from a typed neighbour applies, never the literal fallback: freezing
+// one Select to its literals would type every Select chained to it as well.
+static void TypeUndeterminedSelects(
+    const FBpirEntryBlock& Block, const TMap<int32, FEmittedNodeInfo>& EmitMap, TArray<FCompileError>& OutErrors)
+{
+    for (bool bChanged = true; bChanged; )
+    {
+        bChanged = false;
+        for (int32 Index = 0; Index < Block.Instructions.Num(); ++Index)
+        {
+            const FBpirInstruction& Inst = Block.Instructions[Index];
+            if (Inst.Opcode != EBpirOpcode::Select)
+            {
+                continue;
+            }
+            const FEmittedNodeInfo* Info = EmitMap.Find(Index);
+            UK2Node_Select* SelectNode = Info ? Cast<UK2Node_Select>(Info->Node) : nullptr;
+            UEdGraphPin* ReturnPin = SelectNode ? SelectNode->GetReturnValuePin() : nullptr;
+            if (!ReturnPin || ReturnPin->PinType.PinCategory != UEdGraphSchema_K2::PC_Wildcard)
+            {
+                continue;
+            }
+
+            bool bFound = false;
+            FEdGraphPinType PinType;
+            for (const UEdGraphPin* Pin : SelectNode->Pins)
+            {
+                if (!Pin || Pin->PinType.PinCategory != UEdGraphSchema_K2::PC_Wildcard
+                    || Pin->PinName == FName(TEXT("Index")))
+                {
+                    continue;
+                }
+                for (const UEdGraphPin* Linked : Pin->LinkedTo)
+                {
+                    if (!Linked)
+                    {
+                        continue;
+                    }
+                    if (Linked->PinType.PinCategory != UEdGraphSchema_K2::PC_Wildcard)
+                    {
+                        PinType = Linked->PinType;
+                        bFound = true;
+                        break;
+                    }
+                }
+                if (bFound)
+                {
+                    break;
+                }
+            }
+            if (!bFound && (GetDefault<UEdGraphSchema_K2>()->GetGraphType(SelectNode->GetGraph()) == GT_Macro
+                || !InferSelectTypeFromOptionLiterals(Inst, PinType)))
+            {
+                continue;
+            }
+
+            PreTypeSelectPins(SelectNode, PinType);
+
+            // Pass 3a wrote each literal raw onto a wildcard pin; re-apply it now the pin is
+            // typed (strips a real literal's `f` suffix, etc.). A string literal's raw value
+            // is already final — re-applying would strip quotes that belong to its content.
+            if (PinType.PinCategory != UEdGraphSchema_K2::PC_String)
+            {
+                for (UEdGraphPin* Pin : SelectNode->Pins)
+                {
+                    if (Pin && Pin->Direction == EGPD_Input && Pin->LinkedTo.Num() == 0
+                        && !Pin->DefaultValue.IsEmpty() && Pin->PinName != FName(TEXT("Index")))
+                    {
+                        const FString RawLiteral = Pin->DefaultValue;
+                        FString DefaultError;
+                        if (!FCodePinResolver::SetPinDefaultValue(Pin, RawLiteral, &DefaultError))
+                        {
+                            OutErrors.Add(FCompileError(Inst.SourceLine, DefaultError.IsEmpty()
+                                ? FString::Printf(TEXT("Could not set default value '%s' for select pin '%s' once typed %s"),
+                                    *RawLiteral, *Pin->PinName.ToString(), *PinType.PinCategory.ToString())
+                                : DefaultError));
+                        }
+                    }
+                }
+            }
+            bChanged = true;
         }
     }
 }
@@ -3552,6 +3733,8 @@ FCompileResult FBpirCompiler::Compile(const FString& Code, EBpirCompileMode Mode
             }
         }
 
+        TypeUndeterminedSelects(Block, EmitMap, AccumulatedErrors);
+
         // Pass 3b: Wire exec pins (auto-chain within label blocks + explicit label targets)
         if (!WireExecPins(Block, EntryExecPin))
         {
@@ -3994,6 +4177,8 @@ FCompileResult FBpirCompiler::InsertCodeAfterNode(UEdGraphNode* InsertionPointNo
         }
     }
 
+    TypeUndeterminedSelects(Block, EmitMap, AccumulatedErrors);
+
     // Pass 3b: Wire exec pins
     if (!WireExecPins(Block, ExecOutPin))
     {
@@ -4355,6 +4540,8 @@ FCompileResult FBpirCompiler::CompileBodyIntoGraph(const FString& BodyCode, UEdG
             }
         }
     }
+
+    TypeUndeterminedSelects(Block, EmitMap, AccumulatedErrors);
 
     // Wire exec pins
     if (!WireExecPins(Block, EntryExecPin))
@@ -6810,6 +6997,33 @@ bool FBpirCompiler::EmitInstruction(int32 InstructionIndex, FBpirInstruction& In
             return false;
         }
 
+        // Same routing policy as MakeStruct below (B-bpir-break-struct-emits-generic-node):
+        // the bare-name form of a HasNativeBreak struct (`break<Rotator>`, `break<HitResult>`)
+        // emits the native break CallFunction the editor itself uses. A generic
+        // UK2Node_BreakStruct on such a struct draws the Kismet warning "cannot be broken
+        // using generic 'break' node" (CanBeBroken refuses it), and for FHitResult it has no
+        // member pins at all. The F-prefixed form keeps the literal BreakStruct node.
+        const bool bIsBareNameForm = Struct->GetName().Equals(Inst.TypeArg, ESearchCase::CaseSensitive);
+        if (bIsBareNameForm && Struct->HasMetaData(TEXT("HasNativeBreak")))
+        {
+            const FString NativeBreakPath = Struct->GetMetaData(TEXT("HasNativeBreak"));
+            UFunction* NativeFunc = FindStructNativeFunction(Struct, TEXT("HasNativeBreak"));
+            if (!NativeFunc)
+            {
+                AccumulatedErrors.Add(FCompileError(Inst.SourceLine,
+                    FString::Printf(TEXT("Struct '%s' has HasNativeBreak metadata but native function '%s' could not be resolved"),
+                        *Inst.TypeArg, *NativeBreakPath)));
+                return false;
+            }
+
+            // Pure call: CreateCallFunctionNode nulls InOutExecPin, so restore it.
+            UEdGraphPin* SavedExecPin = InOutExecPin;
+            UK2Node_CallFunction* CallNode = NodeEmitter->CreateCallFunctionNode(NativeFunc, InOutExecPin);
+            Emit.Node = CallNode;
+            InOutExecPin = SavedExecPin;
+            return CallNode != nullptr;
+        }
+
         UK2Node_BreakStruct* Node = NodeEmitter->CreateBreakStructNode(Struct);
         Emit.Node = Node;
         return Node != nullptr;
@@ -6838,11 +7052,7 @@ bool FBpirCompiler::EmitInstruction(int32 InstructionIndex, FBpirInstruction& In
         if (bIsBareNameForm && Struct->HasMetaData(TEXT("HasNativeMake")))
         {
             const FString NativeMakePath = Struct->GetMetaData(TEXT("HasNativeMake"));
-#if UE_VERSION_NEWER_THAN_OR_EQUAL(5, 7, 0)
-            UFunction* NativeFunc = FindObject<UFunction>(nullptr, *NativeMakePath, EFindObjectFlags::ExactClass);
-#else
-            UFunction* NativeFunc = FindObject<UFunction>(nullptr, *NativeMakePath, true);
-#endif
+            UFunction* NativeFunc = FindStructNativeFunction(Struct, TEXT("HasNativeMake"));
             if (!NativeFunc)
             {
                 AccumulatedErrors.Add(FCompileError(Inst.SourceLine,
@@ -7535,9 +7745,27 @@ bool FBpirCompiler::WireDataPins(int32 InstructionIndex, FBpirInstruction& Inst,
                         bIsSelfToSelf ? TEXT(" (redundant self wire, non-fatal)") : TEXT(""));
                     if (!bIsSelfToSelf)
                     {
+                        // Name both pin types and the schema's reason: without them a typed
+                        // mismatch (e.g. a Pawn into Array_Find over a Character array) reads
+                        // like an unresolved wildcard (B-bpir-array-find-wildcard-not-notified).
+                        const FPinConnectionResponse Response = Schema->CanCreateConnection(SourcePin, TargetPin);
+                        const FString Reason = Response.Message.IsEmpty()
+                            ? FString()
+                            : FString::Printf(TEXT(": %s"), *Response.Message.ToString());
+                        // B-bpir-cannot-assign-interface-variable: the K2 schema offers no
+                        // conversion node for object -> interface (the editor refuses the drag too).
+                        const bool bObjectIntoInterface =
+                            SourcePin->PinType.PinCategory == UEdGraphSchema_K2::PC_Object
+                            && TargetPin->PinType.PinCategory == UEdGraphSchema_K2::PC_Interface;
+                        const TCHAR* InterfaceHint = bObjectIntoInterface
+                            ? TEXT(". An object connects to an interface pin only when its class implements the ")
+                              TEXT("interface; wrap it in cast<InterfaceClass>(...) to convert it at runtime")
+                            : TEXT("");
                         AccumulatedErrors.Add(FCompileError(Inst.SourceLine,
-                            FString::Printf(TEXT("TryCreateConnection failed wiring data '%s' -> '%s'"),
-                                *SourcePin->PinName.ToString(), *TargetPin->PinName.ToString())));
+                            FString::Printf(TEXT("TryCreateConnection failed wiring data '%s' (%s) -> '%s' (%s)%s%s"),
+                                *SourcePin->PinName.ToString(), *UEdGraphSchema_K2::TypeToText(SourcePin->PinType).ToString(),
+                                *TargetPin->PinName.ToString(), *UEdGraphSchema_K2::TypeToText(TargetPin->PinType).ToString(),
+                                *Reason, InterfaceHint)));
                         bAllWired = false;
                     }
                 }
