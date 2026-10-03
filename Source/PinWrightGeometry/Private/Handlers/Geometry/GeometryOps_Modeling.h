@@ -1030,18 +1030,21 @@ namespace GeometryOps
 
     struct FRemoveDegeneratesParams
     {
-        // RepairOrDelete is the engine default and what the op hardcoded. DeleteOnly skips the
-        // collapse attempt entirely, which is what a mesh about to be welded wants; RepairOrSkip
-        // never deletes, so the triangle count cannot drop.
+        // RepairOrDelete is the engine default and what the op hardcoded: repair each degenerate
+        // in place (collapse a needle, split-and-collapse a cap) and delete what cannot be.
+        // DeleteOnly skips the repair entirely, which is what a mesh about to be welded wants;
+        // RepairOrSkip never deletes, so the triangle count cannot drop.
         ERepairMeshMode Mode = ERepairMeshMode::RepairOrDelete;
 
-        // A triangle under this area is degenerate. Engine default.
-        double MinTriangleArea = 0.001;
+        // A triangle under this area is degenerate. NOT the engine's 0.001: this is
+        // GeometryUtils::DegenerateAreaEpsilon, the threshold the health report and
+        // PWMODEL_DEGENERATE_GEOMETRY count against, so the op clears exactly what they count.
+        // At 0.001 (0.1 mm^2 in centimetres) it deleted thousands of live bevel triangles.
+        double MinTriangleArea = 1e-6;
 
-        // An edge under this length is degenerate. Engine default. Note it is 10x SMALLER than
-        // MinTriangleArea's default, and both are absolute world units - on a mesh authored in
-        // metres rather than centimetres both defaults are effectively zero and the op looks
-        // like it does nothing.
+        // An edge under this length is degenerate. Engine default. Both thresholds are absolute
+        // world units - on a mesh authored in metres rather than centimetres they are
+        // effectively zero.
         double MinEdgeLength = 0.0001;
 
         bool bCompactOnCompletion = true;

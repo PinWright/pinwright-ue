@@ -49,6 +49,7 @@
 
 #include "Handlers/Geometry/GeometryOps_Boolean.h"
 #include "Handlers/Geometry/GeometryOps_Modeling.h"
+#include "Handlers/Geometry/GeometryUtils.h"
 
 #include "DynamicMesh/DynamicMesh3.h"
 #include "DynamicMesh/DynamicMeshAttributeSet.h"
@@ -597,8 +598,7 @@ bool FGeometryOpsModelingOptionsDefaultsMatchEngineTest::RunTest(const FString& 
         const FGeometryScriptDegenerateTriangleOptions EngineDegenerates;
         ModelingOptionsTest_ExpectSameEnum(*this, TEXT("remove_degenerates Mode"),
             Degenerates.Mode, EngineDegenerates.Mode);
-        ModelingOptionsTest_ExpectSameScalar(*this, TEXT("remove_degenerates MinTriangleArea"),
-            Degenerates.MinTriangleArea, EngineDegenerates.MinTriangleArea);
+        // MinTriangleArea deliberately differs - see DocumentedDivergencesFromTheEngineDefaults.
         ModelingOptionsTest_ExpectSameScalar(*this, TEXT("remove_degenerates MinEdgeLength"),
             Degenerates.MinEdgeLength, EngineDegenerates.MinEdgeLength);
         TestEqual(TEXT("remove_degenerates bCompactOnCompletion"),
@@ -663,6 +663,19 @@ bool FGeometryOpsModelingOptionsDocumentedOverridesTest::RunTest(const FString& 
         TestEqual(TEXT("weld_vertices Tolerance is the shipped 0.0001"), Weld.Tolerance, 0.0001);
         TestTrue(TEXT("weld_vertices Tolerance deliberately differs from the engine's 1e-06"),
             !FMath::IsNearlyEqual(Weld.Tolerance, (double)Engine.Tolerance, 1e-9));
+    }
+
+    // remove_degenerates: 1e-06, not the engine's 0.001 - the health report's own degenerate
+    // threshold, so the op clears exactly what PWMODEL_DEGENERATE_GEOMETRY counts. At 0.001 it
+    // deleted thousands of live centimetre-scale bevel triangles
+    // (B-pwmodel-remove-degenerates-deletes-instead-of-repairing-and-opens-mesh).
+    {
+        const GeometryOps::FRemoveDegeneratesParams Degenerates;
+        const FGeometryScriptDegenerateTriangleOptions Engine;
+        TestEqual(TEXT("remove_degenerates MinTriangleArea is the health report's degenerate threshold"),
+            Degenerates.MinTriangleArea, GeometryUtils::DegenerateAreaEpsilon, 1e-12);
+        TestTrue(TEXT("remove_degenerates MinTriangleArea deliberately differs from the engine's 0.001"),
+            !FMath::IsNearlyEqual(Degenerates.MinTriangleArea, (double)Engine.MinTriangleArea, 1e-9));
     }
 
     // The distances. Every face op's engine struct defaults its distance to 1.0, which is a

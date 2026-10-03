@@ -1769,11 +1769,11 @@ REGISTER_RPC_HANDLER("geometry.fill_holes", "geometry", "Fill all holes in a dyn
 // ============================================================================
 // remove_degenerates
 // ============================================================================
-REGISTER_RPC_HANDLER("geometry.remove_degenerates", "geometry", "Remove degenerate geometry from a dynamic mesh. Both thresholds are ABSOLUTE world units, so on a mesh authored in metres rather than centimetres the defaults are effectively zero and the op looks like it does nothing.",
+REGISTER_RPC_HANDLER("geometry.remove_degenerates", "geometry", "Repair degenerate triangles on a dynamic mesh in place, keeping a closed mesh closed. Both thresholds are ABSOLUTE world units, so on a mesh authored in metres rather than centimetres the defaults are effectively zero and the op looks like it does nothing.",
     RPC_PARAMS(
         RPC_PARAM_REQ("actorName", "string", "Name of the DynamicMeshActor"),
-        RPC_PARAM_OPT("mode", "string", "What happens to a triangle found degenerate: repair_or_delete (default) collapses it if it can and deletes it otherwise; delete_only skips the collapse; repair_or_skip never deletes, so the triangle count cannot drop"),
-        RPC_PARAM_OPT("minTriangleArea", "number", "A triangle below this area is degenerate (default 0.001)"),
+        RPC_PARAM_OPT("mode", "string", "What happens to a triangle found degenerate: repair_or_delete (default) repairs it in place - a needle (two corners in one place) is collapsed, a cap (a corner lying on the opposite edge) is split into its neighbour - and deletes it only when neither works, which opens the mesh and adds a warning; delete_only skips the repair; repair_or_skip never deletes, so the triangle count cannot drop"),
+        RPC_PARAM_OPT("minTriangleArea", "number", "A triangle below this area is degenerate (default 0.000001, the threshold the health report's degenerateTriangles counts against; the engine's own 0.001 treats real centimetre-scale bevel triangles as degenerate)"),
         RPC_PARAM_OPT("minEdgeLength", "number", "An edge below this length is degenerate (default 0.0001)"),
         RPC_PARAM_OPT("compactOnCompletion", "boolean", "Compact the vertex and triangle ID lists afterwards (default true). Off preserves existing IDs, which matters when a later call addresses elements by index.")
     ))

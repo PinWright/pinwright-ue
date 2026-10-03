@@ -359,7 +359,7 @@ Not listed: internal plumbing namespaces, not intended for direct use - `pipelin
 | `geometry.recompute_tangents` | Recompute tangents on a dynamic mesh. |
 | `geometry.relax` | Apply relax (Laplacian smoothing) to a dynamic mesh |
 | `geometry.remesh_uniform` | Apply uniform remeshing to a dynamic mesh |
-| `geometry.remove_degenerates` | Remove degenerate geometry from a dynamic mesh. |
+| `geometry.remove_degenerates` | Repair degenerate triangles on a dynamic mesh in place, keeping a closed mesh closed. |
 | `geometry.revolve` | Create a dynamic mesh actor by revolving an open profile path around the local Z axis. |
 | `geometry.self_union` | Apply self-union to resolve self-intersections in a mesh |
 | `geometry.set_lod_settings` | Configure LOD reduction settings for a specific LOD level |

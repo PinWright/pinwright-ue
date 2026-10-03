@@ -2854,6 +2854,223 @@ FOpResult FillHoles(UDynamicMesh* Mesh, const FFillHolesParams& Params, FFillHol
     return Result;
 }
 
+// The repair half of remove_degenerates. The engine's RepairMeshDegenerateGeometry "repairs" only
+// by QEM-simplifying to MinEdgeLength with every boundary and seam constrained, so the one
+// degenerate it can fix is a triangle with a SHORT EDGE - and even that one stops at a seam
+// corner. A zero-area cap (one vertex lying on the opposite edge, every edge long) is never
+// touched (its own TODO, MeshRepairFunctions.cpp: "this would not resolve sliver triangles that
+// have all long-edges"), so repair_or_delete deleted it and opened the mesh, and repair_or_skip
+// was a no-op. These are the two classic local repairs, run here before the engine pass so its
+// delete pass only ever sees what neither could fix.
+namespace GeometryOpsRemoveDegenerates
+{
+    double TriangleArea(const FVector3d& A, const FVector3d& B, const FVector3d& C)
+    {
+        return 0.5 * FVector3d::CrossProduct(B - A, C - A).Length();
+    }
+
+    double TriangleArea(const UE::Geometry::FDynamicMesh3& Mesh, int32 TriangleID)
+    {
+        FVector3d A, B, C;
+        Mesh.GetTriVertices(TriangleID, A, B, C);
+        return TriangleArea(A, B, C);
+    }
+
+    // Moving RemoveVID onto KeepVID must not turn any surviving triangle of its one-ring over: a
+    // folded neighbour is a self-intersection the closed-mesh gate cannot see.
+    bool CollapseKeepsOrientation(const UE::Geometry::FDynamicMesh3& Mesh, int32 KeepVID, int32 RemoveVID)
+    {
+        const FVector3d KeepPos = Mesh.GetVertex(KeepVID);
+        for (const int32 TriangleID : Mesh.VtxTrianglesItr(RemoveVID))
+        {
+            const UE::Geometry::FIndex3i Tri = Mesh.GetTriangle(TriangleID);
+            if (Tri.Contains(KeepVID))
+            {
+                continue; // collapses away with the edge
+            }
+            FVector3d Before[3], After[3];
+            for (int32 Corner = 0; Corner < 3; ++Corner)
+            {
+                Before[Corner] = Mesh.GetVertex(Tri[Corner]);
+                After[Corner] = (Tri[Corner] == RemoveVID) ? KeepPos : Before[Corner];
+            }
+            const FVector3d NormalBefore =
+                FVector3d::CrossProduct(Before[1] - Before[0], Before[2] - Before[0]);
+            const FVector3d NormalAfter =
+                FVector3d::CrossProduct(After[1] - After[0], After[2] - After[0]);
+            if (NormalBefore.Dot(NormalAfter) < 0.0)
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // Needle or point: two corners are effectively one place, so merging them removes the
+    // triangle and its neighbour across that edge and leaves the surface where it was.
+    bool TryCollapse(UE::Geometry::FDynamicMesh3& Mesh, int32 VertexA, int32 VertexB)
+    {
+        const UE::Geometry::FIndex2i Orders[2] = { { VertexA, VertexB }, { VertexB, VertexA } };
+        for (const UE::Geometry::FIndex2i& Order : Orders)
+        {
+            if (!CollapseKeepsOrientation(Mesh, Order.A, Order.B))
+            {
+                continue;
+            }
+            UE::Geometry::FDynamicMesh3::FEdgeCollapseInfo CollapseInfo;
+            if (Mesh.CollapseEdge(Order.A, Order.B, 0.0, CollapseInfo) == UE::Geometry::EMeshResult::Ok)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Cap: the apex lies on the long edge. Split that edge at the apex's projection and collapse
+    // the new vertex onto the apex - the far triangle becomes two real triangles fanned from the
+    // apex and the cap disappears, with no vertex moving more than the cap's height. Split +
+    // collapse rather than a flip because both carry UV / normal seams and material IDs through
+    // the engine's own overlay bookkeeping, where a flip across a seam is undefined.
+    bool TrySplitAndCollapse(UE::Geometry::FDynamicMesh3& Mesh, int32 LongEdgeID, int32 ApexVID,
+                             double MinTriangleArea)
+    {
+        if (Mesh.IsBoundaryEdge(LongEdgeID))
+        {
+            return false;
+        }
+        const UE::Geometry::FIndex2i EdgeV = Mesh.GetEdgeV(LongEdgeID);
+        const UE::Geometry::FIndex2i Opposing = Mesh.GetEdgeOpposingV(LongEdgeID);
+        const int32 FarVID = (Opposing.A == ApexVID) ? Opposing.B : Opposing.A;
+        // Apex already joined to the far vertex: the collapse would make a duplicate edge
+        // (the link condition), so the split would be left behind as two more slivers.
+        if (FarVID == UE::Geometry::FDynamicMesh3::InvalidID || FarVID == ApexVID
+            || Mesh.FindEdge(ApexVID, FarVID) != UE::Geometry::FDynamicMesh3::InvalidID)
+        {
+            return false;
+        }
+
+        const FVector3d A = Mesh.GetVertex(EdgeV.A);
+        const FVector3d B = Mesh.GetVertex(EdgeV.B);
+        const FVector3d Apex = Mesh.GetVertex(ApexVID);
+        const FVector3d Far = Mesh.GetVertex(FarVID);
+        // Both replacement triangles must carry area, or this only trades one degenerate for
+        // another (the apex sits next to an end of the edge: that is a needle, not a cap).
+        if (TriangleArea(A, Apex, Far) < MinTriangleArea || TriangleArea(Apex, B, Far) < MinTriangleArea)
+        {
+            return false;
+        }
+        // And both must face the way the far triangle (A, B, Far) did. The area test is unsigned:
+        // a cap folded back over its neighbour passes it and would come out as a flipped triangle.
+        const FVector3d FarNormal = FVector3d::CrossProduct(B - A, Far - A);
+        if (FVector3d::CrossProduct(Apex - A, Far - A).Dot(FarNormal) <= 0.0
+            || FVector3d::CrossProduct(B - Apex, Far - Apex).Dot(FarNormal) <= 0.0)
+        {
+            return false;
+        }
+        const double LengthSquared = FVector3d::DistSquared(A, B);
+        if (LengthSquared <= 0.0)
+        {
+            return false;
+        }
+        const double SplitT = FMath::Clamp((Apex - A).Dot(B - A) / LengthSquared, 0.0, 1.0);
+
+        UE::Geometry::FDynamicMesh3::FEdgeSplitInfo SplitInfo;
+        if (Mesh.SplitEdge(LongEdgeID, SplitInfo, SplitT) != UE::Geometry::EMeshResult::Ok)
+        {
+            return false;
+        }
+        // The prechecks above are the collapse's link condition for this configuration, so this
+        // is expected to succeed; if it does not, the two zero-area halves are left for the next
+        // pass or for the engine's delete pass, exactly where the cap itself would have gone.
+        UE::Geometry::FDynamicMesh3::FEdgeCollapseInfo CollapseInfo;
+        return Mesh.CollapseEdge(ApexVID, SplitInfo.NewVertex, 0.0, CollapseInfo)
+            == UE::Geometry::EMeshResult::Ok;
+    }
+
+    // Returns how many degenerate triangles were repaired in place.
+    int32 RepairInPlace(UE::Geometry::FDynamicMesh3& Mesh, double MinTriangleArea, double MinEdgeLength)
+    {
+        // A corner pair this close is "one place": merging it moves geometry by no more than a
+        // degenerate triangle's own scale.
+        const double CollapseLimit = FMath::Max(MinEdgeLength, FMath::Sqrt(FMath::Max(MinTriangleArea, 0.0)));
+        // A repair can expose a neighbouring sliver (a chain of caps along one edge), so passes
+        // repeat until one makes no progress. The cap is bounded by MaxPasses, not by a count
+        // argument: a needle collapse can leave a new sliver behind.
+        constexpr int32 MaxPasses = 16;
+
+        int32 Repaired = 0;
+        for (int32 Pass = 0; Pass < MaxPasses; ++Pass)
+        {
+            TArray<int32> Candidates;
+            for (const int32 TriangleID : Mesh.TriangleIndicesItr())
+            {
+                if (TriangleArea(Mesh, TriangleID) < MinTriangleArea)
+                {
+                    Candidates.Add(TriangleID);
+                }
+            }
+
+            int32 RepairedThisPass = 0;
+            for (const int32 TriangleID : Candidates)
+            {
+                // A repair earlier in this pass may have removed it, fixed it, or recycled the ID.
+                if (!Mesh.IsTriangle(TriangleID) || TriangleArea(Mesh, TriangleID) >= MinTriangleArea)
+                {
+                    continue;
+                }
+
+                const UE::Geometry::FIndex3i TriV = Mesh.GetTriangle(TriangleID);
+                const UE::Geometry::FIndex3i TriE = Mesh.GetTriEdges(TriangleID); // edge j = (V[j], V[j+1])
+                double Length[3];
+                int32 Shortest = 0;
+                int32 Longest = 0;
+                for (int32 Edge = 0; Edge < 3; ++Edge)
+                {
+                    Length[Edge] = FVector3d::Distance(Mesh.GetVertex(TriV[Edge]), Mesh.GetVertex(TriV[(Edge + 1) % 3]));
+                    Shortest = (Length[Edge] < Length[Shortest]) ? Edge : Shortest;
+                    Longest = (Length[Edge] > Length[Longest]) ? Edge : Longest;
+                }
+
+                bool bRepaired = false;
+                if (Length[Shortest] <= CollapseLimit)
+                {
+                    // Every short edge is a candidate, starting at the shortest: on a point-triangle (all
+                    // three corners coincident, a collapsed apex) the link condition can refuse
+                    // one edge and accept another.
+                    for (int32 Offset = 0; Offset < 3 && !bRepaired; ++Offset)
+                    {
+                        const int32 Edge = (Shortest + Offset) % 3;
+                        bRepaired = Length[Edge] <= CollapseLimit
+                            && TryCollapse(Mesh, TriV[Edge], TriV[(Edge + 1) % 3]);
+                    }
+                }
+                else
+                {
+                    bRepaired = TrySplitAndCollapse(Mesh, TriE[Longest], TriV[(Longest + 2) % 3], MinTriangleArea);
+                }
+                RepairedThisPass += bRepaired ? 1 : 0;
+            }
+
+            Repaired += RepairedThisPass;
+            if (RepairedThisPass == 0)
+            {
+                break;
+            }
+        }
+        return Repaired;
+    }
+
+    int32 CountBoundaryEdges(const UE::Geometry::FDynamicMesh3& Mesh)
+    {
+        int32 Count = 0;
+        for (const int32 EdgeID : Mesh.EdgeIndicesItr())
+        {
+            Count += Mesh.IsBoundaryEdge(EdgeID) ? 1 : 0;
+        }
+        return Count;
+    }
+} // namespace GeometryOpsRemoveDegenerates
+
 FOpResult RemoveDegenerates(UDynamicMesh* Mesh, const FRemoveDegeneratesParams& Params)
 {
     FOpResult Result;
@@ -2862,8 +3079,25 @@ FOpResult RemoveDegenerates(UDynamicMesh* Mesh, const FRemoveDegeneratesParams& 
         return Result;
     }
 
+    int32 Repaired = 0;
+    if (Params.Mode != ERepairMeshMode::DeleteOnly)
+    {
+        Mesh->EditMesh([&](UE::Geometry::FDynamicMesh3& EditMesh)
+        {
+            Repaired = GeometryOpsRemoveDegenerates::RepairInPlace(
+                EditMesh, Params.MinTriangleArea, Params.MinEdgeLength);
+        });
+    }
+    // Counted after the repair, so the delta below is what the engine's delete pass opened.
+    int32 BoundaryEdgesBefore = 0;
+    Mesh->ProcessMesh([&](const UE::Geometry::FDynamicMesh3& ReadMesh)
+    {
+        BoundaryEdgesBefore = GeometryOpsRemoveDegenerates::CountBoundaryEdges(ReadMesh);
+    });
+
+    // The engine pass still runs after ours: its short-edge simplify and, unless the mode is
+    // repair_or_skip, its delete pass for whatever neither repair could fix.
     FGeometryScriptDegenerateTriangleOptions Options;
-    // RepairOrDelete was hardcoded and is the engine default, so the default path is unchanged.
     Options.Mode = GeometryOpsModeling_ToEngine(Params.Mode);
     Options.MinTriangleArea = Params.MinTriangleArea;
     Options.MinEdgeLength = Params.MinEdgeLength;
@@ -2871,7 +3105,21 @@ FOpResult RemoveDegenerates(UDynamicMesh* Mesh, const FRemoveDegeneratesParams& 
 
     UGeometryScriptLibrary_MeshRepairFunctions::RepairMeshDegenerateGeometry(Mesh, Options, nullptr);
 
-    FinishOp(Mesh, Result);
+    // A fallback deletion that opens the mesh reports success in every count it touches, so say
+    // so. Not for delete_only: deleting is what that caller asked for (the .pwmodel boolean
+    // cleanup is one), and repair_or_skip never deletes.
+    const int32 OpenedEdges =
+        GeometryOpsRemoveDegenerates::CountBoundaryEdges(Mesh->GetMeshRef()) - BoundaryEdgesBefore;
+    if (Params.Mode == ERepairMeshMode::RepairOrDelete && OpenedEdges > 0)
+    {
+        Result.Warnings.Add(FString::Printf(
+            TEXT("remove_degenerates opened %d boundary edge(s): degenerate triangles it could not repair in place were deleted, so the mesh is no longer closed. mode=repair_or_skip repairs what it can and never deletes"),
+            OpenedEdges));
+    }
+
+    // A cap repair keeps both counts (split +2 triangles, collapse -2), so the counts alone would
+    // report a real repair as a no-op.
+    FinishOp(Mesh, Result, /*bForceChanged=*/Repaired > 0);
     return Result;
 }
 

@@ -243,11 +243,10 @@ part roof at=(0, 0, 990) {
     # cone: 192 triangles, 64 of them degenerate - exactly the 64 the whole
     # watchtower was carrying.
     #
-    # `remove_degenerates` DOES delete them (192 -> 128, both at the default
-    # thresholds and at aggressive ones), and it is the wrong fix: the 32
-    # coincident apex vertices stop being shared, so the part comes back with 64
-    # boundary edges and PWMODEL_MESH_NOT_CLOSED. Trading a silent degenerate for
-    # an open mesh is a worse trade than not making the apex collapse at all.
+    # `remove_degenerates` used to delete them (192 -> 128) and hand the part
+    # back with 64 boundary edges and PWMODEL_MESH_NOT_CLOSED. It now collapses
+    # the coincident apex ring into one vertex and keeps the part closed, but
+    # not making the apex collapse at all is still the better model.
     #
     # A 4-radius truncation is also what the roof wants. A stone spire is not
     # honed to a needle; it stops at a seating and a finial is bedded on it -

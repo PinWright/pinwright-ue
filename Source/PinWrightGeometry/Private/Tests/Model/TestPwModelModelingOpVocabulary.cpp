@@ -486,7 +486,7 @@ bool FPwModelModelingRepairVocabularyTest::RunTest(const FString& Parameters)
     ModelingVocabTest_ExpectEnum(*this, TEXT("remove_degenerates"), TEXT("mode"), TEXT("repair_or_delete"),
         TArray<FString>{ TEXT("delete_only"), TEXT("repair_or_delete"), TEXT("repair_or_skip") });
     ModelingVocabTest_ExpectParam(*this, TEXT("remove_degenerates"), TEXT("min_triangle_area"),
-        EPwModelParamType::Number, TEXT("0.001"));
+        EPwModelParamType::Number, TEXT("0.000001"));
     ModelingVocabTest_ExpectParam(*this, TEXT("remove_degenerates"), TEXT("min_edge_length"),
         EPwModelParamType::Number, TEXT("0.0001"));
     ModelingVocabTest_ExpectParam(*this, TEXT("remove_degenerates"), TEXT("compact_on_completion"),

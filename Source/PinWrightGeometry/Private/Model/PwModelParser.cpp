@@ -865,12 +865,12 @@ TArray<FPwModelOpSpec> BuildOpTable()
             TEXT("Floating disconnected triangles bound a 'hole' that cannot be filled, so the engine deletes them first. Off keeps them and lets them be reported as failed fills instead.")),
     }));
 
-    Ops.Add(MakeModifier(TEXT("remove_degenerates"), TEXT("Remove zero-area triangles and duplicate vertices. Both thresholds are ABSOLUTE world units, so on a mesh authored in metres rather than centimetres the defaults are effectively zero and the op looks like it does nothing."), {
+    Ops.Add(MakeModifier(TEXT("remove_degenerates"), TEXT("Repair zero-area triangles in place, keeping a closed mesh closed. Both thresholds are ABSOLUTE world units, so on a mesh authored in metres rather than centimetres the defaults are effectively zero and the op looks like it does nothing."), {
         MakeEnum(TEXT("mode"), TEXT("repair_or_delete"),
-            TEXT("What happens to a triangle found degenerate. repair_or_delete collapses it if it can and deletes it otherwise; delete_only skips the collapse; repair_or_skip never deletes, so the triangle count cannot drop."),
+            TEXT("What happens to a triangle found degenerate. repair_or_delete repairs it in place - a needle (two corners in one place) is collapsed, a cap (a corner lying on the opposite edge) is split into its neighbour - and deletes it only when neither works, which opens the mesh and is reported as a warning; delete_only skips the repair; repair_or_skip never deletes, so the triangle count cannot drop."),
             RepairMeshModeValues()),
-        MakeParam(TEXT("min_triangle_area"), EPwModelParamType::Number, TEXT("0.001"),
-            TEXT("A triangle below this area is degenerate.")),
+        MakeParam(TEXT("min_triangle_area"), EPwModelParamType::Number, TEXT("0.000001"),
+            TEXT("A triangle below this area is degenerate. The default is the threshold PWMODEL_DEGENERATE_GEOMETRY and the health report count against, not the engine's 0.001: at 0.001 the op treats real centimetre-scale bevel triangles as degenerate.")),
         MakeParam(TEXT("min_edge_length"), EPwModelParamType::Number, TEXT("0.0001"),
             TEXT("An edge below this length is degenerate.")),
         MakeParam(TEXT("compact_on_completion"), EPwModelParamType::Bool, TEXT("true"),

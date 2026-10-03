@@ -237,12 +237,12 @@
 # parts long before it showed as an open boundary - READ THAT FIELD, it is the early
 # warning, and it is not one of the two gate fields.
 #
-# `remove_degenerates` OPENS THE MESH AT ITS DEFAULT SETTING. Added to two parts to
-# clear a one-triangle PWMODEL_DEGENERATE_GEOMETRY warning, it returned
-# `isClosed false, boundaryEdges 15` on exactly those two parts: `mode` defaults to
-# `repair_or_delete` and a deleted triangle leaves a hole nothing fills. If you ever
-# need it here, it is `mode=repair_or_skip`. The warning it was chasing went to zero
-# on its own once the grain-streak magnitudes went up.
+# `remove_degenerates` USED TO OPEN THE MESH AT ITS DEFAULT SETTING. Added to two
+# parts to clear a one-triangle PWMODEL_DEGENERATE_GEOMETRY warning, it returned
+# `isClosed false, boundaryEdges 15` on exactly those two parts: its "repair" never
+# fired on a sliver with long edges, so it deleted it and left a hole. It now
+# repairs such slivers in place and warns if it ever does open the mesh. The warning
+# it was chasing went to zero on its own once the grain-streak magnitudes went up.
 #
 # CUT ORDER: EVERY BOOLEAN RUNS FIRST, AND THE GRAIN NOISE RUNS AFTER THEM.
 # The old rule was "near-tangent tools before the deformers, half-spaces after",

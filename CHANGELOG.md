@@ -148,6 +148,15 @@
   points into one branch. Pure values fed by an impure node's output keep their old placement.
 - Fixed: `bpir.txt` printed the first `# BPIR_WARN:` / `# BPIR_ERROR:` marker after a graph body
   on the same line as its closing brace (`}# BPIR_WARN: ...`); every marker now starts a line.
+- Fixed: `remove_degenerates` (`.pwmodel` op and `geometry.remove_degenerates`) now repairs
+  degenerate triangles in place instead of deleting them: a needle (two corners in one place, e.g.
+  the `cone top_radius=0` apex ring) is collapsed and a cap (a corner on the opposite edge, the
+  boolean/bevel sliver) is split into its neighbour, so a closed mesh stays closed. `repair_or_skip`
+  now repairs too; only what neither repair reaches is deleted under `repair_or_delete`, which then
+  adds a warning naming the boundary edges it opened. **Behaviour change:** the `min_triangle_area`
+  (`minTriangleArea`) default drops from the engine's 0.001 to 0.000001, the threshold
+  `degenerateTriangles` / `PWMODEL_DEGENERATE_GEOMETRY` count against; at 0.001 the op deleted
+  thousands of real centimetre-scale triangles. A caller relying on the old default passes 0.001.
 - Changed: `EDITOR_NOT_RUNNING` tells a never-started editor from one that served this project and
   died. `structuredContent.lastSession` carries `state` (`never_started` | `crashed` |
   `killed_externally` | `exited` | `stopped`), the last port, the last `jobs.jsonl` job, the editor
