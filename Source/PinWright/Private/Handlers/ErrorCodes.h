@@ -1575,6 +1575,10 @@ namespace ErrorCodes
     inline constexpr TCHAR ERR_TARGET_AMBIGUOUS[]                           = TEXT("TARGET_AMBIGUOUS");
     inline constexpr TCHAR ERR_TARGET_CHANGED[]                             = TEXT("TARGET_CHANGED");
     inline constexpr TCHAR ERR_TARGET_NODE_NOT_FOUND[]                      = TEXT("TARGET_NODE_NOT_FOUND");
+    // drive.type: the click on the target left keyboard focus on another widget (something over
+    // the field took it, or the target takes no focus), so nothing was typed rather than the text
+    // going to that widget.
+    inline constexpr TCHAR ERR_TARGET_NOT_FOCUSED[]                         = TEXT("TARGET_NOT_FOCUSED");
     inline constexpr TCHAR ERR_TARGET_NOT_FOUND[]                           = TEXT("TARGET_NOT_FOUND");
     // drive.* pointer verbs: the target's center is routed to a different top-level window (one
     // stacked over it, e.g. a Message Log the editor opened on PIE start) or to no window at all,

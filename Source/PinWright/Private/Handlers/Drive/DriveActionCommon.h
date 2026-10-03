@@ -47,6 +47,12 @@ public:
     // path with a more specific reason overwrites).
     using FInject = TFunction<bool(const FVector2D& TargetCenter, FDriveInjectFailure& OutFailure)>;
 
+    // FInject that also receives the resolved target widget (null for a target-less action, or
+    // when it died while the pointer-routing wait ran), for an injection that must check the
+    // widget itself (drive.type: keyboard focus).
+    using FInjectOnTarget = TFunction<bool(const FVector2D& TargetCenter, const TSharedPtr<SWidget>& TargetWidget,
+        FDriveInjectFailure& OutFailure)>;
+
     // Run one action end-to-end against the handle resolved from Ctx args. Reads
     // the common settle / observe / journal params from Ctx, sends the response
     // itself (synchronous error or async success), and the calling handler simply
@@ -64,6 +70,8 @@ public:
     // injection can know (drive.key: whether the platform held the modifiers); its fields are
     // copied into the success response.
     static void RunAction(FHandlerContext& Ctx, const FString& Handle, const FInject& Inject,
+        const TCHAR* InputPath = nullptr, const TSharedPtr<FJsonObject>& InjectFields = nullptr);
+    static void RunAction(FHandlerContext& Ctx, const FString& Handle, const FInjectOnTarget& Inject,
         const TCHAR* InputPath = nullptr, const TSharedPtr<FJsonObject>& InjectFields = nullptr);
 
     // Whether a freshly re-resolved element may still be acted on: it must be drawn, enabled,

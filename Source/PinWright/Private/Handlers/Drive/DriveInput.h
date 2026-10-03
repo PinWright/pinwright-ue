@@ -24,6 +24,7 @@ class FSlateApplication;
 class FGenericWindow;
 class FModifierKeysState;
 class SWindow;
+class SWidget;
 class FJsonObject;
 
 // Mouse button to inject.
@@ -137,6 +138,14 @@ public:
     // Type Text one character at a time (key down, character event, key up per
     // char), holding Shift for characters that need it on a US layout.
     static bool TypeString(const FString& Text);
+
+    // Give Target keyboard focus for the keyboard Slate user (the one TypeString and PressKey send
+    // to). Nothing is injected when Target or a widget inside it already holds that focus, so the
+    // caret and an existing selection (a ctrl+A) survive; otherwise a left click at ScreenPos, the
+    // way a user focuses a field. Focus the click moved into a popup it opened (a child window of
+    // Target's window, e.g. a combo's search field) also counts. False when neither holds the focus
+    // after the click; OutFocused then names the widget that holds it, empty if none.
+    static bool FocusForKeyboard(const TSharedRef<SWidget>& Target, const FVector2D& ScreenPos, FString& OutFocused);
 
     // The top-level window a pointer event at ScreenPos is routed to right now: the same
     // FSlateApplication::LocateWindowUnderMouse call ProcessMouseButtonDownEvent, the mouse-move

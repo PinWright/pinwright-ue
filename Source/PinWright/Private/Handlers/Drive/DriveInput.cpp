@@ -699,3 +699,53 @@ bool FDriveInput::TypeString(const FString& Text)
 
     return true;
 }
+
+bool FDriveInput::FocusForKeyboard(const TSharedRef<SWidget>& Target, const FVector2D& ScreenPos, FString& OutFocused)
+{
+    OutFocused.Reset();
+    if (!FSlateApplication::IsInitialized())
+    {
+        return false;
+    }
+
+    // A wrapper (SEditableTextBox) forwards its focus to the inner SEditableText, so a focused
+    // descendant counts as the target holding focus.
+    const int32 KeyboardUser = FSlateApplication::Get().GetUserIndexForKeyboard();
+    const auto HoldsFocus = [&Target, KeyboardUser]()
+    {
+        return Target->HasUserFocus(KeyboardUser).IsSet() || Target->HasUserFocusedDescendants(KeyboardUser);
+    };
+    if (HoldsFocus())
+    {
+        return true;
+    }
+
+    // The windows open before the click, so a popup the click opens can be told from one already up.
+    FSlateApplication& SlateApp = FSlateApplication::Get();
+    const TSharedPtr<SWindow> TargetWindow = SlateApp.FindWidgetWindow(Target);
+    TArray<TSharedRef<SWindow>> WindowsBefore;
+    SlateApp.GetAllVisibleWindowsOrdered(WindowsBefore);
+
+    // A click that no widget on the path takes focus from (it lands on a non-focusable overlay)
+    // leaves Slate focusing the leaf-most focusable widget under it, e.g. an SDockingTabStack.
+    ClickAt(ScreenPos);
+    if (HoldsFocus())
+    {
+        return true;
+    }
+    const TSharedPtr<SWidget> Focused = SlateApp.GetUserFocusedWidget(KeyboardUser);
+    if (!Focused.IsValid())
+    {
+        return false;
+    }
+    // A combo or search box the click opened focuses a field in its popup, a child window of the
+    // target's window; the keys a user types next go there, so that counts as the target's focus.
+    const TSharedPtr<SWindow> FocusedWindow = SlateApp.FindWidgetWindow(Focused.ToSharedRef());
+    if (TargetWindow.IsValid() && FocusedWindow.IsValid() && FocusedWindow != TargetWindow
+        && FocusedWindow->IsDescendantOf(TargetWindow) && !WindowsBefore.Contains(FocusedWindow.ToSharedRef()))
+    {
+        return true;
+    }
+    OutFocused = Focused->ToString();
+    return false;
+}

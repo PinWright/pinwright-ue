@@ -264,10 +264,30 @@ REGISTER_RPC_HANDLER("drive.type", "drive",
         return true;
     }
 
+    // Keys and characters go to whatever holds keyboard focus, so type only once the target holds
+    // it. A field already focused is not clicked again: the click would clear a ctrl+A selection
+    // and move the caret. A click that left focus on another widget is refused, not typed into it.
     FDriveActionCommon::RunAction(Ctx, Handle,
-        [Text](const FVector2D& Center, FDriveInjectFailure&)
+        [Text, Handle](const FVector2D& Center, const TSharedPtr<SWidget>& Target, FDriveInjectFailure& Failure)
         {
-            FDriveInput::ClickAt(Center);
+            if (!Target.IsValid())
+            {
+                Failure.Code = ErrorCodes::ERR_TARGET_CHANGED;
+                Failure.Message = FString::Printf(TEXT("Element '%s' is no longer live; nothing was typed."), *Handle);
+                return false;
+            }
+            FString Focused;
+            if (!FDriveInput::FocusForKeyboard(Target.ToSharedRef(), Center, Focused))
+            {
+                Failure.Code = ErrorCodes::ERR_TARGET_NOT_FOCUSED;
+                Failure.Message = FString::Printf(
+                    TEXT("Clicking element '%s' did not give it keyboard focus (focus is on %s), so nothing was typed. Something over the field takes the click, or the element is not a text input; drive.input_state shows the focused widget."),
+                    *Handle, Focused.IsEmpty() ? TEXT("no widget") : *Focused);
+                Failure.Details = MakeShared<FJsonObject>();
+                Failure.Details->SetStringField(TEXT("handle"), Handle);
+                Failure.Details->SetStringField(TEXT("focused_widget"), Focused);
+                return false;
+            }
             return FDriveInput::TypeString(Text);
         });
     return true;

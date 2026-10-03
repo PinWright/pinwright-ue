@@ -17,6 +17,12 @@
   that shape (as `position`), but `location` was declared an untyped alias of the `array` param
   `locations`, so the type gate refused the object with `PARAM_TYPE_MISMATCH` before the handler
   ran. `location` is now a typed alias declared `array|object`.
+- Fixed: `drive.type` types only into a target that holds keyboard focus. A target already
+  focused is no longer clicked first, so a `drive.key` ctrl+A selection survives and the text
+  replaces it instead of being appended at the click point. **Behaviour change:** when the
+  focusing click leaves focus on another widget, the call is refused `TARGET_NOT_FOCUSED`
+  (`focused_widget` names it) and nothing is typed; it used to type into that widget and report a
+  settle outcome.
 - Added: `widget.get_animation_section_ranges` reads each widget-animation section's range (open
   sides as `endBounded: false`), whether every key lies inside it, and whether the compiled
   class's copy carries the same range. `widget.set_animation_section_range` sets `start` / `end`

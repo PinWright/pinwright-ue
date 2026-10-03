@@ -250,6 +250,17 @@ void FDriveActionCommon::MaybeAttachJournal(
 void FDriveActionCommon::RunAction(FHandlerContext& Ctx, const FString& Handle, const FInject& Inject,
     const TCHAR* InputPath, const TSharedPtr<FJsonObject>& InjectFields)
 {
+    RunAction(Ctx, Handle,
+        [Inject](const FVector2D& TargetCenter, const TSharedPtr<SWidget>&, FDriveInjectFailure& OutFailure)
+        {
+            return Inject(TargetCenter, OutFailure);
+        },
+        InputPath, InjectFields);
+}
+
+void FDriveActionCommon::RunAction(FHandlerContext& Ctx, const FString& Handle, const FInjectOnTarget& Inject,
+    const TCHAR* InputPath, const TSharedPtr<FJsonObject>& InjectFields)
+{
     const FString InputPathLabel = InputPath ? FString(InputPath) : FString();
 
     const EDriveSurface Surface = FDriveHandlerCommon::ResolveSurface(Ctx);
@@ -298,6 +309,7 @@ void FDriveActionCommon::RunAction(FHandlerContext& Ctx, const FString& Handle, 
     FVector2D TargetCenter = FVector2D::ZeroVector;
     // The target's own top-level window; pointer input must be routed there to reach it.
     TSharedPtr<SWindow> TargetWindow;
+    TSharedPtr<SWidget> TargetWidget;
 
     // Stale-state guard: re-resolve the target NOW (only when an action targets a
     // handle; drive.key without a handle acts on the focused widget). The resolve is
@@ -345,6 +357,7 @@ void FDriveActionCommon::RunAction(FHandlerContext& Ctx, const FString& Handle, 
         {
             TargetWindow = FSlateApplication::Get().FindWidgetWindow(Resolved.Widget.ToSharedRef());
         }
+        TargetWidget = Resolved.Widget;
     }
 
     // Pre-action baseline for the diff. For a target-less action this sample is
@@ -489,7 +502,7 @@ void FDriveActionCommon::RunAction(FHandlerContext& Ctx, const FString& Handle, 
         // Inject the input. A failure here (Slate down mid-flight, an os_input refusal) is a
         // clean error.
         FDriveInjectFailure Failure{ ErrorCodes::ERR_INPUT_FAILED, InjectFailedMessage };
-        if (!Inject(TargetCenter, Failure))
+        if (!Inject(TargetCenter, TargetWidget, Failure))
         {
             Ctx.SendError(Failure.Code, Failure.Message, Failure.Details);
             return;
@@ -505,8 +518,9 @@ void FDriveActionCommon::RunAction(FHandlerContext& Ctx, const FString& Handle, 
     TSharedRef<FAsyncResponseToken> Token = Ctx.MakeAsyncToken();
     const double Deadline = FPlatformTime::Seconds() + PointerRouteWaitSeconds;
     const TWeakPtr<SWindow> WeakTargetWindow = TargetWindow;
+    const TWeakPtr<SWidget> WeakTargetWidget = TargetWidget;
     FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda(
-        [Token, WeakTargetWindow, TargetCenter, Deadline, Inject, StartSettle, Handle, InjectFailedMessage](float) -> bool
+        [Token, WeakTargetWindow, WeakTargetWidget, TargetCenter, Deadline, Inject, StartSettle, Handle, InjectFailedMessage](float) -> bool
         {
             const TSharedPtr<SWindow> Target = WeakTargetWindow.Pin();
             if (!Target.IsValid())
@@ -519,7 +533,7 @@ void FDriveActionCommon::RunAction(FHandlerContext& Ctx, const FString& Handle, 
             if (Under == Target)
             {
                 FDriveInjectFailure Failure{ ErrorCodes::ERR_INPUT_FAILED, InjectFailedMessage };
-                if (Inject(TargetCenter, Failure))
+                if (Inject(TargetCenter, WeakTargetWidget.Pin(), Failure))
                 {
                     StartSettle(Token);
                 }
