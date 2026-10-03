@@ -27,6 +27,18 @@ An editor-only Unreal Engine plugin that speaks MCP (Model Context Protocol) on 
 
 ## Quick start
 
+### Install with your assistant
+
+If your assistant can run commands (Claude Code, Codex CLI, Cursor in agent mode, Gemini CLI, Cline), open it in your Unreal project's folder and paste this prompt:
+
+```text
+Install the PinWright Unreal plugin (github.com/PinWright/pinwright-ue) into this project's `Plugins` folder. If this is a C++ project, or on Linux or a source-built engine, clone the latest release tag (not master); otherwise use the latest release zip for this project's engine version. Then connect yourself to it as the README describes and tell me to restart you and open the editor.
+```
+
+Paste the same prompt again later to update PinWright.
+
+### Install it yourself
+
 1. **Get the plugin.** Download the prebuilt zip for your engine version from [Releases](https://github.com/PinWright/pinwright-ue/releases) (Windows), install [from Fab](https://www.fab.com/listings/d9caf916-e5cf-435e-ab0e-a74cb8dcb253) through the Epic Launcher, or clone this repository and build it (Windows and Linux). All three are the same code under MIT:
 
    ```
