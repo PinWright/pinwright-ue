@@ -2,6 +2,13 @@
 
 ## 1.0.0
 
+- Added: `blueprint.record_dispatcher` observes a Blueprint Event Dispatcher (or any dynamic
+  multicast delegate) firing on a live object, which Python cannot do. It runs as a job: it binds
+  a recorder, records up to `count` broadcasts with their parameters and timestamps, and removes
+  the binding on every exit (count reached, timeout, target destroyed, cancel). The result
+  reports `bindingRemoved` as read back from the invocation list. `pauseOnFire` pauses PIE inside
+  the broadcast that completes the count, so a capture can show a short-lived effect. New error
+  code `DISPATCHER_NOT_FOUND`, whose `available[]` lists the dispatchers the object has.
 - Added (contributors): `REGISTER_RPC_HANDLER_TICK_UNSAFE` (`Handlers/HandlerRegistration.h`)
   declares a verb tick-unsafe on its own registration, so the dispatcher defers it out of
   `UWorld::Tick` without an entry in `Dispatch/SafePoint.cpp`'s name table (now the legacy site,

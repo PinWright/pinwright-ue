@@ -417,6 +417,25 @@ This RPC does not remove dispatchers, mutate an existing dispatcher signature, b
 
 Implementation note for new handlers: when a payload has both an asset path and a semantic object name, resolve the asset path with `ResolveExplicitBlueprintPath` so a `name` field is never interpreted as the Blueprint path. Route `{name,type}` pin arrays through `ParseNamedTypePinParams`; choose strict mode for dispatcher-like signatures and wildcard fallback only where an invalid type should still create an editable pin.
 
+### blueprint.record_dispatcher
+
+The runtime observer half of `blueprint.add_dispatcher`: it watches an Event Dispatcher fire on a **live** object, typically a PIE actor. It also works on any dynamic multicast delegate property, such as a native `BlueprintAssignable` delegate (`OnDestroyed`). Python cannot do this, because `unreal` exposes only native delegates as attributes, so a Blueprint-declared dispatcher has no bindable attribute there and its `is_bound()` result is unreliable. Use `property.get` to read a dispatcher's current bindings, and this verb to observe broadcasts.
+
+It is a job. The call binds a recorder into the dispatcher's invocation list and returns a `ticket_id` right away, along with the resolved `objectPath`, `dispatcher`, `delegateKind` and `signature` (`[{name, type}]`). Make the call with `wait: false`, then trigger the event (fire the weapon, step the game), then poll `system.job_status`. The job ends on the first of these exits, and every exit removes the binding:
+
+| `outcome` | when |
+|---|---|
+| `count_reached` | `count` broadcasts arrived (default 1) |
+| `timed_out` | `timeoutSeconds` elapsed (default 30, max 600). This is wall-clock time, so it keeps running while PIE is paused. `met` is `false` and the records collected so far are kept |
+| `target_destroyed` | the object was destroyed or reinstanced, for example when PIE ends or the Blueprint recompiles |
+| *(ticket `cancelled`)* | `system.job_cancel`. The binding is removed and there is no result |
+
+Result: `met` (`fireCount >= requestedCount`), `fireCount`, `records[]` and `recordsDropped`. Each record is `{seq, elapsedSeconds, frame, worldSeconds?, params?}`. `elapsedSeconds` counts from the bind and `frame` is `GFrameCounter`. `worldSeconds` is the object's world time and appears only when the object has a world. `params` is each signature parameter exported like `property.get`, so object references become paths. Only the first `maxRecords` broadcasts (default 16) produce a record; later ones are counted in `fireCount` and `recordsDropped`. The result also has `targetAlive` and `bindingRemoved`. `bindingRemoved` is read back from the invocation list, not assumed. Broadcasts that arrive after the job ends are not observed.
+
+`pauseOnFire: true` pauses the PIE session inside the broadcast that completes the count, using the same levers as `editor.pause`, so the next capture shows the frame the firing produced. This is how to photograph a muzzle flash or another effect that lives for a few frames. The result reports a measured `paused`. Resume with `editor.resume`. The result also reports `uiFrozen`. The object must be in the running PIE world (`GEditor->PlayWorld`), otherwise the call is refused with `NO_ACTIVE_SESSION`. Only a single PIE world is supported, not a client world of a multi-player session. A broadcast that arrives during PIE teardown (`EndPlay`, `OnDestroyed`) or after the end of PIE was requested does not pause, and `paused` reads `false`.
+
+`objectPath` is an exact object path (a PIE actor's or component's path), or an actor label or name. Labels and names are resolved in the PIE world first, and an ambiguous one is refused with `AMBIGUOUS_ACTOR_NAME` and a list of candidates. A destroyed object that is not yet collected is refused with `OBJECT_NOT_FOUND`. An unknown dispatcher is refused with `DISPATCHER_NOT_FOUND`, and its `available[]` lists the multicast delegate properties the class does have. A class default object or archetype is refused with `INVALID_PARAMS`, because it never broadcasts. A copy of the object made while the job runs (duplicate, PIE world copy, or the new instance a Blueprint recompile creates) carries the recorder binding with it: its broadcasts are recorded as if the original fired (without `params` once the original is gone), and its binding is not removed. It goes inert when the job ends.
+
 ### blueprint.add_function
 
 Creates an empty function graph with a caller-defined signature. UE's physical terminator directions are the inverse of the signature as seen by a caller: each logical `inputs` entry is an `EGPD_Output` user pin on `UK2Node_FunctionEntry`, while each logical `outputs` entry is an `EGPD_Input` user pin on `UK2Node_FunctionResult`. Supplying at least one output creates the result terminator when the fresh graph does not already have one.

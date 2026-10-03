@@ -435,6 +435,9 @@ namespace ErrorCodes
     // which EditorDestroyWorld's own CheckForWorldGCLeaks would fatal on. That payload
     // carries survivingWorlds[] instead of the packageDirty/worldFound fields.
     inline constexpr TCHAR ERR_DIRTY_WORLD_BLOCKS_MAP_SWAP[]                 = TEXT("DIRTY_WORLD_BLOCKS_MAP_SWAP");
+    // blueprint.record_dispatcher: the object's class has no multicast delegate property of that
+    // name. The payload's available[] lists the ones it has.
+    inline constexpr TCHAR ERR_DISPATCHER_NOT_FOUND[]                       = TEXT("DISPATCHER_NOT_FOUND");
     inline constexpr TCHAR ERR_DUPLICATE_FAILED[]                           = TEXT("DUPLICATE_FAILED");
     inline constexpr TCHAR ERR_DUPLICATE_NAME[]                             = TEXT("DUPLICATE_NAME");
     inline constexpr TCHAR ERR_DUPLICATE_TIMELINE[]                         = TEXT("DUPLICATE_TIMELINE");
