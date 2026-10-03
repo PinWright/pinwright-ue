@@ -63,6 +63,12 @@
   (a value in ticks, display frames or seconds, or `"unbounded"`) on the matched sections in one
   undoable transaction with per-section read-back; it reports `compileRequired` instead of
   compiling.
+- Added: `eqs.set_test_purpose` changes an existing EQS test's purpose (`filter` | `score` |
+  `filter_and_score`) and `eqs.remove_test` removes a test (later indices shift down; the EQS
+  editor graph node is removed too, so the editor cannot restore it). `eqs.create` takes
+  `overwrite` (default false), which clears an existing query's generators and tests in place,
+  keeping the asset object so referencers stay valid; it reports `closedEditorCount` and
+  `editorGraphDropped`, and its save is measured (`SAVE_FAILED` when the write does not land).
 - Fixed: `drive.hover` (Slate path) keeps the hover it enters. Slate's per-frame synthetic cursor
   move re-hit-tested without the inactive-input flag the injection held, so while the editor was
   not the active application and another application's window covered the point, it sent

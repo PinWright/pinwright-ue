@@ -11,7 +11,10 @@
 #include "Utils/StringUtils.h"
 #include "Utils/AssetUtils.h"
 
+#include "AIGraphNode.h"
 #include "AssetRegistry/AssetRegistryModule.h"
+#include "EdGraph/EdGraph.h"
+#include "Editor.h"
 #include "EnvironmentQuery/EnvQuery.h"
 #include "EnvironmentQuery/EnvQueryContext.h"
 #include "EnvironmentQuery/EnvQueryGenerator.h"
@@ -19,6 +22,7 @@
 #include "EnvironmentQuery/EnvQueryTest.h"
 #include "Misc/PackageName.h"
 #include "ScopedTransaction.h"
+#include "Subsystems/AssetEditorSubsystem.h"
 
 namespace PinWrightEQS
 {
@@ -213,18 +217,106 @@ namespace PinWrightEQS
             return Option->Tests[TestIndex];
         }
 
-        EEnvTestPurpose::Type ParsePurpose(const FString& Purpose)
+        bool TryParsePurpose(const FString& Purpose, EEnvTestPurpose::Type& OutPurpose)
         {
             const FString Value = NormalizeToken(Purpose);
             if (Value == TEXT("filter"))
             {
-                return EEnvTestPurpose::Filter;
+                OutPurpose = EEnvTestPurpose::Filter;
+                return true;
+            }
+            if (Value == TEXT("score"))
+            {
+                OutPurpose = EEnvTestPurpose::Score;
+                return true;
             }
             if (Value == TEXT("filter_and_score") || Value == TEXT("filterandscore"))
             {
-                return EEnvTestPurpose::FilterAndScore;
+                OutPurpose = EEnvTestPurpose::FilterAndScore;
+                return true;
             }
-            return EEnvTestPurpose::Score;
+            return false;
+        }
+
+        // eqs.add_test's historical lenient parse: an unrecognized purpose falls back to Score.
+        EEnvTestPurpose::Type ParsePurpose(const FString& Purpose)
+        {
+            EEnvTestPurpose::Type Parsed = EEnvTestPurpose::Score;
+            TryParsePurpose(Purpose, Parsed);
+            return Parsed;
+        }
+
+        const TCHAR* PurposeToWire(EEnvTestPurpose::Type Purpose)
+        {
+            switch (Purpose)
+            {
+            case EEnvTestPurpose::Filter: return TEXT("filter");
+            case EEnvTestPurpose::FilterAndScore: return TEXT("filter_and_score");
+            default: return TEXT("score");
+            }
+        }
+
+        // UEnvironmentQueryGraph::UpdateAsset rebuilds every option's Tests array from the graph's
+        // test subnodes, and SpawnMissingNodes only ADDS nodes for tests the graph lacks. So a test
+        // removed from Option->Tests alone comes back on the next edit in the EQS editor. Drop the
+        // graph's subnode for it too. Returns the number of subnodes removed (0 when the query has
+        // never been opened in the EQS editor and so has no graph).
+        int32 RemoveTestFromEditorGraph(UEnvQuery* Query, const UEnvQueryTest* Test)
+        {
+            int32 Removed = 0;
+#if WITH_EDITORONLY_DATA
+            if (!Query->EdGraph)
+            {
+                return 0;
+            }
+            for (UEdGraphNode* Node : Query->EdGraph->Nodes)
+            {
+                UAIGraphNode* OptionNode = Cast<UAIGraphNode>(Node);
+                if (!OptionNode)
+                {
+                    continue;
+                }
+                for (int32 SubIdx = OptionNode->SubNodes.Num() - 1; SubIdx >= 0; --SubIdx)
+                {
+                    UAIGraphNode* SubNode = OptionNode->SubNodes[SubIdx];
+                    if (SubNode && SubNode->NodeInstance == Test)
+                    {
+                        OptionNode->RemoveSubNode(SubNode);
+                        ++Removed;
+                    }
+                }
+            }
+            if (Removed > 0)
+            {
+                Query->EdGraph->NotifyGraphChanged();
+            }
+#endif
+            return Removed;
+        }
+
+        // Measured save tail shared by the edit verbs: saved:true only when the package write
+        // reached disk; a failed write is SAVE_FAILED carrying the same report.
+        bool SendMutationWithSaveReport(FHandlerContext& Ctx, UEnvQuery* Query, bool bSave, const TSharedPtr<FJsonObject>& Result, const TCHAR* What)
+        {
+            EAssetSaveState SaveState = bSave
+                ? EAssetSaveState::Failed
+                : EAssetSaveState::NotRequested;
+            bool bSaved = false;
+            if (bSave)
+            {
+                bSaved = SaveAssetToDiskReportingPresence(
+                    Query, /*bForce=*/true, nullptr, nullptr, &SaveState);
+            }
+            AddAssetSaveReport(Result, bSave, bSaved, SaveState);
+            if (bSave && !bSaved)
+            {
+                Ctx.SendError(TEXT("SAVE_FAILED"), FString::Printf(
+                    TEXT("%s in memory, but the query save was not durable (saveState=%s)."),
+                    What, AssetSaveStateToWire(SaveState)), Result);
+                return true;
+            }
+            Ctx.SendSuccess(Result);
+            return true;
         }
 
         bool ParseFilterType(const FString& Type, EEnvTestFilterType::Type& OutType)
@@ -350,7 +442,7 @@ namespace PinWrightEQS
         }
     }
 
-    bool HandleCreate(FHandlerContext& Ctx)
+    bool HandleCreate(FHandlerContext& Ctx, bool bOverwrite)
     {
         const TSharedPtr<FJsonObject>& Payload = Ctx.GetRawPayload();
         const FString Name = GetJsonStringField(Payload, TEXT("name"));
@@ -366,25 +458,73 @@ namespace PinWrightEQS
             return true;
         }
 
+        UEnvQuery* Existing = nullptr;
         if (ResolveAsset(ObjectPath).bExists || FindObject<UEnvQuery>(nullptr, *ObjectPath))
         {
-            Ctx.SendError(TEXT("ALREADY_EXISTS"), FString::Printf(TEXT("EQS Query already exists: %s"), *ObjectPath));
-            return true;
+            Existing = bOverwrite ? Cast<UEnvQuery>(LoadObject<UObject>(nullptr, *ObjectPath)) : nullptr;
+            if (!Existing)
+            {
+                Ctx.SendError(TEXT("ALREADY_EXISTS"), bOverwrite
+                    ? FString::Printf(TEXT("Asset already exists and is not an EQS Query: %s (overwrite only clears an existing EQS Query)"), *ObjectPath)
+                    : FString::Printf(TEXT("EQS Query already exists: %s (eqs.create overwrite:true clears it in place)"), *ObjectPath));
+                return true;
+            }
         }
 
         FScopedTransaction Transaction(NSLOCTEXT("PinWrightEQS", "CreateEQSQuery", "Create EQS Query"));
 
-        UPackage* Package = CreatePackage(*PackagePath);
-        UEnvQuery* Query = NewObject<UEnvQuery>(Package, UEnvQuery::StaticClass(), FName(*Name), RF_Public | RF_Standalone | RF_Transactional);
-        if (!Query)
+        UEnvQuery* Query = Existing;
+        int32 PreviousOptionCount = 0;
+        int32 ClosedEditorCount = 0;
+        bool bEditorGraphDropped = false;
+        if (Query)
         {
-            Ctx.SendError(TEXT("CREATION_FAILED"), TEXT("Failed to create EQS Query asset"));
-            return true;
+            // Clear in place so the UEnvQuery object (and every referencer) survives. An open EQS
+            // editor would write its stale graph back over the cleared options, so close it, and
+            // drop the graph so the next open regenerates it from Options.
+            // Closing the editor synchronously is not tick-unsafe here: the EQS editor is a plain
+            // graph editor with no SEditorViewport, so no viewport client is torn down mid-tick.
+            if (GEditor)
+            {
+                if (UAssetEditorSubsystem* AssetEditors = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>())
+                {
+                    ClosedEditorCount = AssetEditors->FindEditorsForAsset(Query).Num();
+                    AssetEditors->CloseAllEditorsForAsset(Query);
+                }
+            }
+            Query->Modify();
+            PreviousOptionCount = Query->GetOptionsMutable().Num();
+            Query->GetOptionsMutable().Reset();
+#if WITH_EDITORONLY_DATA
+            bEditorGraphDropped = Query->EdGraph != nullptr;
+            Query->EdGraph = nullptr;
+#endif
         }
+        else
+        {
+            UPackage* Package = CreatePackage(*PackagePath);
+            Query = NewObject<UEnvQuery>(Package, UEnvQuery::StaticClass(), FName(*Name), RF_Public | RF_Standalone | RF_Transactional);
+            if (!Query)
+            {
+                Ctx.SendError(TEXT("CREATION_FAILED"), TEXT("Failed to create EQS Query asset"));
+                return true;
+            }
 
-        Query->Modify();
-        FAssetRegistryModule::AssetCreated(Query);
+            Query->Modify();
+            FAssetRegistryModule::AssetCreated(Query);
+        }
         Query->MarkPackageDirty();
+        if (Existing)
+        {
+            // The overwrite edits a query that already exists, like the other edit verbs, so it
+            // gets their measured save rather than the mark-dirty deferral used for a new asset.
+            TSharedPtr<FJsonObject> Result = MakeQueryResult(Query);
+            Result->SetBoolField(TEXT("overwritten"), true);
+            Result->SetNumberField(TEXT("previousOptionCount"), PreviousOptionCount);
+            Result->SetNumberField(TEXT("closedEditorCount"), ClosedEditorCount);
+            Result->SetBoolField(TEXT("editorGraphDropped"), bEditorGraphDropped);
+            return SendMutationWithSaveReport(Ctx, Query, bSave, Result, TEXT("EQS query cleared"));
+        }
         if (bSave)
         {
             McpSafeAssetSave(Query);
@@ -392,6 +532,7 @@ namespace PinWrightEQS
 
         TSharedPtr<FJsonObject> Result = MakeQueryResult(Query);
         Result->SetBoolField(TEXT("saved"), bSave);
+        Result->SetBoolField(TEXT("overwritten"), false);
         Ctx.SendSuccess(Result);
         return true;
     }
@@ -889,6 +1030,115 @@ namespace PinWrightEQS
         Ctx.SendSuccess(Result);
         return true;
     }
+
+    bool HandleSetTestPurpose(FHandlerContext& Ctx)
+    {
+        const TSharedPtr<FJsonObject>& Payload = Ctx.GetRawPayload();
+        const FString QueryPath = GetJsonStringField(Payload, TEXT("queryPath"));
+        const int32 GeneratorIndex = static_cast<int32>(GetJsonNumberField(Payload, TEXT("generatorIndex"), 0.0));
+        const int32 TestIndex = static_cast<int32>(GetJsonNumberField(Payload, TEXT("testIndex"), -1.0));
+        const FString PurposeName = GetJsonStringField(Payload, TEXT("purpose"));
+        const bool bSave = GetJsonBoolField(Payload, TEXT("save"), false);
+
+        EEnvTestPurpose::Type NewPurpose = EEnvTestPurpose::Score;
+        if (!TryParsePurpose(PurposeName, NewPurpose))
+        {
+            Ctx.SendError(TEXT("INVALID_ARGUMENT"), FString::Printf(TEXT("Unsupported EQS test purpose: %s. Valid: filter, score, filter_and_score."), *PurposeName));
+            return true;
+        }
+
+        UEnvQuery* Query = LoadQueryOrSendError(Ctx, QueryPath);
+        if (!Query)
+        {
+            return true;
+        }
+
+        UEnvQueryOption* Option = GetOptionOrSendError(Ctx, Query, GeneratorIndex);
+        if (!Option)
+        {
+            return true;
+        }
+
+        UEnvQueryTest* Test = GetTestOrSendError(Ctx, Option, TestIndex);
+        if (!Test)
+        {
+            return true;
+        }
+
+        const EEnvTestPurpose::Type PreviousPurpose = Test->TestPurpose;
+
+        if (PreviousPurpose != NewPurpose)
+        {
+            FScopedTransaction Transaction(NSLOCTEXT("PinWrightEQS", "SetEQSTestPurpose", "Set EQS Test Purpose"));
+            Query->Modify();
+            Option->Modify();
+            Test->Modify();
+            Test->TestPurpose = NewPurpose;
+            Query->MarkPackageDirty();
+        }
+
+        TSharedPtr<FJsonObject> Result = MakeQueryResult(Query);
+        Result->SetNumberField(TEXT("generatorIndex"), GeneratorIndex);
+        Result->SetNumberField(TEXT("testIndex"), TestIndex);
+        Result->SetStringField(TEXT("testClass"), Test->GetClass()->GetPathName());
+        Result->SetStringField(TEXT("previousPurpose"), PurposeToWire(PreviousPurpose));
+        Result->SetStringField(TEXT("purpose"), PurposeToWire(Test->TestPurpose));
+        Result->SetBoolField(TEXT("changed"), Test->TestPurpose != PreviousPurpose);
+        return SendMutationWithSaveReport(Ctx, Query, bSave, Result, TEXT("EQS test purpose changed"));
+    }
+
+    bool HandleRemoveTest(FHandlerContext& Ctx)
+    {
+        const TSharedPtr<FJsonObject>& Payload = Ctx.GetRawPayload();
+        const FString QueryPath = GetJsonStringField(Payload, TEXT("queryPath"));
+        const int32 GeneratorIndex = static_cast<int32>(GetJsonNumberField(Payload, TEXT("generatorIndex"), 0.0));
+        const int32 TestIndex = static_cast<int32>(GetJsonNumberField(Payload, TEXT("testIndex"), -1.0));
+        const bool bSave = GetJsonBoolField(Payload, TEXT("save"), false);
+
+        UEnvQuery* Query = LoadQueryOrSendError(Ctx, QueryPath);
+        if (!Query)
+        {
+            return true;
+        }
+
+        UEnvQueryOption* Option = GetOptionOrSendError(Ctx, Query, GeneratorIndex);
+        if (!Option)
+        {
+            return true;
+        }
+
+        UEnvQueryTest* Test = GetTestOrSendError(Ctx, Option, TestIndex);
+        if (!Test)
+        {
+            return true;
+        }
+
+        FScopedTransaction Transaction(NSLOCTEXT("PinWrightEQS", "RemoveEQSTest", "Remove EQS Test"));
+        Query->Modify();
+        Option->Modify();
+        Option->Tests.RemoveAt(TestIndex);
+        // Keep TestOrder equal to the array index. UEnvironmentQueryGraph::UpdateAsset uses the
+        // graph subnode index instead, which also counts disabled tests (absent from Tests), so the
+        // two can differ by a gap; TestOrder only sorts, and the next editor rebuild re-derives it.
+        for (int32 Idx = TestIndex; Idx < Option->Tests.Num(); ++Idx)
+        {
+            if (UEnvQueryTest* Remaining = Option->Tests[Idx])
+            {
+                Remaining->Modify();
+                Remaining->TestOrder = Idx;
+            }
+        }
+        const int32 GraphNodesRemoved = RemoveTestFromEditorGraph(Query, Test);
+        Query->MarkPackageDirty();
+
+        TSharedPtr<FJsonObject> Result = MakeQueryResult(Query);
+        Result->SetNumberField(TEXT("generatorIndex"), GeneratorIndex);
+        Result->SetNumberField(TEXT("removedTestIndex"), TestIndex);
+        Result->SetStringField(TEXT("removedTestClass"), Test->GetClass()->GetPathName());
+        Result->SetNumberField(TEXT("testCount"), Option->Tests.Num());
+        Result->SetNumberField(TEXT("editorGraphNodesRemoved"), GraphNodesRemoved);
+        return SendMutationWithSaveReport(Ctx, Query, bSave, Result, TEXT("EQS test removed"));
+    }
 }
 
 REGISTER_RPC_HANDLER("eqs.create", "eqs",
@@ -896,10 +1146,11 @@ REGISTER_RPC_HANDLER("eqs.create", "eqs",
     RPC_PARAMS(
         RPC_PARAM_REQ("name", "string", "Name for the new EQS Query"),
         RPC_PARAM_DEF("path", "path", "Content path for the asset", "/Game/AI/EQS"),
-        RPC_PARAM_DEF("save", "boolean", "Save the asset after creation", "true")
+        RPC_PARAM_DEF("save", "boolean", "Save the asset after creation", "true"),
+        RPC_PARAM_DEF("overwrite", "boolean", "When an EQS Query already exists at path, clear its generators and tests in place (same object, so Behavior Tree and other referencers stay valid) instead of returning ALREADY_EXISTS. Unlike blueprint.create's overwrite it never deletes the asset.", "false")
     ))
 {
-    return PinWrightEQS::HandleCreate(Ctx);
+    return PinWrightEQS::HandleCreate(Ctx, GetJsonBoolField(Ctx.GetRawPayload(), TEXT("overwrite"), false));
 }
 
 REGISTER_RPC_HANDLER("eqs.add_generator", "eqs",
@@ -964,4 +1215,29 @@ REGISTER_RPC_HANDLER("eqs.set_test_scoring", "eqs",
     ))
 {
     return PinWrightEQS::HandleSetTestScoring(Ctx);
+}
+
+REGISTER_RPC_HANDLER("eqs.set_test_purpose", "eqs",
+    "Change an existing EQS test's purpose (filter, score, or filter_and_score)",
+    RPC_PARAMS(
+        RPC_PARAM_REQ("queryPath", "path", "Path to the EQS Query asset"),
+        RPC_PARAM_DEF("generatorIndex", "integer", "Generator option index", "0"),
+        RPC_PARAM_REQ("testIndex", "integer", "Test index"),
+        RPC_PARAM_REQ("purpose", "string", "filter, score, or filter_and_score; anything else is rejected"),
+        RPC_PARAM_DEF("save", "boolean", "Save the asset after mutation", "false")
+    ))
+{
+    return PinWrightEQS::HandleSetTestPurpose(Ctx);
+}
+
+REGISTER_RPC_HANDLER("eqs.remove_test", "eqs",
+    "Remove a test from an EQS generator option; later test indices shift down by one",
+    RPC_PARAMS(
+        RPC_PARAM_REQ("queryPath", "path", "Path to the EQS Query asset"),
+        RPC_PARAM_DEF("generatorIndex", "integer", "Generator option index", "0"),
+        RPC_PARAM_REQ("testIndex", "integer", "Test index to remove"),
+        RPC_PARAM_DEF("save", "boolean", "Save the asset after mutation", "false")
+    ))
+{
+    return PinWrightEQS::HandleRemoveTest(Ctx);
 }

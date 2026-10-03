@@ -4,6 +4,11 @@
 #include "Dom/JsonObject.h"
 #include "Misc/PackageName.h"
 #include "Tests/TestUtils.h"
+#include "Tests/AutomationSuiteMaintenance.h"
+
+#include "AIGraph.h"
+#include "AIGraphNode.h"
+#include "EdGraph/EdGraphSchema.h"
 
 #include "EnvironmentQuery/EnvQuery.h"
 #include "EnvironmentQuery/EnvQueryOption.h"
@@ -501,3 +506,275 @@ bool FEqsUnsupportedTokenErrorsEnumerateValidTokensTest::RunTest(const FString& 
     CleanupTestAsset(QueryPackagePath);
     return true;
 }
+
+namespace TestEqsTestEditingHelpers
+{
+    FString MakeScratchEqsPackagePath(const TCHAR* Stem)
+    {
+        return FString::Printf(TEXT("%s/EQS/%s_%s"),
+            PinWrightSuiteMaintenance::ScratchRootPackagePath(),
+            Stem,
+            *FGuid::NewGuid().ToString(EGuidFormats::Digits));
+    }
+
+    // Creates the query, one OnCircle generator, and one test per entry of TestSpecs
+    // ({testType, purpose}). Returns the option, or nullptr after reporting the failure.
+    UEnvQueryOption* BuildQuery(FAutomationTestBase& Test, const FString& PackagePath,
+        const TArray<TPair<FString, FString>>& TestSpecs, UEnvQuery*& OutQuery)
+    {
+        OutQuery = CreateTempQuery(Test, PackagePath);
+        if (!OutQuery)
+        {
+            return nullptr;
+        }
+
+        TSharedPtr<FJsonObject> AddGeneratorPayload = MakeShared<FJsonObject>();
+        AddGeneratorPayload->SetStringField(TEXT("queryPath"), OutQuery->GetPathName());
+        AddGeneratorPayload->SetStringField(TEXT("generatorType"), TEXT("OnCircle"));
+        FTestResponseCapture AddGeneratorCapture;
+        if (!InvokeEqsHandler(Test, TEXT("eqs.add_generator"), AddGeneratorPayload, AddGeneratorCapture))
+        {
+            return nullptr;
+        }
+
+        for (const TPair<FString, FString>& Spec : TestSpecs)
+        {
+            TSharedPtr<FJsonObject> AddTestPayload = MakeShared<FJsonObject>();
+            AddTestPayload->SetStringField(TEXT("queryPath"), OutQuery->GetPathName());
+            AddTestPayload->SetNumberField(TEXT("generatorIndex"), 0);
+            AddTestPayload->SetStringField(TEXT("testType"), Spec.Key);
+            AddTestPayload->SetStringField(TEXT("purpose"), Spec.Value);
+            FTestResponseCapture AddTestCapture;
+            if (!InvokeEqsHandler(Test, TEXT("eqs.add_test"), AddTestPayload, AddTestCapture))
+            {
+                return nullptr;
+            }
+        }
+
+        UEnvQueryOption* Option = OutQuery->GetOptions().IsValidIndex(0) ? OutQuery->GetOptions()[0] : nullptr;
+        if (!Option || Option->Tests.Num() != TestSpecs.Num())
+        {
+            Test.AddError(FString::Printf(TEXT("Fixture precondition: expected 1 option with %d tests"), TestSpecs.Num()));
+            return nullptr;
+        }
+        return Option;
+    }
+
+    // Builds the editor graph exactly as FEnvironmentQueryEditor does on first open. The graph
+    // class is not exported, so create it by reflection and drive it through UAIGraph's virtuals.
+    UAIGraph* BuildEditorGraph(FAutomationTestBase& Test, UEnvQuery* Query)
+    {
+        UClass* GraphClass = FindObject<UClass>(nullptr, TEXT("/Script/EnvironmentQueryEditor.EnvironmentQueryGraph"));
+        if (!GraphClass)
+        {
+            Test.AddError(TEXT("Fixture precondition: EnvironmentQueryGraph class not found"));
+            return nullptr;
+        }
+        UAIGraph* Graph = NewObject<UAIGraph>(Query, GraphClass, NAME_None, RF_Transactional);
+        Query->EdGraph = Graph;
+        Graph->GetSchema()->CreateDefaultNodesForGraph(*Graph);
+        Graph->OnCreated();
+        Graph->Initialize();
+        return Graph;
+    }
+}
+
+// F-eqs-set-test-purpose-and-remove-test #1: a test created as a filter can be turned into a
+// score without rebuilding the query, and an unknown purpose is refused rather than silently
+// falling back to score.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEqsSetTestPurposeConvertsFilterToScoreTest,
+    "PinWright.eqs.SetTestPurposeConvertsFilterToScore",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FEqsSetTestPurposeConvertsFilterToScoreTest::RunTest(const FString& Parameters)
+{
+    const FString QueryPackagePath = TestEqsTestEditingHelpers::MakeScratchEqsPackagePath(TEXT("EQS_SetPurpose"));
+    UEnvQuery* Query = nullptr;
+    UEnvQueryOption* Option = TestEqsTestEditingHelpers::BuildQuery(*this, QueryPackagePath,
+        { {TEXT("trace"), TEXT("filter")}, {TEXT("trace"), TEXT("filter")} }, Query);
+    if (!Option)
+    {
+        CleanupTestAsset(QueryPackagePath);
+        return false;
+    }
+    UEnvQueryTest* Target = Option->Tests[1];
+    UEnvQueryTest* Sibling = Option->Tests[0];
+    TestEqual(TEXT("Fixture precondition: target starts as Filter"), Target->TestPurpose.GetValue(), EEnvTestPurpose::Filter);
+
+    {
+        TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+        Payload->SetStringField(TEXT("queryPath"), Query->GetPathName());
+        Payload->SetNumberField(TEXT("generatorIndex"), 0);
+        Payload->SetNumberField(TEXT("testIndex"), 1);
+        Payload->SetStringField(TEXT("purpose"), TEXT("score"));
+        FTestResponseCapture Capture;
+        if (InvokeEqsHandler(*this, TEXT("eqs.set_test_purpose"), Payload, Capture) && Capture.Result.IsValid())
+        {
+            TestEqual(TEXT("previousPurpose reports filter"), Capture.Result->GetStringField(TEXT("previousPurpose")), FString(TEXT("filter")));
+            TestEqual(TEXT("purpose reports score"), Capture.Result->GetStringField(TEXT("purpose")), FString(TEXT("score")));
+            TestTrue(TEXT("changed is true"), Capture.Result->GetBoolField(TEXT("changed")));
+        }
+    }
+    TestEqual(TEXT("Target test is now Score"), Target->TestPurpose.GetValue(), EEnvTestPurpose::Score);
+    TestEqual(TEXT("Sibling test is untouched"), Sibling->TestPurpose.GetValue(), EEnvTestPurpose::Filter);
+
+    {
+        TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+        Payload->SetStringField(TEXT("queryPath"), Query->GetPathName());
+        Payload->SetNumberField(TEXT("testIndex"), 0);
+        Payload->SetStringField(TEXT("purpose"), TEXT("scoring"));
+        FTestResponseCapture Capture;
+        if (InvokeEqsHandlerExpectError(*this, TEXT("eqs.set_test_purpose"), Payload, Capture))
+        {
+            TestEqual(TEXT("Unknown purpose is INVALID_ARGUMENT"), Capture.ErrorCode, FString(TEXT("INVALID_ARGUMENT")));
+        }
+    }
+    TestEqual(TEXT("Rejected purpose leaves the test as Filter"), Sibling->TestPurpose.GetValue(), EEnvTestPurpose::Filter);
+
+    CleanupTestAsset(QueryPackagePath);
+    return true;
+}
+
+// F-eqs-set-test-purpose-and-remove-test #2: removing a test shifts later indices down, and the
+// removal survives the EQS editor's graph rebuild. UEnvironmentQueryGraph::UpdateAsset rebuilds
+// Option->Tests from the graph's subnodes, so a removal that only touched Option->Tests comes
+// back the next time the query is edited in the EQS editor.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEqsRemoveTestSurvivesEditorGraphRebuildTest,
+    "PinWright.eqs.RemoveTestSurvivesEditorGraphRebuild",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FEqsRemoveTestSurvivesEditorGraphRebuildTest::RunTest(const FString& Parameters)
+{
+    const FString QueryPackagePath = TestEqsTestEditingHelpers::MakeScratchEqsPackagePath(TEXT("EQS_RemoveTest"));
+    UEnvQuery* Query = nullptr;
+    UEnvQueryOption* Option = TestEqsTestEditingHelpers::BuildQuery(*this, QueryPackagePath,
+        { {TEXT("distance"), TEXT("score")}, {TEXT("trace"), TEXT("filter")}, {TEXT("dot"), TEXT("score")} }, Query);
+    if (!Option)
+    {
+        CleanupTestAsset(QueryPackagePath);
+        return false;
+    }
+    UEnvQueryTest* First = Option->Tests[0];
+    UEnvQueryTest* Removed = Option->Tests[1];
+    UEnvQueryTest* Last = Option->Tests[2];
+
+    UAIGraph* Graph = TestEqsTestEditingHelpers::BuildEditorGraph(*this, Query);
+    if (!Graph)
+    {
+        CleanupTestAsset(QueryPackagePath);
+        return false;
+    }
+
+    int32 SubNodesBefore = 0;
+    for (UEdGraphNode* Node : Graph->Nodes)
+    {
+        if (UAIGraphNode* AINode = Cast<UAIGraphNode>(Node))
+        {
+            SubNodesBefore += AINode->SubNodes.Num();
+        }
+    }
+    if (!TestEqual(TEXT("Fixture precondition: graph mirrors the three tests"), SubNodesBefore, 3))
+    {
+        CleanupTestAsset(QueryPackagePath);
+        return false;
+    }
+
+    TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+    Payload->SetStringField(TEXT("queryPath"), Query->GetPathName());
+    Payload->SetNumberField(TEXT("generatorIndex"), 0);
+    Payload->SetNumberField(TEXT("testIndex"), 1);
+    FTestResponseCapture Capture;
+    if (InvokeEqsHandler(*this, TEXT("eqs.remove_test"), Payload, Capture) && Capture.Result.IsValid())
+    {
+        TestEqual(TEXT("testCount reports 2"), static_cast<int32>(Capture.Result->GetNumberField(TEXT("testCount"))), 2);
+        TestEqual(TEXT("editorGraphNodesRemoved reports 1"), static_cast<int32>(Capture.Result->GetNumberField(TEXT("editorGraphNodesRemoved"))), 1);
+    }
+
+    const auto ExpectRemaining = [&](const TCHAR* When)
+    {
+        UEnvQueryOption* Current = Query->GetOptions().IsValidIndex(0) ? Query->GetOptions()[0] : nullptr;
+        if (!TestNotNull(FString::Printf(TEXT("%s: option exists"), When), Current))
+        {
+            return;
+        }
+        TestEqual(FString::Printf(TEXT("%s: two tests remain"), When), Current->Tests.Num(), 2);
+        TestFalse(FString::Printf(TEXT("%s: removed test is gone"), When), Current->Tests.Contains(Removed));
+        if (Current->Tests.Num() == 2)
+        {
+            TestTrue(FString::Printf(TEXT("%s: index 0 is still the first test"), When), Current->Tests[0] == First);
+            TestTrue(FString::Printf(TEXT("%s: the last test shifted to index 1"), When), Current->Tests[1] == Last);
+            TestEqual(FString::Printf(TEXT("%s: shifted test's TestOrder follows its index"), When), Last->TestOrder, 1);
+        }
+    };
+    ExpectRemaining(TEXT("after remove_test"));
+
+    Graph->UpdateAsset();
+    ExpectRemaining(TEXT("after the EQS editor graph rebuild"));
+
+    Query->EdGraph = nullptr;
+    CleanupTestAsset(QueryPackagePath);
+    return true;
+}
+
+// F-eqs-set-test-purpose-and-remove-test #3: eqs.create overwrite:true clears an existing query in
+// place, keeping the same UEnvQuery object so referencers stay valid.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEqsCreateOverwriteClearsInPlaceTest,
+    "PinWright.eqs.CreateOverwriteClearsInPlace",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FEqsCreateOverwriteClearsInPlaceTest::RunTest(const FString& Parameters)
+{
+    const FString QueryPackagePath = TestEqsTestEditingHelpers::MakeScratchEqsPackagePath(TEXT("EQS_Overwrite"));
+    UEnvQuery* Query = nullptr;
+    if (!TestEqsTestEditingHelpers::BuildQuery(*this, QueryPackagePath, { {TEXT("trace"), TEXT("filter")} }, Query))
+    {
+        CleanupTestAsset(QueryPackagePath);
+        return false;
+    }
+
+    TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+    Payload->SetStringField(TEXT("name"), FPackageName::GetLongPackageAssetName(QueryPackagePath));
+    Payload->SetStringField(TEXT("path"), FPackageName::GetLongPackagePath(QueryPackagePath));
+
+    {
+        FTestResponseCapture Capture;
+        if (InvokeEqsHandlerExpectError(*this, TEXT("eqs.create"), Payload, Capture))
+        {
+            TestEqual(TEXT("Without overwrite an existing query is ALREADY_EXISTS"), Capture.ErrorCode, FString(TEXT("ALREADY_EXISTS")));
+        }
+        TestEqual(TEXT("Refused create leaves the option in place"), Query->GetOptions().Num(), 1);
+    }
+
+    // A query that was opened in the EQS editor carries a graph whose UpdateAsset rebuilds Options
+    // from its nodes, so the overwrite must drop it or the next open restores the cleared options.
+    if (!TestEqsTestEditingHelpers::BuildEditorGraph(*this, Query))
+    {
+        CleanupTestAsset(QueryPackagePath);
+        return false;
+    }
+
+    // save defaults to true; the overwrite's save must be measured, not echoed from the request.
+    Payload->SetBoolField(TEXT("overwrite"), true);
+    FTestResponseCapture Capture;
+    if (InvokeEqsHandler(*this, TEXT("eqs.create"), Payload, Capture) && Capture.Result.IsValid())
+    {
+        TestTrue(TEXT("overwritten is true"), Capture.Result->GetBoolField(TEXT("overwritten")));
+        TestEqual(TEXT("previousOptionCount is 1"), static_cast<int32>(Capture.Result->GetNumberField(TEXT("previousOptionCount"))), 1);
+        TestEqual(TEXT("Same query object path"), Capture.Result->GetStringField(TEXT("queryPath")), Query->GetPathName());
+        TestTrue(TEXT("editorGraphDropped is true"), Capture.Result->GetBoolField(TEXT("editorGraphDropped")));
+        TestEqual(TEXT("closedEditorCount is 0 (no editor open)"), static_cast<int32>(Capture.Result->GetNumberField(TEXT("closedEditorCount"))), 0);
+        FString SaveState;
+        TestTrue(TEXT("response carries saveState"), Capture.Result->TryGetStringField(TEXT("saveState"), SaveState));
+        TestEqual(TEXT("overwrite reports a disk write"), SaveState, FString(TEXT("written")));
+        TestTrue(TEXT("saved is true"), Capture.Result->GetBoolField(TEXT("saved")));
+    }
+    TestTrue(TEXT("The existing UEnvQuery object survived"), LoadObject<UEnvQuery>(nullptr, *Query->GetPathName()) == Query);
+    TestEqual(TEXT("Options were cleared in place"), Query->GetOptions().Num(), 0);
+    TestNull(TEXT("Overwrite dropped the editor graph"), Query->EdGraph.Get());
+    TestFalse(TEXT("Saved overwrite leaves the package clean"), Query->GetPackage()->IsDirty());
+    Query->EdGraph = nullptr;
+
+    CleanupTestAsset(QueryPackagePath);
+    return true;
+}
+

@@ -1,12 +1,16 @@
 # eqs
 
-Author Environment Query System (`UEnvQuery`) assets — create a query, add generators and tests, set context classes, and configure test filter / scoring. Use `call("behavior_tree")` for the behavior trees that consume EQS queries via the Run EQS Query task; `eqs.*` is scoped to query-asset authoring only.
+Author Environment Query System (`UEnvQuery`) assets — create a query, add generators and tests, set context classes, configure test filter / scoring, and change a test's purpose or remove it. Use `call("behavior_tree")` for the behavior trees that consume EQS queries via the Run EQS Query task; `eqs.*` is scoped to query-asset authoring only.
 
 ## Reading back / verifying a query
 
 To confirm an authored query, `asset.dump` now writes an **`env_query.json`** sidecar (alongside `properties.json`/`meta.json`) that expands the topology the generic property walk could not reach. `UEnvQuery::Options` is a plain `TArray<TObjectPtr<UEnvQueryOption>>` (no Instanced specifier), so `properties.json` serializes it only as bare option object-ref path strings; the sidecar walks each option and surfaces its `generatorClass` plus each test's `testClass`, `purpose`, `filter` (type + float bounds / bool match), `scoring` (equation + factor), and `comment`. Read `env_query.json` from the dump directory to verify the round-trip in one file.
 
 If you need a live (non-dump) read of a specific test field, `property.get` resolves the option's test subobjects directly — path shape `<EqsAsset>.EnvQueryOption_<g>:EnvQueryTest_<...>` (or via the `EnvQueryOption_<g>.Tests` array index) — reading `TestPurpose`, `FilterType`/`FloatValueMin`/`FloatValueMax`, `ScoringEquation`/`ScoringFactor`, and the context property.
+
+### eqs.create
+
+An existing asset at `path`/`name` is refused with `ALREADY_EXISTS` unless `overwrite:true`. With `overwrite:true` on an existing EQS Query, the verb clears every generator and test **in place**: the `UEnvQuery` object keeps its path and identity, so Behavior Tree `Run EQS Query` tasks and other referencers keep pointing at it — rebuild the contents with `eqs.add_generator` / `eqs.add_test` afterwards. Any open EQS editor for the query is closed and its editor graph is dropped (regenerated from the cleared options on next open). This differs from `blueprint.create`'s `overwrite`, which deletes and recreates. An existing asset of another class is still `ALREADY_EXISTS`. The response carries `overwritten` and, when true, `previousOptionCount`, `closedEditorCount` (EQS editors that were open on the query and got closed) and `editorGraphDropped` (whether the query carried an editor graph). An overwrite's save is measured like `eqs.set_context_class`'s: `save` (default true) returns `saveRequested`, `saved`, `saveState` and `saveDetail`, and a blocked or failed write is `SAVE_FAILED` with the cleared query left in memory. A fresh create (no existing asset) still only marks the package dirty and echoes `saved` from the request.
 
 ### eqs.add_generator
 
@@ -29,3 +33,11 @@ Use exactly one discriminator, `filter.kind` or its compatibility spelling `filt
 ### eqs.set_test_scoring
 
 `scoring.equation` selects the scoring curve shape. Accepted equations (case-insensitive): `linear`, `inverse_linear`, `square`, `square_root`, `constant`. "inverse-linear" maps to `inverse_linear`, not `inverse`. Other scoring fields: `factor`, `clampMinType`/`clampMaxType` (`none`, `specified_value`, `filter_threshold`), `clampMin`/`clampMax`, `referenceValue`. `curve` is rejected on UE 5.6 (no `ScoringCurve` field).
+
+### eqs.set_test_purpose
+
+Changes an existing test's `purpose` — the edit that turns a filter that rejects every item into a score — without rebuilding the query. `purpose` is one of `filter`, `score`, `filter_and_score` (case-insensitive, same vocabulary as `eqs.add_test`); any other value is `INVALID_ARGUMENT` and the test is left unchanged. Filter and scoring settings already on the test are kept, so a test turned back into a filter keeps its old filter. Response: `previousPurpose`, `purpose` (read back from the test), `changed`, `testClass`. `save` follows the `eqs.set_context_class` contract: `saved:true` only when the write reached disk, otherwise `SAVE_FAILED` with the measured save state.
+
+### eqs.remove_test
+
+Removes the test at `testIndex` under `generatorIndex`. **Indices shift:** every later test moves down by one, so re-read indices (e.g. from `asset.dump`'s `env_query.json`) before a second removal, or remove from the highest index down. If the query has been opened in the EQS editor, the matching test node is removed from its editor graph too (`editorGraphNodesRemoved`); otherwise the editor's next graph rebuild would put the test back. Response: `removedTestIndex`, `removedTestClass`, `testCount` (tests left on the option), and the same `save` report as `eqs.set_test_purpose`.

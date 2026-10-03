@@ -8,7 +8,8 @@ class FHandlerContext;
 
 namespace PinWrightEQS
 {
-    bool HandleCreate(FHandlerContext& Ctx);
+    // bOverwrite is read by eqs.create's registration only; the ai.create_eqs_query shim keeps false.
+    bool HandleCreate(FHandlerContext& Ctx, bool bOverwrite = false);
     bool HandleAddGenerator(FHandlerContext& Ctx);
     bool HandleAddTest(FHandlerContext& Ctx);
     bool HandleSetContextClass(FHandlerContext& Ctx);
