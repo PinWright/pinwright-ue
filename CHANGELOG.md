@@ -26,6 +26,15 @@
   seeded `CLAUDE.md`/`AGENTS.md` name the `source.fileMd5` check; all are create-if-missing, so an
   existing dump root keeps its old files until they are deleted. Dump core version 4: every cached aspect regenerates once.
 
+- Fixed: a `mode: "visible"` `editor_start` / `editor_restart` no longer runs UnrealBuildTool at
+  startup. A project that sets `bForceCompilationAtStartup` (EditorLoadingSavingSettings) made the
+  engine rebuild the editor target on every visible start, before PinWright loaded and without the
+  result saying so, compiling whatever C++ other agents had half-edited in a shared checkout (and on
+  a source engine with an invalidated makefile, failing `FailedDueToEngineChange` and exiting).
+  Visible launches now pass `-SKIPCOMPILE`; `allow_build: true` (visible only; refused with
+  `INVALID_ARGUMENTS` on offscreen / headless, which never compile at startup) restores the engine's
+  choice, and the result's `startupCompile` reads `skipped` or `allowed`. **Behaviour change:** edit
+  C++ then `editor_start` no longer builds it; run `editor_build` first.
 - Changed: `audio.synth.describe_schema` packs its `generators` / `effects` pages with the spill
   gate's own measurement (new `HttpResponseSpill::MeasureInlineCharacters`, one condensed copy)
   instead of a pretty print, so **pages can hold more kinds and `pageCount` may drop**. Handlers

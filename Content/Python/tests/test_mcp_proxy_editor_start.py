@@ -95,9 +95,28 @@ def _same(a, b):
 
 
 class BuildEditorCommandTest(unittest.TestCase):
-    def test_visible_gets_only_the_always_flags(self):
+    def test_visible_gets_only_the_always_flags_and_skipcompile(self):
         cmd = build_editor_command("Editor.exe", "P.uproject", mode="visible", extra_args=[])
-        self.assertEqual(cmd, ["Editor.exe", "P.uproject", "-AutoDeclinePackageRecovery"])
+        self.assertEqual(cmd, ["Editor.exe", "P.uproject", "-AutoDeclinePackageRecovery",
+                               "-SKIPCOMPILE"])
+
+    # The engine's startup compile (LaunchEngineLoop.cpp:6581-6640) runs UBT on every visible
+    # start when the project sets bForceCompilationAtStartup; -SKIPCOMPILE is its only off
+    # switch. Counterfactual: drop the append and the default case fails.
+    def test_visible_skips_the_startup_compile_unless_allow_build(self):
+        default = build_editor_command("Editor.exe", "P.uproject", mode="visible", extra_args=[])
+        allowed = build_editor_command("Editor.exe", "P.uproject", mode="visible", extra_args=[],
+                                       allow_build=True)
+        self.assertIn("-SKIPCOMPILE", default)
+        self.assertNotIn("-SKIPCOMPILE", allowed)
+
+    def test_windowless_never_carries_skipcompile(self):
+        # The engine skips the whole startup module check under -unattended, so the switch
+        # would be noise on an argv every windowless test pins exactly.
+        for mode in ("offscreen", "headless"):
+            with self.subTest(mode=mode):
+                cmd = build_editor_command("Editor.exe", "P.uproject", mode=mode, extra_args=[])
+                self.assertNotIn("-SKIPCOMPILE", cmd)
 
     def test_offscreen_has_the_windowless_flags_and_a_real_rhi(self):
         cmd = build_editor_command("Editor.exe", "P.uproject", mode="offscreen", extra_args=[])
@@ -126,7 +145,8 @@ class BuildEditorCommandTest(unittest.TestCase):
 
     def test_none_extra_args_tolerated(self):
         cmd = build_editor_command("Editor.exe", "P.uproject", mode="visible", extra_args=None)
-        self.assertEqual(cmd, ["Editor.exe", "P.uproject", "-AutoDeclinePackageRecovery"])
+        self.assertEqual(cmd, ["Editor.exe", "P.uproject", "-AutoDeclinePackageRecovery",
+                               "-SKIPCOMPILE"])
 
     # The startup map is read by FParse::Token as the FIRST token of the remaining command line
     # and skipped outright if that token starts with '-' (UnrealEdMisc.cpp:396-399). Index 2 -
@@ -924,6 +944,75 @@ class ProxyEditorStartTest(unittest.TestCase):
         self.assertIn("-unattended", command)
         self.assertIn("-RunningUnattendedScript", command)
 
+    # ---- startup compile (B-editor-start-silent-module-rebuild) ---------------
+
+    def test_visible_start_with_a_map_skips_the_startup_compile(self):
+        # The ticket's call shape: a visible map launch silently ran UBT on the checkout.
+        self.assertIn("-SKIPCOMPILE", self._spawn_argv({"map": "/Game/Maps/X"}))
+
+    def test_allow_build_leaves_the_startup_compile_to_the_engine(self):
+        self.assertNotIn("-SKIPCOMPILE",
+                         self._spawn_argv({"map": "/Game/Maps/X", "allow_build": True}))
+
+    def test_result_reports_which_startup_compile_policy_applied(self):
+        for allow_build, expected in ((False, "skipped"), (True, "allowed")):
+            with self.subTest(allow_build=allow_build), tempfile.TemporaryDirectory() as temp:
+                proxy = self._proxy(uproject=self._project(temp))
+                probes = iter([("not_running", "refused"), ("alive", None)])
+                with mock.patch.object(proxy, "_probe_state",
+                                       side_effect=lambda _url: next(probes)), \
+                        mock.patch("mcp_proxy.resolve_editor",
+                                   return_value=("C:\\UE_5.8", "Editor.exe")), \
+                        mock.patch("mcp_proxy.subprocess.Popen",
+                                   return_value=_CompletedProcess(code=None)):
+                    result = proxy._editor_start(_start_args(allow_build=allow_build))
+                self.assertFalse(result["isError"], result)
+                self.assertEqual(result["structuredContent"]["startupCompile"], expected)
+
+    def test_bad_allow_build_is_refused_before_the_slot_wait_and_guards(self):
+        # slot_wait can block up to an hour; a malformed call must fail at once.
+        proxy = self._proxy()
+        with mock.patch.object(proxy, "_wait_for_free_slot",
+                               side_effect=AssertionError("must not wait")), \
+                mock.patch.object(proxy, "_editor_process_guard",
+                                  side_effect=AssertionError("must not guard")), \
+                mock.patch.object(proxy, "_launch_capacity_guard",
+                                  side_effect=AssertionError("must not guard")):
+            result = proxy._editor_start(_start_args(mode="offscreen", allow_build=True,
+                                                     slot_wait=3600))
+        self.assertEqual(result["structuredContent"],
+                         {"error": "INVALID_ARGUMENTS", "param": "allow_build"})
+
+    def test_startup_compile_reads_the_final_argv(self):
+        # allow_build:true with a -SKIPCOMPILE in extra_args still skips; say so.
+        with tempfile.TemporaryDirectory() as temp:
+            proxy = self._proxy(uproject=self._project(temp))
+            probes = iter([("not_running", "refused"), ("alive", None)])
+            with mock.patch.object(proxy, "_probe_state",
+                                   side_effect=lambda _url: next(probes)), \
+                    mock.patch("mcp_proxy.resolve_editor",
+                               return_value=("C:\\UE_5.8", "Editor.exe")), \
+                    mock.patch("mcp_proxy.subprocess.Popen",
+                               return_value=_CompletedProcess(code=None)):
+                result = proxy._editor_start(_start_args(allow_build=True,
+                                                         extra_args=["-skipcompile"]))
+        self.assertEqual(result["structuredContent"]["startupCompile"], "skipped")
+
+    def test_bad_allow_build_is_refused_before_anything_is_spawned(self):
+        for mode, value in (("offscreen", True), ("headless", True), ("visible", "yes")):
+            with self.subTest(mode=mode, value=value), tempfile.TemporaryDirectory() as temp:
+                proxy = self._proxy(uproject=self._project(temp))
+                with mock.patch.object(
+                        proxy, "_probe_state", return_value=("not_running", "refused")), \
+                        mock.patch("mcp_proxy.subprocess.Popen",
+                                   side_effect=AssertionError("must not spawn")), \
+                        mock.patch("mcp_proxy.pinwright_supervisor.spawn_supervised",
+                                   side_effect=AssertionError("must not spawn")):
+                    result = proxy._editor_start(_start_args(mode=mode, allow_build=value))
+                self.assertTrue(result["isError"])
+                self.assertEqual(result["structuredContent"],
+                                 {"error": "INVALID_ARGUMENTS", "param": "allow_build"})
+
 
     def test_invalid_map_is_rejected_before_anything_is_spawned(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -1002,7 +1091,7 @@ class ProxyEditorStartTest(unittest.TestCase):
     def test_mode_visible_keeps_todays_command_line_plus_the_launch_switches(self):
         command = self._spawn_argv({"mode": "visible"})
         identity = pinwright_supervisor.launch_identity_args(REASON, "editor_start")
-        self.assertEqual(command[2:], ["-AutoDeclinePackageRecovery"] + identity)
+        self.assertEqual(command[2:], ["-AutoDeclinePackageRecovery", "-SKIPCOMPILE"] + identity)
         self.assertNotIn("-RenderOffScreen", command)
 
     def test_mode_offscreen_keeps_todays_command_line_plus_the_launch_switches(self):
@@ -1068,7 +1157,7 @@ class LinuxLaunchTest(unittest.TestCase):
         result, popen, _display, project = self._start({}, {"return_value": self.SESSION})
         self.assertFalse(result["isError"])
         self.assertEqual(popen.call_args.args[0],
-                         [self.EXE, project, "-AutoDeclinePackageRecovery"]
+                         [self.EXE, project, "-AutoDeclinePackageRecovery", "-SKIPCOMPILE"]
                          + pinwright_supervisor.launch_identity_args(REASON, "editor_start"))
         env = popen.call_args.kwargs["env"]
         self.assertEqual(env["DISPLAY"], ":1")
@@ -1279,6 +1368,23 @@ class ProxyEditorRestartTest(unittest.TestCase):
             launched_by="editor_restart")
         self.assertTrue(result["structuredContent"]["restarted"])
         self.assertTrue(result["structuredContent"]["stoppedPreviousEditor"])
+
+    def test_allow_build_is_forwarded_to_the_start_half(self):
+        proxy = self._proxy()
+        started = {"content": [], "structuredContent": {"success": True}, "isError": False}
+        with mock.patch.object(proxy, "_probe_state", return_value=("not_running", "refused")), \
+                mock.patch.object(proxy, "_editor_start", return_value=started) as start:
+            proxy._editor_restart(_start_args(allow_build=True))
+        self.assertIs(start.call_args.args[0]["allow_build"], True)
+
+    def test_windowless_allow_build_is_refused_before_the_quit(self):
+        proxy = self._proxy()
+        with mock.patch.object(proxy, "_probe_state", return_value=("alive", None)), \
+                mock.patch.object(proxy, "_request_editor_quit",
+                                  side_effect=AssertionError("must not quit")):
+            result = proxy._editor_restart(_start_args(mode="offscreen", allow_build=True))
+        self.assertEqual(result["structuredContent"],
+                         {"error": "INVALID_ARGUMENTS", "param": "allow_build"})
 
     def test_no_running_editor_skips_the_quit_half(self):
         proxy = self._proxy()

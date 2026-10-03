@@ -281,6 +281,21 @@ EDITOR_START_TOOL = {
                     "and a modal there is unrecoverable."
                 ),
             },
+            "allow_build": {
+                "type": "boolean",
+                "description": (
+                    "Mode visible only; default false. false passes -SKIPCOMPILE, so the "
+                    "editor never runs UnrealBuildTool at startup: a project whose "
+                    "EditorPerProjectUserSettings sets bForceCompilationAtStartup otherwise "
+                    "rebuilds the checkout (including other agents' in-progress C++) on every "
+                    "visible start, before PinWright loads. true lets the engine decide; the "
+                    "result's startupCompile says which applied ('skipped' or 'allowed'). "
+                    "offscreen and headless never compile at startup (the engine skips the check "
+                    "under -unattended), so true there is refused with INVALID_ARGUMENTS. Missing "
+                    "or wrong-BuildId modules still raise the engine's rebuild prompt on a visible "
+                    "launch; build with editor_build."
+                ),
+            },
             "slot_wait": {
                 "type": "number",
                 "description": (
@@ -355,6 +370,12 @@ EDITOR_RESTART_TOOL = {
                     "Passed through to the start half. Defaults exactly as editor_start does: "
                     "true when map is given, false otherwise - and, exactly as there, it "
                     "governs mode visible only (offscreen and headless are always suppressed)."
+                ),
+            },
+            "allow_build": {
+                "type": "boolean",
+                "description": (
+                    "Passed through to the start half; same rules as editor_start's allow_build."
                 ),
             },
         },
@@ -1898,6 +1919,18 @@ _NULLRHI_FLAG = "-NullRHI"
 
 LAUNCH_MODES = ("visible", "offscreen", "headless")
 
+# Visible launches only, unless the caller passes allow_build. The engine's startup module check
+# (LaunchEngineLoop.cpp:6581, skipped entirely under -unattended, so windowless launches never
+# reach it) reads EditorLoadingSavingSettings.bForceCompilationAtStartup and, when it is set, runs
+# CompileGameProject - UBT on the editor target with -NoEngineChanges - on EVERY start, before
+# PinWright loads and without telling anyone (:6637-6640, :6745). A project that ships the setting
+# in DefaultEditorPerProjectUserSettings.ini therefore turns "start the editor" into "build the
+# checkout": other agents' half-edited C++ gets linked into the loaded DLLs, and on a source engine
+# whose makefile was invalidated UBT fails FailedDueToEngineChange and the editor exits. -SKIPCOMPILE
+# is the one switch that clears that setting (:6638). It does NOT skip the missing / wrong-BuildId
+# module prompt that follows (a native dialog on a visible launch); editor_build is the way to build.
+_SKIP_STARTUP_COMPILE_FLAG = "-SKIPCOMPILE"
+
 # Suite launches only: a DDC cache graph with no ZenLocal store. Two independent reasons, and the
 # second is the one that makes it more than an optimization.
 #
@@ -1988,7 +2021,7 @@ def normalize_start_map(value):
 
 
 def build_editor_command(exe, uproject, mode, extra_args, unattended_script=False,
-                         map_name=None, identity_args=()):
+                         map_name=None, identity_args=(), allow_build=False):
     """Assemble the argv list to spawn the editor. mode 'visible' is a normal interactive window;
     'offscreen' adds the windowless flag set, which already carries -RunningUnattendedScript
     alongside -unattended (see _OFFSCREEN_FLAGS: the two must never be separated); 'headless'
@@ -2001,8 +2034,9 @@ def build_editor_command(exe, uproject, mode, extra_args, unattended_script=Fals
     BEFORE every switch - the only position the engine reads it from (see normalize_start_map for
     the parse). identity_args (pinwright_supervisor.launch_identity_args: the launch reason and
     launched-by switches) precede extra_args, which is appended last so an operator override always
-    wins. New parameters are keyword-defaulted so older 4-positional call sites still work. Pure -
-    no spawning - so it is unit-testable."""
+    wins. A visible launch gets _SKIP_STARTUP_COMPILE_FLAG unless allow_build (see there). New
+    parameters are keyword-defaulted so older 4-positional call sites still work. Pure - no
+    spawning - so it is unit-testable."""
     argv = [exe, uproject]
     if map_name:
         argv.append(map_name)
@@ -2015,6 +2049,8 @@ def build_editor_command(exe, uproject, mode, extra_args, unattended_script=Fals
         argv += _OFFSCREEN_FLAGS
     if unattended_script and "-RunningUnattendedScript" not in argv:
         argv.append("-RunningUnattendedScript")
+    if mode == "visible" and not allow_build:
+        argv.append(_SKIP_STARTUP_COMPILE_FLAG)
     argv += list(identity_args)
     if extra_args:
         argv += list(extra_args)
@@ -3070,6 +3106,24 @@ class Proxy:
             return refuse("INVALID_REASON", reason_error, "reason")
         return None, mode, reason
 
+    @staticmethod
+    def _allow_build_error(args, mode):
+        """None, or the refusal for a bad allow_build. Only a visible launch can build at startup:
+        the engine skips its startup module check under -unattended, which every windowless
+        launch carries, so true there would promise a build that never runs."""
+        allow_build = args.get("allow_build", False)
+        if not isinstance(allow_build, bool):
+            text = "allow_build must be a boolean, got %r." % (allow_build,)
+        elif allow_build and mode != "visible":
+            text = ("allow_build applies to mode visible only: a %s editor runs under -unattended, "
+                    "where the engine never runs its startup compile. Build with editor_build."
+                    % mode)
+        else:
+            return None
+        return Proxy._start_result("INVALID_ARGUMENTS: " + text,
+                                   {"error": "INVALID_ARGUMENTS", "param": "allow_build"},
+                                   is_error=True)
+
     def _acquire_launch_lock(self, argv, log_path):
         """(lock, error_result): the machine-wide editor-launch lock for an editor about to be
         spawned with argv, waiting up to launch_lock_wait for another launch to release it. An
@@ -3100,6 +3154,9 @@ class Proxy:
         intent_error, mode, reason = self._launch_intent(args, _START_MODE_HELP)
         if intent_error is not None:
             return intent_error
+        allow_build_error = self._allow_build_error(args, mode)
+        if allow_build_error is not None:
+            return allow_build_error
         guard_result = (self._wait_for_free_slot(args) or self._editor_process_guard()
                         or self._launch_capacity_guard("editor"))
         if guard_result is not None:
@@ -3128,6 +3185,7 @@ class Proxy:
         # This parameter therefore only decides the VISIBLE path, where a human may be at the
         # window: default it on for map launches, off otherwise.
         unattended_script = bool(args.get("unattended_script", start_map is not None))
+        allow_build = args.get("allow_build", False)
 
         display_kind = args.get("display", "desktop")
         if display_kind != "desktop" and (display_kind not in PRIVATE_DISPLAYS or mode != "visible"
@@ -3166,6 +3224,7 @@ class Proxy:
                     os.path.splitext(os.path.basename(uproject))[0], display_kind, time.time()))]
         cmd = build_editor_command(
             exe, uproject, mode, extra_args, unattended_script, map_name=start_map,
+            allow_build=allow_build,
             identity_args=pinwright_supervisor.launch_identity_args(reason, launched_by))
         cmdline = subprocess.list2cmdline(cmd)
         supervised = not visible or _visible_via_supervisor()
@@ -3245,6 +3304,9 @@ class Proxy:
             if isinstance(structured, dict):
                 structured.update({
                     "reason": reason, "launchedBy": launched_by, "mode": mode,
+                    # From the final argv: extra_args can carry either off switch too.
+                    "startupCompile": "skipped" if {"-skipcompile", "-unattended"} & {
+                        a.lower() for a in cmd} else "allowed",
                     "capped": bool(getattr(proc, "capped", False)),
                 })
             return result
@@ -3266,7 +3328,8 @@ class Proxy:
 
         # Refuse a missing mode or reason BEFORE stopping anything, like a bad map below: a
         # refused start must not cost the caller a running editor.
-        intent_error = self._launch_intent(args, _START_MODE_HELP)[0]
+        intent_error = (self._launch_intent(args, _START_MODE_HELP)[0]
+                        or self._allow_build_error(args, args.get("mode")))
         if intent_error is not None:
             return intent_error
 
@@ -3317,7 +3380,7 @@ class Proxy:
             stopped = True
 
         start_args = {k: args[k] for k in ("map", "mode", "reason", "extra_args",
-                                           "unattended_script")
+                                           "unattended_script", "timeout", "allow_build")
                       if k in args}
         result = self._editor_start(start_args, launched_by="editor_restart")
         structured = result.get("structuredContent")
