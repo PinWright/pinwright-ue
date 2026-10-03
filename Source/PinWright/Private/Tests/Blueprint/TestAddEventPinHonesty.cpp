@@ -14,9 +14,13 @@
 //     (UNSUPPORTED_ARGUMENT, no node added) rather than dropped and echoed;
 //   - a pin the node refuses makes the verb report failure, and the response still names the
 //     pins that DO exist (PIN_CREATION_FAILED);
-//   - blueprint.get does not report an event that only the registry believes in.
+//   - blueprint.get does not report an event (or, the same merge's twin, a function) that only
+//     the registry believes in.
 #include "Misc/AutomationTest.h"
 #include "Handlers/HandlerContext.h"
+#include "Handlers/Blueprint/BlueprintHandlerUtils.h"
+#include "State/PluginState.h"
+#include "State/BlueprintTracker.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "Tests/TestUtils.h"
@@ -131,6 +135,16 @@ namespace AddEventPinHonestyTestUtils
             Entry->TryGetStringField(Field, Out);
         }
         return Out;
+    }
+
+    // True when the in-memory blueprint registry entry under RegistryKey (the add_* verb's
+    // response blueprintPath) lists Name in ArrayName. The phantom tests assert this as a
+    // precondition: without the registry record they would pass whether or not blueprint.get
+    // merges it.
+    inline bool RegistryListsName(const FString& RegistryKey, const TCHAR* ArrayName, const FString& Name)
+    {
+        return JsonArrayHasObjectWithStringField(
+            FPluginState::Get().Blueprints().FindBlueprintEntry(RegistryKey), ArrayName, TEXT("name"), Name);
     }
 }
 
@@ -388,6 +402,14 @@ bool FBlueprintGetDropsPhantomRegistryEventTest::RunTest(const FString& Paramete
             DeleteAssetIfPresent(AssetPath);
             return true;
         }
+        FString RegistryKey;
+        if (Capture.Result.IsValid()) Capture.Result->TryGetStringField(TEXT("blueprintPath"), RegistryKey);
+        if (!TestTrue(TEXT("precondition: the registry records the authored event"),
+                RegistryListsName(RegistryKey, TEXT("events"), EventName.ToString())))
+        {
+            DeleteAssetIfPresent(AssetPath);
+            return true;
+        }
     }
 
     // 2. Delete the node behind the registry's back — the shape a default-mode compile_bpir
@@ -414,6 +436,84 @@ bool FBlueprintGetDropsPhantomRegistryEventTest::RunTest(const FString& Paramete
             TestFalse(TEXT("blueprint.get does not report an event the graph no longer has"),
                 JsonArrayHasObjectWithStringField(
                     Capture.Result, TEXT("events"), TEXT("name"), EventName.ToString()));
+        }
+    }
+
+    DeleteAssetIfPresent(AssetPath);
+    return true;
+}
+
+// ============================================================================
+// The functions[] twin of the test above (B-blueprint-get-registry-functions-phantom):
+// blueprint.add_function records the function in the registry, and a function graph the
+// registry still remembers but the Blueprint no longer has must NOT appear in blueprint.get.
+// ============================================================================
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBlueprintGetDropsPhantomRegistryFunctionTest,
+    "PinWright.blueprint.get.RegistryOnlyFunctionIsNotReported",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FBlueprintGetDropsPhantomRegistryFunctionTest::RunTest(const FString& Parameters)
+{
+    using namespace AddEventPinHonestyTestUtils;
+
+    const FString AssetPath = MakeAssetPath(TEXT("BlueprintGetPhantomFunction"));
+    UBlueprint* BP = MakeActorBlueprint(AssetPath);
+    if (!TestNotNull(TEXT("Blueprint created"), BP))
+    {
+        DeleteAssetIfPresent(AssetPath);
+        return true;
+    }
+
+    const FString FunctionName(TEXT("PwPhantomFunction"));
+
+    // 1. Author the function through the production verb, which records it in the registry.
+    {
+        TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+        Payload->SetStringField(TEXT("path"), AssetPath);
+        Payload->SetStringField(TEXT("functionName"), FunctionName);
+        FTestResponseCapture Capture;
+        if (!TestTrue(TEXT("blueprint.add_function handler found"),
+                InvokeHandlerWithCapture(TEXT("blueprint.add_function"), Payload, Capture))
+            || !TestTrue(TEXT("blueprint.add_function succeeded"), Capture.bSuccess))
+        {
+            DeleteAssetIfPresent(AssetPath);
+            return true;
+        }
+        FString RegistryKey;
+        if (Capture.Result.IsValid()) Capture.Result->TryGetStringField(TEXT("blueprintPath"), RegistryKey);
+        if (!TestTrue(TEXT("precondition: the registry records the authored function"),
+                RegistryListsName(RegistryKey, TEXT("functions"), FunctionName)))
+        {
+            DeleteAssetIfPresent(AssetPath);
+            return true;
+        }
+    }
+
+    // 2. Remove the graph behind the registry's back. blueprint.remove_function currently leaves
+    //    the registry record too, but a direct RemoveGraph keeps this test independent of
+    //    whether that verb ever learns to clear it.
+    UEdGraph* Graph = BlueprintHandlerUtils::FindFunctionGraphByName(BP, FunctionName);
+    if (!TestNotNull(TEXT("the authored function graph is on the Blueprint"), Graph))
+    {
+        DeleteAssetIfPresent(AssetPath);
+        return true;
+    }
+    FBlueprintEditorUtils::RemoveGraph(BP, Graph);
+    TestNull(TEXT("the function graph is gone from the Blueprint"),
+        BlueprintHandlerUtils::FindFunctionGraphByName(BP, FunctionName));
+
+    // 3. blueprint.get must not resurrect it from the registry.
+    {
+        TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+        Payload->SetStringField(TEXT("path"), AssetPath);
+        FTestResponseCapture Capture;
+        if (TestTrue(TEXT("blueprint.get handler found"),
+                InvokeHandlerWithCapture(TEXT("blueprint.get"), Payload, Capture)))
+        {
+            TestTrue(TEXT("blueprint.get succeeded"), Capture.bSuccess);
+            TestFalse(TEXT("blueprint.get does not report a function the Blueprint no longer has"),
+                JsonArrayHasObjectWithStringField(
+                    Capture.Result, TEXT("functions"), TEXT("name"), FunctionName));
         }
     }
 

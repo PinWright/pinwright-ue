@@ -52,7 +52,7 @@ REGISTER_RPC_HANDLER("blueprint.exists", "blueprint", "Check whether a blueprint
 }
 
 // ---- blueprint.get ----
-REGISTER_RPC_HANDLER("blueprint.get", "blueprint", "Return summary metadata for a Blueprint: parentClass (full class path, null when the parent is missing), variables, functions, events, and a defaults map (each member variable's CDO default value, same shape as property.get includeDefault). events[] is a live enumeration of the graph nodes, including legacy and Enhanced Input entry nodes; input entries identify their key/action in name and expose connected edges in execOutputs[]. An event that was authored and later removed is absent from it. Does NOT include components — for class-level component templates use blueprint.scs.get, or blueprint.inspect for the full structural dump (graphs/references/components).",
+REGISTER_RPC_HANDLER("blueprint.get", "blueprint", "Return summary metadata for a Blueprint: parentClass (full class path, null when the parent is missing), variables, functions, events, and a defaults map (each member variable's CDO default value, same shape as property.get includeDefault). events[] is a live enumeration of the graph nodes, including legacy and Enhanced Input entry nodes; input entries identify their key/action in name and expose connected edges in execOutputs[]. An event that was authored and later removed is absent from it; functions[] is likewise a live enumeration of the function graphs. Does NOT include components — for class-level component templates use blueprint.scs.get, or blueprint.inspect for the full structural dump (graphs/references/components).",
     RPC_PARAMS(
         BlueprintPathParamReq(TEXT("path"), TEXT("path"), TEXT("Blueprint asset path to inspect."))
     ))
@@ -95,48 +95,24 @@ REGISTER_RPC_HANDLER("blueprint.get", "blueprint", "Return summary metadata for 
         if (RegistryEntry->HasField(TEXT("metadata")) && !Entry->HasField(TEXT("metadata")))
             Entry->SetObjectField(TEXT("metadata"), RegistryEntry->GetObjectField(TEXT("metadata")));
 
-        // Merge functions
-        if (RegistryEntry->HasField(TEXT("functions")))
-        {
-            TArray<TSharedPtr<FJsonValue>> RegFuncs = RegistryEntry->GetArrayField(TEXT("functions"));
-            if (!Entry->HasField(TEXT("functions")))
-            {
-                Entry->SetArrayField(TEXT("functions"), RegFuncs);
-            }
-            else
-            {
-                TArray<TSharedPtr<FJsonValue>> ExistingFuncs = Entry->GetArrayField(TEXT("functions"));
-                TSet<FString> KnownNames;
-                for (const auto& Val : ExistingFuncs)
-                {
-                    const TSharedPtr<FJsonObject> Obj = Val->AsObject();
-                    FString N;
-                    if (Obj.IsValid() && Obj->TryGetStringField(TEXT("name"), N))
-                        KnownNames.Add(N);
-                }
-                for (const auto& Val : RegFuncs)
-                {
-                    const TSharedPtr<FJsonObject> Obj = Val->AsObject();
-                    FString N;
-                    if (Obj.IsValid() && Obj->TryGetStringField(TEXT("name"), N) && !KnownNames.Contains(N))
-                        ExistingFuncs.Add(Val);
-                }
-                Entry->SetArrayField(TEXT("functions"), ExistingFuncs);
-            }
-        }
-
-        // Events are deliberately NOT unioned with the registry the way functions are above.
-        // BuildBlueprintSnapshot always sets events[] from CollectBlueprintEvents, which walks
-        // every node of every UbergraphPage, so the snapshot is a COMPLETE enumeration of the
-        // graph: a registry event the snapshot does not list is an event the graph does not
-        // have. Appending it made blueprint.get assert that a node exists when it does not —
-        // e.g. blueprint.add_event followed by a default-mode blueprint.compile_bpir, whose
-        // Phase 0 sweep deletes the add_event-created entry (docs/wiki-src/blueprint.bpir-
-        // gotchas.md) while the registry record survives. That turned the readback into a
-        // corroborating witness for the write path instead of an independent one.
+        // Functions and events are deliberately NOT unioned with the registry. BuildBlueprintSnapshot
+        // always sets functions[] from CollectBlueprintFunctions (every FunctionGraphs entry) and
+        // events[] from CollectBlueprintEvents (every node of every UbergraphPage), so the snapshot
+        // is a COMPLETE enumeration of the graph: a registry record the snapshot does not list is a
+        // function graph or event node the Blueprint does not have. Appending it made blueprint.get
+        // assert that it exists when it does not — e.g. blueprint.add_function followed by
+        // blueprint.remove_function (which leaves the registry record behind), or
+        // blueprint.add_event followed by a default-mode blueprint.compile_bpir, whose Phase 0 sweep
+        // deletes the add_event-created entry (docs/wiki-src/blueprint.bpir-gotchas.md) while the
+        // registry record survives. That turned the readback into a corroborating witness for the
+        // write path instead of an independent one.
         //
-        // The one surviving registry path is the degenerate case where no snapshot could be
-        // built at all, in which case a stale list beats no list.
+        // Unreachable today; kept as a guard: the one surviving registry path is the degenerate
+        // case where no snapshot could be built at all, in which case a stale list beats no list.
+        if (RegistryEntry->HasField(TEXT("functions")) && !Entry->HasField(TEXT("functions")))
+        {
+            Entry->SetArrayField(TEXT("functions"), RegistryEntry->GetArrayField(TEXT("functions")));
+        }
         if (RegistryEntry->HasField(TEXT("events")) && !Entry->HasField(TEXT("events")))
         {
             Entry->SetArrayField(TEXT("events"), RegistryEntry->GetArrayField(TEXT("events")));

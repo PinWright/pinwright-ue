@@ -18,6 +18,11 @@
   system with emitters. **Behaviour change:** a loaded asset whose saved bytecode is in sync now
   reads `passed` without `niagara.compile`; an out-of-sync one still shows `pendingCompile: true`.
   The `COMPILE_STATE_UNINITIALIZED` message now names `niagara.compile` as the remedy.
+- Fixed: `blueprint.get` no longer reports a function the Blueprint does not have. It appended
+  every function `blueprint.add_function` had recorded in the in-memory registry, so a function
+  later removed (by `blueprint.remove_function`, an editor edit, or another verb) still read back
+  in `functions[]`. `functions[]` is now only the live enumeration of the function graphs, as
+  `events[]` already was.
 - Changed: the PinWright Setup screen no longer opens at launch in an `-unattended` editor (the
   automation suite, offscreen/headless `editor_start`), even with `bShowSetupScreenOnLaunch` or a
   port-conflict alert; the conflict is still logged. On a real display its window covered the
