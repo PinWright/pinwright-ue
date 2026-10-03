@@ -747,7 +747,7 @@ Gotchas: returns `{isClosed, boundaryEdges, degenerateTriangles, nonManifoldVert
 
 **`unreferencedVertices` counts allocated vertices no triangle names.** `FDynamicMesh3` keeps a vertex live after the last triangle using it is removed, so a cut or a boolean can strand one: it is inside `vertexCount` and is part of no surface. That makes it the only field reconciling `vertexCount` with any triangle-reduced measurement of the same mesh (`geometry.measure`'s bbox, the `.pwmodel` `bounds`), which otherwise disagree in silence. Non-zero is also a signal on its own — an op removed geometry and left the leftovers behind. **It is in no verdict:** the static-mesh build is driven by triangles, so an orphan reaches no asset, and failing a mesh on it would refuse correct models.
 
-**`checkSelfIntersection` is the third gate term, and it is opt-in.** Nothing above can see a surface that passes through **itself**, and both shapes of that fault walk straight through `isClosed && signedVolume > 0`: a membrane spanning a bore is two oppositely wound fans whose volume contributions cancel *exactly*, and a sweep whose walls were pushed through each other degrades `signedVolume` smoothly with no threshold on it. Pass `checkSelfIntersection: true` and gate on `isClosed && signedVolume > 0 && selfIntersections === 0`. It is off by default because it builds an AABB tree per connected component and descends it against itself — a different cost class from the allocation-free `O(E + T + V)` walk every other field comes from. **Read `selfIntersectionsMeasured` before the count:** it is `false` when you did not ask *and* when the measurement declined (empty mesh, or above its 200k-triangle budget), and the three count fields are **absent rather than zero** in both cases, so a missing measurement can never be mistaken for a clean one. `selfIntersectionsTruncated` says the count is a floor rather than a total; the verdict is unaffected, since a floor above zero is still above zero. Crossings are counted **inside one edge-connected component only** — separate shells that interpenetrate are the ordinary way a model is assembled here and stay at zero.
+**`checkSelfIntersection` is the third gate term, and it is opt-in.** Nothing above can see a surface that passes through **itself**, and both shapes of that fault walk straight through `isClosed && signedVolume > 0`: a membrane spanning a bore is two oppositely wound fans whose volume contributions cancel *exactly*, and a sweep whose walls were pushed through each other degrades `signedVolume` smoothly with no threshold on it. Pass `checkSelfIntersection: true` and gate on `isClosed && signedVolume > 0 && selfIntersections === 0`. It is off by default because it builds an AABB tree per connected component and descends it against itself — a different cost class from the allocation-free `O(E + T + V)` walk every other field comes from. **Read `selfIntersectionsMeasured` before the count:** it is `false` when you did not ask *and* when the measurement declined (empty mesh, or above its 200k-triangle budget), and the three count fields are **absent rather than zero** in both cases, so a missing measurement can never be mistaken for a clean one. `selfIntersectionsTruncated` says the count is a floor rather than a total; the verdict is unaffected, since a floor above zero is still above zero. Crossings are counted **inside one edge-connected component only** — separate shells that interpenetrate are the ordinary way a model is assembled here and stay at zero. **For a saved StaticMesh, no actor is needed:** `geometry.audit_static_meshes` with `checks: ["self_intersection"]` runs the same measurement on the asset, spawn-free and batched.
 
 **`signedVolume` is the only field that can see an inside-out mesh, and it means something only when `isClosed`.** A closed mesh whose winding is uniformly reversed renders *identically* to a correct one — backface culling shows you whichever wall faces the camera, and the two walls carry opposite normals — so every other field here matches a correct mesh exactly: closed, `boundaryEdges: 0`, no bowties, same counts. `signedVolume` is the divergence-theorem volume in the engine's own facing-normal convention, so it is **positive** when the facing normals point outward and **negative** on the same shell wound inside out. Gate on `isClosed && signedVolume > 0`; on an open mesh the number is the integral of an unclosed surface and means nothing. `inverted` is that gate pre-evaluated (`isClosed && signedVolume < 0`), which is also why it stays `false` on an open mesh — open is not inside out, it is open. **This is not cosmetic:** the mesh distance field decides inside from outside by counting backface hits (`MeshDistanceFieldUtilities.cpp:261-281`), so an inverted shell inverts its field and Lumen / DFAO light the part as though the camera were inside it — invisible in any preview capture, wrong in a lit level.
 
@@ -970,7 +970,8 @@ different facts and only one of them is about geometry.
 
 **Checks.** `inverted` (error), `inconsistent_winding` (error), `empty` (error), `not_closed`,
 `degenerate_triangles`, `non_manifold`, `mirrored_build_scale`, `z_fighting`, and
-`floating_components` (warnings) are on by default; `thin_shell` is off and must be asked for.
+`floating_components` (warnings) are on by default; `thin_shell` and `self_intersection` (error)
+are off and must be asked for.
 `inverted` walks edge-connected triangle components,
 not just the asset-level sum. Its finding measurements include `components[]` with each component's
 `index`, `status`, `signedVolume`, `surfaceArea`, `volumeRatio`, `boundaryEdges`,
@@ -978,6 +979,18 @@ not just the asset-level sum. Its finding measurements include `components[]` wi
 `invertedComponents` and `cleanComponents`.
 The whole-mesh `signedVolume` remains in the common measurements as context, but it is not the
 verdict: equal correctly wound and inverted shells can cancel it to zero.
+
+`self_intersection` is the third term of the `isClosed && signedVolume > 0 && selfIntersections === 0`
+gate, on the saved asset: the same `MeasureMeshSelfIntersection` that `geometry.check_health`'s
+`checkSelfIntersection` runs on an actor, so the two cannot disagree. It counts triangle pairs that
+cross or overlap **inside one edge-connected component**; separate shells that interpenetrate stay
+clean. Off by default because it builds an AABB tree per component. Its measurements carry
+`selfIntersectionsMeasured`, `selfIntersections`, `selfIntersectingComponents`,
+`selfIntersectionsTruncated` (the count is a floor) and a `witness` point on the first crossing. An
+empty mesh is not-applicable; a mesh above the 200k-triangle budget is `unrunnable` coded
+`MESH_AUDIT_SELF_INTERSECTION_UNRUNNABLE`, never clean. `checks: ["not_closed", "inverted",
+"self_intersection"]` with `failOn: "any"` evaluates all three gate terms in one sweep (`not_closed`
+is a warning, hence `any`).
 
 `floating_components` is a warning-only spatial-isolation check, not a disconnected-component
 count. It builds a proximity graph over edge-connected components: component AABBs prune pairs

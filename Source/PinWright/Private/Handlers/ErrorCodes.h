@@ -971,6 +971,12 @@ namespace ErrorCodes
     // The asset loaded but its requested LOD would not copy into a measurable mesh. An
     // UNRUNNABLE reason, not a defect: the sweep says it could not look rather than passing.
     inline constexpr TCHAR ERR_MESH_AUDIT_READ_FAILED[]                     = TEXT("MESH_AUDIT_READ_FAILED");
+    // Two triangles of ONE edge-connected component cross or overlap: the surface passes through
+    // itself, the third term of the published `isClosed && signedVolume > 0 && selfIntersections
+    // === 0` gate. Same measurement as geometry.check_health's checkSelfIntersection.
+    inline constexpr TCHAR ERR_MESH_AUDIT_SELF_INTERSECTION[]               = TEXT("MESH_AUDIT_SELF_INTERSECTION");
+    // The self-intersection measurement declined (above its triangle budget). UNRUNNABLE, never clean.
+    inline constexpr TCHAR ERR_MESH_AUDIT_SELF_INTERSECTION_UNRUNNABLE[]    = TEXT("MESH_AUDIT_SELF_INTERSECTION_UNRUNNABLE");
     // A closed mesh enclosing negligible volume against its own surface area - a sheet folded
     // back on itself, which passes both the inversion and the closedness checks.
     inline constexpr TCHAR ERR_MESH_AUDIT_THIN_SHELL[]                      = TEXT("MESH_AUDIT_THIN_SHELL");

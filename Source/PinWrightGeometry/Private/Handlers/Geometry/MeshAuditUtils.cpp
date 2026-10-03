@@ -108,6 +108,14 @@ namespace MeshAudit
                   "only warns when triangle-level distance exceeds a tolerance derived from the "
                   "model's bounding sphere. The finding reports each floater's size, centre and "
                   "nearest-component distance.")},
+            {ECheck::SelfIntersection, TEXT("self_intersection"),
+             ErrorCodes::ERR_MESH_AUDIT_SELF_INTERSECTION, ESeverity::Error, false, false,
+             TEXT("Triangle pairs inside ONE edge-connected component that cross or overlap: "
+                  "the surface passes through itself, the third term of the gate "
+                  "`isClosed && signedVolume > 0 && selfIntersections === 0`. Same measurement "
+                  "as geometry.check_health's checkSelfIntersection. Separate shells that "
+                  "interpenetrate stay clean. Off by default: it builds an AABB tree per "
+                  "component. Declined above 200k triangles, reported unrunnable.")},
         };
         checkf(Checks.Num() == CheckCount, TEXT("MeshAudit check table is out of sync with ECheck."));
         return Checks;
@@ -2480,6 +2488,10 @@ namespace MeshAudit
             MeasureSpatialProximity(Scratch, Out.Spatial, Out.Components,
                                     Config.Thresholds.FloatingToleranceFraction);
         }
+        if (HasCheck(Config.SelectedChecks, ECheck::SelfIntersection))
+        {
+            Out.SelfIntersection = GeometryUtils::MeasureMeshSelfIntersection(Scratch);
+        }
         // Keep the reported component count tied to the same edge-connected walk that supplied
         // the per-component volumes. This avoids a whole-mesh helper and the audit disagreeing
         // about what a component is on a mesh with unwelded shells.
@@ -2984,6 +2996,18 @@ namespace MeshAudit
                     Analysis.PlaneDistanceEpsilon, Analysis.ModelExtent, Analysis.NormalDotThreshold);
                 break;
             }
+
+            case ECheck::SelfIntersection:
+                if (!DescribeSelfIntersection(M, *Measurements, bFlagged, Message))
+                {
+                    ++Tally.Unrunnable;
+                    PushFinding(R, Config.MaxFindings, AssetPath, AssetName, Info,
+                                EFindingStatus::Unrunnable,
+                                ErrorCodes::ERR_MESH_AUDIT_SELF_INTERSECTION_UNRUNNABLE,
+                                Message, Measurements);
+                    continue;
+                }
+                break;
 
             default:
                 break;

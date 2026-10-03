@@ -89,6 +89,10 @@ namespace MeshAudit
         ZFighting,
         // Components may be disconnected; this warns only for spatially isolated islands.
         FloatingComponents,
+        // Off by default (an AABB tree per component, a different cost class). Two triangles
+        // of ONE edge-connected component crossing: the third gate term, blind to every
+        // check above. Evaluated in MeshAuditSelfIntersection.cpp.
+        SelfIntersection,
         Count
     };
 
@@ -463,6 +467,10 @@ namespace MeshAudit
         // EvaluateAsset apply a caller-selected fraction without touching the UObject again.
         FSpatialMeasurement Spatial;
 
+        // Filled only when `self_intersection` is selected; bMeasured false otherwise or when
+        // the measurement declined, which EvaluateAsset reports unrunnable, never clean.
+        GeometryUtils::FMeshSelfIntersection SelfIntersection;
+
         // Geometry copied from the same component walk. This is deliberately a plain value
         // array so EvaluateAsset can run over synthetic fixtures without an engine object.
         TArray<FZFightTriangle> ZFightTriangles;
@@ -651,6 +659,11 @@ namespace MeshAudit
     // the existing decomposition, so no package, world or UObject is needed by its tests.
     void AnalyzeZFighting(const TArray<FZFightTriangle>& Triangles, const FThresholds& Thresholds,
                           FZFightAnalysis& Out);
+
+    // The `self_intersection` row: writes the measurement fields and message, sets bOutFlagged.
+    // Returns false when M.SelfIntersection declined, i.e. the row is unrunnable.
+    bool DescribeSelfIntersection(const FAssetMeasurement& M, FJsonObject& Measurements,
+                                  bool& bOutFlagged, FString& OutMessage);
 
     // Turn ONE measurement into findings and tallies. Pure: no engine calls, no loads, no
     // UObject access - which is what makes it drivable from an automation test over synthetic

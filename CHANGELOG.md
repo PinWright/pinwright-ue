@@ -156,6 +156,11 @@
   `INVALID_ARGUMENTS` on offscreen / headless, which never compile at startup) restores the engine's
   choice, and the result's `startupCompile` reads `skipped` or `allowed`. **Behaviour change:** edit
   C++ then `editor_start` no longer builds it; run `editor_build` first.
+- Added: `self_intersection` check id on `geometry.audit_static_meshes` (opt-in, error): the third
+  gate term `selfIntersections === 0`, measured on a saved StaticMesh without spawning an actor,
+  with the same measurement as `geometry.check_health`'s `checkSelfIntersection`. Above the
+  200k-triangle budget the row is `unrunnable` (`MESH_AUDIT_SELF_INTERSECTION_UNRUNNABLE`). The
+  default check set is unchanged; `checks[]` in every response gains one row.
 - Fixed: a game-thread stall on a crashed GPU (`GIsGPUCrashed`, set on device removal/loss) is
   reported as terminal: `ping` adds `gpuCrashed: true` and `retryable: false`, the message names the
   GPU crash and says to restart instead of listing benign causes and advising a wait, and

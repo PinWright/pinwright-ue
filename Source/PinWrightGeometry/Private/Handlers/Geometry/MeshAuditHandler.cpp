@@ -53,7 +53,8 @@ REGISTER_RPC_HANDLER("geometry.audit_static_meshes", "geometry",
     "Sweep a folder (or a named set) of SAVED StaticMesh assets in ONE call and report the ones "
     "that are demonstrably wrong: inside out per edge-connected component (with each component's "
     "signed volume reported), wound inconsistently, open, degenerate, non-manifold, empty, "
-    "mirrored by a negative Build Scale, spatially isolated, or at geometric risk of z-fighting. "
+    "mirrored by a negative Build Scale, spatially isolated, at geometric risk of z-fighting, or "
+    "(opt-in) passing through itself. "
     "A whole-mesh signed-volume sum is retained as context "
     "only because separate shells can cancel. An open, degenerate or near-zero-volume component "
     "is UNKNOWN, never clean. Nothing is spawned - unlike geometry.create_from_static_mesh, which reaches a saved "
@@ -88,7 +89,9 @@ REGISTER_RPC_HANDLER("geometry.audit_static_meshes", "geometry",
             false, TEXT(""), TArray<FString>({TEXT("name_pattern")})},
         RPC_PARAM_OPT("checks", "array",
             "Check ids to run, e.g. [\"inverted\",\"inconsistent_winding\"]. Omit for the default "
-            "set (everything except thin_shell). An unknown id is an ERROR, not a skip: a typo "
+            "set (everything except thin_shell and self_intersection, which must be asked for: "
+            "self_intersection is the third term of the isClosed && signedVolume > 0 && "
+            "selfIntersections === 0 gate). An unknown id is an ERROR, not a skip: a typo "
             "that silently ran nothing looks exactly like a folder of clean meshes. The response "
             "echoes every check with whether it ran."),
         RPC_PARAM_OPT("excludeChecks", "array",
