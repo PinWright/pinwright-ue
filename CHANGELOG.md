@@ -57,6 +57,10 @@
   was ignored and the wait polled to `outcome:timeout`; it is now refused `CONDITION_INVALID`
   before polling, and the message names the key (and every `CONDITION_INVALID` parse refusal now
   says which rule failed).
+- Added: `drive.observe` takes `visible_only` (default false), which drops every `visible:false`
+  element (collapsed/hidden, or wholly clipped) before `max_elements` / `max_bytes`. Inactive
+  CommonUI screens kept in the widget tree no longer crowd the on-screen controls out of a
+  capped list. `interactables_only` is unchanged and still lists hidden controls.
 - Fixed: `widget.set_image_brush` accepts any brush resource Slate can draw — a `UMaterialInterface`
   or any `UTexture`, not only `UTexture2D` — through `resourcePath` (`texturePath` kept as an alias).
   An undrawable class is refused with `INVALID_ASSET_TYPE` (was `ASSET_NOT_FOUND`). A material has no

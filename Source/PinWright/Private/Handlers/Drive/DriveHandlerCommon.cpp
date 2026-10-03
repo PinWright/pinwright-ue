@@ -278,13 +278,19 @@ void FDriveHandlerCommon::FilterObservationElements(
     bool bInteractablesOnly,
     int32 MaxElements,
     int32 MaxBytes,
-    int32& OutOmittedCount)
+    int32& OutOmittedCount,
+    bool bVisibleOnly)
 {
     OutOmittedCount = 0;
 
     if (bInteractablesOnly)
     {
         Elements.RemoveAll([](const FDriveElement& Element) { return !Element.bInteractable; });
+    }
+
+    if (bVisibleOnly)
+    {
+        Elements.RemoveAll([](const FDriveElement& Element) { return !Element.bVisible; });
     }
 
     if (MaxElements > 0 && Elements.Num() > MaxElements)
@@ -333,7 +339,8 @@ bool FDriveHandlerCommon::BuildObservation(
     bool bInteractablesOnly,
     int32 MaxElements,
     bool bScreenshotToFile,
-    int32 MaxBytes)
+    int32 MaxBytes,
+    bool bVisibleOnly)
 {
     Out = FDriveObservation();
     Out.Surface = Surface;
@@ -363,7 +370,7 @@ bool FDriveHandlerCommon::BuildObservation(
 
     // Compact the list before anything reads it (so the screenshot marks the same set the
     // caller receives). A no-op unless the explicit observe asked for filtering.
-    FilterObservationElements(Out.Elements, bInteractablesOnly, MaxElements, MaxBytes, Out.OmittedCount);
+    FilterObservationElements(Out.Elements, bInteractablesOnly, MaxElements, MaxBytes, Out.OmittedCount, bVisibleOnly);
 
     // Screenshot is best-effort: a capture failure leaves the screenshot unset and
     // the observation still succeeds with its element list. The surface + window
