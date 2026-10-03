@@ -627,6 +627,13 @@ bool AgentMcpConfigurator::ServerEntryMatches(const FJsonObject& Existing, const
     {
         return false;
     }
+    // Slashes first: off Windows IsSamePath reads a single leading '\' as relative and prepends BaseDir.
+    auto IsSameSpelledPath = [](FString A, FString B)
+    {
+        FPaths::NormalizeFilename(A);
+        FPaths::NormalizeFilename(B);
+        return FPaths::IsSamePath(A, B);
+    };
     for (const auto& Field : Desired.Values)
     {
         const FString Key = EARGCompat::JsonKeyToString(Field.Key);
@@ -637,7 +644,7 @@ bool AgentMcpConfigurator::ServerEntryMatches(const FJsonObject& Existing, const
         }
         if (Key == TEXT("command"))
         {
-            if (!FPaths::IsSamePath(Have->AsString(), Field.Value->AsString()))
+            if (!IsSameSpelledPath(Have->AsString(), Field.Value->AsString()))
             {
                 return false;
             }
@@ -655,7 +662,7 @@ bool AgentMcpConfigurator::ServerEntryMatches(const FJsonObject& Existing, const
                 FString HaveArg;
                 // Flags compare as paths too; that is harmless since both sides resolve alike.
                 if (!HaveArgs[i].IsValid() || !HaveArgs[i]->TryGetString(HaveArg)
-                    || !FPaths::IsSamePath(HaveArg, WantArgs[i]->AsString()))
+                    || !IsSameSpelledPath(HaveArg, WantArgs[i]->AsString()))
                 {
                     return false;
                 }
