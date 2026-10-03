@@ -12,6 +12,7 @@
 #include "Utils/ScreenshotUtils.h"
 
 #include "Components/SkeletalMeshComponent.h"
+#include "Dom/JsonObject.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/SkeletalMesh.h"
 #include "Engine/StaticMesh.h"
@@ -85,6 +86,58 @@ namespace
         Out.bWarmupMeasured = false;
     }
 
+bool SettleFrame(TFunctionRef<bool(TArray<FColor>&)> Redraw, TArray<FColor>& InOutPixels,
+    int32 MaxRetries, int32& OutRetries, FFrameSettleReport& OutReport)
+{
+    OutRetries = 0;
+    OutReport = FFrameSettleReport();
+    for (;;)
+    {
+        TArray<FColor> Next;
+        if (!Redraw(Next))
+        {
+            return false;
+        }
+        const PinWrightFlatRegion::FFrameDifferenceStats Difference =
+            PinWrightFlatRegion::MeasureFrameDifference(InOutPixels, Next, SettleChannelThreshold);
+        InOutPixels = MoveTemp(Next);
+        OutReport.bMeasured = Difference.bMeasured;
+        OutReport.ChangedPixelFraction = Difference.ChangedPixelFraction;
+        OutReport.bSettled = Difference.bMeasured
+            && Difference.ChangedPixelFraction <= SettledChangedPixelFraction;
+        if (OutReport.bSettled || OutRetries >= MaxRetries)
+        {
+            return true;
+        }
+        ++OutRetries;
+    }
+}
+
+void AddMeshFrameEvidenceFields(const FMeshCaptureOutput& Capture,
+    const TSharedPtr<FJsonObject>& Result)
+{
+    Result->SetObjectField(TEXT("readiness"),
+        PinWrightThumbnail::MakeReadinessObject(Capture.Readiness));
+    if (!Capture.Settle.bMeasured)
+    {
+        return;
+    }
+    Result->SetBoolField(TEXT("frameSettled"), Capture.Settle.bSettled);
+    Result->SetNumberField(TEXT("settleChangedPixelFraction"),
+        Capture.Settle.ChangedPixelFraction);
+    if (!Capture.Settle.bSettled)
+    {
+        Result->SetStringField(TEXT("frameWarning"), FString::Printf(
+            TEXT("The first shot did not settle: after %d redraw retr%s with identical inputs, ")
+            TEXT("%.4f of the pixels still changed between the last two draws (tolerance %.4f). ")
+            TEXT("The returned frame is the newest draw, but something in the scene was still ")
+            TEXT("loading (shader maps, texture mips, Nanite pages or the sky capture), so do not ")
+            TEXT("compare it against another capture; call again."),
+            Capture.Capture.RedrawRetries, Capture.Capture.RedrawRetries == 1 ? TEXT("y") : TEXT("ies"),
+            Capture.Settle.ChangedPixelFraction, SettledChangedPixelFraction));
+    }
+}
+
 struct FMeshCaptureSession::FImpl
 {
     FImpl()
@@ -100,6 +153,8 @@ struct FMeshCaptureSession::FImpl
     FBoxSphereBounds Bounds;
     FString AssetPath;
     FString AssetClass;
+    PinWrightThumbnail::FThumbnailReadinessReport Readiness;
+    bool bFirstFrameSettled = false;
 };
 
 FMeshCaptureSession::FMeshCaptureSession(TUniquePtr<FImpl>&& InImpl)
@@ -253,6 +308,9 @@ TUniquePtr<FMeshCaptureSession> FMeshCaptureSession::Create(const FString& Asset
         return nullptr;
     }
 
+    // The mesh build alone is not drawable: its slot materials' shader maps and the mips of the
+    // textures they sample are waited on too (B-capture-mesh-cold-first-frame-no-readiness-wait).
+    PinWrightThumbnail::WaitForThumbnailSubjectReadiness(Resolved.Object, NewImpl.Readiness);
     NewImpl.AssetPath = Resolved.Object->GetPathName();
     NewImpl.AssetClass = MoveTemp(AssetClass);
     NewImpl.MeshComponent = MeshComponent;
@@ -285,6 +343,7 @@ bool FMeshCaptureSession::Capture(const FMeshCaptureRequest& Request,
     }
     OutCapture.AssetPath = Impl->AssetPath;
     OutCapture.AssetClass = Impl->AssetClass;
+    OutCapture.Readiness = Impl->Readiness;
 
     const float BoundsRadius = FMath::Max(static_cast<float>(Impl->Bounds.SphereRadius), 1.0f);
     PinWrightSceneCaptureProbe::FColorCaptureRequest ColorRequest;
@@ -327,6 +386,23 @@ bool FMeshCaptureSession::Capture(const FMeshCaptureRequest& Request,
         OutErrCode, OutErrMsg))
     {
         return false;
+    }
+    if (!Impl->bFirstFrameSettled)
+    {
+        // The readiness wait cannot see everything a first draw depends on (Nanite page
+        // streaming, the preview sky capture), so the session's first shot is drawn again until
+        // two consecutive frames agree, and `redrawRetries` reports how many extra draws that
+        // took instead of a constant 0.
+        if (!SettleFrame([&](TArray<FColor>& OutPixels)
+            {
+                return Impl->Probe.CaptureColor(ColorRequest, OutPixels, Metadata,
+                    OutErrCode, OutErrMsg);
+            }, OutCapture.Capture.Pixels, MaxSettleRedrawRetries,
+            OutCapture.Capture.RedrawRetries, OutCapture.Settle))
+        {
+            return false;
+        }
+        Impl->bFirstFrameSettled = true;
     }
     if (Request.bMeasureCoverage)
     {

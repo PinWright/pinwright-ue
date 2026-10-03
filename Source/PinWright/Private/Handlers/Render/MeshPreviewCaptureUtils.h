@@ -3,8 +3,10 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Handlers/Asset/ThumbnailFrameEvidence.h"
 #include "Handlers/Render/FlatRegionStats.h"
 #include "Handlers/Render/PreviewViewportCaptureUtils.h"
+#include "Templates/Function.h"
 
 namespace PinWrightSceneCaptureProbe
 {
@@ -31,6 +33,30 @@ namespace PinWrightMeshPreviewCapture
         bool bWriteFile = true;
     };
 
+    // Whether the first shot of a session was drawn again with identical inputs until two
+    // consecutive frames agreed (B-capture-mesh-cold-first-frame-no-readiness-wait). Only the
+    // session's first shot measures it; later shots reuse the warmed scene.
+    struct FFrameSettleReport
+    {
+        bool bMeasured = false;
+        bool bSettled = false;
+        // Pixels changed (any channel over SettleChannelThreshold) between the last two draws.
+        double ChangedPixelFraction = 0.0;
+    };
+
+    constexpr int32 SettleChannelThreshold = 8;
+    // ponytail: fixed tolerance for GPU noise between two warm draws; make it a param if a
+    // legitimately noisy subject keeps reporting settled:false.
+    constexpr double SettledChangedPixelFraction = 0.001;
+    constexpr int32 MaxSettleRedrawRetries = 1;
+
+    // InOutPixels holds the first draw. Redraw draws the same request again; the newest frame
+    // always replaces InOutPixels. Stops when two consecutive frames agree within the tolerance
+    // above, or after MaxRetries redraws past the first comparison draw. OutRetries counts those
+    // redraws (published as `redrawRetries`). False only when Redraw fails.
+    bool SettleFrame(TFunctionRef<bool(TArray<FColor>&)> Redraw, TArray<FColor>& InOutPixels,
+        int32 MaxRetries, int32& OutRetries, FFrameSettleReport& OutReport);
+
     struct FMeshCaptureOutput
     {
         FString AssetPath;
@@ -40,6 +66,8 @@ namespace PinWrightMeshPreviewCapture
         PinWrightFlatRegion::FFlatRegionStats FlatRegion;
         TOptional<double> SubjectCoverage;
         TArray<uint8> PngData;
+        PinWrightThumbnail::FThumbnailReadinessReport Readiness;
+        FFrameSettleReport Settle;
     };
 
     // One RPC-scoped scene. Multi-shot callers reuse the loaded asset, mesh component, rig,
@@ -60,6 +88,12 @@ namespace PinWrightMeshPreviewCapture
         explicit FMeshCaptureSession(TUniquePtr<FImpl>&& InImpl);
         TUniquePtr<FImpl> Impl;
     };
+
+    // `readiness` (what the session waited for before its first draw) and, on a shot that measured
+    // it, `frameSettled` / `settleChangedPixelFraction` plus a `frameWarning` when the frame never
+    // settled. `redrawRetries` itself is published by the shared capture fields.
+    void AddMeshFrameEvidenceFields(const FMeshCaptureOutput& Capture,
+        const TSharedPtr<FJsonObject>& Result);
 
     bool CaptureMeshToPng(const FMeshCaptureRequest& Request, FMeshCaptureOutput& OutCapture,
         FString& OutErrCode, FString& OutErrMsg);

@@ -55,13 +55,14 @@ namespace PinWrightThumbnail
         // FAssetCompilingManager::FinishCompilationForObjects was called on the subject. Always
         // true for a non-null asset; published so an absent block cannot be read as "waited".
         bool bWaitedForAssetCompilation = false;
-        // At least one UTexture was blocked on and streamed: the subject itself when it is a
-        // texture, or every texture the subject material samples.
+        // At least one UTexture was forced resident and streamed: the subject itself when it is a
+        // texture, or every texture the subject's materials sample.
         bool bWaitedForTextureStreaming = false;
         int32 TexturesWaitedFor = 0;
-        // The subject is a UMaterialInterface with a resolvable FMaterialResource, so the
-        // game-thread shader-map completeness question was asked. False leaves both bools below
-        // meaningless and unpublished.
+        // The subject is a UMaterialInterface, or a static/skeletal mesh with slot materials, with
+        // at least one resolvable FMaterialResource, so the game-thread shader-map completeness
+        // question was asked. False leaves both bools below meaningless and unpublished. For a
+        // mesh both bools are the AND over its slot materials.
         bool bShaderMapChecked = false;
         bool bShaderMapCompleteBefore = false;
         bool bShaderMapCompleteAfter = false;
@@ -79,10 +80,11 @@ namespace PinWrightThumbnail
         int64 ComparedPixels = 0;
     };
 
-    // Wait until the subject can actually be drawn: its async build, its shader map, and the
-    // mips of the textures it samples. Scoped to this asset (and, for a material, to the textures
-    // it uses) rather than to the whole editor, so it does not re-create the multi-minute global
-    // stall B-compile-material-blocks-and-mislabels complains about.
+    // Wait until the subject can actually be drawn: its async build, its shader map(s), and the
+    // mips of the textures it samples. Scoped to this asset (and, for a material or a static /
+    // skeletal mesh, to the materials and textures it draws with) rather than to the whole editor,
+    // so it does not re-create the multi-minute global stall B-compile-material-blocks-and-
+    // mislabels complains about.
     //
     // Call this BEFORE constructing FScopedPreviewOverride. FinishCompilationForObjects can fall
     // back to FinishAllCompilation and pump, and the override guard's safety argument
@@ -114,6 +116,10 @@ namespace PinWrightThumbnail
     // parameter. The verdict is the same quantity; only the remedy differs.
     FString MakeThumbnailFrameWarning(const PinWrightRenderCapture::FCaptureImageStats& Stats,
         int32 RenderPasses);
+
+    // The `readiness` object alone, for verbs that publish their own frame evidence
+    // (render.capture_mesh).
+    TSharedPtr<FJsonObject> MakeReadinessObject(const FThumbnailReadinessReport& Readiness);
 
     // Writes the whole evidence block into a generate_thumbnail response: `imageStats`, the
     // `blank` / `crushed` / `blownOut` verdicts, `frameWarning`, `renderPasses`, `coldFrameRetry`

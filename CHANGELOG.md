@@ -14,6 +14,15 @@
   the same output name, including a defaulted name such as `Combined` or `<source>_Inverted`, is now
   refused instead of overwriting. A refused output path on these verbs now quotes the engine's
   reason on the wire (`TEXTURE_ERROR`) instead of a bare `Failed to create texture`.
+- Fixed: before the first draw, `render.capture_mesh` now waits for the mesh's slot materials'
+  shader maps and the mips of the textures they sample (forced resident), not only the mesh build,
+  and publishes that as `readiness`. It flags a first frame that changes on an identical redraw
+  (`frameSettled:false` + `frameWarning`): the first shot is drawn again until two consecutive
+  frames agree, with at most one redraw past the comparison draw. The redraw catches only state the
+  renderer advances itself (such as Nanite pages); shader maps and mips are covered by the wait. `redrawRetries` now counts those redraws instead of being a constant 0, and
+  `frameSettled`, `settleChangedPixelFraction` and, when the frame never settled, `frameWarning`
+  report the measurement. `asset.generate_thumbnail` on a mesh now waits on the same slot
+  materials, and every thumbnail forces its textures' mips resident before waiting on them.
 - Changed: `asset.dump_folder` no longer re-freezes the editor on an asset whose dump never
   returned. The sweep journals the asset it enters in `<dump root>/.dump-inflight.tmp`; a marker
   left behind because the editor stopped inside that dump (froze, crashed or was killed, including

@@ -571,6 +571,7 @@ REGISTER_RPC_HANDLER("render.capture_mesh", "render", "Capture a Static Mesh or 
     Result->SetStringField(TEXT("assetClass"), Captures[0].AssetClass);
     Result->SetBoolField(TEXT("assetEditorOpened"), false);
     Result->SetBoolField(TEXT("activeWorldUsed"), false);
+    PinWrightMeshPreviewCapture::AddMeshFrameEvidenceFields(Captures[0], Result);
     if (Captures[0].SubjectCoverage.IsSet())
     {
         Result->SetNumberField(TEXT("subjectCoverage"),

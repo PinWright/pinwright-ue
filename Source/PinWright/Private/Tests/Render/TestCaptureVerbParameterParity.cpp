@@ -610,7 +610,7 @@ namespace CaptureVerbParameterParityTest
         // The level viewport has no preview scene, so the shared parser's pin is deliberately
         // cleared and remains absent from this verb's public declaration.
         { TEXT("render.capture_open_level"), TEXT("previewScene"), GapKind::Declaration,
-          GRenderHandler, 1999,
+          GRenderHandler, 2000,
           TEXT("`render.capture_open_level` parses then clears `previewScene`"),
           TEXT("The registration delegates through PinWrightOpenLevelCapture::Handle, which parses the shared pin but clears it because a live level viewport has no FPreviewScene rig to apply.") },
         // Declared so the shared parser's read is declared, but always refused: the shared prose

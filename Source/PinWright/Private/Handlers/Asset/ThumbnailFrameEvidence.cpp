@@ -6,6 +6,8 @@
 
 #include "AssetCompilingManager.h"
 #include "Dom/JsonObject.h"
+#include "Engine/SkeletalMesh.h"
+#include "Engine/StaticMesh.h"
 #include "Engine/Texture.h"
 #include "MaterialShared.h"
 #include "Materials/MaterialInterface.h"
@@ -22,33 +24,68 @@ namespace PinWrightThumbnail
             return;
         }
 
-        // The wait set: the subject, plus -- when the subject is a material -- every texture it
-        // samples. A material's own async work being finished says nothing about the mips of the
-        // textures its shader reads, and unstreamed mips are what the washed-out, semi-transparent
-        // grey first frame in B-thumbnail-cold-first-frame-no-stats looks like.
+        // The wait set: the subject, the materials it draws with -- itself when it is a material,
+        // its slot materials when it is a mesh -- and every texture those materials sample. A
+        // material's own async work being finished says nothing about the mips of the textures its
+        // shader reads, and unstreamed mips are what the washed-out, semi-transparent grey first
+        // frame in B-thumbnail-cold-first-frame-no-stats looks like. Mesh subjects joined for
+        // render.capture_mesh (B-capture-mesh-cold-first-frame-no-readiness-wait): before that
+        // the mesh's own build was the only thing waited on, and its materials drew cold.
         TArray<UObject*> WaitSet;
         WaitSet.Add(Asset);
+
+        TArray<UMaterialInterface*> SubjectMaterials;
+        if (UMaterialInterface* AsMaterial = Cast<UMaterialInterface>(Asset))
+        {
+            SubjectMaterials.Add(AsMaterial);
+        }
+        else if (UStaticMesh* AsStaticMesh = Cast<UStaticMesh>(Asset))
+        {
+            for (const FStaticMaterial& Slot : AsStaticMesh->GetStaticMaterials())
+            {
+                if (Slot.MaterialInterface)
+                {
+                    SubjectMaterials.AddUnique(Slot.MaterialInterface);
+                }
+            }
+        }
+        else if (USkeletalMesh* AsSkeletalMesh = Cast<USkeletalMesh>(Asset))
+        {
+            for (const FSkeletalMaterial& Slot : AsSkeletalMesh->GetMaterials())
+            {
+                if (Slot.MaterialInterface)
+                {
+                    SubjectMaterials.AddUnique(Slot.MaterialInterface);
+                }
+            }
+        }
 
         TArray<UTexture*> SubjectTextures;
         if (UTexture* AsTexture = Cast<UTexture>(Asset))
         {
             SubjectTextures.Add(AsTexture);
         }
-        else if (UMaterialInterface* AsMaterial = Cast<UMaterialInterface>(Asset))
+        for (UMaterialInterface* Material : SubjectMaterials)
         {
+            if (Material != Asset)
+            {
+                WaitSet.Add(Material);
+            }
+            TArray<UTexture*> MaterialTextures;
 #if UE_VERSION_NEWER_THAN_OR_EQUAL(5, 7, 0)
             // The ERHIFeatureLevel overloads were made `final { return NULL; }` and deprecated in
             // 5.7 in favour of the EShaderPlatform ones; calling them here would silently collect
             // nothing.
-            AsMaterial->GetUsedTextures(SubjectTextures);
+            Material->GetUsedTextures(MaterialTextures);
 #else
-            AsMaterial->GetUsedTextures(SubjectTextures, EMaterialQualityLevel::Num,
+            Material->GetUsedTextures(MaterialTextures, EMaterialQualityLevel::Num,
                 /*bAllQualityLevels*/ true, GMaxRHIFeatureLevel, /*bAllFeatureLevels*/ true);
 #endif
-            for (UTexture* Texture : SubjectTextures)
+            for (UTexture* Texture : MaterialTextures)
             {
-                if (Texture)
+                if (Texture && !SubjectTextures.Contains(Texture))
                 {
+                    SubjectTextures.Add(Texture);
                     WaitSet.Add(Texture);
                 }
             }
@@ -62,53 +99,72 @@ namespace PinWrightThumbnail
         OutReport.bWaitedForAssetCompilation = true;
 
         // Compilation finishing is not the same question as mips being resident, and only the
-        // second one decides whether the thumbnail shows the texture or a blurry stand-in. This is
+        // second one decides whether the frame shows the texture or a blurry stand-in. This is
         // the pre-wait ObjectTools::GenerateThumbnailForObjectToSaveToDisk does for a UTexture
-        // subject, applied to every texture the frame will actually sample.
+        // subject, applied to every texture the frame will actually sample. The residency force
+        // comes first because WaitForStreaming only waits for the mips the streamer WANTS, and a
+        // subject in a fresh preview world has no streaming history to want them from; forced,
+        // UpdateIndividualRenderAsset asks for every mip (StreamableRenderAsset.h,
+        // ShouldMipLevelsBeForcedResident).
+        //
+        // Side effects, accepted: the force lapses on its own (a timestamp, now + Seconds), but
+        // the call OVERWRITES any existing force window, so it can shorten a longer one another
+        // caller set, and it resets the texture's cinematic-mip flag to false.
+        constexpr float ForceResidentSeconds = 15.0f;
         for (UTexture* Texture : SubjectTextures)
         {
             if (!Texture)
             {
                 continue;
             }
+            Texture->SetForceMipLevelsToBeResident(ForceResidentSeconds);
             Texture->WaitForStreaming();
             ++OutReport.TexturesWaitedFor;
         }
         OutReport.bWaitedForTextureStreaming = OutReport.TexturesWaitedFor > 0;
 
-        if (UMaterialInterface* AsMaterial = Cast<UMaterialInterface>(Asset))
+        // The engine's own thumbnail path calls this out as required specifically for thumbnails,
+        // and it is a DIFFERENT question from the one material.authoring.compile_material answers:
+        // that verb blocks on GShaderCompilingManager->FinishAllCompilation(), which is about the
+        // compile queue draining, while this asks whether THIS resource's game-thread shader map
+        // is complete. A material can pass the first and fail the second, which is why a fixer
+        // aiming at compilation state finds nothing to fix here.
+        //
+        // Widened from the engine's UMaterial-only branch to UMaterialInterface: a material
+        // instance has its own FMaterialResource and its own shader map, and it is exactly as able
+        // to be drawn before that map is complete. For a mesh the pair is the AND over its slot
+        // materials: `before:false` means at least one of them would have drawn cold.
+        bool bAllCompleteBefore = true;
+        bool bAllCompleteAfter = true;
+        for (UMaterialInterface* Material : SubjectMaterials)
         {
-            // The engine's own thumbnail path calls this out as required specifically for
-            // thumbnails, and it is a DIFFERENT question from the one material.authoring.
-            // compile_material answers: that verb blocks on GShaderCompilingManager->
-            // FinishAllCompilation(), which is about the compile queue draining, while this asks
-            // whether THIS resource's game-thread shader map is complete. A material can pass the
-            // first and fail the second, which is why a fixer aiming at compilation state finds
-            // nothing to fix here.
-            //
-            // Widened from the engine's UMaterial-only branch to UMaterialInterface: a material
-            // instance has its own FMaterialResource and its own shader map, and it is exactly as
-            // able to be drawn before that map is complete.
 #if UE_VERSION_NEWER_THAN_OR_EQUAL(5, 7, 0)
-            FMaterialResource* Resource = AsMaterial->GetMaterialResource(GMaxRHIShaderPlatform);
+            FMaterialResource* Resource = Material->GetMaterialResource(GMaxRHIShaderPlatform);
 #else
-            FMaterialResource* Resource = AsMaterial->GetMaterialResource(GMaxRHIFeatureLevel);
+            FMaterialResource* Resource = Material->GetMaterialResource(GMaxRHIFeatureLevel);
 #endif
-            if (Resource)
+            if (!Resource)
             {
-                OutReport.bShaderMapChecked = true;
-                OutReport.bShaderMapCompleteBefore = Resource->IsGameThreadShaderMapComplete();
-                if (!OutReport.bShaderMapCompleteBefore)
-                {
-                    Resource->SubmitCompileJobs_GameThread(EShaderCompileJobPriority::High);
-                }
-                Resource->FinishCompilation();
-                // Read back AFTER the wait rather than assuming it worked. A `false` -> `true`
-                // pair in the response is the direct evidence that this call would have rendered
-                // a cold frame without the wait; a `false` -> `false` pair says the wait did not
-                // achieve completeness and the frame below should be read with that in mind.
-                OutReport.bShaderMapCompleteAfter = Resource->IsGameThreadShaderMapComplete();
+                continue;
             }
+            OutReport.bShaderMapChecked = true;
+            const bool bCompleteBefore = Resource->IsGameThreadShaderMapComplete();
+            if (!bCompleteBefore)
+            {
+                Resource->SubmitCompileJobs_GameThread(EShaderCompileJobPriority::High);
+            }
+            Resource->FinishCompilation();
+            // Read back AFTER the wait rather than assuming it worked. A `false` -> `true` pair in
+            // the response is the direct evidence that this call would have rendered a cold frame
+            // without the wait; a `false` -> `false` pair says the wait did not achieve
+            // completeness and the frame should be read with that in mind.
+            bAllCompleteBefore &= bCompleteBefore;
+            bAllCompleteAfter &= Resource->IsGameThreadShaderMapComplete();
+        }
+        if (OutReport.bShaderMapChecked)
+        {
+            OutReport.bShaderMapCompleteBefore = bAllCompleteBefore;
+            OutReport.bShaderMapCompleteAfter = bAllCompleteAfter;
         }
     }
 
@@ -189,6 +245,28 @@ namespace PinWrightThumbnail
             static_cast<long long>(Stats.ToneLevelMinPixelsUsed));
     }
 
+    TSharedPtr<FJsonObject> MakeReadinessObject(const FThumbnailReadinessReport& Readiness)
+    {
+        TSharedPtr<FJsonObject> ReadinessObject = MakeShared<FJsonObject>();
+        ReadinessObject->SetBoolField(TEXT("assetCompilationWaited"),
+            Readiness.bWaitedForAssetCompilation);
+        ReadinessObject->SetBoolField(TEXT("textureStreamingWaited"),
+            Readiness.bWaitedForTextureStreaming);
+        ReadinessObject->SetNumberField(TEXT("texturesWaitedFor"), Readiness.TexturesWaitedFor);
+        ReadinessObject->SetBoolField(TEXT("shaderMapChecked"), Readiness.bShaderMapChecked);
+        if (Readiness.bShaderMapChecked)
+        {
+            // Omitted rather than defaulted when no material resource was resolved: a
+            // `shaderMapCompleteBefore: false` on a texture subject would read as a measurement
+            // of a question nobody asked.
+            ReadinessObject->SetBoolField(TEXT("shaderMapCompleteBefore"),
+                Readiness.bShaderMapCompleteBefore);
+            ReadinessObject->SetBoolField(TEXT("shaderMapCompleteAfter"),
+                Readiness.bShaderMapCompleteAfter);
+        }
+        return ReadinessObject;
+    }
+
     void AddFrameEvidenceFields(
         const PinWrightRenderCapture::FCaptureImageStats& Stats,
         const FColdFrameRetryReport& ColdRetry,
@@ -202,25 +280,7 @@ namespace PinWrightThumbnail
         }
 
         Result->SetNumberField(TEXT("renderPasses"), RenderPasses);
-
-        TSharedPtr<FJsonObject> ReadinessObject = MakeShared<FJsonObject>();
-        ReadinessObject->SetBoolField(TEXT("assetCompilationWaited"),
-            Readiness.bWaitedForAssetCompilation);
-        ReadinessObject->SetBoolField(TEXT("textureStreamingWaited"),
-            Readiness.bWaitedForTextureStreaming);
-        ReadinessObject->SetNumberField(TEXT("texturesWaitedFor"), Readiness.TexturesWaitedFor);
-        ReadinessObject->SetBoolField(TEXT("shaderMapChecked"), Readiness.bShaderMapChecked);
-        if (Readiness.bShaderMapChecked)
-        {
-            // Omitted rather than defaulted when the subject has no material resource: a
-            // `shaderMapCompleteBefore: false` on a static mesh would read as a measurement of a
-            // question nobody asked.
-            ReadinessObject->SetBoolField(TEXT("shaderMapCompleteBefore"),
-                Readiness.bShaderMapCompleteBefore);
-            ReadinessObject->SetBoolField(TEXT("shaderMapCompleteAfter"),
-                Readiness.bShaderMapCompleteAfter);
-        }
-        Result->SetObjectField(TEXT("readiness"), ReadinessObject);
+        Result->SetObjectField(TEXT("readiness"), MakeReadinessObject(Readiness));
 
         if (!Stats.bStatsMeasured)
         {
