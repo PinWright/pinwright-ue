@@ -797,6 +797,7 @@ Not listed: internal plumbing namespaces, not intended for direct use - `pipelin
 | `audio.authoring.set_metasound_default` | Set the default value of a MetaSound graph input. |
 | `audio.authoring.set_metasound_node_input_default` | Set the literal on a node's input pin inside a MetaSound graph (not a graph input). |
 | `audio.authoring.set_metasound_variable_default` | Set the default value of a MetaSound graph variable. |
+| `audio.authoring.set_sound_wave_gain` | Rescale an existing USoundWave's PCM in place to a peak (dBFS) or loudness (LUFS) target, keeping its channel count, stereo image, markers and routing. |
 | `audio.authoring.set_sound_wave_properties` | Set per-wave properties on a USoundWave (bLooping, volume, pitch, soundGroup, compressionQuality, bMature, bSingleLine). |
 | `audio.authoring.set_submix_parent` | Set the parent SoundSubmix for a USoundSubmix asset (mirrors set_class_parent) |
 | `audio.authoring.validate_metasound` | Run builder-level validation on a MetaSound and return diagnostics |

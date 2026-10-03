@@ -58,6 +58,7 @@
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
+#include "Sound/SoundClass.h"
 #include "Sound/SoundWave.h"
 #include "UObject/GarbageCollection.h"
 #include "UObject/Package.h"
@@ -931,11 +932,26 @@ bool FAudioMusicExportStemsVerifiesAndConvergesTest::RunTest(const FString& Para
     TestEqual(TEXT("an unsaved export wrote nothing to disk"),
         static_cast<int32>(NumberField(Save, TEXT("saved"))), 0);
 
+    // A newly created stem has no routing, and the counts say so.
+    const TSharedPtr<FJsonObject> FirstRouting = ObjectField(First, TEXT("routing"));
+    TestEqual(TEXT("routing.withoutSoundClass counts the new stem"),
+        static_cast<int32>(NumberField(FirstRouting, TEXT("withoutSoundClass"))), 1);
+    TestEqual(TEXT("routing.withoutAttenuation counts the new stem"),
+        static_cast<int32>(NumberField(FirstRouting, TEXT("withoutAttenuation"))), 1);
+
     const int32 Chars = MeasureResponseChars(First);
     AddInfo(FString::Printf(TEXT("export_stems x1: %d chars (ceiling %d)"),
         Chars, WrappedResponseCeiling));
     TestTrue(FString::Printf(TEXT("the export result (%d chars) fits the wrapped ceiling (%d)"),
         Chars, WrappedResponseCeiling), Chars <= WrappedResponseCeiling);
+
+    // Routed before the retry: the rewrite keeps the class, so it drops out of the count while the
+    // still-missing attenuation stays in it.
+    USoundClass* StemClass = NewObject<USoundClass>(GetTransientPackage());
+    if (USoundWave* Routed = Cast<USoundWave>(StaticFindObject(UObject::StaticClass(), nullptr, *ObjectPath)))
+    {
+        Routed->SoundClassObject = StemClass;
+    }
 
     // §8: a retry converges on the same asset rather than making a second one. The measurement a
     // flag cannot fake is updatedInPlace, which comes from AssetCreatePolicy finding the occupant.
@@ -951,6 +967,11 @@ bool FAudioMusicExportStemsVerifiesAndConvergesTest::RunTest(const FString& Para
         TestFalse(TEXT("no _1 sibling was created"),
             AssetExistsInMemory(FString::Printf(TEXT("%s/%s_1.%s_1"),
                 TestAssetFolder, *TrackName, *TrackName)));
+        const TSharedPtr<FJsonObject> SecondRouting = ObjectField(Second, TEXT("routing"));
+        TestEqual(TEXT("a stem whose SoundClass survived the rewrite is not counted"),
+            static_cast<int32>(NumberField(SecondRouting, TEXT("withoutSoundClass"))), 0);
+        TestEqual(TEXT("the stem still lacking attenuation is counted"),
+            static_cast<int32>(NumberField(SecondRouting, TEXT("withoutAttenuation"))), 1);
     }
     else
     {

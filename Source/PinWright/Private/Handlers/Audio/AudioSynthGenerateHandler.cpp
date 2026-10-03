@@ -1983,7 +1983,13 @@ REGISTER_RPC_HANDLER("audio.synth.export", "audio.synth",
             "reports saved:false / pendingFlush:true.", "true"),
         RPC_PARAM_DEF("overwrite", "boolean",
             "Delete and recreate an existing SoundWave instead of rewriting it in place. Rejected "
-            "with ASSET_IN_USE when other packages reference it.", "false")
+            "with ASSET_IN_USE when other packages reference it.", "false"),
+        RPC_PARAM_DEF("channels", "integer",
+            "Channel count of the written wave: 2 (stereo bus as rendered) or 1 (mono, the mean "
+            "of the two sides - exact when every layer sits at pan 0, a real downmix otherwise; "
+            "downmix.sourceChannelsIdentical says which). Use 1 for a wave a mono MetaSound or a "
+            "spatialized one-shot consumes: a stereo wave there costs twice the memory and decode "
+            "for a channel that is discarded.", "2")
     ))
 {
     using namespace PwSynthGenerateInternal;
@@ -2053,6 +2059,33 @@ REGISTER_RPC_HANDLER("audio.synth.export", "audio.synth",
 
     const bool bSave = Ctx.GetBool(TEXT("save"), true);
     const bool bOverwrite = Ctx.GetBool(TEXT("overwrite"), false);
+    const int32 Channels = Ctx.GetInt(TEXT("channels"), PwExportChannels);
+    if (Channels != 1 && Channels != PwExportChannels)
+    {
+        Ctx.SendError(ErrorCodes::ERR_INVALID_ARGUMENT,
+            FString::Printf(TEXT("channels=%d; pass 1 (mono) or 2 (stereo)."), Channels));
+        return true;
+    }
+
+    // What the payload should decode back to, per side. Stereo: the candidate as it stands. Mono:
+    // the mean of the two sides, which the decoder duplicates into both - so a mono export is
+    // verified against the downmix it wrote, not against a stereo image it deliberately dropped.
+    TArray<float> MonoMix;
+    bool bSidesIdentical = true;
+    double MaxSideDifference = 0.0;
+    if (Channels == 1)
+    {
+        MonoMix.SetNumUninitialized(Source.NumFrames());
+        for (int32 Frame = 0; Frame < Source.NumFrames(); ++Frame)
+        {
+            MonoMix[Frame] = 0.5f * (Source.Left[Frame] + Source.Right[Frame]);
+            MaxSideDifference = FMath::Max(MaxSideDifference,
+                FMath::Abs(static_cast<double>(Source.Left[Frame] - Source.Right[Frame])));
+        }
+        bSidesIdentical = MaxSideDifference == 0.0;
+    }
+    const TArray<float>& ExpectedLeft = (Channels == 1) ? MonoMix : Source.Left;
+    const TArray<float>& ExpectedRight = (Channels == 1) ? MonoMix : Source.Right;
 
     // Mandatory before any create path: IAssetTools/CreatePackage on an occupied path can reach
     // a modal overwrite prompt that wedges the game thread for every client. bRequireExactClass
@@ -2068,7 +2101,7 @@ REGISTER_RPC_HANDLER("audio.synth.export", "audio.synth",
     FString ExportError;
     FPwSoundWaveWriteReport WriteReport;
     USoundWave* Wave = PwCreateSoundWaveAsset(
-        Source, ValidatedFolder, Name, bSave, WriteReport, ExportError);
+        Source, ValidatedFolder, Name, bSave, WriteReport, ExportError, Channels);
     if (!Wave)
     {
         Ctx.SendError(ErrorCodes::ERR_CREATION_FAILED, ExportError);
@@ -2116,7 +2149,7 @@ REGISTER_RPC_HANDLER("audio.synth.export", "audio.synth",
     const bool bFramesMatch = Decoded.NumFrames() == Source.NumFrames();
     const bool bRateMatch = Decoded.SampleRate == Source.SampleRate;
     const bool bChannelsMatch = bReadPayloadHeader &&
-        static_cast<int32>(PayloadChannels) == PwExportChannels;
+        static_cast<int32>(PayloadChannels) == Channels;
 
     TSharedPtr<FJsonObject> Verification = MakeShared<FJsonObject>();
     Verification->SetBoolField(TEXT("measured"), true);
@@ -2125,6 +2158,7 @@ REGISTER_RPC_HANDLER("audio.synth.export", "audio.synth",
              "which parses the RIFF payload independently of the FSoundWavePCMWriter path that "
              "wrote it"));
     Verification->SetNumberField(TEXT("toleranceAbs"), ExportToleranceAbs);
+    Verification->SetNumberField(TEXT("expectedChannels"), Channels);
     Verification->SetBoolField(TEXT("framesMatch"), bFramesMatch);
     Verification->SetNumberField(TEXT("sourceFrames"), Source.NumFrames());
     Verification->SetNumberField(TEXT("decodedFrames"), Decoded.NumFrames());
@@ -2134,9 +2168,9 @@ REGISTER_RPC_HANDLER("audio.synth.export", "audio.synth",
     Verification->SetBoolField(TEXT("payloadHeaderRead"), bReadPayloadHeader);
 
     const bool bLeftMatch = AddChannelComparison(Verification, TEXT("left"),
-        MeasureChannel(Source.Left), MeasureChannel(Decoded.Left));
+        MeasureChannel(ExpectedLeft), MeasureChannel(Decoded.Left));
     const bool bRightMatch = AddChannelComparison(Verification, TEXT("right"),
-        MeasureChannel(Source.Right), MeasureChannel(Decoded.Right));
+        MeasureChannel(ExpectedRight), MeasureChannel(Decoded.Right));
 
     // An in-place rewrite that moved a property the payload does not own fails the verb. The
     // asset's audio can be perfect and the asset still be broken: a wave that lost its
@@ -2159,6 +2193,16 @@ REGISTER_RPC_HANDLER("audio.synth.export", "audio.synth",
     Result->SetNumberField(TEXT("sampleRate"), Decoded.SampleRate);
     Result->SetNumberField(TEXT("channels"), bReadPayloadHeader ? PayloadChannels : 0);
     SetRounded(Result, TEXT("durationSeconds"), Decoded.DurationSeconds(), 4);
+    if (Channels == 1)
+    {
+        // Measured on the candidate, so "mono" is never ambiguous between "the candidate was
+        // already dual-mono and nothing was lost" and "a stereo image was folded down".
+        TSharedPtr<FJsonObject> Downmix = MakeShared<FJsonObject>();
+        Downmix->SetStringField(TEXT("method"), TEXT("mean of left and right"));
+        Downmix->SetBoolField(TEXT("sourceChannelsIdentical"), bSidesIdentical);
+        SetRounded(Downmix, TEXT("maxChannelDifference"), MaxSideDifference, 6);
+        Result->SetObjectField(TEXT("downmix"), Downmix);
+    }
     Result->SetObjectField(TEXT("verification"), Verification);
     // "routing" on the result, "propertiesPreserved" on the verification. Emitted on both the
     // create and the rewrite: an empty soundClass on a create is not a loss, but it is the same
@@ -2202,7 +2246,7 @@ REGISTER_RPC_HANDLER("audio.synth.export", "audio.synth",
                                  "exists; its contents are not what was requested.%s"),
                 *AssetPath, *CandidateId, Source.NumFrames(), Decoded.NumFrames(),
                 Source.SampleRate, Decoded.SampleRate,
-                PwExportChannels, bReadPayloadHeader ? static_cast<int32>(PayloadChannels) : 0,
+                Channels, bReadPayloadHeader ? static_cast<int32>(PayloadChannels) : 0,
                 *PropertyClause),
             Result);
         return true;

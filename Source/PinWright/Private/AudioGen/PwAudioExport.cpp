@@ -24,7 +24,9 @@
 // anonymous namespaces merged into one TU collide by name. See CLAUDE.md > Building.
 namespace PwAudioExportInternal
 {
-    // Deinterleaved stereo float -> interleaved float, clamped to [-1, 1].
+    // Deinterleaved stereo float -> interleaved float of NumChannels (1 or 2), clamped to
+    // [-1, 1]. One channel is the mean of the two sides, which is exact - not a downmix - for
+    // the dual-mono buffer every mono source becomes (0.5f * (a + a) == a in IEEE float).
     //
     // The clamp belongs HERE and not to the conversion that follows it: the
     // TSampleBuffer<int16> = TSampleBuffer<float> assignment runs
@@ -37,21 +39,31 @@ namespace PwAudioExportInternal
     //
     // Returns false for an empty or inconsistent buffer; Out is emptied first so a
     // rejected buffer cannot leave a partially-filled array behind.
-    bool BuildInterleavedClamped(const FPwAudioBuffer& In, TArray<float>& Out)
+    bool BuildInterleavedClamped(const FPwAudioBuffer& In, int32 NumChannels, TArray<float>& Out)
     {
         Out.Reset();
 
         const int32 NumFrames = In.NumFrames();
-        if (NumFrames <= 0 || !In.IsValid())
+        if (NumFrames <= 0 || !In.IsValid() || NumChannels < 1 || NumChannels > PwExportChannels)
         {
             return false;
         }
 
-        Out.SetNumUninitialized(NumFrames * PwExportChannels);
+        Out.SetNumUninitialized(NumFrames * NumChannels);
 
         const float* RESTRICT LeftData = In.Left.GetData();
         const float* RESTRICT RightData = In.Right.GetData();
         float* RESTRICT OutData = Out.GetData();
+
+        if (NumChannels == 1)
+        {
+            for (int32 Frame = 0; Frame < NumFrames; ++Frame)
+            {
+                OutData[Frame] = FMath::Clamp(0.5f * (LeftData[Frame] + RightData[Frame]),
+                                              -1.0f, 1.0f);
+            }
+            return true;
+        }
 
         for (int32 Frame = 0; Frame < NumFrames; ++Frame)
         {
@@ -64,16 +76,17 @@ namespace PwAudioExportInternal
     // Interleaved clamped float -> the int16 TSampleBuffer the engine writer accepts.
     // Routed through TSampleBuffer<float> + the converting assignment operator, which
     // is the only conversion the engine itself exposes for this direction.
-    bool BuildInt16SampleBuffer(const FPwAudioBuffer& In, Audio::TSampleBuffer<int16>& Out)
+    bool BuildInt16SampleBuffer(const FPwAudioBuffer& In, int32 NumChannels,
+                                Audio::TSampleBuffer<int16>& Out)
     {
         TArray<float> Interleaved;
-        if (!BuildInterleavedClamped(In, Interleaved))
+        if (!BuildInterleavedClamped(In, NumChannels, Interleaved))
         {
             return false;
         }
 
         const Audio::TSampleBuffer<float> FloatBuffer(
-            Interleaved.GetData(), Interleaved.Num(), PwExportChannels, In.SampleRate);
+            Interleaved.GetData(), Interleaved.Num(), NumChannels, In.SampleRate);
         Out = FloatBuffer;
         return Out.GetNumSamples() > 0;
     }
@@ -164,6 +177,20 @@ namespace PwAudioExportInternal
         return Names;
     }
 
+    // The source-file state a rewrite of the SAME frame count at the SAME rate leaves valid:
+    // markers, their origin, the timecode (with the USoundBase offset SetTimecodeInfo derives
+    // from it) and the imported rate cue points are scaled by. A subset of the list above. When
+    // a caller keeps them (bKeepSourceMarkers) they are the asset author's, not the payload's,
+    // so the diff below measures them like any other authored property.
+    const TSet<FName>& SourceMarkerProperties()
+    {
+        static const TSet<FName> Names = {
+            FName(TEXT("CuePoints")), FName(TEXT("CuePointOrigin")), FName(TEXT("TimecodeInfo")),
+            FName(TEXT("TimecodeOffset")), FName(TEXT("ImportedSampleRate"))
+        };
+        return Names;
+    }
+
     // Exported text of every UPROPERTY the payload does not own, keyed by name.
     //
     // Text rather than a duplicated object: StaticDuplicateObject would copy the bulk payload
@@ -173,7 +200,8 @@ namespace PwAudioExportInternal
     //
     // Index 0 only. USoundWave declares no static array (ArrayDim > 1) property; one appearing
     // later would be compared on its first element, which is a weaker check, not a wrong one.
-    TMap<FName, FString> CaptureNonPayloadProperties(const USoundWave* Wave)
+    TMap<FName, FString> CaptureNonPayloadProperties(const USoundWave* Wave,
+                                                     bool bIncludeSourceMarkers)
     {
         TMap<FName, FString> Values;
         if (!Wave)
@@ -184,8 +212,10 @@ namespace PwAudioExportInternal
         for (TFieldIterator<FProperty> It(Wave->GetClass()); It; ++It)
         {
             const FProperty* Property = *It;
+            const FName Name = Property->GetFName();
             if (Property->HasAnyPropertyFlags(CPF_Transient) ||
-                PayloadOwnedProperties().Contains(Property->GetFName()))
+                (PayloadOwnedProperties().Contains(Name) &&
+                 !(bIncludeSourceMarkers && SourceMarkerProperties().Contains(Name))))
             {
                 continue;
             }
@@ -200,9 +230,9 @@ namespace PwAudioExportInternal
 
     /** Names whose exported value no longer matches Before, sorted so the report is stable. */
     TArray<FName> DiffNonPayloadProperties(const TMap<FName, FString>& Before,
-                                           const USoundWave* Wave)
+                                           const USoundWave* Wave, bool bIncludeSourceMarkers)
     {
-        const TMap<FName, FString> After = CaptureNonPayloadProperties(Wave);
+        const TMap<FName, FString> After = CaptureNonPayloadProperties(Wave, bIncludeSourceMarkers);
 
         TArray<FName> Changed;
         for (const TPair<FName, FString>& Pair : Before)
@@ -219,7 +249,8 @@ namespace PwAudioExportInternal
 
     // Rewrite Wave's audio WITHOUT reconstructing the object, which is what keeps every
     // non-payload property (see PwAudioExport.h). Assigns only what the payload owns.
-    void UpdateSoundWaveInPlace(USoundWave* Wave, const Audio::TSampleBuffer<int16>& Samples)
+    void UpdateSoundWaveInPlace(USoundWave* Wave, const Audio::TSampleBuffer<int16>& Samples,
+                                bool bKeepSourceMarkers)
     {
         // Source state parsed out of the OLD payload. Left behind it would describe audio the
         // asset no longer holds: markers pointing past the end of a shorter take, a multichannel
@@ -229,42 +260,48 @@ namespace PwAudioExportInternal
         Wave->ChannelOffsets.Reset();
         Wave->ChannelSizes.Reset();
         Wave->bIsAmbisonics = false;
-#if UE_VERSION_NEWER_THAN_OR_EQUAL(5, 6, 0)
-        Wave->SetSoundWaveCuePoints(TArray<FSoundWaveCuePoint>());
-#else
-        // USoundWave gained SetSoundWaveCuePoints in 5.6. Before that CuePoints is a protected
-        // editor-only UPROPERTY with no accessor, so clear the reflected field: the same property
-        // the 5.6 setter assigns, and the one the engine re-derives the published
-        // FSoundWaveData copy from when platform data is next updated.
-        if (const FProperty* CuePointsProperty =
-                USoundWave::StaticClass()->FindPropertyByName(TEXT("CuePoints")))
+
+        // A same-length, same-rate rewrite (a gain change) leaves every marker pointing at the
+        // sample it always did, so the caller may keep them; SourceMarkerProperties.
+        if (!bKeepSourceMarkers)
         {
-            CuePointsProperty->ContainerPtrToValuePtr<TArray<FSoundWaveCuePoint>>(Wave)->Reset();
-        }
+#if UE_VERSION_NEWER_THAN_OR_EQUAL(5, 6, 0)
+            Wave->SetSoundWaveCuePoints(TArray<FSoundWaveCuePoint>());
+#else
+            // USoundWave gained SetSoundWaveCuePoints in 5.6. Before that CuePoints is a protected
+            // editor-only UPROPERTY with no accessor, so clear the reflected field: the same property
+            // the 5.6 setter assigns, and the one the engine re-derives the published
+            // FSoundWaveData copy from when platform data is next updated.
+            if (const FProperty* CuePointsProperty =
+                    USoundWave::StaticClass()->FindPropertyByName(TEXT("CuePoints")))
+            {
+                CuePointsProperty->ContainerPtrToValuePtr<TArray<FSoundWaveCuePoint>>(Wave)->Reset();
+            }
 #endif
 #if UE_VERSION_NEWER_THAN_OR_EQUAL(5, 7, 0)
-        Wave->SetCuePointOrigin(ESoundWaveCuePointOrigin::MarkerTransformation);
+            Wave->SetCuePointOrigin(ESoundWaveCuePointOrigin::MarkerTransformation);
 #elif UE_VERSION_NEWER_THAN_OR_EQUAL(5, 6, 0)
-        // USoundWave gained SetCuePointOrigin in 5.7. On 5.6 the CuePointOrigin UPROPERTY is
-        // protected with no accessor, so write the reflected field: same property, same value the
-        // 5.7 setter assigns. Before 5.6 neither the property nor ESoundWaveCuePointOrigin
-        // exists - those engines have no cue-point origin at all - so nothing is written, which
-        // costs nothing on an emptied cue-point set.
-        if (const FProperty* CuePointOriginProperty =
-                USoundWave::StaticClass()->FindPropertyByName(TEXT("CuePointOrigin")))
-        {
-            *CuePointOriginProperty->ContainerPtrToValuePtr<ESoundWaveCuePointOrigin>(Wave) =
-                ESoundWaveCuePointOrigin::MarkerTransformation;
-        }
+            // USoundWave gained SetCuePointOrigin in 5.7. On 5.6 the CuePointOrigin UPROPERTY is
+            // protected with no accessor, so write the reflected field: same property, same value the
+            // 5.7 setter assigns. Before 5.6 neither the property nor ESoundWaveCuePointOrigin
+            // exists - those engines have no cue-point origin at all - so nothing is written, which
+            // costs nothing on an emptied cue-point set.
+            if (const FProperty* CuePointOriginProperty =
+                    USoundWave::StaticClass()->FindPropertyByName(TEXT("CuePointOrigin")))
+            {
+                *CuePointOriginProperty->ContainerPtrToValuePtr<ESoundWaveCuePointOrigin>(Wave) =
+                    ESoundWaveCuePointOrigin::MarkerTransformation;
+            }
 #endif
-        Wave->SetTimecodeInfo(FSoundWaveTimecodeInfo{});
+            Wave->SetTimecodeInfo(FSoundWaveTimecodeInfo{});
 
-        // 0 means "not imported from a file", which is what a wave this layer writes is.
-        // USoundWave::PostLoad re-derives it from the payload header when it is 0
-        // (SoundWave.cpp:2309-2319); a rate left over from an earlier import would instead
-        // rescale this payload's cue points and drive the cook's resample decision from a
-        // number that no longer describes the audio. It is also what the create path leaves.
-        Wave->SetImportedSampleRate(0);
+            // 0 means "not imported from a file", which is what a wave this layer writes is.
+            // USoundWave::PostLoad re-derives it from the payload header when it is 0
+            // (SoundWave.cpp:2309-2319); a rate left over from an earlier import would instead
+            // rescale this payload's cue points and drive the cook's resample decision from a
+            // number that no longer describes the audio. It is also what the create path leaves.
+            Wave->SetImportedSampleRate(0);
+        }
 
         ApplyWavPayload(Wave, Samples);
 
@@ -295,7 +332,8 @@ namespace PwAudioExportInternal
 
 USoundWave* PwCreateSoundWaveAsset(const FPwAudioBuffer& In, const FString& PackagePath,
                                    const FString& AssetName, bool bSaveToDisk,
-                                   FPwSoundWaveWriteReport& OutReport, FString& OutError)
+                                   FPwSoundWaveWriteReport& OutReport, FString& OutError,
+                                   int32 NumChannels, bool bKeepSourceMarkers)
 {
     // Failure is the default on every early-out (rpc-design.md §2).
     OutReport = FPwSoundWaveWriteReport();
@@ -322,6 +360,14 @@ USoundWave* PwCreateSoundWaveAsset(const FPwAudioBuffer& In, const FString& Pack
         return nullptr;
     }
 
+    if (NumChannels < 1 || NumChannels > PwExportChannels)
+    {
+        OutError = FString::Printf(
+            TEXT("NumChannels=%d; a SoundWave this layer writes is 1 (mono) or %d (stereo)."),
+            NumChannels, PwExportChannels);
+        return nullptr;
+    }
+
     FString RelativeFolder;
     if (!PwAudioExportInternal::MakeGameRelativeFolder(PackagePath, RelativeFolder, OutError))
     {
@@ -334,7 +380,7 @@ USoundWave* PwCreateSoundWaveAsset(const FPwAudioBuffer& In, const FString& Pack
     // writer copies the buffer by value and reading a stale InputBuffer afterwards
     // would be the trap this struct exists to close.
     Audio::FAudioRecordingData Recording;
-    if (!PwAudioExportInternal::BuildInt16SampleBuffer(In, Recording.InputBuffer))
+    if (!PwAudioExportInternal::BuildInt16SampleBuffer(In, NumChannels, Recording.InputBuffer))
     {
         OutError = FString::Printf(
             TEXT("Audio buffer holds nothing to write (frames=%d, left=%d, right=%d, rate=%d Hz)."),
@@ -382,6 +428,30 @@ USoundWave* PwCreateSoundWaveAsset(const FPwAudioBuffer& In, const FString& Pack
     // AssetCreatePolicy::Resolve(bRequireExactClass=true) has already refused to hand us.
     if (Existing && Existing->GetClass() == USoundWave::StaticClass())
     {
+        // Kept markers are only valid on the same frames at the same rate; measured off the
+        // payload header rather than trusted from the caller.
+        if (bKeepSourceMarkers)
+        {
+            TArray<uint8> OldPcm;
+            uint32 OldRate = 0;
+            uint16 OldChannels = 0;
+            const bool bReadOld = Existing->GetImportedSoundWaveData(OldPcm, OldRate, OldChannels) &&
+                OldChannels > 0;
+            const int32 OldFrames = bReadOld
+                ? OldPcm.Num() / (static_cast<int32>(sizeof(int16)) * OldChannels) : 0;
+            if (!bReadOld || OldFrames != Recording.InputBuffer.GetNumFrames() ||
+                static_cast<int32>(OldRate) != Recording.InputBuffer.GetSampleRate())
+            {
+                OutError = FString::Printf(
+                    TEXT("Keeping the source markers of '%s' needs the same frame count and rate, "
+                         "but the wave holds %d frames @ %u Hz and the new audio %d frames @ %d Hz; "
+                         "nothing was written."),
+                    *ExpectedPackage, OldFrames, OldRate, Recording.InputBuffer.GetNumFrames(),
+                    Recording.InputBuffer.GetSampleRate());
+                return nullptr;
+            }
+        }
+
         OutReport.bUpdatedInPlace = true;
 
         // Snapshot BEFORE the write, diff after. The preservation is structural - the update
@@ -389,12 +459,13 @@ USoundWave* PwCreateSoundWaveAsset(const FPwAudioBuffer& In, const FString& Pack
         // it, and a future engine field that starts moving under the rewrite fails the verb's
         // verification instead of silently unrouting the asset.
         const TMap<FName, FString> PropertiesBefore =
-            PwAudioExportInternal::CaptureNonPayloadProperties(Existing);
+            PwAudioExportInternal::CaptureNonPayloadProperties(Existing, bKeepSourceMarkers);
 
-        PwAudioExportInternal::UpdateSoundWaveInPlace(Existing, Recording.InputBuffer);
+        PwAudioExportInternal::UpdateSoundWaveInPlace(Existing, Recording.InputBuffer,
+            bKeepSourceMarkers);
 
-        OutReport.ChangedProperties =
-            PwAudioExportInternal::DiffNonPayloadProperties(PropertiesBefore, Existing);
+        OutReport.ChangedProperties = PwAudioExportInternal::DiffNonPayloadProperties(
+            PropertiesBefore, Existing, bKeepSourceMarkers);
         Wave = Existing;
     }
     else
@@ -466,7 +537,7 @@ USoundWave* PwCreateSoundWaveAsset(const FPwAudioBuffer& In, const FString& Pack
     UE_LOG(LogPinWrightSubsystem, Verbose,
         TEXT("PwCreateSoundWaveAsset: %s (%d frames @ %d Hz, %d ch), updatedInPlace=%d "
              "changedProperties=%d saveRequested=%d saved=%d"),
-        *ExpectedPackage, In.NumFrames(), In.SampleRate, PwExportChannels,
+        *ExpectedPackage, In.NumFrames(), In.SampleRate, NumChannels,
         OutReport.bUpdatedInPlace ? 1 : 0, OutReport.ChangedProperties.Num(),
         bSaveToDisk ? 1 : 0, OutReport.bSavedToDisk ? 1 : 0);
 
@@ -519,7 +590,7 @@ USoundWave* PwCreateTransientSoundWave(const FPwAudioBuffer& In)
     }
 
     Audio::TSampleBuffer<int16> Samples;
-    if (!PwAudioExportInternal::BuildInt16SampleBuffer(In, Samples))
+    if (!PwAudioExportInternal::BuildInt16SampleBuffer(In, PwExportChannels, Samples))
     {
         return nullptr;
     }

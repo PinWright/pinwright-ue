@@ -37,7 +37,7 @@
 //      the compression type is set here instead.
 //   5. Anything above 2 channels is silently downmixed to stereo with no clamp and
 //      no report (:381-385). Unreachable here by construction: FPwAudioBuffer is
-//      deinterleaved stereo, so PwExportChannels is the only width this layer emits.
+//      deinterleaved stereo, so PwExportChannels is the widest this layer emits.
 //   6. It hardcodes a "/Game/" prefix onto the path it is given (:344-348) and
 //      relocates a path it considers invalid to the Content root with only a log
 //      warning (:358-364). Both are silent-wrong-target hazards, so the folder is
@@ -63,10 +63,11 @@ struct FPwAudioBuffer;
 class FJsonObject;
 class USoundWave;
 
-// Channel count of every wave this layer produces. FPwAudioBuffer is deinterleaved
-// stereo by contract (a mono source duplicates its single channel into both sides),
-// so there is no input shape that could ask for anything else - which is what makes
-// the writer's unreported >2-channel downmix unreachable rather than merely unused.
+// Default, and widest, channel count of a wave this layer produces. FPwAudioBuffer is
+// deinterleaved stereo by contract (a mono source duplicates its single channel into both
+// sides), so nothing can ask for more than 2 - which is what makes the writer's unreported
+// >2-channel downmix unreachable rather than merely unused. A caller may ask for 1, which
+// writes the mean of the two sides (exact for a dual-mono buffer); see PwCreateSoundWaveAsset.
 inline constexpr int32 PwExportChannels = 2;
 
 // What a write did, measured rather than echoed back from what was asked for, so a
@@ -138,12 +139,26 @@ struct FPwSoundWaveWriteReport
 // OutReport is a required parameter rather than a defaulted out-pointer so a call site
 // cannot forget it and report persistence, or preservation, it never measured.
 //
+// NumChannels is the payload width written: PwExportChannels (2, the default) or 1, which
+// writes 0.5 * (L + R) - bit-exact for the dual-mono buffer a mono source decodes to, a real
+// downmix otherwise, and the caller's to report. An in-place rewrite may change the width;
+// NumChannels is payload-owned, so that is not a preservation failure.
+//
+// bKeepSourceMarkers is for a caller rewriting the SAME frame count at the SAME rate (a gain
+// change): cue points, cue-point origin, timecode and the imported sample rate still describe
+// that audio, so the in-place path keeps them instead of resetting them, and they join the
+// ChangedProperties diff. Ignored on a create. A different frame count or rate than the wave
+// already holds is refused (nullptr, OutError) before anything is written.
+//
 // Game thread only, editor only. Returns nullptr with OutError set (always non-empty
-// on failure) for a null/empty buffer, a folder outside /Game, an empty asset name, or
-// a writer that did not reach the Succeeded state. OutError is emptied on success.
+// on failure) for a null/empty buffer, a folder outside /Game, an empty asset name, a
+// NumChannels other than 1 or 2, or a writer that did not reach the Succeeded state.
+// OutError is emptied on success.
 USoundWave* PwCreateSoundWaveAsset(const FPwAudioBuffer& In, const FString& PackagePath,
                                    const FString& AssetName, bool bSaveToDisk,
-                                   FPwSoundWaveWriteReport& OutReport, FString& OutError);
+                                   FPwSoundWaveWriteReport& OutReport, FString& OutError,
+                                   int32 NumChannels = PwExportChannels,
+                                   bool bKeepSourceMarkers = false);
 
 // Publish a write report into a verb's response.
 //   Result       gets "routing" { soundClass, attenuationSettings } - always, including

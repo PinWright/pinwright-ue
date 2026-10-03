@@ -105,6 +105,8 @@ Verification decodes through `USoundWave::GetImportedSoundWaveData`, independent
 
 Re-runs rewrite the audio in place rather than create `_1` siblings; `updatedInPlace` counts occupied paths. The rewrite keeps every property that is not the payload - SoundClass, attenuation, concurrency, submix and bus sends, modulation, loading behaviour, compression type, looping, volume, sound group - and refreshes only what the old audio determined: duration, format, cue points, channel layout, timecode. A rewrite that moves anything else fails that stem's row with `VERIFICATION_FAILED` naming the properties, rather than reporting a verified stem.
 
+`routing.withoutSoundClass` and `routing.withoutAttenuation` count the stems the writer reached that, read off the wave after the write, have no SoundClass or no attenuation. A newly created stem has neither, and a rewrite keeps whatever the asset had. Neither count fails the job: music is usually 2D, so a missing attenuation may be intended, but a stem without a SoundClass escapes every SoundMix and class volume.
+
 Names are validated, not sanitized: a name the sanitizer would rewrite is rejected. Case-insensitive duplicates are rejected because `Pad` and `pad` are one Windows file.
 
 Leave the waves PCM if they must loop seamlessly. See the compression caveat above.

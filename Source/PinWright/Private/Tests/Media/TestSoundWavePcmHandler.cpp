@@ -30,6 +30,7 @@
 
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Misc/PackageName.h"
+#include "Sound/SoundClass.h"
 #include "Sound/SoundWave.h"
 #include "UObject/GarbageCollection.h"
 #include "UObject/Package.h"
@@ -500,5 +501,387 @@ bool FAudioAuthoringCreateSoundWaveFromPcmIsTickGatedTest::RunTest(const FString
     TestTrue(TEXT("create_sound_wave_from_pcm is in the tick-unsafe method table"),
         PinWrightSafePoint::IsTickUnsafeMethod(
             TEXT("audio.authoring.create_sound_wave_from_pcm")));
+    return true;
+}
+
+// =========================================================================
+// E. channels:1 writes a MONO wave (board F-audio-no-mono-soundwave-path). It
+//    used to be duplicated into a 2-channel payload, so a mono MetaSound paid
+//    twice the memory and decode for a channel it discards. Read off the
+//    payload header here, not off the response.
+// =========================================================================
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAudioAuthoringCreateSoundWaveFromPcmMonoTest,
+    "PinWright.audio.authoring.create_sound_wave_from_pcm.MonoInputWritesMonoWave",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAudioAuthoringCreateSoundWaveFromPcmMonoTest::RunTest(const FString& Parameters)
+{
+    using namespace PwSoundWavePcmTestInternal;
+
+    const FString PackagePath = MakeUniquePackagePath();
+    ON_SCOPE_EXIT
+    {
+        PwTestAssetTeardown::DiscardCreatedAssetByObjectPath(ToObjectPathForPackage(PackagePath));
+    };
+
+    TArray<float> Left;
+    TArray<float> Right;
+    BuildTestSignal(Left, Right);
+    TArray<TSharedPtr<FJsonValue>> Samples;
+    for (const float Sample : Left)
+    {
+        Samples.Add(MakeShared<FJsonValueNumber>(Sample));
+    }
+
+    FTestResponseCapture Capture;
+    InvokeHandlerWithCapture(TEXT("audio.authoring.create_sound_wave_from_pcm"),
+        MakePayload(PackagePath, Samples, 1, TestSampleRate), Capture);
+    TestTrue(*FString::Printf(TEXT("mono create succeeded (errorCode='%s', message='%s')"),
+        *Capture.ErrorCode, *Capture.Message), Capture.bSuccess);
+    if (!Capture.bSuccess)
+    {
+        return false;
+    }
+
+    int32 ReportedChannels = 0;
+    Capture.Result->TryGetNumberField(TEXT("channels"), ReportedChannels);
+    TestEqual(TEXT("the response reports a mono wave"), ReportedChannels, 1);
+
+    USoundWave* Wave = Cast<USoundWave>(StaticFindObject(UObject::StaticClass(), nullptr,
+        *ToObjectPathForPackage(PackagePath)));
+    TestNotNull(TEXT("the wave exists"), Wave);
+    if (!Wave)
+    {
+        return false;
+    }
+
+    TArray<uint8> Pcm;
+    uint32 Rate = 0;
+    uint16 Channels = 0;
+    TestTrue(TEXT("the payload header reads"), Wave->GetImportedSoundWaveData(Pcm, Rate, Channels));
+    TestEqual(TEXT("the payload carries ONE channel"), static_cast<int32>(Channels), 1);
+    TestEqual(TEXT("the payload holds one int16 per frame"), Pcm.Num(),
+        TestFrames * static_cast<int32>(sizeof(int16)));
+
+    FPwAudioBuffer Decoded;
+    FString DecodeError;
+    TestTrue(TEXT("the mono wave decodes"), PwDecodeSoundWave(Wave, Decoded, DecodeError));
+    float Worst = 0.0f;
+    for (int32 Frame = 0; Frame < FMath::Min(Decoded.NumFrames(), Left.Num()); ++Frame)
+    {
+        Worst = FMath::Max(Worst, FMath::Abs(Decoded.Left[Frame] - Left[Frame]));
+    }
+    TestEqual(TEXT("every frame came back"), Decoded.NumFrames(), TestFrames);
+    TestTrue(FString::Printf(TEXT("the samples are the input's (worst |delta| %g)"), Worst),
+        Worst <= ExpectedToleranceAbs);
+    return true;
+}
+
+// =========================================================================
+// F. audio.authoring.set_sound_wave_gain (board F-rpc-audio-normalize-existing-wave).
+//    The point of the verb is what it does NOT change: a level fix through a
+//    `sample` layer collapsed every wide wave to mono with pass:true. So the
+//    fixtures are an asymmetric stereo wave carrying routing, and a mono wave,
+//    and both are read back off the object after the call.
+// =========================================================================
+namespace PwSoundWaveGainTestInternal
+{
+    using namespace PwSoundWavePcmTestInternal;
+
+    const TCHAR* const GainMethod = TEXT("audio.authoring.set_sound_wave_gain");
+
+    /** Writes Buffer as a wave at a fresh /Game/PinWrightTests path; returns its object path. */
+    FString MakeWave(const FPwAudioBuffer& Buffer, int32 Channels)
+    {
+        const FString PackagePath = MakeUniquePackagePath();
+        FPwSoundWaveWriteReport Report;
+        FString Error;
+        USoundWave* Wave = PwCreateSoundWaveAsset(Buffer, FPackageName::GetLongPackagePath(PackagePath),
+            FPackageName::GetLongPackageAssetName(PackagePath), /*bSaveToDisk=*/false, Report, Error,
+            Channels);
+        return Wave ? Wave->GetPathName() : FString();
+    }
+
+    double Rms(const TArray<float>& Samples)
+    {
+        double Sum = 0.0;
+        for (const float Sample : Samples)
+        {
+            Sum += static_cast<double>(Sample) * Sample;
+        }
+        return Samples.Num() > 0 ? FMath::Sqrt(Sum / Samples.Num()) : 0.0;
+    }
+
+    TSharedPtr<FJsonObject> GainPayload(const FString& ObjectPath, const TCHAR* Mode, double Target)
+    {
+        TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+        Payload->SetStringField(TEXT("assetPath"), ObjectPath);
+        Payload->SetStringField(TEXT("mode"), Mode);
+        Payload->SetNumberField(TEXT("target"), Target);
+        Payload->SetBoolField(TEXT("save"), false);
+        return Payload;
+    }
+
+    /** Exported text of one reflected USoundWave property; empty when the engine lacks it. */
+    FString ExportWaveProperty(const USoundWave* Wave, const TCHAR* PropertyName)
+    {
+        FString Text;
+        if (const FProperty* Property = USoundWave::StaticClass()->FindPropertyByName(PropertyName))
+        {
+            Property->ExportText_InContainer(0, Text, Wave, /*Delta=*/nullptr,
+                const_cast<USoundWave*>(Wave), PPF_None);
+        }
+        return Text;
+    }
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAudioAuthoringSetSoundWaveGainStereoTest,
+    "PinWright.audio.authoring.set_sound_wave_gain.KeepsStereoImageAndRouting",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAudioAuthoringSetSoundWaveGainStereoTest::RunTest(const FString& Parameters)
+{
+    using namespace PwSoundWaveGainTestInternal;
+
+    TestTrue(TEXT("set_sound_wave_gain is tick-unsafe"),
+        PinWrightSafePoint::IsTickUnsafeMethod(GainMethod));
+
+    FPwAudioBuffer Source;
+    Source.SampleRate = TestSampleRate;
+    BuildTestSignal(Source.Left, Source.Right);
+    const FString ObjectPath = MakeWave(Source, 2);
+    ON_SCOPE_EXIT
+    {
+        PwTestAssetTeardown::DiscardCreatedAssetByObjectPath(ObjectPath);
+    };
+    USoundWave* Wave = Cast<USoundWave>(StaticFindObject(UObject::StaticClass(), nullptr, *ObjectPath));
+    if (!TestNotNull(TEXT("fixture wave created"), Wave))
+    {
+        return false;
+    }
+
+    // A fixture precondition, asserted so a broken fixture does not read as a verb defect.
+    FPwAudioBuffer Before;
+    FString Error;
+    if (!TestTrue(TEXT("fixture decodes"), PwDecodeSoundWave(Wave, Before, Error)))
+    {
+        return false;
+    }
+    const double LeftBefore = Rms(Before.Left);
+    const double RightBefore = Rms(Before.Right);
+    TestTrue(TEXT("fixture sides are distinct"), FMath::Abs(LeftBefore - RightBefore) > 0.1);
+
+    USoundClass* SoundClass = NewObject<USoundClass>(GetTransientPackage());
+    Wave->SoundClassObject = SoundClass;
+    Wave->bLooping = true;
+
+    // Source markers a gain change leaves valid (same frames, same rate). CuePoints through
+    // reflection: it has no public setter before 5.6.
+    FSoundWaveCuePoint Cue;
+    Cue.CuePointID = 7;
+    Cue.Label = TEXT("Hit");
+    Cue.FramePosition = Before.NumFrames() / 2;
+    if (const FProperty* CuePointsProperty = USoundWave::StaticClass()->FindPropertyByName(TEXT("CuePoints")))
+    {
+        CuePointsProperty->ContainerPtrToValuePtr<TArray<FSoundWaveCuePoint>>(Wave)->Add(Cue);
+    }
+    FSoundWaveTimecodeInfo Timecode;
+    Timecode.NumSamplesSinceMidnight = static_cast<uint64>(TestSampleRate) * 3600;
+    Timecode.NumSamplesPerSecond = TestSampleRate;
+    Timecode.Description = TEXT("pinwright-gain-fixture");
+    Wave->SetTimecodeInfo(Timecode);
+    Wave->SetImportedSampleRate(TestSampleRate);
+    const TCHAR* const MarkerProperties[] = {
+        TEXT("CuePoints"), TEXT("TimecodeInfo"), TEXT("ImportedSampleRate") };
+    TMap<FString, FString> MarkersBefore;
+    for (const TCHAR* const Marker : MarkerProperties)
+    {
+        MarkersBefore.Add(Marker, ExportWaveProperty(Wave, Marker));
+    }
+    TestTrue(TEXT("fixture carries a cue point"), MarkersBefore[TEXT("CuePoints")].Contains(TEXT("Hit")));
+    TestTrue(TEXT("fixture carries a timecode"),
+        MarkersBefore[TEXT("TimecodeInfo")].Contains(TEXT("pinwright-gain-fixture")));
+
+    // The fixture peaks at 0.6 (-4.44 dBFS); -12 dBFS is a -7.56 dB change.
+    FTestResponseCapture Capture;
+    TestTrue(TEXT("handler registered"),
+        InvokeHandlerWithCapture(GainMethod, GainPayload(ObjectPath, TEXT("peak"), -12.0), Capture));
+    TestTrue(*FString::Printf(TEXT("the gain call succeeded (code='%s', message='%s')"),
+        *Capture.ErrorCode, *Capture.Message), Capture.bSuccess);
+    if (!Capture.bSuccess)
+    {
+        return false;
+    }
+
+    double GainDb = 0.0;
+    Capture.Result->TryGetNumberField(TEXT("gainDb"), GainDb);
+    const double ExpectedGain = FMath::Pow(10.0, GainDb / 20.0);
+    TestTrue(FString::Printf(TEXT("the reported gain is the peak move (%f dB)"), GainDb),
+        FMath::IsNearlyEqual(GainDb, -12.0 - 20.0 * FMath::LogX(10.0, 0.6), 0.05));
+
+    USoundWave* After = Cast<USoundWave>(StaticFindObject(UObject::StaticClass(), nullptr, *ObjectPath));
+    if (!TestTrue(TEXT("the same object was rewritten"), After == Wave))
+    {
+        return false;
+    }
+    TestTrue(TEXT("the sound class survived"), After->SoundClassObject == SoundClass);
+    TestTrue(TEXT("bLooping survived"), After->bLooping != 0);
+    // A gain change keeps every marker on its sample; the shared rewrite resets them otherwise.
+    for (const TCHAR* const Marker : MarkerProperties)
+    {
+        TestEqual(*FString::Printf(TEXT("%s survived"), Marker), ExportWaveProperty(After, Marker),
+            MarkersBefore[Marker]);
+    }
+    const TSharedPtr<FJsonObject>* GainVerification = nullptr;
+    bool bPropertiesPreserved = false;
+    TestTrue(TEXT("verification.propertiesPreserved is true"),
+        Capture.Result->TryGetObjectField(TEXT("verification"), GainVerification) && GainVerification &&
+        (*GainVerification)->TryGetBoolField(TEXT("propertiesPreserved"), bPropertiesPreserved) &&
+        bPropertiesPreserved);
+
+    TArray<uint8> Pcm;
+    uint32 Rate = 0;
+    uint16 Channels = 0;
+    After->GetImportedSoundWaveData(Pcm, Rate, Channels);
+    TestEqual(TEXT("the wave is still stereo"), static_cast<int32>(Channels), 2);
+
+    FPwAudioBuffer Decoded;
+    if (!TestTrue(TEXT("the rewrite decodes"), PwDecodeSoundWave(After, Decoded, Error)))
+    {
+        return false;
+    }
+    // Each side moved by the SAME gain - the collapse this verb exists to avoid would have
+    // made the two sides equal instead.
+    TestTrue(FString::Printf(TEXT("left moved by the gain (%f vs %f)"), Rms(Decoded.Left) / LeftBefore,
+        ExpectedGain), FMath::IsNearlyEqual(Rms(Decoded.Left) / LeftBefore, ExpectedGain, 0.01));
+    TestTrue(FString::Printf(TEXT("right moved by the gain (%f vs %f)"), Rms(Decoded.Right) / RightBefore,
+        ExpectedGain), FMath::IsNearlyEqual(Rms(Decoded.Right) / RightBefore, ExpectedGain, 0.01));
+
+    const TSharedPtr<FJsonObject>* Routing = nullptr;
+    FString ReportedClass;
+    TestTrue(TEXT("the response carries routing"),
+        Capture.Result->TryGetObjectField(TEXT("routing"), Routing) && Routing &&
+        (*Routing)->TryGetStringField(TEXT("soundClass"), ReportedClass));
+    TestEqual(TEXT("routing names the class that survived"), ReportedClass, SoundClass->GetPathName());
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAudioAuthoringSetSoundWaveGainMonoTest,
+    "PinWright.audio.authoring.set_sound_wave_gain.MonoWaveStaysMono",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAudioAuthoringSetSoundWaveGainMonoTest::RunTest(const FString& Parameters)
+{
+    using namespace PwSoundWaveGainTestInternal;
+
+    FPwAudioBuffer Source;
+    Source.SampleRate = TestSampleRate;
+    TArray<float> Unused;
+    BuildTestSignal(Source.Left, Unused);
+    Source.Right = Source.Left;
+    const FString ObjectPath = MakeWave(Source, 1);
+    ON_SCOPE_EXIT
+    {
+        PwTestAssetTeardown::DiscardCreatedAssetByObjectPath(ObjectPath);
+    };
+    USoundWave* Wave = Cast<USoundWave>(StaticFindObject(UObject::StaticClass(), nullptr, *ObjectPath));
+    if (!TestNotNull(TEXT("fixture wave created"), Wave))
+    {
+        return false;
+    }
+    TArray<uint8> Pcm;
+    uint32 Rate = 0;
+    uint16 Channels = 0;
+    Wave->GetImportedSoundWaveData(Pcm, Rate, Channels);
+    if (!TestEqual(TEXT("fixture is mono"), static_cast<int32>(Channels), 1))
+    {
+        return false;
+    }
+
+    FTestResponseCapture Capture;
+    InvokeHandlerWithCapture(GainMethod, GainPayload(ObjectPath, TEXT("peak"), -1.0), Capture);
+    TestTrue(*FString::Printf(TEXT("the gain call succeeded (code='%s', message='%s')"),
+        *Capture.ErrorCode, *Capture.Message), Capture.bSuccess);
+
+    Wave->GetImportedSoundWaveData(Pcm, Rate, Channels);
+    TestEqual(TEXT("the rescaled wave is still mono"), static_cast<int32>(Channels), 1);
+
+    FPwAudioBuffer Decoded;
+    FString Error;
+    TestTrue(TEXT("the rewrite decodes"), PwDecodeSoundWave(Wave, Decoded, Error));
+    double Peak = 0.0;
+    for (const float Sample : Decoded.Left)
+    {
+        Peak = FMath::Max(Peak, FMath::Abs(static_cast<double>(Sample)));
+    }
+    TestTrue(FString::Printf(TEXT("the decoded peak is -1 dBFS (%f dB)"), 20.0 * FMath::LogX(10.0, Peak)),
+        FMath::IsNearlyEqual(20.0 * FMath::LogX(10.0, Peak), -1.0, 0.05));
+    return true;
+}
+
+// The refusals leave the wave byte-identical: a clamped or partly applied gain would be a
+// waveform change reported as a level change.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAudioAuthoringSetSoundWaveGainRefusalTest,
+    "PinWright.audio.authoring.set_sound_wave_gain.RefusesUnreachableTargets",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAudioAuthoringSetSoundWaveGainRefusalTest::RunTest(const FString& Parameters)
+{
+    using namespace PwSoundWaveGainTestInternal;
+
+    // 0.6 s - long enough for BS.1770 - of a quiet tone with one near-full-scale spike, so any
+    // loud LUFS target needs more gain than the spike has headroom for.
+    FPwAudioBuffer Source;
+    Source.SampleRate = TestSampleRate;
+    Source.SetNumFrames(TestSampleRate * 6 / 10);
+    for (int32 Frame = 0; Frame < Source.NumFrames(); ++Frame)
+    {
+        Source.Left[Frame] = 0.01f * FMath::Sin(2.0f * UE_PI * 440.0f * Frame / TestSampleRate);
+    }
+    Source.Left[Source.NumFrames() / 2] = 0.9f;
+    Source.Right = Source.Left;
+    const FString ObjectPath = MakeWave(Source, 1);
+    ON_SCOPE_EXIT
+    {
+        PwTestAssetTeardown::DiscardCreatedAssetByObjectPath(ObjectPath);
+    };
+    USoundWave* Wave = Cast<USoundWave>(StaticFindObject(UObject::StaticClass(), nullptr, *ObjectPath));
+    if (!TestNotNull(TEXT("fixture wave created"), Wave))
+    {
+        return false;
+    }
+    TArray<uint8> PcmBefore;
+    uint32 Rate = 0;
+    uint16 Channels = 0;
+    Wave->GetImportedSoundWaveData(PcmBefore, Rate, Channels);
+
+    const auto ExpectRefused = [&](const TCHAR* Label, const TCHAR* Mode, double Target)
+    {
+        FTestResponseCapture Capture;
+        InvokeHandlerWithCapture(GainMethod, GainPayload(ObjectPath, Mode, Target), Capture);
+        TestFalse(*FString::Printf(TEXT("%s: refused"), Label), Capture.bSuccess);
+        TestEqual(*FString::Printf(TEXT("%s: INVALID_ARGUMENT"), Label), Capture.ErrorCode,
+            FString(TEXT("INVALID_ARGUMENT")));
+        TArray<uint8> PcmAfter;
+        Wave->GetImportedSoundWaveData(PcmAfter, Rate, Channels);
+        TestTrue(*FString::Printf(TEXT("%s: payload untouched"), Label), PcmAfter == PcmBefore);
+        return Capture;
+    };
+
+    // BS.1770 needs Audio::FLKFSAnalyzer, which arrived in UE 5.8 (PwAudioFeatures.cpp); before
+    // that a lufs request is refused by the loudness gate, not by the clip guard under test.
+#if UE_VERSION_NEWER_THAN_OR_EQUAL(5, 8, 0)
+    const FTestResponseCapture Clip = ExpectRefused(TEXT("clipping lufs target"), TEXT("lufs"), -6.0);
+    double MaxTarget = 0.0;
+    TestTrue(TEXT("the clip refusal names the highest reachable target"),
+        Clip.Result.IsValid() && Clip.Result->TryGetNumberField(TEXT("maxTarget"), MaxTarget) &&
+        MaxTarget < -6.0);
+#else
+    PinWrightTestSkip::SkipAssertions(*this, TEXT("engine-has-no-lkfs-analyzer"),
+        TEXT("the clipping-lufs case needs Audio::FLKFSAnalyzer (UE 5.8+); the peak and mode "
+             "refusals below still run"));
+#endif
+    ExpectRefused(TEXT("peak above full scale"), TEXT("peak"), 1.0);
+    ExpectRefused(TEXT("unknown mode"), TEXT("rms"), -12.0);
     return true;
 }

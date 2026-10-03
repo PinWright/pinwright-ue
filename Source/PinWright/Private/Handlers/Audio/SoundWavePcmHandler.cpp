@@ -33,6 +33,7 @@
 #include "AudioGen/PwAudioBuffer.h"
 #include "AudioGen/PwAudioDecode.h"
 #include "AudioGen/PwAudioExport.h"
+#include "AudioGen/PwAudioFeatures.h"
 
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
@@ -115,16 +116,69 @@ namespace PwSoundWavePcmHandlerInternal
 
         return RmsDelta <= PwRoundTripToleranceAbs && PeakDelta <= PwRoundTripToleranceAbs;
     }
+
+    // set_sound_wave_gain: how far the decoded level may sit from the requested target, dB. The
+    // write quantizes to 16-bit PCM, which moves a peak by at most one LSB - 0.0003 dB at full
+    // scale, ~0.03 dB at -40 dBFS - and BS.1770 gating can shift a gated integral by a few
+    // hundredths when every sample scales; 0.1 dB clears both and is still ten times finer than
+    // the 1 LU delivery tolerance a loudness review works to.
+    constexpr double PwGainToleranceDb = 0.1;
+
+    double LinearToDbOrFloor(double Linear)
+    {
+        return Linear > 0.0 ? 20.0 * FMath::LogX(10.0, Linear) : -200.0;
+    }
+
+    struct FPwLevelReading
+    {
+        double PeakLinear = 0.0;
+        double LeftRms = 0.0;
+        double RightRms = 0.0;
+        bool bLufsMeasured = false;
+        double IntegratedLufs = 0.0;
+    };
+
+    // Peak and per-side RMS always; integrated loudness when the buffer is long and loud enough
+    // for the analyzer, with its refusal kept for a caller that asked for "lufs".
+    FPwLevelReading ReadLevel(const FPwAudioBuffer& Buffer, FString& OutLufsCode,
+                              FString& OutLufsError)
+    {
+        FPwLevelReading Out;
+        const FPwChannelSignature Left = MeasureChannel(Buffer.Left);
+        const FPwChannelSignature Right = MeasureChannel(Buffer.Right);
+        Out.PeakLinear = FMath::Max(Left.Peak, Right.Peak);
+        Out.LeftRms = Left.Rms;
+        Out.RightRms = Right.Rms;
+
+        FPwLoudnessResult Loudness;
+        if (PwComputeLoudness(Buffer, Loudness, OutLufsCode, OutLufsError) && Loudness.bMeasured)
+        {
+            Out.bLufsMeasured = true;
+            Out.IntegratedLufs = Loudness.IntegratedLufs;
+        }
+        return Out;
+    }
+
+    TSharedPtr<FJsonObject> LevelToJson(const FPwLevelReading& In)
+    {
+        TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+        Out->SetNumberField(TEXT("peakDb"), LinearToDbOrFloor(In.PeakLinear));
+        if (In.bLufsMeasured)
+        {
+            Out->SetNumberField(TEXT("integratedLufs"), In.IntegratedLufs);
+        }
+        return Out;
+    }
 }
 
 REGISTER_RPC_HANDLER("audio.authoring.create_sound_wave_from_pcm", "audio.authoring",
-    "Create a USoundWave asset from raw interleaved float PCM sent inline as JSON, then verify it by decoding the created asset back and comparing frames, sample rate, channel count and an RMS/peak signature against the source. The wave is always stereo (mono input is duplicated into both channels). Idempotent: re-running against an existing SoundWave rewrites its payload in place and keeps every property that is not the payload (SoundClass, attenuation, concurrency, submix and bus sends, modulation, loading behaviour, compression type, looping, volume, sound group), refreshing only the state parsed out of the old audio (duration, format, cue points, channel layout, timecode); verification.propertiesPreserved measures that and a failure fails the call. The response reports routing.soundClass / routing.attenuationSettings as they stand after the write - a newly created wave has neither, and an unrouted wave escapes every SoundMix and plays at full level at any distance. Errors ASSET_ALREADY_EXISTS when a different asset class occupies the path, VERIFICATION_FAILED when the decode-back disagrees with the source. Inline samples are capped; a candidate_id form of this verb is the route for longer audio.",
+    "Create a USoundWave asset from raw interleaved float PCM sent inline as JSON, then verify it by decoding the created asset back and comparing frames, sample rate, channel count and an RMS/peak signature against the source. The wave keeps the input's channel count: channels:1 writes a mono wave, channels:2 a stereo one. Idempotent: re-running against an existing SoundWave rewrites its payload in place and keeps every property that is not the payload (SoundClass, attenuation, concurrency, submix and bus sends, modulation, loading behaviour, compression type, looping, volume, sound group), refreshing only the state parsed out of the old audio (duration, format, cue points, channel layout, timecode); verification.propertiesPreserved measures that and a failure fails the call. The response reports routing.soundClass / routing.attenuationSettings as they stand after the write - a newly created wave has neither, and an unrouted wave escapes every SoundMix and plays at full level at any distance. Errors ASSET_ALREADY_EXISTS when a different asset class occupies the path, VERIFICATION_FAILED when the decode-back disagrees with the source. Inline samples are capped; a candidate_id form of this verb is the route for longer audio.",
     RPC_PARAMS(
         RPC_PARAM_REQ("name", "string", "Asset name without extension, e.g. 'SW_Beep'."),
         RPC_PARAM_REQ("path", "path", "Content-browser folder for the new asset; must be under /Game, e.g. /Game/Audio."),
         RPC_PARAM_REQ("samples", "array", "Interleaved float PCM in [-1,1]. Length must be an exact multiple of channels and at most 96000 values (one second of 48 kHz stereo, which is also about where the 1 MB request-body limit lands). Values outside [-1,1] are clamped and counted in clampedSamples."),
         RPC_PARAM_REQ("sampleRate", "number", "Sample rate of the supplied PCM in Hz, 1..192000."),
-        RPC_PARAM_REQ("channels", "number", "Interleave width of samples: 1 (mono) or 2 (stereo). Required rather than defaulted because guessing wrong silently garbles the audio instead of failing. Mono is duplicated into both channels, so the created wave reports channels:2 either way."),
+        RPC_PARAM_REQ("channels", "number", "Interleave width of samples: 1 (mono) or 2 (stereo). Required rather than defaulted because guessing wrong silently garbles the audio instead of failing. The created wave has the same channel count, so channels:1 produces a mono wave (half the memory and decode of a duplicated stereo one)."),
         RPC_PARAM_DEF("save", "boolean", "Write the .uasset to disk. false marks the package dirty only, and the response reports saved:false / pendingFlush:true.", "true"),
         RPC_PARAM_DEF("overwrite", "boolean", "Delete and recreate an existing SoundWave instead of rewriting it in place. Rejected with ASSET_IN_USE when other packages reference it.", "false")
     ))
@@ -280,11 +334,13 @@ REGISTER_RPC_HANDLER("audio.authoring.create_sound_wave_from_pcm", "audio.author
 
     // Both Create and UpdateInPlace go through the same call: the engine writer's
     // NewObject reconstructs an existing same-class wave in place, which is what makes a
-    // retried request converge instead of accumulating assets (rpc-design.md §8).
+    // retried request converge instead of accumulating assets (rpc-design.md §8). The
+    // payload keeps the caller's width; a mono Source holds the same samples on both sides,
+    // so the writer's mean of the two is the input itself, bit for bit.
     FString ExportError;
     FPwSoundWaveWriteReport WriteReport;
     USoundWave* Wave = PwCreateSoundWaveAsset(
-        Source, ValidatedFolder, Name, bSave, WriteReport, ExportError);
+        Source, ValidatedFolder, Name, bSave, WriteReport, ExportError, SourceChannels);
     if (!Wave)
     {
         Ctx.SendError(ErrorCodes::ERR_CREATION_FAILED, ExportError);
@@ -335,7 +391,7 @@ REGISTER_RPC_HANDLER("audio.authoring.create_sound_wave_from_pcm", "audio.author
     const bool bFramesMatch = Decoded.NumFrames() == Source.NumFrames();
     const bool bRateMatch = Decoded.SampleRate == Source.SampleRate;
     const bool bChannelsMatch = bReadPayloadHeader &&
-        static_cast<int32>(PayloadChannels) == PwExportChannels;
+        static_cast<int32>(PayloadChannels) == SourceChannels;
 
     TSharedPtr<FJsonObject> Verification = MakeShared<FJsonObject>();
     Verification->SetBoolField(TEXT("measured"), true);
@@ -351,7 +407,7 @@ REGISTER_RPC_HANDLER("audio.authoring.create_sound_wave_from_pcm", "audio.author
     Verification->SetNumberField(TEXT("sourceSampleRate"), Source.SampleRate);
     Verification->SetNumberField(TEXT("decodedSampleRate"), Decoded.SampleRate);
     Verification->SetBoolField(TEXT("channelsMatch"), bChannelsMatch);
-    Verification->SetNumberField(TEXT("expectedChannels"), PwExportChannels);
+    Verification->SetNumberField(TEXT("expectedChannels"), SourceChannels);
     Verification->SetNumberField(TEXT("payloadChannels"), bReadPayloadHeader ? PayloadChannels : 0);
     Verification->SetBoolField(TEXT("payloadHeaderRead"), bReadPayloadHeader);
 
@@ -425,12 +481,293 @@ REGISTER_RPC_HANDLER("audio.authoring.create_sound_wave_from_pcm", "audio.author
                                  "asset exists; its contents are not what was requested.%s"),
                 *AssetPath, Source.NumFrames(), Decoded.NumFrames(),
                 Source.SampleRate, Decoded.SampleRate,
-                PwExportChannels, bReadPayloadHeader ? static_cast<int32>(PayloadChannels) : 0,
+                SourceChannels, bReadPayloadHeader ? static_cast<int32>(PayloadChannels) : 0,
                 *PropertyClause),
             Result);
         return true;
     }
 
     Ctx.SendSuccess(Result);
+    return true;
+}
+
+// Tick-unsafe for the reasons audio.authoring.create_sound_wave_from_pcm is listed in
+// Dispatch/SafePoint.cpp: the same writer, the same in-place rewrite and save, plus the decode
+// before and after.
+REGISTER_RPC_HANDLER_TICK_UNSAFE("audio.authoring.set_sound_wave_gain", "audio.authoring",
+    "Rescale an existing USoundWave's PCM in place to a peak (dBFS) or integrated-loudness (LUFS) target. One gain is applied to every channel, so the channel count, the stereo image and every non-payload property (SoundClass, attenuation, looping, volume and the rest) plus the cue points and timecode are left exactly as they were - the safe route for a loudness fix, where re-exporting through an audio.synth `sample` layer collapses the wave to mono. Verified by decoding the rewritten asset back: the measured level must land within toleranceDb of the target, each channel must have moved by the same gain, and verification.propertiesPreserved must hold, or the call fails with VERIFICATION_FAILED. A target that would push the peak past full scale is refused before anything is written, with the highest reachable target in the error payload. LUFS figures use audio.analysis' convention (a mono wave is measured as dual-mono), so a target read off audio.analysis.analyze means the same thing here.",
+    RPC_PARAMS(
+        RPC_PARAM_REQ("assetPath", "path", "USoundWave to rescale, under /Game, e.g. /Game/Audio/SW_Impact."),
+        RPC_PARAM_REQ("mode", "string", "What `target` measures: 'peak' (sample peak, dBFS) or 'lufs' (gated BS.1770 integrated loudness). Required: -16 dBFS and -16 LUFS are different requests. lufs needs about 0.5 s of audio."),
+        RPC_PARAM_REQ("target", "number", "Level to reach, in the unit `mode` names. A peak target must be <= 0 dBFS."),
+        RPC_PARAM_DEF("save", "boolean", "Write the .uasset to disk. false marks the package dirty only, and the response reports saved:false / pendingFlush:true.", "true")
+    ))
+{
+    using namespace PwSoundWavePcmHandlerInternal;
+
+    FString RawPath;
+    if (!Ctx.RequireAssetPath(TEXT("assetPath"), RawPath)) return true;
+    FString Mode;
+    if (!Ctx.RequireString(TEXT("mode"), Mode)) return true;
+    double Target = 0.0;
+    if (!Ctx.RequireNumber(TEXT("target"), Target)) return true;
+
+    const bool bPeakMode = Mode.Equals(TEXT("peak"), ESearchCase::IgnoreCase);
+    if (!bPeakMode && !Mode.Equals(TEXT("lufs"), ESearchCase::IgnoreCase))
+    {
+        Ctx.SendError(ErrorCodes::ERR_INVALID_ARGUMENT,
+            FString::Printf(TEXT("mode='%s'; pass 'peak' or 'lufs'."), *Mode));
+        return true;
+    }
+    if (!FMath::IsFinite(Target) || (bPeakMode && Target > 0.0))
+    {
+        Ctx.SendError(ErrorCodes::ERR_INVALID_ARGUMENT,
+            FString::Printf(TEXT("target=%g is not a reachable %s level%s."), Target,
+                bPeakMode ? TEXT("peak") : TEXT("loudness"),
+                bPeakMode ? TEXT(": a sample peak above 0 dBFS clips") : TEXT("")));
+        return true;
+    }
+
+    FString ObjectPath;
+    FString PathError;
+    if (!NormalizeToObjectPath(RawPath, ObjectPath, PathError))
+    {
+        Ctx.SendError(ErrorCodes::ERR_INVALID_PATH, PathError);
+        return true;
+    }
+
+    USoundWave* Wave =
+        Cast<USoundWave>(StaticLoadObject(USoundWave::StaticClass(), nullptr, *ObjectPath));
+    if (!Wave)
+    {
+        Ctx.SendError(ErrorCodes::ERR_ASSET_NOT_FOUND,
+            FString::Printf(TEXT("No USoundWave at '%s'."), *ObjectPath));
+        return true;
+    }
+    // Exact class: a procedural wave or source bus owns no stored PCM, and the writer's in-place
+    // path is only defined for a plain USoundWave.
+    if (Wave->GetClass() != USoundWave::StaticClass())
+    {
+        Ctx.SendError(ErrorCodes::ERR_AUDIO_PROCEDURAL_UNSUPPORTED,
+            FString::Printf(TEXT("'%s' is a %s, which carries no stored samples to rescale."),
+                *ObjectPath, *Wave->GetClass()->GetName()));
+        return true;
+    }
+
+    const FString PackageName = Wave->GetOutermost()->GetName();
+    const FString Folder = FPackageName::GetLongPackagePath(PackageName);
+    const FString Name = Wave->GetName();
+    if (!Folder.Equals(TEXT("/Game")) && !Folder.StartsWith(TEXT("/Game/")))
+    {
+        Ctx.SendError(ErrorCodes::ERR_INVALID_PATH,
+            FString::Printf(TEXT("'%s' is outside /Game; the SoundWave writer only reaches /Game "
+                                 "content."), *ObjectPath));
+        return true;
+    }
+
+    // Channel count off the payload header: the decoded buffer cannot carry it (mono duplicates
+    // into both sides), and writing back at any other width would be the image change this verb
+    // exists not to make.
+    TArray<uint8> HeaderPcm;
+    uint32 HeaderRate = 0;
+    uint16 HeaderChannels = 0;
+    FPwAudioBuffer Buffer;
+    FString DecodeCode;
+    FString DecodeError;
+    if (!PwDecodeSoundWaveWithCode(Wave, Buffer, DecodeCode, DecodeError) ||
+        !Wave->GetImportedSoundWaveData(HeaderPcm, HeaderRate, HeaderChannels))
+    {
+        Ctx.SendError(DecodeCode.IsEmpty() ? FString(ErrorCodes::ERR_AUDIO_UNSUPPORTED_FORMAT)
+                                           : DecodeCode,
+            DecodeError.IsEmpty()
+                ? FString::Printf(TEXT("'%s' has no readable payload header."), *ObjectPath)
+                : DecodeError);
+        return true;
+    }
+    HeaderPcm.Empty();
+    const int32 Channels = static_cast<int32>(HeaderChannels);
+
+    FString LufsCode;
+    FString LufsError;
+    const FPwLevelReading Before = ReadLevel(Buffer, LufsCode, LufsError);
+    if (Before.PeakLinear <= 0.0)
+    {
+        Ctx.SendError(ErrorCodes::ERR_AUDIO_EMPTY_BUFFER,
+            FString::Printf(TEXT("'%s' is digitally silent; no finite gain reaches a target."),
+                *ObjectPath));
+        return true;
+    }
+    if (!bPeakMode && !Before.bLufsMeasured)
+    {
+        Ctx.SendError(LufsCode.IsEmpty() ? FString(ErrorCodes::ERR_INVALID_ARGUMENT) : LufsCode,
+            FString::Printf(TEXT("The loudness of '%s' could not be measured, so a LUFS target "
+                                 "cannot be applied (use mode 'peak'): %s"), *ObjectPath, *LufsError));
+        return true;
+    }
+
+    const double MeasuredDb = bPeakMode ? LinearToDbOrFloor(Before.PeakLinear) : Before.IntegratedLufs;
+    const double GainDb = Target - MeasuredDb;
+    const double GainLinear = FMath::Pow(10.0, GainDb / 20.0);
+
+    // Refused, never clamped: a clamp would change the waveform, not only its level. Only a lufs
+    // target can get here - a peak target <= 0 dBFS lands at or below 1.0 - and the slack keeps
+    // a 0 dBFS peak target from being refused over the last bit of a double.
+    const double ResultingPeak = Before.PeakLinear * GainLinear;
+    if (ResultingPeak > 1.0 + 1.0e-9)
+    {
+        const double MaxTarget = Target - LinearToDbOrFloor(ResultingPeak);
+        TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
+        Data->SetStringField(TEXT("assetPath"), ObjectPath);
+        Data->SetObjectField(TEXT("before"), LevelToJson(Before));
+        Data->SetNumberField(TEXT("gainDb"), GainDb);
+        Data->SetNumberField(TEXT("resultingPeakDb"), LinearToDbOrFloor(ResultingPeak));
+        Data->SetNumberField(TEXT("maxTarget"), MaxTarget);
+        Ctx.SendError(ErrorCodes::ERR_INVALID_ARGUMENT,
+            FString::Printf(TEXT("Reaching %.2f LUFS needs %+.2f dB, which puts the peak at %+.2f "
+                                 "dBFS and would clip. The highest reachable target is %.2f LUFS; "
+                                 "nothing was written."),
+                Target, GainDb, LinearToDbOrFloor(ResultingPeak), MaxTarget),
+            Data);
+        return true;
+    }
+
+    for (float& Sample : Buffer.Left)
+    {
+        Sample = static_cast<float>(Sample * GainLinear);
+    }
+    for (float& Sample : Buffer.Right)
+    {
+        Sample = static_cast<float>(Sample * GainLinear);
+    }
+
+    // The policy decides, even though the occupant is the very wave just loaded: it is what keeps
+    // every write path in this subsystem free of a modal overwrite prompt.
+    const AssetCreatePolicy::FResolution Resolution = AssetCreatePolicy::Resolve(
+        PackageName, Name, USoundWave::StaticClass(), /*bOverwriteRequested=*/false,
+        /*bRequireExactClass=*/true);
+    if (Resolution.IsRejected())
+    {
+        return AssetCreatePolicy::SendRejection(Ctx, Resolution);
+    }
+
+    const bool bSave = Ctx.GetBool(TEXT("save"), true);
+    FString ExportError;
+    FPwSoundWaveWriteReport WriteReport;
+    // Same frames, same rate: cue points, timecode and the imported rate still describe this
+    // audio, so they are kept - and then diffed with every other authored property.
+    USoundWave* Written = PwCreateSoundWaveAsset(
+        Buffer, Folder, Name, bSave, WriteReport, ExportError, Channels,
+        /*bKeepSourceMarkers=*/true);
+    if (!Written)
+    {
+        Ctx.SendError(ErrorCodes::ERR_CREATION_FAILED, ExportError);
+        return true;
+    }
+
+    // ---------------------------------------------------------------------------
+    // Verification: decode the rewritten asset and measure it again. The level is
+    // compared with the TARGET, and each side's RMS with the side it came from, so a
+    // wrong gain, a collapsed image and a changed width all fail independently.
+    // ---------------------------------------------------------------------------
+    FPwAudioBuffer Decoded;
+    TArray<uint8> AfterPcm;
+    uint32 AfterRate = 0;
+    uint16 AfterChannels = 0;
+    const bool bDecoded = PwDecodeSoundWaveWithCode(Written, Decoded, DecodeCode, DecodeError) &&
+        Written->GetImportedSoundWaveData(AfterPcm, AfterRate, AfterChannels);
+    AfterPcm.Empty();
+
+    TSharedPtr<FJsonObject> Verification = MakeShared<FJsonObject>();
+    Verification->SetBoolField(TEXT("measured"), bDecoded);
+    Verification->SetStringField(TEXT("method"),
+        TEXT("decoded back through USoundWave::GetImportedSoundWaveData and re-measured"));
+    Verification->SetNumberField(TEXT("toleranceDb"), PwGainToleranceDb);
+
+    FPwLevelReading After;
+    bool bVerified = false;
+    if (bDecoded)
+    {
+        After = ReadLevel(Decoded, LufsCode, LufsError);
+        const double AchievedDb = bPeakMode ? LinearToDbOrFloor(After.PeakLinear)
+                                            : After.IntegratedLufs;
+        const bool bLevelMeasured = bPeakMode || After.bLufsMeasured;
+        const bool bOnTarget = bLevelMeasured && FMath::Abs(AchievedDb - Target) <= PwGainToleranceDb;
+
+        // Per-side gain, measured: equal on both sides is what "the image was left alone" means.
+        // A silent side has no gain to measure and is not held against the call.
+        const auto SideGainDb = [](double BeforeRms, double AfterRms)
+        {
+            return (BeforeRms > 0.0 && AfterRms > 0.0)
+                ? 20.0 * FMath::LogX(10.0, AfterRms / BeforeRms) : 0.0;
+        };
+        const double LeftGainDb = SideGainDb(Before.LeftRms, After.LeftRms);
+        const double RightGainDb = SideGainDb(Before.RightRms, After.RightRms);
+        const bool bLeftOk = Before.LeftRms <= 0.0 || FMath::Abs(LeftGainDb - GainDb) <= PwGainToleranceDb;
+        const bool bRightOk = Before.RightRms <= 0.0 || FMath::Abs(RightGainDb - GainDb) <= PwGainToleranceDb;
+
+        const bool bFramesMatch = Decoded.NumFrames() == Buffer.NumFrames();
+        const bool bChannelsMatch = static_cast<int32>(AfterChannels) == Channels;
+        const bool bPropertiesPreserved = WriteReport.ChangedProperties.Num() == 0;
+
+        if (bLevelMeasured)
+        {
+            Verification->SetNumberField(TEXT("achieved"), AchievedDb);
+        }
+        Verification->SetBoolField(TEXT("onTarget"), bOnTarget);
+        Verification->SetNumberField(TEXT("leftGainDb"), LeftGainDb);
+        Verification->SetNumberField(TEXT("rightGainDb"), RightGainDb);
+        Verification->SetBoolField(TEXT("imagePreserved"), bLeftOk && bRightOk);
+        Verification->SetBoolField(TEXT("framesMatch"), bFramesMatch);
+        Verification->SetBoolField(TEXT("channelsMatch"), bChannelsMatch);
+        bVerified = bOnTarget && bLeftOk && bRightOk && bFramesMatch && bChannelsMatch &&
+            bPropertiesPreserved;
+    }
+    else
+    {
+        Verification->SetStringField(TEXT("errorCode"), DecodeCode);
+        Verification->SetStringField(TEXT("error"), DecodeError);
+    }
+    Verification->SetBoolField(TEXT("pass"), bVerified);
+
+    TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+    Result->SetStringField(TEXT("mode"), bPeakMode ? TEXT("peak") : TEXT("lufs"));
+    Result->SetNumberField(TEXT("target"), Target);
+    Result->SetNumberField(TEXT("gainDb"), GainDb);
+    Result->SetNumberField(TEXT("channels"), Channels);
+    Result->SetNumberField(TEXT("frames"), Buffer.NumFrames());
+    Result->SetObjectField(TEXT("before"), LevelToJson(Before));
+    if (bDecoded)
+    {
+        Result->SetObjectField(TEXT("after"), LevelToJson(After));
+    }
+    Result->SetObjectField(TEXT("verification"), Verification);
+    PwAddSoundWaveWriteReport(Result, Verification, WriteReport);
+    if (bSave)
+    {
+        AddAssetSaveReport(Result, /*bSaveRequested=*/true, WriteReport.bSavedToDisk);
+    }
+    else
+    {
+        AddMarkDirtySaveReport(Result, Written, /*bSaveRequested=*/false);
+    }
+    AddAssetVerification(Result, Written);
+    // After AddAssetVerification, which writes the bare package path under the same key.
+    Result->SetStringField(TEXT("assetPath"), Written->GetPathName());
+
+    if (!bVerified)
+    {
+        // A decode-back that failed outright carries the decoder's own code, as in
+        // audio.synth.export and audio.synth.render_metasound.
+        Ctx.SendError((bDecoded || DecodeCode.IsEmpty())
+                ? FString(ErrorCodes::ERR_VERIFICATION_FAILED) : DecodeCode,
+            FString::Printf(TEXT("'%s' was rewritten but does not verify (see verification): the "
+                                 "level, the per-channel gain, the width or a non-payload property "
+                                 "is not what was requested."), *Written->GetPathName()),
+            Result);
+        return true;
+    }
+
+    Ctx.SendSuccess(FString::Printf(TEXT("Applied %+.2f dB to %s (%d ch)."),
+        GainDb, *Written->GetPathName(), Channels), Result);
     return true;
 }

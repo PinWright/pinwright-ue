@@ -44,6 +44,14 @@
 #include "MetasoundFrontendLiteral.h"
 #include "MetasoundSource.h"
 
+#include "Dom/JsonObject.h"
+#include "Misc/ScopeExit.h"
+#include "Sound/SoundAttenuation.h"
+#include "Sound/SoundClass.h"
+#include "Sound/SoundWave.h"
+#include "Tests/TestAssetTeardown.h"
+#include "Tests/TestUtils.h"
+
 // Named (not anonymous) namespace: the main module builds with Unity on, and two anonymous
 // namespaces merged into one TU collide by name. See CLAUDE.md > Building.
 namespace PwMetaSoundRenderTestFixture
@@ -582,6 +590,138 @@ bool FPwMetaSoundRenderRangeGuardTest::RunTest(const FString& Parameters)
         TestEqual(TEXT("an under-floor sample rate reports INVALID_PARAMS"), Code,
             FString(ErrorCodes::ERR_INVALID_PARAMS));
     }
+
+    return true;
+}
+
+// =================================================================================================
+// audio.synth.render_metasound's optional asset write publishes the shared writer's report: the
+// routing block on every write, and on an in-place rewrite the measured property diff folded into
+// the verdict (board B-render-metasound-drops-write-report). Driven through the handler, because
+// the contract is the response - the writer filling the report was never the gap.
+// =================================================================================================
+
+namespace PwRenderMetaSoundWriteReportTest
+{
+    TSharedPtr<FJsonObject> Child(const TSharedPtr<FJsonObject>& Parent, const TCHAR* Key)
+    {
+        const TSharedPtr<FJsonObject>* Out = nullptr;
+        return (Parent.IsValid() && Parent->TryGetObjectField(Key, Out) && Out) ? *Out : nullptr;
+    }
+
+    FString Str(const TSharedPtr<FJsonObject>& Object, const TCHAR* Key)
+    {
+        FString Out;
+        if (Object.IsValid())
+        {
+            Object->TryGetStringField(Key, Out);
+        }
+        return Out;
+    }
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPwRenderMetaSoundWriteReportTest,
+    "PinWright.audio.synth.render_metasound.InPlaceRewritePublishesWriteReport",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FPwRenderMetaSoundWriteReportTest::RunTest(const FString& Parameters)
+{
+    using namespace PwMetaSoundRenderTestFixture;
+    using namespace PwRenderMetaSoundWriteReportTest;
+
+    FString SkipReason;
+    UMetaSoundSource* Source = BuildSineSource(SkipReason);
+    if (!Source)
+    {
+        PinWrightTestSkip::SkipAssertions(*this, TEXT("metasound-fixture-unbuildable"), SkipReason);
+        return true;
+    }
+    FScopedFixtureSource Scoped(Source);
+
+    const FString Folder = TEXT("/Game/PinWrightTests");
+    const FString AssetName = FString::Printf(TEXT("SW_RenderWriteReport_%s"),
+        *FGuid::NewGuid().ToString(EGuidFormats::Digits));
+    const FString ObjectPath = FString::Printf(TEXT("%s/%s.%s"), *Folder, *AssetName, *AssetName);
+    ON_SCOPE_EXIT
+    {
+        PwTestAssetTeardown::DiscardCreatedAssetByObjectPath(ObjectPath);
+    };
+
+    const auto Render = [&](FTestResponseCapture& Capture)
+    {
+        TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+        Payload->SetStringField(TEXT("assetPath"), Source->GetPathName());
+        Payload->SetNumberField(TEXT("durationSeconds"), 0.05);
+        Payload->SetBoolField(TEXT("analyze"), false);
+        Payload->SetStringField(TEXT("name"), AssetName);
+        Payload->SetStringField(TEXT("path"), Folder);
+        // save:false throughout: the suite must not write .uasset files into the host project.
+        Payload->SetBoolField(TEXT("save"), false);
+        return InvokeHandlerWithCapture(TEXT("audio.synth.render_metasound"), Payload, Capture);
+    };
+
+    FTestResponseCapture Created;
+    TestTrue(TEXT("handler registered"), Render(Created));
+    if (Created.ErrorCode == ErrorCodes::ERR_METASOUND_NOT_AVAILABLE)
+    {
+        PinWrightTestSkip::SkipAssertions(*this, TEXT("metasound-fixture-unbuildable"),
+            TEXT("render_metasound is compiled out on this engine (no MetaSound document gate)"));
+        return true;
+    }
+    TestTrue(FString::Printf(TEXT("the first render+write succeeded (code='%s', message='%s')"),
+        *Created.ErrorCode, *Created.Message), Created.bSuccess);
+    if (!Created.bSuccess)
+    {
+        return false;
+    }
+
+    // A create carries no routing, and the response has to say so rather than say nothing.
+    const TSharedPtr<FJsonObject> CreatedAsset = Child(Created.Result, TEXT("asset"));
+    const TSharedPtr<FJsonObject> CreatedRouting = Child(CreatedAsset, TEXT("routing"));
+    TestTrue(TEXT("a create publishes asset.routing"), CreatedRouting.IsValid());
+    TestEqual(TEXT("a freshly created wave reports no sound class"),
+        Str(CreatedRouting, TEXT("soundClass")), FString());
+    TestFalse(TEXT("a create claims no preservation - there was nothing to preserve"),
+        Child(CreatedAsset, TEXT("verification")).IsValid() &&
+        Child(CreatedAsset, TEXT("verification"))->HasField(TEXT("propertiesPreserved")));
+
+    USoundWave* Wave = Cast<USoundWave>(
+        StaticFindObject(UObject::StaticClass(), nullptr, *ObjectPath));
+    if (!Wave)
+    {
+        AddError(FString::Printf(TEXT("the written wave did not resolve at '%s'"), *ObjectPath));
+        return false;
+    }
+
+    // Transient outers: nothing is saved, and the wave keeps both alive through its UPROPERTYs.
+    USoundClass* SoundClass = NewObject<USoundClass>(GetTransientPackage());
+    USoundAttenuation* Attenuation = NewObject<USoundAttenuation>(GetTransientPackage());
+    Wave->SoundClassObject = SoundClass;
+    Wave->AttenuationSettings = Attenuation;
+
+    FTestResponseCapture Rewritten;
+    Render(Rewritten);
+    TestTrue(FString::Printf(TEXT("the re-render over the same wave succeeded (code='%s')"),
+        *Rewritten.ErrorCode), Rewritten.bSuccess);
+
+    const TSharedPtr<FJsonObject> Asset = Child(Rewritten.Result, TEXT("asset"));
+    TestEqual(TEXT("the re-render took the in-place path"),
+        Str(Asset, TEXT("mode")), FString(TEXT("updated_in_place")));
+
+    const TSharedPtr<FJsonObject> Routing = Child(Asset, TEXT("routing"));
+    TestEqual(TEXT("asset.routing reports the sound class that survived the rewrite"),
+        Str(Routing, TEXT("soundClass")), SoundClass->GetPathName());
+    TestEqual(TEXT("asset.routing reports the attenuation that survived the rewrite"),
+        Str(Routing, TEXT("attenuationSettings")), Attenuation->GetPathName());
+
+    const TSharedPtr<FJsonObject> Verification = Child(Asset, TEXT("verification"));
+    bool bPreserved = false;
+    TestTrue(TEXT("asset.verification publishes propertiesPreserved on a rewrite"),
+        Verification.IsValid() && Verification->TryGetBoolField(TEXT("propertiesPreserved"), bPreserved));
+    TestTrue(TEXT("every non-payload property was preserved"), bPreserved);
+    bool bPass = false;
+    TestTrue(TEXT("the rewrite verified"),
+        Verification.IsValid() && Verification->TryGetBoolField(TEXT("pass"), bPass) && bPass);
 
     return true;
 }

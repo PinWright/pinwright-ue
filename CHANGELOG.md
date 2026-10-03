@@ -131,6 +131,23 @@
 - Added: `material.authoring.get_material_instance_info` and `asset.dump`'s `material_instance.json`
   carry `orphanedOverrides` (per type, the overrides whose parameter the instance's declared set no
   longer holds) and `orphanedOverrideCount`. `material_instance.json` aspect version 2 -> 3.
+- Added: `audio.authoring.set_sound_wave_gain {assetPath, mode: "peak"|"lufs", target}` rescales an
+  existing USoundWave's PCM in place with one gain for every channel, so a loudness fix no longer has
+  to go through an `audio.synth` `sample` layer, which collapses a stereo wave to mono. Verified by
+  decode-back: level on target, equal per-channel gain, channel count, cue points, timecode and every
+  non-payload property unchanged. A target that would clip is refused with `maxTarget` in the error
+  payload.
+- Added: `audio.synth.export` takes `channels: 1` to write a mono wave (mean of the two sides, exact
+  for a pan-0 recipe; `downmix.sourceChannelsIdentical` says which).
+- Fixed: `audio.authoring.create_sound_wave_from_pcm` honours `channels: 1`. **Behaviour change:** a
+  mono input now creates a 1-channel wave (`channels: 1`); it used to be duplicated into a 2-channel
+  payload.
+- Fixed: `audio.synth.render_metasound`'s asset write publishes `asset.routing` and, on an in-place
+  rewrite, `asset.verification.propertiesPreserved` / `changedProperties`. **Behaviour change:** a
+  write that does not verify now fails the call with `VERIFICATION_FAILED` (the decoder's own code
+  when the wave cannot be decoded back), carrying the result and the resident `candidateId`; it used
+  to succeed beside `verification.pass: false`. `audio.music.export_stems` reports
+  `routing.withoutSoundClass` / `routing.withoutAttenuation` counts.
 - Added: `audio.synth.get_recipe {candidateId}` returns a resident candidate's canonical recipe (the
   document `audio.synth.patch` pointers address) plus its `recipeDigest`; recipe-less candidates
   (`render_metasound`, `audio.music`) are refused with `UNSUPPORTED_OPERATION`. Patch's

@@ -545,6 +545,12 @@ REGISTER_RPC_HANDLER("audio.synth.render_metasound", "audio.synth",
         Verification->SetStringField(TEXT("method"),
             TEXT("decoded back through USoundWave::GetImportedSoundWaveData (PwDecodeSoundWave), "
                  "a different subsystem from the writer"));
+        // An in-place rewrite that moved a property the payload does not own fails the write the
+        // way it fails audio.synth.export: the audio can be exact and the wave still have lost its
+        // SoundClass or attenuation, which no frames/rate check can see
+        // (board B-render-metasound-drops-write-report).
+        const bool bPropertiesPreserved = WriteReport.ChangedProperties.Num() == 0;
+        bool bVerified = false;
         if (bDecoded)
         {
             const bool bFramesMatch = Decoded.NumFrames() == Rendered.NumFrames();
@@ -553,15 +559,18 @@ REGISTER_RPC_HANDLER("audio.synth.render_metasound", "audio.synth",
             Verification->SetBoolField(TEXT("sampleRateMatch"), bRateMatch);
             Verification->SetNumberField(TEXT("sourceFrames"), Rendered.NumFrames());
             Verification->SetNumberField(TEXT("decodedFrames"), Decoded.NumFrames());
-            Verification->SetBoolField(TEXT("pass"), bFramesMatch && bRateMatch);
+            bVerified = bFramesMatch && bRateMatch && bPropertiesPreserved;
         }
         else
         {
             Verification->SetStringField(TEXT("errorCode"), DecodeCode);
             Verification->SetStringField(TEXT("error"), DecodeError);
-            Verification->SetBoolField(TEXT("pass"), false);
         }
+        Verification->SetBoolField(TEXT("pass"), bVerified);
         AssetBlock->SetObjectField(TEXT("verification"), Verification);
+        // asset.routing + asset.verification.propertiesPreserved: the same report the sibling
+        // writers publish, namespaced under `asset` like the rest of this verb's write.
+        PwAddSoundWaveWriteReport(AssetBlock, Verification, WriteReport);
 
         // The same {saveRequested, saved, pendingFlush} triple both save families emit, so a
         // caller never has to know which one ran (§5).
@@ -578,12 +587,33 @@ REGISTER_RPC_HANDLER("audio.synth.render_metasound", "audio.synth",
         AssetBlock->SetStringField(TEXT("assetPath"), WavePath);
         Result->SetObjectField(TEXT("asset"), AssetBlock);
 
+        if (!bVerified)
+        {
+            // The render is resident either way, so the failure carries the candidate id and the
+            // caller retries the WRITE, not the render.
+            const FString PropertyClause = bPropertiesPreserved
+                ? FString()
+                : FString::Printf(
+                    TEXT(" The rewrite changed %d propert%s the payload does not own (%s); see "
+                         "asset.verification.changedProperties."),
+                    WriteReport.ChangedProperties.Num(),
+                    WriteReport.ChangedProperties.Num() == 1 ? TEXT("y") : TEXT("ies"),
+                    *FString::JoinBy(WriteReport.ChangedProperties, TEXT(", "),
+                        [](const FName& PropertyName) { return PropertyName.ToString(); }));
+            Ctx.SendError((bDecoded || DecodeCode.IsEmpty())
+                    ? FString(ErrorCodes::ERR_VERIFICATION_FAILED) : DecodeCode,
+                FString::Printf(TEXT("'%s' was written but did not verify: %s%s"), *WavePath,
+                    bDecoded ? TEXT("the decode-back disagrees with the render.")
+                             : *FString::Printf(TEXT("it could not be decoded back (%s)."),
+                                   *DecodeError),
+                    *PropertyClause),
+                Result);
+            return true;
+        }
+
         // Recorded on the candidate only after the round trip held, so list_candidates cannot
         // show an export that did not verify.
-        if (bDecoded && Verification->GetBoolField(TEXT("pass")))
-        {
-            Registry.SetExportedAssetPath(CandidateId, WavePath);
-        }
+        Registry.SetExportedAssetPath(CandidateId, WavePath);
     }
 
     Result->SetObjectField(TEXT("registry"),

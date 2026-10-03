@@ -1385,6 +1385,8 @@ REGISTER_RPC_HANDLER("audio.music.export_stems", "audio.music",
         int32 NumFailed = 0;
         int32 NumSavedToDisk = 0;
         int32 NumUpdatedInPlace = 0;
+        int32 NumWithoutSoundClass = 0;
+        int32 NumWithoutAttenuation = 0;
 
         for (const FResolvedStemExport& Stem : Resolved)
         {
@@ -1432,6 +1434,11 @@ REGISTER_RPC_HANDLER("audio.music.export_stems", "audio.music",
                 continue;
             }
             NumSavedToDisk += WriteReport.bSavedToDisk ? 1 : 0;
+            // PW_SOUNDWAVE_WRITE_REPORT_BY_HAND: this verb writes up to 16 rows, so the report is
+            // published as aggregates - routing counts on the result, a non-empty property diff as a
+            // failed row below - rather than as PwAddSoundWaveWriteReport's per-call blocks.
+            NumWithoutSoundClass += WriteReport.SoundClassPath.IsEmpty() ? 1 : 0;
+            NumWithoutAttenuation += WriteReport.AttenuationPath.IsEmpty() ? 1 : 0;
 
             const FString AssetPath = Wave->GetPathName();
             Row->SetStringField(TEXT("assetPath"), AssetPath);
@@ -1518,6 +1525,13 @@ REGISTER_RPC_HANDLER("audio.music.export_stems", "audio.music",
         Result->SetNumberField(TEXT("exported"), NumExported);
         Result->SetNumberField(TEXT("failed"), NumFailed);
         Result->SetNumberField(TEXT("updatedInPlace"), NumUpdatedInPlace);
+        // Counted over every stem the writer reached, read off the wave after the write. A stem with
+        // no SoundClass escapes every SoundMix and class volume; music is usually 2D, so a missing
+        // attenuation may be intended - both are counted, neither is a failure.
+        TSharedPtr<FJsonObject> Routing = MakeShared<FJsonObject>();
+        Routing->SetNumberField(TEXT("withoutSoundClass"), NumWithoutSoundClass);
+        Routing->SetNumberField(TEXT("withoutAttenuation"), NumWithoutAttenuation);
+        Result->SetObjectField(TEXT("routing"), Routing);
         Result->SetArrayField(TEXT("stems"), Rows);
 
         // The same {saveRequested, saved, pendingFlush} triple both save families emit, aggregated:
