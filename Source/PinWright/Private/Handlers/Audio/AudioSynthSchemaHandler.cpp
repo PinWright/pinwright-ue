@@ -341,18 +341,6 @@ namespace PwSynthSchemaHandler
     // growing slightly between the packing measurement and the final emit.
     constexpr int32 PageOverheadReserve = 512;
 
-    int32 MeasureChars(const TSharedPtr<FJsonObject>& Object)
-    {
-        FString Text;
-        // Same writer policy the transport serializes responses with
-        // (JsonRpc::Serialize / HttpResponseSpill both use TJsonWriterFactory<>),
-        // so this measures the bytes the spill gate will measure, not a proxy.
-        const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Text);
-        FJsonSerializer::Serialize(Object.ToSharedRef(), Writer);
-        Writer->Close();
-        return Text.Len();
-    }
-
     // Greedily packs kinds into pages by SERIALIZING each trial page and stopping
     // before the inline budget, rather than assuming a per-kind average. That
     // makes the page size self-tuning: a wave-2 agent adding DSP parameters
@@ -376,7 +364,8 @@ namespace PwSynthSchemaHandler
             {
                 Entries.Add(MakeShared<FJsonValueObject>(KindToJson(*Kinds[Index + Count])));
                 Result->SetArrayField(FieldName, Entries);
-                if (Count > 0 && MeasureChars(Result) > Budget)
+                // The gate's own measurement, so pages pack against the real gate, not a proxy.
+                if (Count > 0 && HttpResponseSpill::MeasureInlineCharacters(Result.ToSharedRef()) > Budget)
                 {
                     Entries.Pop();
                     break;

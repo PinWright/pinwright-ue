@@ -22,7 +22,6 @@
 #include "Handlers/HandlerRegistration.h"
 #include "Handlers/HandlerContext.h"
 #include "Utils/HttpResponseSpill.h"
-#include "Policies/CondensedJsonPrintPolicy.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
 #include "Handlers/ErrorCodes.h"
@@ -245,11 +244,8 @@ int32 ModelHandler_DefaultDiagnosticLimit()
 // from the end of ModelHandler_ResultToJson, which is the one point where the body is complete
 // and the diagnostics are not yet in it.
 //
-// CONDENSED, because that is what the gate counts: HttpResponseSpill measures one condensed copy
-// of `structuredContent`. This is the one place that rule is restated rather than called, since
-// the gate exports only its threshold and its decision, not its measurement - so if the two ever
-// diverge, they diverge in the safe direction only while the gate counts no MORE than this does.
-// Exporting the measurement would remove the restatement; that is the follow-up.
+// Measured with HttpResponseSpill::MeasureInlineCharacters - the gate's own measurement (one
+// condensed copy of `structuredContent`), so this cannot drift from what the gate counts.
 //
 // An explicit `diagnosticLimit` is never fitted. A caller who names a number gets that number,
 // including 0 for "everything", and the spill path is what handles the consequences - the whole
@@ -261,14 +257,9 @@ int32 ModelHandler_FitDiagnosticLimit(const TSharedPtr<FJsonObject>& Body)
         return ModelHandler_DefaultDiagnosticLimit();
     }
 
-    FString Condensed;
-    const TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
-        TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Condensed);
-    FJsonSerializer::Serialize(Body.ToSharedRef(), Writer);
-    Writer->Close();
-
     const int32 Budget = HttpResponseSpill::GetDefaultThresholdCharacters();
-    const int32 Remaining = Budget - Condensed.Len() - ModelHandler_OutcomeTailCharacters;
+    const int32 Remaining = Budget - HttpResponseSpill::MeasureInlineCharacters(Body.ToSharedRef())
+        - ModelHandler_OutcomeTailCharacters;
 
     // One entry minimum, for the same reason as above: 0 means "print everything". A body that
     // has already eaten the whole budget still gets its first diagnostic printed and then spills,

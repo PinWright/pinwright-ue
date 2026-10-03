@@ -10,6 +10,15 @@ namespace HttpResponseSpill
 {
     PINWRIGHT_API const TCHAR* GetInternalSkipParamName();
     PINWRIGHT_API int32 GetDefaultThresholdCharacters();
+
+    // THE number a handler budgets against GetDefaultThresholdCharacters(): the size the
+    // tools/call gate (MarkOversizedToolResult) measures for a success result whose
+    // structuredContent is `Result` - one condensed copy, the same string the wire carries.
+    // Not the wrapped ToolResult (that carries the payload twice) and not a pretty print
+    // (TJsonWriterFactory<> defaults to TPrettyJsonPrintPolicy, which the wire never emits).
+    // A handler that sizes or paginates its own response measures with this, so it packs
+    // against the real gate instead of a proxy for it.
+    PINWRIGHT_API int32 MeasureInlineCharacters(const TSharedRef<FJsonObject>& Result);
     PINWRIGHT_API int32 ClampThresholdCharacters(int32 ThresholdCharacters);
 
     PINWRIGHT_API bool ShouldSkipHttpResponseSpill(
@@ -38,8 +47,9 @@ namespace HttpResponseSpill
         bool bSkipSpill);
 
     // For MCP `tools/call` success results, which bypass the envelope-level spill:
-    // if the wrapped ToolResult serializes larger than the threshold, spill the
-    // full payload to a file and rewrite it in place so content[0].text becomes a
+    // if the reader-facing payload - MeasureInlineCharacters(structuredContent), or
+    // the summed text blocks when there is no structuredContent - is larger than the
+    // threshold, spill the full payload to a file and rewrite it in place so content[0].text becomes a
     // short "Response exceeds display limit" notice and structuredContent carries
     // {outputTooLong:true, message, file:{path,...}}. No-op when within threshold.
     // The file holds the payload itself - the `structuredContent` object at the

@@ -65,10 +65,11 @@
 // -------------------------------------------------------------------------------------------
 // RESPONSE SIZE
 // -------------------------------------------------------------------------------------------
-// The wrapped MCP ToolResult carries the payload twice - escaped in content[0].text and verbatim
-// in structuredContent - so the real ceiling for a bare result is about 4,250 characters, not the
-// 10,000 the spill constant suggests (board ticket E-spill-threshold-measured-post-wrap). Every
-// verb here answers in a capped form, the three that have a fuller one behind a `detail` parameter:
+// The spill gate measures ONE condensed copy of the bare result against 10,000 characters
+// (HttpResponseSpill::MeasureInlineCharacters). The caps below were sized when the gate measured
+// the wrapped ToolResult pretty-printed, against an effective ~4,250-character pretty budget
+// (board ticket E-spill-threshold-measured-post-wrap); that budget is kept as a conservative house
+// limit, not because the gate still applies it. Every verb here answers in a capped form, the three that have a fuller one behind a `detail` parameter:
 //   analyze     SerializeAudioAnalysis(..., false)   ~1.6 KB
 //   decompose   SerializeDecomposition(..., false)   ~2.0 KB, capped by the report's own caps
 //   compare     the serializer's full report minus the per-mode and per-band arrays, with the
@@ -76,8 +77,8 @@
 //   to_recipe   the whole draft recipe, with its two audio-scaled lists capped - see
 //               TrimRecipeToDraft, which REPORTS every cut and re-validates what it cut
 //   audit_folder counts, histograms and at most MaxReportedAuditAssets named assets
-// Measurement uses the PRETTY writer the transport actually takes; a condensed measurement
-// understates the budget by roughly 20%. TestAudioAnalysisHandler.cpp holds the gates so growth
+// The house budget is measured with the PRETTY writer, which over-counts the wire's condensed
+// encoding by roughly 20% - stricter than the gate. TestAudioAnalysisHandler.cpp holds the gates so growth
 // trips CI instead of a user's response.
 //
 // Audio never travels inline in either direction. Images leave as file paths plus sizeBytes and
@@ -131,7 +132,7 @@ namespace PwAudioAnalysisHandlerInternal
 
     /**
      * Deviations carried inline by the compare summary. Sized against the ~4,250-character
-     * wrapped ceiling with the pretty writer: one deviation is six fields on six lines, about
+     * pretty house budget (see RESPONSE SIZE): one deviation is six fields on six lines, about
      * 190 characters, and the rest of the summary (two source blocks, six paired scalars, the
      * mode counts, the diagnosis histogram and the truncation block) is about 2,000.
      */
@@ -141,7 +142,7 @@ namespace PwAudioAnalysisHandlerInternal
      * The two lists in a to_recipe draft whose length follows the analysed audio rather than the
      * schema: the modal bank (up to the schema's 32 modes) and the residual contour (up to its 64
      * envelope points). Uncapped, the 250 ms fixture in TestAudioAnalysisHandler.cpp serialized to
-     * 8,595 characters against the ~4,250 ceiling, and both lists grow with the reference's
+     * 8,595 characters against the ~4,250 house budget, and both lists grow with the reference's
      * duration - so the draft spilled to a file exactly when it got interesting.
      *
      * Asymmetric because the two rows cost differently under the pretty writer: a mode is three

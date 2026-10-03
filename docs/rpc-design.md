@@ -725,8 +725,15 @@ not one of them a real overflow. The generalisation: **a threshold on "how much 
 caller" must be applied to the artefact the caller consumes, not to a serialization convenient to
 the code.** And when the gate publishes its number, publish both — `characters` (what was measured)
 beside `fileCharacters` (what is on disk) — because a single number under two meanings is how the
-first one drifted. Corollary that bit twice here: **a constant derived from a measurement factor
-must cite the factor** (`ModelCompileHandler.cpp` sized its diagnostic limit from "about 2.13× its
+first one drifted. **A handler that sizes or paginates its own response measures with
+`HttpResponseSpill::MeasureInlineCharacters(result)` against `GetDefaultThresholdCharacters()`** —
+the gate's own measurement, pinned to it by
+`PinWright.infra.http_response_spill.MeasureInlineCharactersIsTheGateExactly`. A hand-rolled
+`TJsonWriterFactory<>` measure is a pretty print (~20% over the wire), a proxy, which is how
+`audio.synth.describe_schema` and the audio budgets ended up packing against a "~4,250 ceiling"
+the gate had stopped applying (board `E-spill-threshold-measured-post-wrap`).
+Corollary that bit twice here: **a constant derived from a measurement factor must cite the
+factor** (`ModelCompileHandler.cpp` sized its diagnostic limit from "about 2.13× its
 own serialized length", correctly, and is now conservative by a further 2.4× because the factor
 moved underneath it).
 

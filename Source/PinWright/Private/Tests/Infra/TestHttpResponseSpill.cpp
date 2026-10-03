@@ -302,6 +302,78 @@ bool FHttpResponseSpillToolResultMeasuresOneCopyTest::RunTest(const FString& Par
     return true;
 }
 
+// MeasureInlineCharacters is the number a handler budgets against; this pins it to the gate EXACTLY.
+// A payload measured at N stays inline at threshold N and spills at N-1. Fails if the helper drifts
+// from the gate in either direction (a pretty measure over-counts and the N-1 case stays inline; a
+// gate that went back to measuring the wrapper spills at N), which is how handlers ended up sizing
+// against a "~4,250 ceiling" the gate no longer applied (board E-spill-threshold-measured-post-wrap).
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FHttpResponseSpillInlineBudgetIsTheGateTest,
+    "PinWright.infra.http_response_spill.MeasureInlineCharactersIsTheGateExactly",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FHttpResponseSpillInlineBudgetIsTheGateTest::RunTest(const FString& Parameters)
+{
+    const FString Root = MakeSpillTestRoot();
+    HttpResponseSpill::SetHttpResponseSpillRootOverrideForTests(Root);
+    ON_SCOPE_EXIT
+    {
+        HttpResponseSpill::SetHttpResponseSpillRootOverrideForTests(TEXT(""));
+        IFileManager::Get().DeleteDirectory(*Root, /*RequireExists=*/false, /*Tree=*/true);
+    };
+
+    // Nested objects (pretty-print cost) and a string full of quotes and newlines (escape cost), so
+    // both proxies a handler might reach for are measurably larger than the real number.
+    const auto MakePayload = []()
+    {
+        TSharedRef<FJsonObject> Payload = MakeShared<FJsonObject>();
+        for (int32 GroupIndex = 0; GroupIndex < 16; ++GroupIndex)
+        {
+            TSharedRef<FJsonObject> Group = MakeShared<FJsonObject>();
+            for (int32 FieldIndex = 0; FieldIndex < 8; ++FieldIndex)
+            {
+                Group->SetNumberField(FString::Printf(TEXT("value%02d"), FieldIndex),
+                    static_cast<double>(GroupIndex * 10 + FieldIndex) / 3.0);
+            }
+            Group->SetStringField(TEXT("note"), TEXT("say \"hi\"\nthen \"bye\"\n"));
+            Payload->SetObjectField(FString::Printf(TEXT("group%02d"), GroupIndex), Group);
+        }
+        return Payload;
+    };
+
+    const int32 Measured = HttpResponseSpill::MeasureInlineCharacters(MakePayload());
+    const int32 Pretty = SerializeJsonObject(MakePayload()).Len();
+    const int32 Wrapped = SerializeCondensedForTest(MakeToolResultForTest(MakePayload())).Len();
+    if (!TestTrue(
+            FString::Printf(TEXT("Precondition: fixture clears the 1024-char clamp and both proxies over-count "
+                "(inline %d, pretty %d, wrapped %d)"), Measured, Pretty, Wrapped),
+            Measured > 1100 && Pretty > Measured + 100 && Wrapped > 2 * Measured))
+    {
+        return true;
+    }
+
+    {
+        const TSharedRef<FJsonObject> ToolResult = MakeToolResultForTest(MakePayload());
+        HttpResponseSpill::MarkOversizedToolResult(ToolResult, Measured);
+        const TSharedPtr<FJsonObject>* Structured = nullptr;
+        TestTrue(FString::Printf(TEXT("a payload measured at %d stays inline at threshold %d"), Measured, Measured),
+            ToolResult->TryGetObjectField(TEXT("structuredContent"), Structured) && Structured != nullptr &&
+            Structured->IsValid() && (*Structured)->HasField(TEXT("group00")) &&
+            !(*Structured)->HasField(TEXT("outputTooLong")));
+    }
+
+    {
+        const TSharedRef<FJsonObject> ToolResult = MakeToolResultForTest(MakePayload());
+        HttpResponseSpill::MarkOversizedToolResult(ToolResult, Measured - 1);
+        const TSharedPtr<FJsonObject>* Structured = nullptr;
+        bool bTooLong = false;
+        TestTrue(FString::Printf(TEXT("a payload measured at %d spills at threshold %d"), Measured, Measured - 1),
+            ToolResult->TryGetObjectField(TEXT("structuredContent"), Structured) && Structured != nullptr &&
+            Structured->IsValid() && (*Structured)->TryGetBoolField(TEXT("outputTooLong"), bTooLong) && bTooLong);
+    }
+
+    return true;
+}
+
 // The other direction, and the one that must never be lost to an over-clever measurement: a payload
 // that really is too big still spills, and the reference it leaves behind says which number was
 // compared against the threshold and which number is on disk.

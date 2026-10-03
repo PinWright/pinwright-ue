@@ -25,11 +25,10 @@
 //   - the tick-unsafe registration is asserted through the shared table, never re-implemented;
 //   - the response-size gates hold, so growth trips CI instead of a user's response.
 //
-// SIZE GATES. The wrapped MCP ToolResult carries the payload twice - escaped in content[0].text
-// and verbatim in structuredContent - so the real ceiling for a bare result is about 4,250
-// characters (board ticket E-spill-threshold-measured-post-wrap). Measurement uses the PRETTY
-// writer, which is what JsonRpc::Serialize and HttpResponseSpill actually take; a condensed
-// measurement understates the budget by roughly 20%.
+// SIZE GATES. These hold the verbs to a ~4,250-character PRETTY house budget, sized when the spill
+// gate measured the wrapped ToolResult (board ticket E-spill-threshold-measured-post-wrap). The
+// gate itself now measures one condensed copy against 10,000 (HttpResponseSpill::
+// MeasureInlineCharacters), so this budget is deliberately stricter than the gate.
 //
 // JOB VERBS UNDER TEST. FHandlerContext::StartJob invokes its bind delegate synchronously and the
 // test context has no subsystem, so the captured response is the STARTED payload (ticket id,
@@ -79,7 +78,7 @@ namespace PwAudioAnalysisHandlerTestHelpers
 
     constexpr int32 TestSampleRate = 48000;
 
-    /** The wrapped-response ceiling every gate in this file holds against. */
+    /** The pretty house budget every gate in this file holds against (stricter than the spill gate). */
     constexpr int32 WrappedResponseCeiling = 4250;
 
     // ---------------------------------------------------------------------------------------
@@ -87,9 +86,8 @@ namespace PwAudioAnalysisHandlerTestHelpers
     // ---------------------------------------------------------------------------------------
 
     /**
-     * Serializes with the SAME writer the transport uses - JsonRpc::Serialize and
-     * HttpResponseSpill both take the default TJsonWriterFactory<>, i.e. the PRETTY policy, whose
-     * per-field newline, indent and post-colon space add roughly 20% over a condensed encoding.
+     * PRETTY measurement for the house budget. Not what the wire or the spill gate measure (both
+     * condensed, see HttpResponseSpill::MeasureInlineCharacters); pretty adds roughly 20%.
      */
     int32 MeasureResponseChars(const TSharedPtr<FJsonObject>& Object)
     {
@@ -905,7 +903,7 @@ bool FAudioAnalysisToRecipeTest::RunTest(const FString& Parameters)
     // draft's two lists that used to scale with the analysed duration - the modal bank and the
     // residual contour - are capped by TrimRecipeToDraft, so a longer reference returns the same
     // shape with a `truncated` block saying what it dropped. The uncapped draft measured 8,595
-    // characters on this very fixture, against a 4,250 ceiling.
+    // characters on this very fixture, against the 4,250 house budget.
     const FString CandidateId = AddCandidate(MakeModalBuffer(250.0));
 
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();

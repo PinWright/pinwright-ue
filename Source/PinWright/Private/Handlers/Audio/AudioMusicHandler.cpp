@@ -66,9 +66,10 @@
 // -------------------------------------------------------------------------------------------
 // RESPONSE SIZE
 // -------------------------------------------------------------------------------------------
-// The wrapped MCP ToolResult carries the payload twice - escaped in content[0].text and verbatim
-// in structuredContent - so the real ceiling for a bare result is about 4,250 characters, not the
-// 10,000 the spill constant suggests (board ticket E-spill-threshold-measured-post-wrap). That is
+// The spill gate measures ONE condensed copy of the bare result against 10,000 characters
+// (HttpResponseSpill::MeasureInlineCharacters). These shapes were sized when the gate measured the
+// wrapped ToolResult pretty-printed, against an effective ~4,250-character pretty budget (board
+// ticket E-spill-threshold-measured-post-wrap), kept now as a conservative house limit. That is
 // why render_stems returns a compact per-stem TABLE (name, id, four numbers) rather than 16 full
 // stem reports, why export_stems returns one row per asset, and why describe_schema is sectioned
 // with a digest-only default for the generation modes. Audio never travels inline in either
@@ -219,10 +220,10 @@ namespace PwMusicHandlerInternal
 // vocabulary below is read out of PwMusicScore.cpp's own tables, so the documentation cannot drift
 // from the validation - adding a scale, a role or a generation parameter updates both at once.
 //
-// SIZE. The sections exist because the whole grammar does not fit one response, and the binding
-// ceiling is ~4,250 characters, not the 10,000 spill constant (the wrapped ToolResult carries the
-// payload twice). `overview` is the shape, the beat convention, the caps and the required list -
-// enough to write a score that fails on taste rather than on structure. `rules`, `example`,
+// SIZE. The sections exist because the whole grammar does not fit one response. Each section is
+// held to the ~4,250-character pretty house budget (see RESPONSE SIZE above), stricter than the
+// gate's 10,000 condensed characters. `overview` is the shape, the beat convention, the caps and
+// the required list - enough to write a score that fails on taste rather than on structure. `rules`, `example`,
 // `scales`, `roles` and `modes` are the drill-downs, `modes` returning DIGESTS unless `mode` names
 // one, so a generation mode gaining parameters cannot grow it. Only `all` deliberately exceeds the
 // inline threshold and comes back as a spill file.

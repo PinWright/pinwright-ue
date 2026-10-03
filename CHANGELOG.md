@@ -13,6 +13,10 @@
   tick. **Behaviour change:** it now runs at the next safe point instead of inline, its schema
   gains the optional `expectWorld` precondition (refused with `WORLD_MISMATCH` on mismatch), and a
   successful response carries `world` (the current world object path) besides `success`.
+- Changed: `audio.synth.describe_schema` packs its `generators` / `effects` pages with the spill
+  gate's own measurement (new `HttpResponseSpill::MeasureInlineCharacters`, one condensed copy)
+  instead of a pretty print, so **pages can hold more kinds and `pageCount` may drop**. Handlers
+  that budget their own response should measure with that helper.
 - Added: graph layout keeps comment boxes. Every PinWright layout (BPIR / MGIR / AGIR compiles,
   `material.authoring.auto_layout`) records each comment's members from the rects before it runs;
   a comment around unmoved nodes is an obstacle the moved nodes stay out of, and a comment with

@@ -136,7 +136,7 @@ namespace
         if (ToolResult->TryGetObjectField(TEXT("structuredContent"), Structured) &&
             Structured != nullptr && Structured->IsValid())
         {
-            return SerializeCondensed(Structured->ToSharedRef()).Len();
+            return MeasureInlineCharacters(Structured->ToSharedRef());
         }
 
         TArray<FString> Texts;
@@ -287,6 +287,11 @@ const TCHAR* GetInternalSkipParamName()
 int32 GetDefaultThresholdCharacters()
 {
     return DefaultThresholdCharacters;
+}
+
+int32 MeasureInlineCharacters(const TSharedRef<FJsonObject>& Result)
+{
+    return SerializeCondensed(Result).Len();
 }
 
 int32 ClampThresholdCharacters(int32 ThresholdCharacters)

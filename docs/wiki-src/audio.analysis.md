@@ -49,10 +49,10 @@ Deviations are signed or paired wherever they have two failure directions: `dcOf
 
 The summary form is scalars only, no per-frame arrays, a handful of peaks, and is roughly 1.6 KB as the transport encodes it. The full-detail form adds the onset list, the pitch track, the flux series (each decimated, and flagged when decimated) and the analysis parameters, and may spill to a file. That is a deliberate trade, not a failure.
 
-The MCP result carries the payload twice—escaped in `content[0].text` and verbatim in
-`structuredContent`—for roughly 2.35x amplification against the spill gate. The practical inline
-ceiling is therefore about 4,250 characters, not the threshold constant's 10,000. Ask for full
-detail only when you need the series.
+The spill gate compares one condensed copy of the result against 10,000 characters (see
+[`render.response-budget`](render.response-budget.md)). The summary forms here are held to a
+stricter ~4,250-character budget, so they stay inline with room to spare. Ask for full detail only
+when you need the series.
 
 ## Images are the perceptual channel
 

@@ -19,6 +19,7 @@
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
 #include "Tests/TestUtils.h"
+#include "Tests/TestSkipReporting.h"
 
 #include "AudioGen/PwSynthRecipe.h"
 #include "Handlers/ErrorCodes.h"
@@ -755,8 +756,8 @@ bool FPwSynthDescribeSchemaTest::RunTest(const FString& Parameters)
         TestTrue(FString::Printf(TEXT("the worked example parses (%s)"), *ExampleError), bExampleValidated);
 
         TestTrue(FString::Printf(TEXT("overview stays inline: %d chars vs threshold %d"),
-            PwSynthTestToJson(Capture.Result).Len(), Threshold),
-            PwSynthTestToJson(Capture.Result).Len() < Threshold);
+            HttpResponseSpill::MeasureInlineCharacters(Capture.Result.ToSharedRef()), Threshold),
+            HttpResponseSpill::MeasureInlineCharacters(Capture.Result.ToSharedRef()) < Threshold);
     }
 
     // Every drill-down section must stay inline - that is the whole point of
@@ -764,9 +765,17 @@ bool FPwSynthDescribeSchemaTest::RunTest(const FString& Parameters)
     // listings, walk every page: each page must be inline AND the pages together
     // must cover every kind, so a paging bug that drops a kind cannot pass by
     // making the response conveniently small.
+    // A page is FULL under the gate's own measurement: the packer refused the next page's first
+    // kind because one condensed copy (HttpResponseSpill::MeasureInlineCharacters) went over
+    // Threshold - PageOverheadReserve (512, AudioSynthSchemaHandler.cpp). The emitted page only
+    // adds fields to what was packed, so re-adding that kind must measure over the budget. A packer
+    // measuring a pretty print stops ~20% early and fails this.
+    const int32 PackBudget = Threshold - 512;
+    int32 PageBoundariesChecked = 0;
     auto PageThroughSection = [&](const TCHAR* Section, const TCHAR* ArrayField, int32 ExpectedTotal)
     {
         TSet<FString> SeenKinds;
+        TSharedPtr<FJsonObject> PrevResult;
         int32 Page = 1;
         for (int32 Guard = 0; Guard < 32; ++Guard)
         {
@@ -779,7 +788,7 @@ bool FPwSynthDescribeSchemaTest::RunTest(const FString& Parameters)
                 return;
             }
 
-            const int32 Length = PwSynthTestToJson(Capture.Result).Len();
+            const int32 Length = HttpResponseSpill::MeasureInlineCharacters(Capture.Result.ToSharedRef());
             TestTrue(FString::Printf(TEXT("section '%s' page %d stays inline: %d chars vs threshold %d"),
                 Section, Page, Length, Threshold), Length < Threshold);
 
@@ -792,6 +801,23 @@ bool FPwSynthDescribeSchemaTest::RunTest(const FString& Parameters)
             }
             TestTrue(FString::Printf(TEXT("section '%s' page %d is not empty"), Section, Page),
                 Entries->Num() > 0);
+
+            const TArray<TSharedPtr<FJsonValue>>* PrevEntries = nullptr;
+            if (PrevResult.IsValid() && Entries->Num() > 0 &&
+                PrevResult->TryGetArrayField(ArrayField, PrevEntries))
+            {
+                TArray<TSharedPtr<FJsonValue>> Grown = *PrevEntries;
+                Grown.Add((*Entries)[0]);
+                TSharedRef<FJsonObject> GrownPage = MakeShared<FJsonObject>();
+                GrownPage->Values = PrevResult->Values;
+                GrownPage->SetArrayField(ArrayField, Grown);
+                const int32 GrownLength = HttpResponseSpill::MeasureInlineCharacters(GrownPage);
+                TestTrue(FString::Printf(TEXT("section '%s' page %d is packed full under the gate's measure: "
+                    "adding the next kind measures %d chars, over the %d packing budget"),
+                    Section, Page - 1, GrownLength, PackBudget), GrownLength > PackBudget);
+                ++PageBoundariesChecked;
+            }
+            PrevResult = Capture.Result;
             for (const TSharedPtr<FJsonValue>& Entry : *Entries)
             {
                 const TSharedPtr<FJsonObject>* Obj = nullptr;
@@ -819,6 +845,11 @@ bool FPwSynthDescribeSchemaTest::RunTest(const FString& Parameters)
         static_cast<int32>(EPwSynthGeneratorKind::Count) - 1);
     PageThroughSection(TEXT("effects"), TEXT("effects"),
         static_cast<int32>(EPwSynthFxKind::Count) - 1);
+    if (PageBoundariesChecked == 0)
+    {
+        PinWrightTestSkip::SkipAssertions(*this, TEXT("no-page-boundary"),
+            TEXT("generators and effects each fit one page, so the packed-full check had no boundary to measure"));
+    }
 
     for (const TCHAR* Section : { TEXT("envelopes"), TEXT("targets") })
     {
@@ -830,7 +861,7 @@ bool FPwSynthDescribeSchemaTest::RunTest(const FString& Parameters)
         {
             continue;
         }
-        const int32 Length = PwSynthTestToJson(Capture.Result).Len();
+        const int32 Length = HttpResponseSpill::MeasureInlineCharacters(Capture.Result.ToSharedRef());
         TestTrue(FString::Printf(TEXT("section '%s' stays inline: %d chars vs threshold %d"),
             Section, Length, Threshold), Length < Threshold);
     }
