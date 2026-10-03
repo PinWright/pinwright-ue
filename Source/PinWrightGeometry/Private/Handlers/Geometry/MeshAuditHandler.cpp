@@ -134,7 +134,14 @@ REGISTER_RPC_HANDLER("geometry.audit_static_meshes", "geometry",
             "Cap on findings[] ROWS (1-2000). Per-check tallies stay exact when rows are clipped, "
             "and a clipped page reports findingsTruncated and cannot pass.", "200"),
         RPC_PARAM_DEF("includeClean", "boolean",
-            "Also list the asset paths that produced no finding at all (capped at 500).", "false")
+            "Also return the clean results. `cleanAssets` lists the asset paths with NO finding "
+            "of any severity and no unrunnable check across every selected check - one warning "
+            "disqualifies an asset. `cleanChecks` carries one row {assetPath, assetName, check, "
+            "measurements} per check that ran and came back clean, on every asset, so healthy "
+            "content can be measured without forcing a finding; capped at maxFindings rows, with "
+            "cleanChecksTruncated saying so (it does not affect pass). Both keys are present "
+            "(possibly empty) whenever this is true. Not the per-check `clean` count on each checks[] "
+            "row.", "false")
     ))
 {
     using namespace MeshAudit;
@@ -539,7 +546,10 @@ REGISTER_RPC_HANDLER("geometry.audit_static_meshes", "geometry",
         }
         Result->SetArrayField(TEXT("findings"), FindingRows);
 
-        if (Report.CleanAssets.Num() > 0)
+        // Emitted whenever includeClean was asked for, EMPTY included: a key that vanished
+        // when the answer was "none" made the flag indistinguishable from one that was
+        // dropped (B-mesh-audit-includeclean-emits-nothing).
+        if (Config.MaxCleanAssets > 0)
         {
             TArray<TSharedPtr<FJsonValue>> CleanRows;
             for (const FString& Path : Report.CleanAssets)
@@ -547,6 +557,22 @@ REGISTER_RPC_HANDLER("geometry.audit_static_meshes", "geometry",
                 CleanRows.Add(MakeShared<FJsonValueString>(Path));
             }
             Result->SetArrayField(TEXT("cleanAssets"), CleanRows);
+
+            TArray<TSharedPtr<FJsonValue>> CleanCheckRows;
+            for (const FCleanCheck& Clean : Report.CleanChecks)
+            {
+                TSharedPtr<FJsonObject> Row = MakeShared<FJsonObject>();
+                Row->SetStringField(TEXT("assetPath"), Clean.AssetPath);
+                Row->SetStringField(TEXT("assetName"), Clean.AssetName);
+                Row->SetStringField(TEXT("check"), CheckInfo(Clean.Check).Id);
+                if (Clean.Measurements.IsValid() && Clean.Measurements->Values.Num() > 0)
+                {
+                    Row->SetObjectField(TEXT("measurements"), Clean.Measurements);
+                }
+                CleanCheckRows.Add(MakeShared<FJsonValueObject>(Row));
+            }
+            Result->SetArrayField(TEXT("cleanChecks"), CleanCheckRows);
+            Result->SetBoolField(TEXT("cleanChecksTruncated"), Report.bCleanChecksTruncated);
         }
 
         // What this sweep could NOT see, said out loud rather than left to be discovered.

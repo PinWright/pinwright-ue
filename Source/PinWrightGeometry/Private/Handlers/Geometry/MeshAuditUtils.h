@@ -148,12 +148,25 @@ namespace MeshAudit
     // fine cells use the coarse-grid fallback instead. The fallback counts every coarse-grid
     // reference it inspects before filtering or deduplication. All limits fail closed as
     // unrunnable rather than silently dropping pairs and reporting clean.
+    //
+    // The bound is ONE whole-mesh budget, linear in the triangle count: the sum of every
+    // fine-cell all-pairs loop plus every coarse reference the large-triangle fallback would
+    // inspect, computed BEFORE scanning. It used to be three local 256 caps (triangles per
+    // fine cell, coarse references per large triangle, candidates per large triangle), which
+    // refused a 160-triangle panel because one wall-sized quad touched every coarse bucket,
+    // and a detailed weapon because one 2.5 uu cell held 309 triangles - both far inside any
+    // honest time bound. The floor means the BROAD PHASE never refuses a mesh up to ~1,400
+    // triangles (the candidate-pair budget below can still refuse one whose pairs nearly all
+    // overlap). The ceiling makes a multi-million-triangle import refuse up front instead of
+    // spending billions of game-thread inspections. The budget bounds the work but not its
+    // shape: the coarse fallback stays quadratic in the number of wall-sized triangles, which
+    // is what the budget then refuses (B-mesh-audit-zfight-coarse-grid-unrunnable-on-tiny-meshes).
     inline constexpr int32 ZFightGridResolution = 32;
     inline constexpr int32 ZFightLargeGridResolution = 4;
     inline constexpr int32 ZFightMaxFineCellsPerTriangle = 256;
-    inline constexpr int32 ZFightMaxTrianglesPerFineCell = 256;
-    inline constexpr int32 ZFightMaxCoarseReferencesPerLargeTriangle = 256;
-    inline constexpr int32 ZFightMaxLargeCandidatesPerTriangle = 256;
+    inline constexpr int64 ZFightBroadPhaseWorkPerTriangle = 1024;
+    inline constexpr int64 ZFightMinBroadPhaseWork = 1 << 20;
+    inline constexpr int64 ZFightMaxBroadPhaseWork = 1 << 28;
     inline constexpr int32 ZFightMaxCandidatePairsPerTriangle = 256;
     // Unique region-area union is quadratic in the number of accepted pair polygons. Keep that
     // local post-process bounded so the overall detector remains expected-linear in triangle and
@@ -230,6 +243,9 @@ namespace MeshAudit
         bool bUnrunnable = false;
         FString UnrunnableCode;
         FString UnrunnableReason;
+        // Machine-readable id of the limit or precondition that refused, e.g.
+        // "broad_phase_work", "candidate_pairs", "region_union_polygons". Empty when runnable.
+        FString UnrunnableBound;
 
         int32 ModelTriangleCount = 0;
         int32 ValidTriangleCount = 0;
@@ -242,6 +258,10 @@ namespace MeshAudit
         // references rejected by component, AABB, duplicate, or self filters.
         int32 LargeReferenceInspectCount = 0;
         int32 MaxLargeReferenceInspectCount = 0;
+        // Fine-cell pair inspections plus coarse references, against the whole-mesh budget.
+        int64 BroadPhaseWork = 0;
+        int64 BroadPhaseWorkBudget = 0;
+        int32 DensestFineCellTriangleCount = 0;
         int32 FightingPairCount = 0;
         int32 FightingTriangleCount = 0;
         double ModelExtent = 0.0;
@@ -482,6 +502,16 @@ namespace MeshAudit
         TSharedPtr<FJsonObject> Measurements;
     };
 
+    // One (asset, check) that ran and came back clean, kept only under includeClean so a
+    // healthy asset can still be MEASURED - measurements otherwise ride on findings alone.
+    struct FCleanCheck
+    {
+        FString AssetPath;
+        FString AssetName;
+        ECheck Check = ECheck::Inverted;
+        TSharedPtr<FJsonObject> Measurements;
+    };
+
     // Per-check accounting. Two identities hold for every SELECTED check and are asserted by
     // the tests, because an asset that falls out of every bucket is exactly how a check
     // silently stops running:
@@ -513,7 +543,9 @@ namespace MeshAudit
         // Cap on findings[] ROWS. Per-check tallies are always exact; only the rows are
         // capped, and a capped page reports findingsTruncated and therefore cannot pass.
         int32 MaxFindings = 200;
-        // Cap on asset paths collected into FReport::CleanAssets. 0 = do not collect them.
+        // Cap on asset paths collected into FReport::CleanAssets. 0 = do not collect them
+        // (nor FReport::CleanChecks, which is collected whenever this is non-zero, capped at
+        // MaxFindings rows).
         int32 MaxCleanAssets = 0;
     };
 
@@ -538,6 +570,10 @@ namespace MeshAudit
         TArray<FFinding> Findings;
         FCheckTally Tallies[CheckCount];
         TArray<FString> CleanAssets;
+        TArray<FCleanCheck> CleanChecks;
+        // CleanChecks reached Config.MaxFindings rows and later clean rows were dropped.
+        // Informational only: clean rows never enter the pass rule.
+        bool bCleanChecksTruncated = false;
         // Statements about what this sweep could NOT see.
         TArray<FString> Caveats;
 

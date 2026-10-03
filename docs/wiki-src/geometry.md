@@ -996,13 +996,25 @@ compiler, and `suppressed`.
 `z_fighting` looks for projected overlap between near-coplanar triangles from different connected
 components. Its plane epsilon is `modelExtent * 0.00001`, while its grid cell size is derived
 separately from a fixed 32-cell model resolution. AABB expansion catches pairs straddling a cell
-boundary; full-span triangles use a coarse-grid fallback that caps every inspected coarse
-reference before filtering or deduplication. Any dense-cell, inspected-reference, or candidate
-limit hit is `unrunnable`, never clean. Exact candidates accept parallel and anti-parallel normals,
+boundary; full-span triangles use a coarse-grid fallback. The broad phase has ONE whole-mesh work
+budget, `1,024 * validTriangles` inspections clamped to `[2^20, 2^28]`: every fine-cell all-pairs
+loop plus every coarse reference the fallback would inspect (before filtering or deduplication),
+summed **before** scanning. The broad phase therefore never refuses a mesh up to ~1,400 triangles
+(the candidate-pair budget still can), a single wall-sized quad or one dense cell no longer refuses
+a whole mesh, and a multi-million-triangle import refuses up front rather than stall the editor.
+The coarse fallback is still quadratic in the number of wall-sized triangles; the budget is what
+bounds it. Exceeding the budget, or the
+candidate-pair budget (`256 * validTriangles`), is `unrunnable`, never clean. An unrunnable row's
+measurements name the limit in `unrunnableBound` (`broad_phase_work`, `candidate_pairs`,
+`region_union_polygons`, `region_projection`, `region_union`, ...) and every row reports
+`broadPhaseWork`, `broadPhaseWorkBudget` and `densestFineCellTriangleCount`, so a refusal says by
+how much it was exceeded. Exact candidates accept parallel and anti-parallel normals,
 test both triangles against the opposite plane, and clip projected triangles independently of
 winding. Measurements include actual broad-phase work, fallback reference inspections, total
 overlap area, and ranked regions whose `overlapArea` is the unique projected union of their
-accepted pair overlaps, so several shells covering the same patch are not pair-summed. Regions
+accepted pair overlaps, so several shells covering the same patch are not pair-summed. A region
+that follows a duplicated surface around a bend or curve is unioned per near-coplanar group, each
+in its own projection, and the groups' areas summed. Regions
 retain unique triangle/component ids and bounded strongest-pair evidence. This remains a
 geometric depth-buffer proxy, not a prediction for every camera, projection, material, or depth
 format. Candidate generation is expected `O(n + candidates)`; the exact union is a bounded local
@@ -1041,6 +1053,18 @@ each selected check, and they are what makes a silent stop detectable:
 applicable + notApplicable          == summary.assetsExamined
 flagged + unrunnable + clean        == applicable
 ```
+
+**`includeClean: true` returns the clean side, always.** `cleanAssets` (asset paths) and
+`cleanChecks` are present whenever the flag is set, as empty arrays when nothing qualifies — an
+absent key means the flag was not set. `cleanAssets` is strict: an asset is listed only with
+**zero** findings of any severity and zero unrunnable checks across every selected check, so one
+`warning` on one check — or one unrunnable `z_fighting` — keeps it out. `cleanChecks` is the
+measuring channel: one row `{assetPath, assetName, check, measurements}` per check that ran and came
+back clean, on **every** asset, including assets another check flagged. `cleanChecks` is capped at
+`maxFindings` rows; `cleanChecksTruncated: true` says rows were dropped (it does not touch `pass`). Use it to read a healthy
+asset's component volumes or z-fighting work figures; do not tighten a threshold to manufacture a
+finding for its numbers. Neither is the `clean` count on each `checks[]` row, which is a per-check
+tally.
 
 **`status` on a finding row is load-bearing.** `unrunnable` means that check did **not** evaluate that
 asset — an asset that would not load, or whose LOD would not copy — and it is never folded into

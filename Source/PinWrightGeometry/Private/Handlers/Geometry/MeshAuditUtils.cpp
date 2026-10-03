@@ -779,10 +779,11 @@ namespace MeshAudit
     {
         Out = FZFightAnalysis();
         Out.ModelTriangleCount = Triangles.Num();
-        auto SetUnrunnable = [&Out](const FString& Reason)
+        auto SetUnrunnable = [&Out](const TCHAR* Bound, const FString& Reason)
         {
             Out.bUnrunnable = true;
             Out.UnrunnableCode = ErrorCodes::ERR_MESH_AUDIT_Z_FIGHTING_UNRUNNABLE;
+            Out.UnrunnableBound = Bound;
             Out.UnrunnableReason = Reason;
         };
 
@@ -790,7 +791,8 @@ namespace MeshAudit
             || Thresholds.ZFightPlaneExtentFraction < 0.0
             || !FMath::IsFinite(Thresholds.ZFightNormalDotThreshold))
         {
-            SetUnrunnable(TEXT("The z-fighting thresholds were non-finite or negative."));
+            SetUnrunnable(TEXT("thresholds"),
+                TEXT("The z-fighting thresholds were non-finite or negative."));
             return;
         }
 
@@ -810,7 +812,7 @@ namespace MeshAudit
         }
         if (!Bounds.IsValid || Out.ValidTriangleCount == 0)
         {
-            SetUnrunnable(FString::Printf(
+            SetUnrunnable(TEXT("no_valid_triangles"), FString::Printf(
                 TEXT("No finite, non-degenerate triangles were available (%d triangle(s) read)."),
                 Out.ModelTriangleCount));
             return;
@@ -819,7 +821,8 @@ namespace MeshAudit
         Out.ModelExtent = FMath::Max3(Bounds.GetSize().X, Bounds.GetSize().Y, Bounds.GetSize().Z);
         if (!FMath::IsFinite(Out.ModelExtent) || Out.ModelExtent <= 0.0)
         {
-            SetUnrunnable(TEXT("The finite triangle set had no positive model extent."));
+            SetUnrunnable(TEXT("model_extent"),
+                TEXT("The finite triangle set had no positive model extent."));
             return;
         }
 
@@ -902,28 +905,75 @@ namespace MeshAudit
             return true;
         };
 
+        // The whole-mesh budget is checked BEFORE any scan, from the exact work the scan is
+        // about to do, so the refusal is independent of hash-map order and says by how much
+        // it was exceeded. Coarse references are counted before filtering or deduplication,
+        // as the fallback inspects them.
+        Out.BroadPhaseWorkBudget = FMath::Clamp<int64>(
+            int64(Out.ValidTriangleCount) * ZFightBroadPhaseWorkPerTriangle,
+            ZFightMinBroadPhaseWork, ZFightMaxBroadPhaseWork);
+        int64 FinePairWork = 0;
         for (const TPair<FIntVector, TArray<int32>>& Cell : FineGrid)
         {
-            if (Cell.Value.Num() > ZFightMaxTrianglesPerFineCell)
+            const int64 CellTriangles = Cell.Value.Num();
+            FinePairWork += CellTriangles * (CellTriangles - 1) / 2;
+            Out.DensestFineCellTriangleCount =
+                FMath::Max(Out.DensestFineCellTriangleCount, Cell.Value.Num());
+        }
+        int64 LargeReferenceWork = 0;
+        for (const int32 LargeIndex : LargeTriangles)
+        {
+            const FZFGridRange CoarseRange = ZFMakeGridRange(
+                Triangles[LargeIndex], GridOrigin, LargeCellSize,
+                ZFightLargeGridResolution, Out.PlaneDistanceEpsilon);
+            int32 References = 0;
+            for (int32 X = CoarseRange.Lo.X; X <= CoarseRange.Hi.X; ++X)
+            for (int32 Y = CoarseRange.Lo.Y; Y <= CoarseRange.Hi.Y; ++Y)
+            for (int32 Z = CoarseRange.Lo.Z; Z <= CoarseRange.Hi.Z; ++Z)
             {
-                Out.CandidatePairCount = CandidateKeys.Num();
-                SetUnrunnable(FString::Printf(
-                    TEXT("A fine-grid cell contained %d triangles, above the bounded per-cell "
-                         "limit of %d; the detector refused to enter an unbounded dense-cell "
-                         "all-pairs loop."),
-                    Cell.Value.Num(), ZFightMaxTrianglesPerFineCell));
-                return;
+                if (const TArray<int32>* Bucket = CoarseGrid.Find(FIntVector(X, Y, Z)))
+                {
+                    References += Bucket->Num();
+                }
             }
+            LargeReferenceWork += References;
+            Out.MaxLargeReferenceInspectCount =
+                FMath::Max(Out.MaxLargeReferenceInspectCount, References);
+        }
+        Out.LargeReferenceInspectCount =
+            static_cast<int32>(FMath::Min<int64>(LargeReferenceWork, MAX_int32));
+        Out.BroadPhaseWork = FinePairWork + LargeReferenceWork;
+        if (Out.BroadPhaseWork > Out.BroadPhaseWorkBudget)
+        {
+            SetUnrunnable(TEXT("broad_phase_work"), FString::Printf(
+                TEXT("The broad phase needs %lld inspections (%lld fine-cell pairs, densest cell "
+                     "%d triangles; %lld coarse references from %d large triangle(s)), above the "
+                     "whole-mesh budget of %lld = clamp(%lld per valid triangle, %lld, %lld). The "
+                     "detector refused rather than report a partial clean result."),
+                Out.BroadPhaseWork, FinePairWork, Out.DensestFineCellTriangleCount,
+                LargeReferenceWork, LargeTriangles.Num(), Out.BroadPhaseWorkBudget,
+                ZFightBroadPhaseWorkPerTriangle, ZFightMinBroadPhaseWork,
+                ZFightMaxBroadPhaseWork));
+            return;
+        }
+
+        auto SetCandidateBudgetUnrunnable = [&]()
+        {
+            Out.CandidatePairCount = CandidateKeys.Num();
+            SetUnrunnable(TEXT("candidate_pairs"), FString::Printf(
+                TEXT("The candidate-pair budget (%d) was exceeded; the detector refused to "
+                     "report a partial clean result."), CandidateBudget));
+        };
+
+        for (const TPair<FIntVector, TArray<int32>>& Cell : FineGrid)
+        {
             for (int32 AIndex = 0; AIndex < Cell.Value.Num(); ++AIndex)
             {
                 for (int32 BIndex = AIndex + 1; BIndex < Cell.Value.Num(); ++BIndex)
                 {
                     if (!AddCandidate(Cell.Value[AIndex], Cell.Value[BIndex]))
                     {
-                        Out.CandidatePairCount = CandidateKeys.Num();
-                        SetUnrunnable(FString::Printf(
-                            TEXT("The fine-grid candidate budget (%d) was exceeded; the detector "
-                                 "refused to report a partial clean result."), CandidateBudget));
+                        SetCandidateBudgetUnrunnable();
                         return;
                     }
                 }
@@ -936,15 +986,9 @@ namespace MeshAudit
                 Triangles[LargeIndex], GridOrigin, LargeCellSize,
                 ZFightLargeGridResolution, Out.PlaneDistanceEpsilon);
             TSet<int32> LargeCandidates;
-            int32 InspectedReferencesForTriangle = 0;
-            bool bReferenceOverflow = false;
-            bool bCandidateOverflow = false;
-            for (int32 X = CoarseRange.Lo.X;
-                 X <= CoarseRange.Hi.X && !bReferenceOverflow && !bCandidateOverflow; ++X)
-            for (int32 Y = CoarseRange.Lo.Y;
-                 Y <= CoarseRange.Hi.Y && !bReferenceOverflow && !bCandidateOverflow; ++Y)
-            for (int32 Z = CoarseRange.Lo.Z;
-                 Z <= CoarseRange.Hi.Z && !bReferenceOverflow && !bCandidateOverflow; ++Z)
+            for (int32 X = CoarseRange.Lo.X; X <= CoarseRange.Hi.X; ++X)
+            for (int32 Y = CoarseRange.Lo.Y; Y <= CoarseRange.Hi.Y; ++Y)
+            for (int32 Z = CoarseRange.Lo.Z; Z <= CoarseRange.Hi.Z; ++Z)
             {
                 const TArray<int32>* Bucket = CoarseGrid.Find(FIntVector(X, Y, Z));
                 if (!Bucket)
@@ -953,16 +997,6 @@ namespace MeshAudit
                 }
                 for (const int32 Candidate : *Bucket)
                 {
-                    ++InspectedReferencesForTriangle;
-                    ++Out.LargeReferenceInspectCount;
-                    Out.MaxLargeReferenceInspectCount = FMath::Max(
-                        Out.MaxLargeReferenceInspectCount, InspectedReferencesForTriangle);
-                    if (InspectedReferencesForTriangle
-                        > ZFightMaxCoarseReferencesPerLargeTriangle)
-                    {
-                        bReferenceOverflow = true;
-                        break;
-                    }
                     if (Candidate == LargeIndex
                         || Triangles[Candidate].ComponentIndex
                             == Triangles[LargeIndex].ComponentIndex
@@ -972,33 +1006,7 @@ namespace MeshAudit
                         continue;
                     }
                     LargeCandidates.Add(Candidate);
-                    if (LargeCandidates.Num() > ZFightMaxLargeCandidatesPerTriangle)
-                    {
-                        bCandidateOverflow = true;
-                        break;
-                    }
                 }
-            }
-            if (bReferenceOverflow)
-            {
-                Out.CandidatePairCount = CandidateKeys.Num();
-                SetUnrunnable(FString::Printf(
-                    TEXT("Large triangle %d inspected more than the bounded coarse-grid "
-                         "reference limit (%d); the detector refused to scan a dense fallback "
-                         "bucket or report a partial clean result."),
-                    Triangles[LargeIndex].TriangleID,
-                    ZFightMaxCoarseReferencesPerLargeTriangle));
-                return;
-            }
-            if (bCandidateOverflow)
-            {
-                Out.CandidatePairCount = CandidateKeys.Num();
-                SetUnrunnable(FString::Printf(
-                    TEXT("Large triangle %d exceeded the bounded fallback candidate limit (%d); "
-                         "the detector refused to report a partial clean result."),
-                    Triangles[LargeIndex].TriangleID,
-                    ZFightMaxLargeCandidatesPerTriangle));
-                return;
             }
 
             TArray<int32> OrderedLargeCandidates;
@@ -1012,10 +1020,7 @@ namespace MeshAudit
             {
                 if (!AddCandidate(LargeIndex, Candidate))
                 {
-                    Out.CandidatePairCount = CandidateKeys.Num();
-                    SetUnrunnable(FString::Printf(
-                        TEXT("The candidate-pair budget (%d) was exceeded; the detector refused "
-                             "to report a partial clean result."), CandidateBudget));
+                    SetCandidateBudgetUnrunnable();
                     return;
                 }
             }
@@ -1294,55 +1299,97 @@ namespace MeshAudit
 
             if (Accumulator.PairIndices.Num() > ZFightMaxUnionPolygonsPerRegion)
             {
-                SetUnrunnable(FString::Printf(
+                SetUnrunnable(TEXT("region_union_polygons"), FString::Printf(
                     TEXT("A fighting region contained %d accepted pair polygons, above the "
                          "bounded unique-area union limit of %d."),
                     Accumulator.PairIndices.Num(), ZFightMaxUnionPolygonsPerRegion));
                 return;
             }
 
-            const FZFAcceptedPair& FirstPair = AcceptedPairs[Accumulator.PairIndices[0]];
-            const FZFightTriangle& FirstTriangle = Triangles[FirstPair.IndexA];
-            const EZFProjectionAxis ProjectionAxis =
-                ZFChooseProjectionAxis(FirstTriangle.Normal);
-            const double ProjectionScale =
-                ZFProjectionScale(FirstTriangle.Normal, ProjectionAxis);
-            if (ProjectionScale <= SMALL_NUMBER)
-            {
-                SetUnrunnable(TEXT("A fighting region had no usable projection scale."));
-                return;
-            }
-
-            TArray<TArray<FZFPoint2>> OverlapPolygons;
-            OverlapPolygons.Reserve(Accumulator.PairIndices.Num());
+            // A region joins pairs through shared vertices, so it follows a duplicated surface
+            // around a bend or a curve. One projection axis cannot carry every plane of such a
+            // region - a pair perpendicular to it projects to zero area, which used to make the
+            // whole asset unrunnable. Union each near-coplanar group of pairs in its own
+            // projection and sum; a planar region is one group, exactly as before.
+            TArray<TArray<int32>> PlaneGroups;
             for (const int32 PairIndex : Accumulator.PairIndices)
             {
-                const FZFAcceptedPair& Pair = AcceptedPairs[PairIndex];
-                TArray<FZFPoint2> Polygon;
-                if (!ZFBuildProjectedOverlap(Triangles[Pair.IndexA], Triangles[Pair.IndexB],
-                                              ProjectionAxis, Polygon))
+                const FZFightTriangle& Triangle = Triangles[AcceptedPairs[PairIndex].IndexA];
+                // Matched against ANY member, not just the first: coplanarity within epsilon
+                // is not transitive, and a pair split off its own plane's group would have its
+                // area counted twice. Bounded: p <= ZFightMaxUnionPolygonsPerRegion.
+                auto Coplanar = [&](int32 MemberPair)
                 {
-                    SetUnrunnable(TEXT("A fighting pair could not be reconstructed for region "
-                                       "area union."));
-                    return;
+                    const FZFightTriangle& Reference = Triangles[AcceptedPairs[MemberPair].IndexA];
+                    return FMath::Abs(FVector3d::DotProduct(Reference.Normal, Triangle.Normal))
+                            >= Out.NormalDotThreshold
+                        && ZFMaxDistanceToPlane(Triangle, Reference.V0, Reference.Normal)
+                            <= Out.PlaneDistanceEpsilon;
+                };
+                TArray<int32>* Group = PlaneGroups.FindByPredicate(
+                    [&](const TArray<int32>& Candidate)
+                    {
+                        return Candidate.ContainsByPredicate(Coplanar);
+                    });
+                if (Group)
+                {
+                    Group->Add(PairIndex);
                 }
-                OverlapPolygons.Add(MoveTemp(Polygon));
+                else
+                {
+                    PlaneGroups.Add(TArray<int32>{PairIndex});
+                }
             }
 
-            double UniqueProjectedArea = 0.0;
-            const double UnionTolerance =
-                FMath::Max(Out.ModelExtent * 1.0e-9, 1.0e-9);
-            if (!ZFUnionArea(OverlapPolygons, UnionTolerance, UniqueProjectedArea)
-                || !FMath::IsFinite(UniqueProjectedArea))
+            Accumulator.Region.OverlapArea = 0.0;
+            for (const TArray<int32>& Group : PlaneGroups)
             {
-                SetUnrunnable(TEXT("A fighting region's projected overlap union was not "
-                                   "finite and measurable."));
-                return;
+                const FZFightTriangle& GroupTriangle = Triangles[AcceptedPairs[Group[0]].IndexA];
+                const EZFProjectionAxis ProjectionAxis =
+                    ZFChooseProjectionAxis(GroupTriangle.Normal);
+                const double ProjectionScale =
+                    ZFProjectionScale(GroupTriangle.Normal, ProjectionAxis);
+                if (ProjectionScale <= SMALL_NUMBER)
+                {
+                    SetUnrunnable(TEXT("region_projection"),
+                        TEXT("A fighting region had no usable projection scale."));
+                    return;
+                }
+
+                TArray<TArray<FZFPoint2>> OverlapPolygons;
+                OverlapPolygons.Reserve(Group.Num());
+                for (const int32 PairIndex : Group)
+                {
+                    const FZFAcceptedPair& Pair = AcceptedPairs[PairIndex];
+                    TArray<FZFPoint2> Polygon;
+                    if (!ZFBuildProjectedOverlap(Triangles[Pair.IndexA], Triangles[Pair.IndexB],
+                                                  ProjectionAxis, Polygon))
+                    {
+                        SetUnrunnable(TEXT("region_projection"),
+                            TEXT("A fighting pair could not be reconstructed for region area "
+                                 "union."));
+                        return;
+                    }
+                    OverlapPolygons.Add(MoveTemp(Polygon));
+                }
+
+                double UniqueProjectedArea = 0.0;
+                const double UnionTolerance =
+                    FMath::Max(Out.ModelExtent * 1.0e-9, 1.0e-9);
+                if (!ZFUnionArea(OverlapPolygons, UnionTolerance, UniqueProjectedArea)
+                    || !FMath::IsFinite(UniqueProjectedArea))
+                {
+                    SetUnrunnable(TEXT("region_union"),
+                        TEXT("A fighting region's projected overlap union was not finite and "
+                             "measurable."));
+                    return;
+                }
+                Accumulator.Region.OverlapArea += UniqueProjectedArea / ProjectionScale;
             }
-            Accumulator.Region.OverlapArea = UniqueProjectedArea / ProjectionScale;
             if (!FMath::IsFinite(Accumulator.Region.OverlapArea))
             {
-                SetUnrunnable(TEXT("A fighting region's unique overlap area was non-finite."));
+                SetUnrunnable(TEXT("region_union"),
+                    TEXT("A fighting region's unique overlap area was non-finite."));
                 return;
             }
             Out.TotalOverlapArea += Accumulator.Region.OverlapArea;
@@ -2859,6 +2906,16 @@ namespace MeshAudit
                                                Analysis.LargeReferenceInspectCount);
                  Measurements->SetNumberField(TEXT("maxLargeReferenceInspectCount"),
                                                Analysis.MaxLargeReferenceInspectCount);
+                Measurements->SetNumberField(TEXT("densestFineCellTriangleCount"),
+                                             Analysis.DensestFineCellTriangleCount);
+                Measurements->SetNumberField(TEXT("broadPhaseWork"),
+                                             static_cast<double>(Analysis.BroadPhaseWork));
+                Measurements->SetNumberField(TEXT("broadPhaseWorkBudget"),
+                                             static_cast<double>(Analysis.BroadPhaseWorkBudget));
+                if (Analysis.bUnrunnable)
+                {
+                    Measurements->SetStringField(TEXT("unrunnableBound"), Analysis.UnrunnableBound);
+                }
                 Measurements->SetNumberField(TEXT("fightingPairCount"), Analysis.FightingPairCount);
                 Measurements->SetNumberField(TEXT("fightingTriangleCount"), Analysis.FightingTriangleCount);
                 Measurements->SetNumberField(TEXT("regionCount"), Analysis.Regions.Num());
@@ -2941,6 +2998,21 @@ namespace MeshAudit
             else
             {
                 ++Tally.Clean;
+                // A clean answer is still a measurement. Without this row the only way to read
+                // a healthy asset's numbers was to tighten a threshold until it failed.
+                // Capped at MaxFindings rows like findings[]: a 500-asset page of
+                // component-listing rows is otherwise unbounded in size.
+                if (Config.MaxCleanAssets > 0)
+                {
+                    if (R.CleanChecks.Num() < Config.MaxFindings)
+                    {
+                        R.CleanChecks.Add({AssetPath, AssetName, Info.Check, Measurements});
+                    }
+                    else
+                    {
+                        R.bCleanChecksTruncated = true;
+                    }
+                }
             }
         }
 

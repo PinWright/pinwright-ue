@@ -175,10 +175,15 @@ bool FMeshAuditZFightingTest::RunTest(const FString& Parameters)
     TestTrue(TEXT("large fallback reports inspected references"),
         CoincidentResult.LargeReferenceInspectCount > 0);
 
+    // 257 full-span triangles: each spans all 64 coarse cells, each holding all 257, so the
+    // fallback would inspect 257 * 64 * 257 = 4,227,136 references - above the whole-mesh
+    // budget max(2^20, 257 * 1024). The per-triangle 256-reference cap this used to pin was
+    // replaced by that budget (B-mesh-audit-zfight-coarse-grid-unrunnable-on-tiny-meshes); the
+    // property kept is the same: a dense scan is refused, never reported clean.
+    constexpr int32 DenseFallbackCount = 257;
     TArray<MeshAudit::FZFightTriangle> DenseFallback;
-    DenseFallback.Reserve(MeshAudit::ZFightMaxCoarseReferencesPerLargeTriangle + 1);
-    for (int32 Index = 0;
-         Index <= MeshAudit::ZFightMaxCoarseReferencesPerLargeTriangle; ++Index)
+    DenseFallback.Reserve(DenseFallbackCount);
+    for (int32 Index = 0; Index < DenseFallbackCount; ++Index)
     {
         // These triangles are deliberately in one component and span the model so they all
         // use the coarse fallback. Same-component filtering must not allow an unbounded bucket
@@ -194,12 +199,19 @@ bool FMeshAuditZFightingTest::RunTest(const FString& Parameters)
     TestTrue(TEXT("dense fallback uses the registered unrunnable code"),
         DenseFallbackResult.UnrunnableCode
             == ErrorCodes::ERR_MESH_AUDIT_Z_FIGHTING_UNRUNNABLE);
-    TestEqual(TEXT("dense fallback stops after one reference beyond the cap"),
+    TestEqual(TEXT("dense fallback names the whole-mesh work budget as the bound"),
+        DenseFallbackResult.UnrunnableBound, FString(TEXT("broad_phase_work")));
+    TestEqual(TEXT("dense fallback counts every coarse reference it would inspect"),
         DenseFallbackResult.LargeReferenceInspectCount,
-        MeshAudit::ZFightMaxCoarseReferencesPerLargeTriangle + 1);
-    TestEqual(TEXT("dense fallback records the bounded per-triangle maximum"),
-        DenseFallbackResult.MaxLargeReferenceInspectCount,
-        MeshAudit::ZFightMaxCoarseReferencesPerLargeTriangle + 1);
+        DenseFallbackCount * 64 * DenseFallbackCount);
+    TestEqual(TEXT("dense fallback records the per-triangle maximum"),
+        DenseFallbackResult.MaxLargeReferenceInspectCount, 64 * DenseFallbackCount);
+    TestTrue(TEXT("dense fallback reports work above its budget"),
+        DenseFallbackResult.BroadPhaseWork > DenseFallbackResult.BroadPhaseWorkBudget);
+    TestEqual(TEXT("dense fallback budget is the floor for a small mesh"),
+        DenseFallbackResult.BroadPhaseWorkBudget, MeshAudit::ZFightMinBroadPhaseWork);
+    TestEqual(TEXT("dense fallback refuses before building any candidate"),
+        DenseFallbackResult.CandidatePairCount, 0);
 
     TArray<MeshAudit::FZFightTriangle> Separated;
     Separated.Append(MeshAuditZFightingQuad(10, 0,
@@ -349,5 +361,95 @@ bool FMeshAuditZFightingTest::RunTest(const FString& Parameters)
         && EmptyReport.Findings[0].Code
             == ErrorCodes::ERR_MESH_AUDIT_Z_FIGHTING_UNRUNNABLE);
 
+    return true;
+}
+
+// B-mesh-audit-zfight-coarse-grid-unrunnable-on-tiny-meshes. Three fixtures that the previous
+// local 256 caps refused outright, each small enough that an all-pairs scan is trivially cheap:
+// one wall-sized quad over a tiled panel (coarse references per large triangle), 300 triangles
+// packed into one fine cell (triangles per fine cell), and a duplicated surface bent through
+// 90 degrees (one projection axis for a non-planar region). Each must now be ANSWERED, with the
+// right answer - a refusal or a wrong area fails the test.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMeshAuditZFightingSmallMeshBoundsTest,
+    "PinWright.Geometry.MeshAudit.ZFightingAnswersSmallMeshesTheOldCapsRefused",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FMeshAuditZFightingSmallMeshBoundsTest::RunTest(const FString& Parameters)
+{
+    // ---- one large quad under a 12 x 12 tiled panel of another component ----
+    constexpr int32 Tiles = 12;
+    constexpr double Span = 10.0;
+    constexpr double Tile = Span / Tiles;
+    TArray<MeshAudit::FZFightTriangle> Panel;
+    Panel.Append(MeshAuditZFightingQuad(0, 0,
+        FVector3d(0.0, 0.0, 0.0), FVector3d(Span, 0.0, 0.0),
+        FVector3d(Span, Span, 0.0), FVector3d(0.0, Span, 0.0), false));
+    for (int32 X = 0; X < Tiles; ++X)
+    {
+        for (int32 Y = 0; Y < Tiles; ++Y)
+        {
+            const double X0 = X * Tile, Y0 = Y * Tile;
+            Panel.Append(MeshAuditZFightingQuad(Panel.Num(), 1,
+                FVector3d(X0, Y0, 0.0), FVector3d(X0 + Tile, Y0, 0.0),
+                FVector3d(X0 + Tile, Y0 + Tile, 0.0), FVector3d(X0, Y0 + Tile, 0.0), false));
+        }
+    }
+    TestEqual(TEXT("panel fixture is 290 triangles"), Panel.Num(), 2 + Tiles * Tiles * 2);
+    const MeshAudit::FZFightAnalysis PanelResult = MeshAuditZFightingAnalyze(Panel);
+    TestTrue(TEXT("panel fixture routes the big quad through the coarse fallback"),
+        PanelResult.LargeTriangleCount >= 2);
+    TestTrue(TEXT("panel's large triangle inspects more coarse references than the old cap of 256"),
+        PanelResult.MaxLargeReferenceInspectCount > 256);
+    TestFalse(FString::Printf(TEXT("a 290-triangle panel is measurable (refused: %s)"),
+        *PanelResult.UnrunnableReason), PanelResult.bUnrunnable);
+    TestTrue(TEXT("the tiles fighting the big quad are found"), PanelResult.FightingPairCount > 0);
+    TestTrue(FString::Printf(TEXT("the fought area is the panel's true area 100 (got %.6g)"),
+        PanelResult.TotalOverlapArea), FMath::IsNearlyEqual(PanelResult.TotalOverlapArea, 100.0, 1.0e-6));
+    TestTrue(TEXT("panel work stays inside its budget"),
+        PanelResult.BroadPhaseWork > 0
+        && PanelResult.BroadPhaseWork <= PanelResult.BroadPhaseWorkBudget);
+
+    // ---- 300 small triangles of 300 components packed into one fine cell ----
+    // A far triangle sets the model extent to ~64, so a fine cell is ~2 units wide. The 300
+    // triangles fan about one shared edge inside that cell, each turned 0.3 degrees from the
+    // last: every pair overlaps in AABB (so all reach the exact phase), and none is within the
+    // plane epsilon of another, so nothing fights.
+    TArray<MeshAudit::FZFightTriangle> Dense;
+    Dense.Add(MeshAuditZFightingTriangle(0, 0,
+        FVector3d(64.0, 64.0, 64.0), FVector3d(63.9, 64.0, 64.0), FVector3d(64.0, 63.9, 64.0)));
+    for (int32 Index = 0; Index < 300; ++Index)
+    {
+        const double Angle = Index * (UE_DOUBLE_HALF_PI / 300.0);
+        Dense.Add(MeshAuditZFightingTriangle(Index + 1, Index + 1,
+            FVector3d(0.5, 0.5, 0.5), FVector3d(1.0, 0.5, 0.5),
+            FVector3d(0.5, 0.5 + 0.5 * FMath::Cos(Angle), 0.5 + 0.5 * FMath::Sin(Angle))));
+    }
+    const MeshAudit::FZFightAnalysis DenseResult = MeshAuditZFightingAnalyze(Dense);
+    TestTrue(TEXT("dense fixture packs more than the old per-cell cap of 256 into one cell"),
+        DenseResult.DensestFineCellTriangleCount > 256);
+    TestFalse(FString::Printf(TEXT("a 301-triangle mesh with one dense cell is measurable "
+        "(refused: %s)"), *DenseResult.UnrunnableReason), DenseResult.bUnrunnable);
+    TestTrue(TEXT("the dense cell's pairs all reached the exact phase"),
+        DenseResult.ExactOverlapTestCount >= 300 * 299 / 2);
+    TestEqual(TEXT("the fanned triangles do not fight"), DenseResult.FightingPairCount, 0);
+
+    // ---- a duplicated L: two faces at 90 degrees, copied into a second component ----
+    TArray<MeshAudit::FZFightTriangle> Bent;
+    for (int32 Component = 0; Component < 2; ++Component)
+    {
+        Bent.Append(MeshAuditZFightingQuad(Bent.Num(), Component,
+            FVector3d(0.0, 0.0, 0.0), FVector3d(2.0, 0.0, 0.0),
+            FVector3d(2.0, 2.0, 0.0), FVector3d(0.0, 2.0, 0.0), false));
+        Bent.Append(MeshAuditZFightingQuad(Bent.Num(), Component,
+            FVector3d(0.0, 0.0, 0.0), FVector3d(0.0, 2.0, 0.0),
+            FVector3d(0.0, 2.0, 2.0), FVector3d(0.0, 0.0, 2.0), false));
+    }
+    const MeshAudit::FZFightAnalysis BentResult = MeshAuditZFightingAnalyze(Bent);
+    TestFalse(FString::Printf(TEXT("a duplicated bent surface is measurable (refused: %s)"),
+        *BentResult.UnrunnableReason), BentResult.bUnrunnable);
+    TestEqual(TEXT("both faces of the L fight"), BentResult.FightingPairCount, 4);
+    TestEqual(TEXT("the bend joins both faces into one region"), BentResult.Regions.Num(), 1);
+    TestTrue(FString::Printf(TEXT("the bent region's area is both faces, 8 (got %.6g)"),
+        BentResult.TotalOverlapArea), FMath::IsNearlyEqual(BentResult.TotalOverlapArea, 8.0, 1.0e-6));
     return true;
 }

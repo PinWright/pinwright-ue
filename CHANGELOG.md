@@ -67,6 +67,19 @@
   seeded `CLAUDE.md`/`AGENTS.md` name the `source.fileMd5` check; all are create-if-missing, so an
   existing dump root keeps its old files until they are deleted. Dump core version 4: every cached aspect regenerates once.
 
+- Fixed: `geometry.audit_static_meshes` `z_fighting` no longer goes `unrunnable` on small or
+  blocky meshes. Its three local 256 caps (triangles per fine cell, coarse references and
+  candidates per large triangle) are replaced by one whole-mesh broad-phase budget,
+  `1024 * validTriangles` clamped to `[2^20, 2^28]`, checked before scanning, so one wall-sized quad or one
+  dense cell no longer refuses the whole mesh. A region following a duplicated surface around a
+  bend is unioned per plane instead of refusing. Measurements add `broadPhaseWork`,
+  `broadPhaseWorkBudget`, `densestFineCellTriangleCount` and, on a refusal, `unrunnableBound`.
+  Behaviour change: meshes that were `unrunnable` now get a verdict, which may be `flagged`.
+- Fixed: `geometry.audit_static_meshes` `includeClean: true` always returns `cleanAssets`, as an
+  empty array when no asset is clean, instead of dropping the key. Added `cleanChecks`: one row
+  `{assetPath, assetName, check, measurements}` per check that came back clean (capped at
+  `maxFindings` rows, `cleanChecksTruncated` when clipped), so healthy assets can be measured.
+
 - Fixed: `niagara.set_module_input` on an enum-typed input (e.g. `ENiagaraCoordinateSpace`)
   accepts the entry name, display name or integral index and writes an enum-typed override pin
   holding the entry name; it used to refuse names with `UNSUPPORTED_INPUT_VALUE` and write any
