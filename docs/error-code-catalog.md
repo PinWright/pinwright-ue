@@ -33,7 +33,7 @@ strings rather than `SendError` literals and so are outside the scan on both cou
 **A callsite is one regex match**, and the constant pattern cannot tell an emit from a
 mention: 13 comparisons (`ErrorCode == ErrorCodes::ERR_*`, recounted 2026-10-02) and the 4
 schema-listing field names in `Handlers/Audio/AudioSynthSchemaHandler.cpp` (2026-08-29 count) are
-counted as callsites here. About 17 of 5629 — the figures are an upper bound on emits, not an
+counted as callsites here. About 17 of 5644 — the figures are an upper bound on emits, not an
 exact one. The scan is also blind in the other direction: a raw code literal passed to a helper
 other than `SendError` is not counted (`EXPRESSION_NOT_FOUND`, passed as an argument to
 `ResolveExpressionOrSendError` in `MaterialAuthoringHandler.cpp`, has no row for that reason).
@@ -41,10 +41,10 @@ other than `SendError` is not counted (`EXPRESSION_NOT_FOUND`, passed as an argu
 Counts come from the scan itself, not from the rows below.
 
 - **Unique codes:** 878 — one row each in `## Codes by frequency`.
-- **Total callsites:** 5629 — sum of that table's `Callsites` column.
+- **Total callsites:** 5644 — sum of that table's `Callsites` column.
 - **Handler files:** 330 of the 703 `.cpp`/`.h` files under the 6 roots emit at
   least one code. Do not sum the `Files` column instead: it is per-code and overlapping
-  (one handler file emits many codes), so it double-counts to 2349.
+  (one handler file emits many codes), so it double-counts to 2351.
 
 Adding the codes only the two tables below carry gives 882 distinct codes file-wide. Quote
 which of the two figures you mean.
@@ -52,7 +52,7 @@ which of the two figures you mean.
 The frequency table and these totals are the scan's output verbatim; no row is appended by hand.
 Codes that need prose go in the two tables above it.
 
-Scanned 2026-10-02 against the clean tree at `af2dc050`. Source is edited concurrently;
+Scanned 2026-10-03 against the clean tree at `9828d554`. Source is edited concurrently;
 re-run the snippet rather than trusting these totals to the day.
 
 > **Scope widened 2026-08-19; the earlier staleness warning is resolved.** The previous snippet
@@ -116,10 +116,10 @@ these also carry a row in the frequency table. Kept for the semantics a count ca
 
 | Code | Callsites | Files |
 |---|---:|---:|
-| `INVALID_ARGUMENT` | 1082 | 179 |
+| `INVALID_ARGUMENT` | 1091 | 179 |
 | `INVALID_PARAMS` | 261 | 69 |
 | `NOT_FOUND` | 196 | 38 |
-| `ASSET_NOT_FOUND` | 186 | 82 |
+| `ASSET_NOT_FOUND` | 183 | 82 |
 | `NO_WORLD` | 94 | 14 |
 | `MISSING_PARAM` | 93 | 12 |
 | `EDITOR_NOT_AVAILABLE` | 83 | 34 |
@@ -170,17 +170,17 @@ these also carry a row in the frequency table. Kept for the semantics a count ca
 | `INVALID_PARAMETER` | 18 | 5 |
 | `INVALID_VALUE` | 18 | 6 |
 | `INVALID_ASSET_PATH` | 17 | 11 |
+| `VERIFICATION_FAILED` | 17 | 11 |
 | `ANIMATION_INVALID` | 16 | 5 |
 | `ANIMATION_NOT_FOUND` | 16 | 8 |
 | `BONE_NOT_FOUND` | 16 | 9 |
 | `INVALID_PROPERTY` | 16 | 5 |
 | `INVALID_RECIPE` | 15 | 5 |
-| `VERIFICATION_FAILED` | 15 | 10 |
+| `MISSING_REQUIRED_PARAM` | 15 | 7 |
 | `ASSET_DATA_INVALID` | 14 | 7 |
 | `EDITOR_ACTOR_SUBSYSTEM_MISSING` | 14 | 8 |
 | `PREVIEW_NOT_FOUND` | 14 | 4 |
 | `PREVIEW_VIEWPORT_NOT_FOUND` | 14 | 6 |
-| `MISSING_REQUIRED_PARAM` | 13 | 7 |
 | `GRAPH_UNAVAILABLE` | 12 | 4 |
 | `MISSING_NAME` | 12 | 3 |
 | `MISSING_PARAMETERS` | 12 | 2 |
@@ -213,6 +213,7 @@ these also carry a row in the frequency table. Kept for the semantics a count ca
 | `BLUEPRINT_BUSY` | 8 | 6 |
 | `CONDITION_INVALID` | 8 | 4 |
 | `FILE_NOT_FOUND` | 8 | 6 |
+| `INSTANCE_INDEX_OUT_OF_RANGE` | 8 | 3 |
 | `INVALID_GEOREFERENCE` | 8 | 3 |
 | `LEVEL_NOT_FOUND` | 8 | 3 |
 | `MRQ_NOT_AVAILABLE` | 8 | 2 |
@@ -233,6 +234,7 @@ these also carry a row in the frequency table. Kept for the semantics a count ca
 | `INVALID_SURFACE_SPEC` | 7 | 3 |
 | `METASOUND_FRONTEND_NOT_SUPPORTED` | 7 | 4 |
 | `MONTAGE_NOT_FOUND` | 7 | 1 |
+| `NO_COMPONENT` | 7 | 3 |
 | `NO_VIEWPORT` | 7 | 2 |
 | `PROPERTY_SET_FAILED` | 7 | 4 |
 | `SKELETAL_MESH_NOT_FOUND` | 7 | 5 |
@@ -246,13 +248,11 @@ these also carry a row in the frequency table. Kept for the semantics a count ca
 | `CONNECTION_FAILED` | 6 | 3 |
 | `DECODE_FAILED` | 6 | 3 |
 | `DESTINATION_EXISTS` | 6 | 3 |
-| `INSTANCE_INDEX_OUT_OF_RANGE` | 6 | 3 |
 | `INVALID_MODE` | 6 | 6 |
 | `INVALID_NODE_TYPE` | 6 | 3 |
 | `INVALID_PARENT` | 6 | 4 |
 | `LANDSCAPE_NOT_FOUND` | 6 | 1 |
 | `NODE_TYPE_NOT_FOUND` | 6 | 2 |
-| `NO_COMPONENT` | 6 | 3 |
 | `PARSE_FAILED` | 6 | 3 |
 | `POLYGON_LIMIT_EXCEEDED` | 6 | 4 |
 | `REPLACE_REFUSED` | 6 | 1 |
@@ -326,6 +326,7 @@ these also carry a row in the frequency table. Kept for the semantics a count ca
 | `INVALID_WATER_BODY_TYPE` | 4 | 1 |
 | `KEY_NOT_FOUND` | 4 | 3 |
 | `MALFORMED_JSON` | 4 | 1 |
+| `MATCH_COUNT_MISMATCH` | 4 | 2 |
 | `METASOUND_DOCUMENT_INTERFACE_NOT_SUPPORTED` | 4 | 2 |
 | `MISSING_MARKER_NAME` | 4 | 2 |
 | `MODULE_NOT_FOUND` | 4 | 1 |
@@ -388,7 +389,6 @@ these also carry a row in the frequency table. Kept for the semantics a count ca
 | `INVALID_REFERENCED_ASSET` | 3 | 1 |
 | `INVALID_ROW_VALUES` | 3 | 1 |
 | `LANDSCAPE_NO_HEIGHT_DATA` | 3 | 1 |
-| `MATCH_COUNT_MISMATCH` | 3 | 2 |
 | `MATERIAL_NOT_FOUND` | 3 | 3 |
 | `MESH_AUDIT_READ_FAILED` | 3 | 1 |
 | `MISSING_VALUE` | 3 | 3 |
@@ -490,6 +490,7 @@ these also carry a row in the frequency table. Kept for the semantics a count ca
 | `INVALID_PARENT_CLASS` | 2 | 2 |
 | `INVALID_TAG` | 2 | 2 |
 | `INVALID_TARGET` | 2 | 2 |
+| `INVALID_TARGET_KIND` | 2 | 2 |
 | `INVALID_TRANSFORM_PAYLOAD` | 2 | 1 |
 | `INVALID_XML` | 2 | 1 |
 | `JOB_CANCEL_UNSUPPORTED` | 2 | 2 |
@@ -753,7 +754,6 @@ these also carry a row in the frequency table. Kept for the semantics a count ca
 | `INVALID_STAGE` | 1 | 1 |
 | `INVALID_STRUCT` | 1 | 1 |
 | `INVALID_SUBGRAPH_ASSET` | 1 | 1 |
-| `INVALID_TARGET_KIND` | 1 | 1 |
 | `INVALID_THRESHOLD` | 1 | 1 |
 | `INVALID_TRIANGLE` | 1 | 1 |
 | `INVALID_VISIBILITY` | 1 | 1 |
