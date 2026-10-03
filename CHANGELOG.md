@@ -100,6 +100,11 @@
 - Fixed: `niagara.set_static_switch` refuses a fractional, non-integer-string, null, array or
   object value for an Integer switch (and a fractional index for an enum switch) with
   `INVALID_VALUE` instead of truncating it or reading it as branch 0.
+- Changed: `spatial.measure_distance`, `spatial.measure_overlap` and `spatial.verify_placement`
+  echo `geometry: "actorAABB"` and add a `warnings[]` entry naming any operand (or
+  `noOverlapWith` / `within` actor) that owns ISM/HISM instances, because its one AABB spans the
+  whole scatter. The wiki now states `edgeGap` is a lower bound on the true gap (false contact,
+  never false clear) and that `centerDistance` / `pivotDistance` are not clearance.
 - Added: `audio.synth` recipes take `master.loopCrossfadeMs` (default 0, one-shot). Above 0 the
   render runs that far past `durationMs` and crossfades the overhang onto the head, using a
   correlation-adaptive law, so the result loops seamlessly with no fade. It is refused with nonzero

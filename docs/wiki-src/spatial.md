@@ -166,7 +166,9 @@ Args:
 call({ path: "spatial.measure_distance", args: { a: "Cube_1", b: "Wall_2", mode: "edge_gap" } })
 ```
 
-Gotchas: all three distances are **always present** — `centerDistance` (bounds-centre to bounds-centre), `pivotDistance` (pivot to pivot), `edgeGap` (nearest surface-to-surface gap) — plus `perAxisGap {x,y,z}`; `mode` only picks which is echoed as the headline `distance`. `edgeGap` is `0` when the AABBs overlap. A negative `perAxisGap` component means the boxes overlap on that axis. AABBs bound a rotated non-box mesh **looser** than its true silhouette, so expect a rotated mesh to read larger than it looks.
+Gotchas: all three distances are **always present** — `centerDistance` (bounds-centre to bounds-centre), `pivotDistance` (pivot to pivot), `edgeGap` (nearest surface-to-surface gap) — plus `perAxisGap {x,y,z}`; `mode` only picks which is echoed as the headline `distance`. `edgeGap` is `0` when the AABBs overlap. A negative `perAxisGap` component means the boxes overlap on that axis.
+
+**What it measured** (echoed as `geometry: "actorAABB"`): one world AABB per named actor, never the mesh shape. An AABB encloses its geometry, so `edgeGap` is a **lower bound** on the true surface gap — a dome, a fluted column or a rotated mesh can read `0` (contact) where it is clearly clear, but cannot read clear where the geometry actually touches (geometry the box does not cover — child actors, WPO, `BoundsScale < 1`, and simple collision larger than the render bounds, so a gate that cares about collision can read falsely clear — is outside that guarantee). `centerDistance` and `pivotDistance`, including the default headline `distance`, are **not clearance**: a large mesh's centre can be far away while its surface is close. **ISM/HISM instances are invisible as instances**: a scatter holder's AABB is one box over every instance, so an operand owning instances adds a `warnings[]` entry naming it. For per-instance occupancy use `spatial.find_clear_placement`, which queries the physics scene and names the blocking instance.
 
 ### spatial.measure_overlap
 
@@ -180,7 +182,7 @@ Args:
 call({ path: "spatial.measure_overlap", args: { a: "Crate_1", b: "Crate_2" } })
 ```
 
-Gotchas: returns `{overlapping, penetrationAxis:"x|y|z", penetrationDepth, perAxisPenetration}`. `penetrationAxis` is the minimum-translation separating axis and `penetrationDepth` its smallest push-out — both are **only meaningful when `overlapping` is true** (a neutral `""` / `0` otherwise). Faces that merely touch count as overlapping. This is a pure read — it does not modify geometry the way `geometry.boolean_intersection` does.
+Gotchas: returns `{overlapping, penetrationAxis:"x|y|z", penetrationDepth, perAxisPenetration}`. `penetrationAxis` is the minimum-translation separating axis and `penetrationDepth` its smallest push-out — both are **only meaningful when `overlapping` is true** (a neutral `""` / `0` otherwise). Faces that merely touch count as overlapping. Same geometry model as `measure_distance` (`geometry: "actorAABB"`, ISM/HISM `warnings[]`): `overlapping: false` is reliable, `overlapping: true` can be a false contact for a non-box shape. This is a pure read — it does not modify geometry the way `geometry.boolean_intersection` does.
 
 ### spatial.verify_placement
 
@@ -209,7 +211,7 @@ call({
 })
 ```
 
-Gotchas: returns `{pass, checks:[{name, pass, detail}]}` where `pass` is the AND of all requested checks. `grounded`/`on` trace **pre-existing** geometry, so tick the world between a spawn and the verify. An actor **sunk into** a surface reads as *no ground* (a downward-from-bottom trace can't report a gap above its start), i.e. a miss rather than a negative gap. `on` uses a 2 cm rest tolerance; unresolved `noOverlapWith` names are reported but do not fail the check.
+Gotchas: returns `{pass, checks:[{name, pass, detail}]}` where `pass` is the AND of all requested checks. `grounded`/`on` trace **pre-existing** geometry, so tick the world between a spawn and the verify. An actor **sunk into** a surface reads as *no ground* (a downward-from-bottom trace can't report a gap above its start), i.e. a miss rather than a negative gap. `on` uses a 2 cm rest tolerance; unresolved `noOverlapWith` names are reported but do not fail the check. `noOverlapWith` and `within` are AABB tests (`geometry: "actorAABB"`) over the **named** actors only — unnamed geometry, including every ISM/HISM instance, is never considered, and a named actor (or the verified actor) owning instances adds a `warnings[]` entry.
 
 ### spatial.place_on_surface
 

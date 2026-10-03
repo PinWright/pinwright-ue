@@ -16,8 +16,10 @@
 #include "Tests/Infra/DispatcherTestHelpers.h"
 #include "Utils/ActorUtils.h"
 
+#include "Components/HierarchicalInstancedStaticMeshComponent.h" // the instanced-operand fixture
 #include "Dispatch/RpcDispatcher.h"
 #include "Editor.h"
+#include "Engine/StaticMesh.h"
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
 #include "Misc/Guid.h"
@@ -464,6 +466,184 @@ bool FMeasureUnknownArgRejectedTest::RunTest(const FString& Parameters)
 
     TestFalse(TEXT("unknown param is rejected"), bSuccess);
     TestEqual(TEXT("unknown param -> UNKNOWN_PARAMS"), ErrorCode, FString(TEXT("UNKNOWN_PARAMS")));
+
+    return true;
+}
+
+// (g) What the AABB verbs measured is on the response: geometry:"actorAABB" always, and a
+//     warnings[] entry naming any operand that owns ISM/HISM instances (its one AABB spans the
+//     whole scatter). Negative case first: two plain cubes carry the echo and NO warnings, so the
+//     warning is derived from instances rather than emitted unconditionally.
+namespace TestMeasureHandlersInstancedHelpers
+{
+    // An actor whose root is a HISM holding three cube instances 200 cm apart along X. Trailing
+    // 'X' on the label so SplitActorLabel cannot strip a numeric tail.
+    AActor* SpawnHolder(FAutomationTestBase& Test, UWorld* World, const FString& Label, const FVector& Origin)
+    {
+        UStaticMesh* Cube = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cube.Cube"));
+        AActor* Holder = (World && Cube)
+            ? World->SpawnActor<AActor>(AActor::StaticClass(), FVector::ZeroVector, FRotator::ZeroRotator)
+            : nullptr;
+        if (!Holder)
+        {
+            Test.AddError(TEXT("instanced holder fixture did not spawn"));
+            return nullptr;
+        }
+        UHierarchicalInstancedStaticMeshComponent* Hism =
+            NewObject<UHierarchicalInstancedStaticMeshComponent>(Holder, TEXT("HISM_MeasureScatter"), RF_Transactional);
+        Holder->SetRootComponent(Hism);
+        Holder->AddInstanceComponent(Hism);
+        Hism->SetStaticMesh(Cube);
+        Hism->RegisterComponent();
+        for (int32 Index = 0; Index < 3; ++Index)
+        {
+            Hism->AddInstance(FTransform(FVector(Index * 200.0, 0.0, 0.0)));
+        }
+        Holder->SetActorLocation(Origin);
+        Holder->SetActorLabel(Label);
+        return Holder;
+    }
+
+    // True when Result carries a warnings[] string that names Label.
+    bool WarningsName(const TSharedPtr<FJsonObject>& Result, const FString& Label)
+    {
+        const TArray<TSharedPtr<FJsonValue>>* Warnings = nullptr;
+        if (!Result.IsValid() || !Result->TryGetArrayField(TEXT("warnings"), Warnings))
+        {
+            return false;
+        }
+        for (const TSharedPtr<FJsonValue>& Value : *Warnings)
+        {
+            FString Text;
+            if (Value.IsValid() && Value->TryGetString(Text) && Text.Contains(Label)
+                && Text.Contains(TEXT("ISM/HISM")))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    FString GeometryOf(const TSharedPtr<FJsonObject>& Result)
+    {
+        FString Geometry;
+        if (Result.IsValid())
+        {
+            Result->TryGetStringField(TEXT("geometry"), Geometry);
+        }
+        return Geometry;
+    }
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMeasureInstancedOperandWarnsTest,
+    "PinWright.spatial.measure_distance.InstancedOperandWarnsAcrossAabbVerbs",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FMeasureInstancedOperandWarnsTest::RunTest(const FString& Parameters)
+{
+    using namespace TestMeasureHandlersInstancedHelpers;
+
+    UWorld* World = MeasureTestEditorWorld();
+    if (!World)
+    {
+        PinWrightTestSkip::SkipAssertions(*this, TEXT("no-editor-world"),
+            TEXT("Editor world not available; skipping instanced-operand measure test."));
+        return true;
+    }
+
+    const double ColX = 230000.0;
+    const double ColY = 200000.0;
+    const FString CubeA = MeasureTestUniqueLabel(TEXT("MInstA"));
+    const FString CubeB = MeasureTestUniqueLabel(TEXT("MInstB"));
+    const FString HolderLabel =
+        FString::Printf(TEXT("PW_MInstHolder_%sX"), *FGuid::NewGuid().ToString(EGuidFormats::Digits));
+
+    AActor* ActorA = MeasureTestSpawnCube(*this, World, CubeA, ColX, ColY, 0.0);
+    AActor* ActorB = MeasureTestSpawnCube(*this, World, CubeB, ColX + 300.0, ColY, 0.0);
+    AActor* Holder = SpawnHolder(*this, World, HolderLabel, FVector(ColX, ColY + 300.0, 0.0));
+    ON_SCOPE_EXIT
+    {
+        if (ActorA) { ActorA->Destroy(); }
+        if (ActorB) { ActorB->Destroy(); }
+        if (Holder) { Holder->Destroy(); }
+    };
+    if (!ActorA || !ActorB || !Holder)
+    {
+        return true;
+    }
+    // Fixture precondition: the holder must resolve by label and actually own instances, or the
+    // positive assertions below would fail for a fixture reason and read as a verb bug.
+    const UInstancedStaticMeshComponent* Ism = Holder->FindComponentByClass<UInstancedStaticMeshComponent>();
+    if (!TestTrue(TEXT("fixture: holder resolves by label"), McpActorUtils::FindActorByName(World, HolderLabel) == Holder)
+        || !TestTrue(TEXT("fixture: holder owns 3 instances"), Ism && Ism->GetInstanceCount() == 3))
+    {
+        return true;
+    }
+
+    auto Invoke = [this](const TCHAR* Method, const TSharedPtr<FJsonObject>& Payload) -> TSharedPtr<FJsonObject>
+    {
+        FTestResponseCapture Capture;
+        TestTrue(FString::Printf(TEXT("%s registered"), Method), InvokeHandlerWithCapture(Method, Payload, Capture));
+        TestTrue(FString::Printf(TEXT("%s succeeded"), Method), Capture.bSuccess);
+        return Capture.bSuccess ? Capture.Result : nullptr;
+    };
+    auto PairPayload = [](const FString& A, const FString& B)
+    {
+        TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+        Payload->SetStringField(TEXT("a"), A);
+        Payload->SetStringField(TEXT("b"), B);
+        return Payload;
+    };
+
+    // Negative: plain cubes -> geometry echo, no warnings field at all.
+    {
+        const TSharedPtr<FJsonObject> Result = Invoke(TEXT("spatial.measure_distance"), PairPayload(CubeA, CubeB));
+        TestEqual(TEXT("cube pair: geometry echo"), GeometryOf(Result), FString(TEXT("actorAABB")));
+        TestFalse(TEXT("cube pair: no warnings field"), Result.IsValid() && Result->HasField(TEXT("warnings")));
+    }
+
+    // Positive: each AABB verb with the holder as an operand names it in warnings[].
+    {
+        const TSharedPtr<FJsonObject> Result = Invoke(TEXT("spatial.measure_distance"), PairPayload(CubeA, HolderLabel));
+        TestEqual(TEXT("measure_distance: geometry echo"), GeometryOf(Result), FString(TEXT("actorAABB")));
+        TestTrue(TEXT("measure_distance: warns about the instanced holder"), WarningsName(Result, HolderLabel));
+    }
+    {
+        const TSharedPtr<FJsonObject> Result = Invoke(TEXT("spatial.measure_overlap"), PairPayload(HolderLabel, CubeA));
+        TestEqual(TEXT("measure_overlap: geometry echo"), GeometryOf(Result), FString(TEXT("actorAABB")));
+        TestTrue(TEXT("measure_overlap: warns about the instanced holder"), WarningsName(Result, HolderLabel));
+    }
+    {
+        TSharedPtr<FJsonObject> Expect = MakeShared<FJsonObject>();
+        Expect->SetArrayField(TEXT("noOverlapWith"), { MakeShared<FJsonValueString>(HolderLabel) });
+        TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+        Payload->SetStringField(TEXT("actor"), CubeA);
+        Payload->SetObjectField(TEXT("expect"), Expect);
+        const TSharedPtr<FJsonObject> Result = Invoke(TEXT("spatial.verify_placement"), Payload);
+        TestEqual(TEXT("verify_placement: geometry echo"), GeometryOf(Result), FString(TEXT("actorAABB")));
+        TestTrue(TEXT("verify_placement: noOverlapWith warns about the instanced holder"),
+            WarningsName(Result, HolderLabel));
+    }
+    // The other two verify_placement warning sources: the verified actor itself, and the
+    // `within` container actor.
+    {
+        TSharedPtr<FJsonObject> Expect = MakeShared<FJsonObject>();
+        Expect->SetStringField(TEXT("within"), CubeA);
+        TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+        Payload->SetStringField(TEXT("actor"), HolderLabel);
+        Payload->SetObjectField(TEXT("expect"), Expect);
+        TestTrue(TEXT("verify_placement: verified actor owning instances warns"),
+            WarningsName(Invoke(TEXT("spatial.verify_placement"), Payload), HolderLabel));
+    }
+    {
+        TSharedPtr<FJsonObject> Expect = MakeShared<FJsonObject>();
+        Expect->SetStringField(TEXT("within"), HolderLabel);
+        TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+        Payload->SetStringField(TEXT("actor"), CubeA);
+        Payload->SetObjectField(TEXT("expect"), Expect);
+        TestTrue(TEXT("verify_placement: within container owning instances warns"),
+            WarningsName(Invoke(TEXT("spatial.verify_placement"), Payload), HolderLabel));
+    }
 
     return true;
 }

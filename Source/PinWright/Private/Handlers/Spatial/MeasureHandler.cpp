@@ -10,7 +10,9 @@
 // (GetActorBounds(false,...) -> FBox) so their numbers agree with that read.
 // find_clear_placement does not: an AABB per actor cannot answer an occupancy SEARCH, so it
 // queries the physics scene with a box overlap, which resolves against ISM/HISM per-instance
-// bodies as well as actors. None of the four mutate the scene: measure_* is pure box math,
+// bodies as well as actors. Because the first three cannot see instances, every result they return
+// echoes geometry:"actorAABB" and warns when an operand owns ISM/HISM instances (its one AABB spans
+// the whole scatter). None of the four mutate the scene: measure_* is pure box math,
 // verify_placement is box math plus a downward line trace via SpatialTraceUtils::TraceGroundBelow,
 // and find_clear_placement only reads. Coordinates are in unreal units (cm); every result echoes
 // units + an axis note.
@@ -76,6 +78,57 @@ namespace
         return FBox(Origin - Extent, Origin + Extent);
     }
 
+    // What the AABB verbs measured, echoed on every result so a caller reads the geometry model
+    // off the response instead of mistaking a box gap for a shape-aware clearance.
+    void MeasureAddGeometryEcho(const TSharedPtr<FJsonObject>& Data)
+    {
+        Data->SetStringField(TEXT("geometry"), TEXT("actorAABB"));
+    }
+
+    // An ISM/HISM holder's AABB is ONE box over every instance it owns: an AABB answer about it
+    // cannot say which instance is near, and reads every gap between instances as occupied.
+    // Derived from the instances themselves - a holder with zero instances has nothing to misreport.
+    void MeasureWarnIfInstanced(const AActor* Actor, TArray<FString>& Warnings)
+    {
+        int32 NumComponents = 0;
+        int32 NumInstances = 0;
+        const TInlineComponentArray<UInstancedStaticMeshComponent*> InstancedComponents(Actor);
+        for (const UInstancedStaticMeshComponent* Component : InstancedComponents)
+        {
+            const int32 Count = Component ? Component->GetInstanceCount() : 0;
+            if (Count > 0)
+            {
+                ++NumComponents;
+                NumInstances += Count;
+            }
+        }
+        if (NumInstances == 0)
+        {
+            return;
+        }
+        Warnings.AddUnique(FString::Printf(
+            TEXT("'%s' owns %d ISM/HISM instance(s) in %d component(s); its AABB is one box over all "
+                 "of them, so this result cannot say which instance is near and reads the gaps between "
+                 "instances as occupied. For per-instance occupancy use spatial.find_clear_placement "
+                 "(physics overlap, names the instance)."),
+            *Actor->GetActorLabel(), NumInstances, NumComponents));
+    }
+
+    // `warnings` only when non-empty (docs/rpc-design.md: the plugin's optional-field convention).
+    void MeasureSetWarnings(const TSharedPtr<FJsonObject>& Data, const TArray<FString>& Warnings)
+    {
+        if (Warnings.Num() == 0)
+        {
+            return;
+        }
+        TArray<TSharedPtr<FJsonValue>> Values;
+        for (const FString& Warning : Warnings)
+        {
+            Values.Add(MakeShared<FJsonValueString>(Warning));
+        }
+        Data->SetArrayField(TEXT("warnings"), Values);
+    }
+
     // Resolve an actor by name/label/path. On failure sends ACTOR_NOT_FOUND naming
     // which slot ("a"/"b"/"actor") failed and returns nullptr; the caller returns.
     AActor* MeasureResolveActorOrError(const FHandlerContext& Ctx, const FString& Name, const TCHAR* Slot)
@@ -107,7 +160,10 @@ REGISTER_RPC_HANDLER("spatial.measure_distance", "spatial",
     "edgeGap (nearest surface-to-surface gap, 0 when the AABBs overlap) and perAxisGap {x,y,z} "
     "(|centerDelta| - (extentA+extentB) per axis; negative = overlap on that axis). All three "
     "distances are always present; `mode` only selects which one is echoed as the headline `distance`. "
-    "Coordinates are in unreal units (cm).",
+    "geometry:\"actorAABB\" is echoed: edgeGap is a LOWER bound on the true surface gap (a dome, column "
+    "or rotated mesh reads contact where it is clear, never clear where it touches); centerDistance and "
+    "pivotDistance are not clearance at all. An operand owning ISM/HISM instances adds a warnings[] "
+    "entry - its one AABB spans the whole scatter. Coordinates are in unreal units (cm).",
     RPC_PARAMS(
         RPC_PARAM_REQ("a", "string", "Display label / internal name / path of the first actor."),
         RPC_PARAM_REQ("b", "string", "Display label / internal name / path of the second actor."),
@@ -166,6 +222,11 @@ REGISTER_RPC_HANDLER("spatial.measure_distance", "spatial",
     Data->SetNumberField(TEXT("edgeGap"), EdgeGap);
     Data->SetObjectField(TEXT("perAxisGap"), MeasureMakeVectorObject(PerAxisGap));
     MeasureAddAxisEcho(Data);
+    MeasureAddGeometryEcho(Data);
+    TArray<FString> Warnings;
+    MeasureWarnIfInstanced(ActorA, Warnings);
+    MeasureWarnIfInstanced(ActorB, Warnings);
+    MeasureSetWarnings(Data, Warnings);
 
     Ctx.SendSuccess(Data);
     return true;
@@ -177,7 +238,9 @@ REGISTER_RPC_HANDLER("spatial.measure_overlap", "spatial",
     "perAxisPenetration {x,y,z} ((extentA+extentB) - |centerDelta| per axis; positive where the "
     "boxes overlap on that axis), and - when overlapping - the minimum-translation separating axis "
     "(penetrationAxis) and its depth (penetrationDepth, the smallest push-out). Pure box math; does "
-    "not modify geometry (unlike geometry.boolean_intersection). Coordinates are in unreal units (cm).",
+    "not modify geometry (unlike geometry.boolean_intersection). geometry:\"actorAABB\" is echoed: "
+    "overlapping:false is reliable, overlapping:true can be a false contact for a non-box shape. An "
+    "operand owning ISM/HISM instances adds a warnings[] entry. Coordinates are in unreal units (cm).",
     RPC_PARAMS(
         RPC_PARAM_REQ("a", "string", "Display label / internal name / path of the first actor."),
         RPC_PARAM_REQ("b", "string", "Display label / internal name / path of the second actor.")
@@ -220,6 +283,11 @@ REGISTER_RPC_HANDLER("spatial.measure_overlap", "spatial",
     Data->SetNumberField(TEXT("penetrationDepth"), bOverlapping ? MinPenetration : 0.0);
     Data->SetObjectField(TEXT("perAxisPenetration"), MeasureMakeVectorObject(Penetration));
     MeasureAddAxisEcho(Data);
+    MeasureAddGeometryEcho(Data);
+    TArray<FString> Warnings;
+    MeasureWarnIfInstanced(ActorA, Warnings);
+    MeasureWarnIfInstanced(ActorB, Warnings);
+    MeasureSetWarnings(Data, Warnings);
 
     Ctx.SendSuccess(Data);
     return true;
@@ -233,7 +301,8 @@ REGISTER_RPC_HANDLER("spatial.verify_placement", "spatial",
     "below must be that actor); noOverlapWith (array of actor names - none may intersect this actor's "
     "AABB); within ({min,max} box or an actor name whose AABB must fully contain this actor's AABB). "
     "Returns pass (all requested checks passed) and checks[] with a per-check pass + detail. "
-    "Non-mutating. Coordinates are in unreal units (cm).",
+    "geometry:\"actorAABB\" is echoed; noOverlapWith tests only the NAMED actors' boxes, and any actor "
+    "here owning ISM/HISM instances adds a warnings[] entry. Non-mutating. Coordinates are in unreal units (cm).",
     RPC_PARAMS(
         RPC_PARAM_REQ("actor", "string", "Display label / internal name / path of the actor to verify."),
         RPC_PARAM_REQ("expect", "object",
@@ -256,6 +325,8 @@ REGISTER_RPC_HANDLER("spatial.verify_placement", "spatial",
 
     TArray<TSharedPtr<FJsonValue>> Checks;
     bool bAllPass = true;
+    TArray<FString> Warnings;
+    MeasureWarnIfInstanced(Target, Warnings);
 
     // --- grounded: trace straight down from the bounds bottom; PASS if it hits within
     //     [0, maxGap]. The trace starts at the bounds bottom-center, so a real hit has a
@@ -360,6 +431,7 @@ REGISTER_RPC_HANDLER("spatial.verify_placement", "spatial",
                 Unresolved.Add(MakeShared<FJsonValueString>(Name));
                 continue;
             }
+            MeasureWarnIfInstanced(Other, Warnings);
             if (TargetBox.Intersect(MeasureActorBox(Other)))
             {
                 Overlapping.Add(MakeShared<FJsonValueString>(Other->GetActorLabel()));
@@ -407,6 +479,7 @@ REGISTER_RPC_HANDLER("spatial.verify_placement", "spatial",
             {
                 Container = MeasureActorBox(ContainerActor);
                 bHaveContainer = true;
+                MeasureWarnIfInstanced(ContainerActor, Warnings);
             }
             else
             {
@@ -445,6 +518,8 @@ REGISTER_RPC_HANDLER("spatial.verify_placement", "spatial",
     Data->SetBoolField(TEXT("pass"), bAllPass);
     Data->SetArrayField(TEXT("checks"), Checks);
     MeasureAddAxisEcho(Data);
+    MeasureAddGeometryEcho(Data);
+    MeasureSetWarnings(Data, Warnings);
 
     Ctx.SendSuccess(Data);
     return true;
