@@ -102,7 +102,7 @@ Not listed: internal plumbing namespaces, not intended for direct use - `pipelin
 | `asset.mark_dirty` | Mark ONE loaded package dirty without writing anything to disk. |
 | `asset.move` | Move an asset to a different folder and leave a redirector at the old path. |
 | `asset.nanite_rebuild_mesh` | Toggle Nanite and/or rebuild its data for a StaticMesh. |
-| `asset.references` | Get assets this asset references (outbound dependencies / hard package dependencies). |
+| `asset.references` | Get both directions for one asset: dependencies (outbound - what this asset references) and referencers (who references this asset - the check before a delete). |
 | `asset.reload` | Force-evict a loaded asset package and re-read it from disk within the current editor session. |
 | `asset.rename` | Rename an asset and create a redirector at the old path so existing references keep resolving. |
 | `asset.reset_instance_parameters` | Reset all parameter overrides on a material instance |

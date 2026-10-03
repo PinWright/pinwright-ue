@@ -293,6 +293,14 @@
   the request is `ev100Requested`, and `fixed` is new. An explicit auto request now draws one frame.
 - Added: `render.capture_open_level` emits `pieWorldWarning` when a PIE world is live and the
   capture was of the editor world.
+- Fixed: `asset.references` reports who references the asset. It now returns **both directions under
+  explicit keys**: `dependencies` / `dependencyCount` (outbound, unchanged) and new `referencers` /
+  `referencerCount` (inbound). **Behaviour change: the legacy `references` / `referenceCount` keys now
+  carry the referencers**; they used to repeat the outbound `dependencies` list byte-for-byte, so a
+  pre-delete "is anything still using this?" check read the asset's own dependencies and missed the
+  level or emitter that actually references it. A caller that read `references` as outbound must
+  switch to `dependencies`. `asset.dependencies` is unchanged. This repurpose is a recorded,
+  deliberate exception to the no-repurpose rule in `docs/rpc-design.md`.
 - Fixed: `bevel` (`geometry.bevel` and `.pwmodel`) measures its one-group-per-quad warning over
   the polygroups its selected edges border instead of the whole mesh, so a `filter_box_min` /
   `filter_box_max` bevel no longer warns about dense geometry outside the box. **The message text

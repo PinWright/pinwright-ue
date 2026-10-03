@@ -145,13 +145,15 @@ Same path contract and same `[ASSET_NOT_FOUND]` verdict as [`asset.get_dependenc
 
 ### asset.references
 
-Outbound dependencies of one asset, as registry `FAssetIdentifier` rows (`packageName`, optional `objectName`). Params: `assetPath` (required). Emits the legacy `references` / `referenceCount` keys and the direction-true `dependencies` / `dependencyCount` aliases side by side; the legacy names are direction-misleading and kept only for wire compatibility. For the inverse use [`asset.dependencies`](#assetdependencies); for a flat package-name list use [`asset.get_dependencies`](#assetget_dependencies).
+Both directions for one asset, as registry `FAssetIdentifier` rows (`packageName`, optional `objectName`). Params: `assetPath` (required). `dependencies` / `dependencyCount` are **outbound** (what this asset references); `referencers` / `referencerCount` are **inbound** (who references this asset - the check before a delete). The legacy `references` / `referenceCount` keys carry the **referencers**. Both lists span every registry dependency category, as `asset.dependencies` does: besides package references, `referencers` can hold Manage rows (asset-manager / primary-asset bookkeeping) and SearchableName rows, so a referencer can be, for example, a `PrimaryAssetLabel` that only names this asset for cooking/chunking rather than a level or asset that loads it.
+
+**Behaviour change:** `references` / `referenceCount` used to repeat the outbound `dependencies` list byte-for-byte, so a caller asking "is anything still using this?" read the asset's own dependencies (engine modules, its parent material) and never saw the level or emitter that actually references it. Read `referencers` for that question and `dependencies` for the other; do not read the legacy keys in new code. For a flat package-name list of outbound deps use [`asset.get_dependencies`](#assetget_dependencies).
 
 **The short `/Game/Foo/Bar` form is accepted.** It previously worked for some assets and failed for others with `[ASSET_NOT_FOUND]` on the exact string `asset.exists` accepted, because the lookup needed a full object path and only succeeded when the package happened to already be loaded in memory - which is not something a caller controls. Both spellings now resolve through the shared package resolver described under [`asset.get_dependencies`](#assetget_dependencies) and return identical results.
 
 ### asset.dependencies
 
-Inbound referencers: who references this asset. Params: `assetPath` (required). Emits the legacy `dependencies` / `dependencyCount` keys and the direction-true `referencers` / `referencerCount` aliases. This is the verb to run before a delete. Same path contract, same short-form fix, and same `[ASSET_NOT_FOUND]` verdict as [`asset.references`](#assetreferences).
+Inbound referencers: who references this asset. Params: `assetPath` (required). Emits the legacy `dependencies` / `dependencyCount` keys and the direction-true `referencers` / `referencerCount` aliases. The legacy `dependencies` here is the **inbound** list - the opposite of the `dependencies` key on `asset.references` - so read `referencers`. This is the verb to run before a delete; `asset.references` returns the same `referencers` plus the outbound `dependencies`. Same path contract, same short-form fix, and same `[ASSET_NOT_FOUND]` verdict as [`asset.references`](#assetreferences).
 
 ### asset.save
 

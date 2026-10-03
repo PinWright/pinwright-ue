@@ -3473,7 +3473,7 @@ REGISTER_RPC_HANDLER("container.set.clear", "container", "Clear all elements fro
 // ===========================================================================
 // asset.references
 // ===========================================================================
-REGISTER_RPC_HANDLER("asset.references", "asset", "Get assets this asset references (outbound dependencies / hard package dependencies). For the inverse (who references this asset) use asset.dependencies.",
+REGISTER_RPC_HANDLER("asset.references", "asset", "Get both directions for one asset: dependencies (outbound - what this asset references) and referencers (who references this asset - the check before a delete). The legacy references/referenceCount keys carry the referencers.",
     RPC_PARAMS(
         RPC_PARAM_REQ("assetPath", "path", "Asset path to query. Both the /Game/Foo/Bar and /Game/Foo/Bar.Bar spellings resolve to the same package, exactly as asset.exists accepts them.")
     ))
@@ -3507,35 +3507,45 @@ REGISTER_RPC_HANDLER("asset.references", "asset", "Get assets this asset referen
         return true;
     }
 
+    auto ToRows = [](const TArray<FAssetIdentifier>& Ids)
+    {
+        TArray<TSharedPtr<FJsonValue>> Rows;
+        for (const FAssetIdentifier& Id : Ids)
+        {
+            TSharedPtr<FJsonObject> RowObj = MakeShared<FJsonObject>();
+            RowObj->SetStringField(TEXT("packageName"), Id.PackageName.ToString());
+            if (!Id.ObjectName.IsNone())
+            {
+                RowObj->SetStringField(TEXT("objectName"), Id.ObjectName.ToString());
+            }
+            Rows.Add(MakeShared<FJsonValueObject>(RowObj));
+        }
+        return Rows;
+    };
+
     TArray<FAssetIdentifier> Dependencies;
     AssetRegistry.GetDependencies(FAssetIdentifier(Resolved.PackageName), Dependencies);
-
-    TArray<TSharedPtr<FJsonValue>> ReferencesArray;
-    for (const FAssetIdentifier& Dep : Dependencies)
-    {
-        TSharedPtr<FJsonObject> RefObj = MakeShared<FJsonObject>();
-        RefObj->SetStringField(TEXT("packageName"), Dep.PackageName.ToString());
-        if (!Dep.ObjectName.IsNone())
-        {
-            RefObj->SetStringField(TEXT("objectName"), Dep.ObjectName.ToString());
-        }
-        ReferencesArray.Add(MakeShared<FJsonValueObject>(RefObj));
-    }
+    TArray<FAssetIdentifier> Referencers;
+    AssetRegistry.GetReferencers(FAssetIdentifier(Resolved.PackageName), Referencers);
 
     TSharedPtr<FJsonObject> ResultPayload = MakeShared<FJsonObject>();
     ResultPayload->SetStringField(TEXT("assetPath"), AssetPath);
     ResultPayload->SetStringField(TEXT("packageName"), Resolved.PackageName.ToString());
-    // Legacy keys (kept for wire compat) — these report the asset's OUTBOUND
-    // dependencies (what this asset references), as the GetDependencies call above
-    // produces. The legacy "references"/"referenceCount" names are direction-
-    // misleading, so emit direction-true aliases alongside them.
-    const int32 OutboundCount = ReferencesArray.Num();
-    ResultPayload->SetNumberField(TEXT("referenceCount"), OutboundCount);
-    ResultPayload->SetNumberField(TEXT("dependencyCount"), OutboundCount);
-    ResultPayload->SetArrayField(TEXT("references"), ReferencesArray);
-    // Direction-true alias is the last array write — move the now-dead local
-    // rather than forcing a third copy of the element array.
-    ResultPayload->SetArrayField(TEXT("dependencies"), MoveTemp(ReferencesArray));
+    // Each direction under its own explicit key. "references"/"referenceCount" used
+    // to repeat the OUTBOUND list byte-for-byte next to "dependencies", so a caller
+    // asking "who still references this?" before a delete read the asset's own
+    // dependencies instead (B-asset-references-returns-dependencies-not-referencers).
+    // The legacy keys now carry the referencers, the reading the name invites.
+    // DELIBERATE exception to docs/rpc-design.md's "do not repurpose an existing
+    // key" rule (recorded there): dropping the keys would make a default-reading
+    // caller see [] = "nothing references this" on the delete path. Do not flip back.
+    const TArray<TSharedPtr<FJsonValue>> ReferencerRows = ToRows(Referencers);
+    ResultPayload->SetNumberField(TEXT("dependencyCount"), Dependencies.Num());
+    ResultPayload->SetArrayField(TEXT("dependencies"), ToRows(Dependencies));
+    ResultPayload->SetNumberField(TEXT("referencerCount"), ReferencerRows.Num());
+    ResultPayload->SetArrayField(TEXT("referencers"), ReferencerRows);
+    ResultPayload->SetNumberField(TEXT("referenceCount"), ReferencerRows.Num());
+    ResultPayload->SetArrayField(TEXT("references"), ReferencerRows);
 
     Ctx.SendSuccess(ResultPayload);
     return true;

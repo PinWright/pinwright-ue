@@ -3,10 +3,13 @@
 // Test: asset.references / asset.dependencies report the correct direction in
 // their result fields and registered summaries.
 //
-// Regression guard for E-asset-dependencies-references-inverted:
-//   - asset.references calls GetDependencies (OUTBOUND deps); its summary must say
-//     so and its payload must carry a direction-true "dependencies" alias next to
-//     the legacy "references" key.
+// Regression guard for E-asset-dependencies-references-inverted and
+// B-asset-references-returns-dependencies-not-referencers:
+//   - asset.references reports BOTH directions under explicit keys: OUTBOUND
+//     "dependencies" (GetDependencies) and INBOUND "referencers" (GetReferencers).
+//     The legacy "references" key carries the referencers; it used to repeat the
+//     outbound list byte-for-byte, so a pre-delete "who uses this?" check read the
+//     asset's own dependencies instead.
 //   - asset.dependencies calls GetReferencers (INBOUND referencers); its summary
 //     must say so and its payload must carry a direction-true "referencers" alias
 //     next to the legacy "dependencies" key.
@@ -20,6 +23,7 @@
 #include "Tests/TestUtils.h"
 #include "Tests/Assets/AssetRefDirectionFixtures.h"
 
+#include "AssetRegistry/AssetRegistryModule.h"
 #include "Misc/PackageName.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetReferenceDirectionTest,
@@ -40,15 +44,13 @@ bool FAssetReferenceDirectionTest::RunTest(const FString& Parameters)
         TestFalse(TEXT("asset.dependencies summary present"), DepSummary.IsEmpty());
         TestFalse(TEXT("asset.get_dependencies summary present"), GetDepSummary.IsEmpty());
 
-        // Assert the direction *property* the ticket is about ("noun matches
-        // direction"), not the exact retired prose: asset.references is the
-        // OUTBOUND verb, so its summary must say "outbound" and must NOT describe
-        // itself as returning inbound referencers.
-        TestTrue(TEXT("asset.references summary says outbound"),
+        // asset.references reports both directions, so its summary must name
+        // both (B-asset-references-returns-dependencies-not-referencers retired
+        // the outbound-only wording).
+        TestTrue(TEXT("asset.references summary names the outbound dependencies"),
             RefSummary.Contains(TEXT("outbound"), ESearchCase::IgnoreCase));
-        TestFalse(TEXT("asset.references summary does not claim to return referencers/inbound"),
-            RefSummary.Contains(TEXT("referencers"), ESearchCase::IgnoreCase)
-            || RefSummary.Contains(TEXT("inbound"), ESearchCase::IgnoreCase));
+        TestTrue(TEXT("asset.references summary names the referencers"),
+            RefSummary.Contains(TEXT("referencers"), ESearchCase::IgnoreCase));
 
         // asset.dependencies is the INBOUND verb: its summary must say
         // "referencers" (or "inbound") and must NOT describe itself as returning
@@ -85,31 +87,74 @@ bool FAssetReferenceDirectionTest::RunTest(const FString& Parameters)
     const FString ObjectPathB = FString::Printf(TEXT("%s.%s"),
         *PathB, *FPackageName::GetLongPackageAssetName(PathB));
 
+    // Fixture precondition, read straight from the registry: the A -> B edge
+    // exists in both directions, so a wrong verb answer below is the verb's fault.
+    {
+        IAssetRegistry& Registry =
+            FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get();
+        TArray<FName> RegDepsOfA, RegRefsOfB;
+        Registry.GetDependencies(FName(*PathA), RegDepsOfA);
+        Registry.GetReferencers(FName(*PathB), RegRefsOfB);
+        if (!TestTrue(TEXT("fixture: registry records A depends on B"), RegDepsOfA.Contains(FName(*PathB)))
+            || !TestTrue(TEXT("fixture: registry records B is referenced by A"), RegRefsOfB.Contains(FName(*PathA))))
+        {
+            CleanupTestAsset(PathA);
+            CleanupTestAsset(PathB);
+            return true;
+        }
+    }
+
     // -------------------------------------------------------------------------
-    // 2. asset.references(A) returns OUTBOUND deps: B appears, under BOTH the
-    //    legacy "references" key AND the direction-true "dependencies" alias.
+    // 2. asset.references reports each direction under its own key. Query both
+    //    ends of the A -> B edge: on A, B is a dependency and NOT a referencer;
+    //    on B, A is a referencer (also under legacy "references") and NOT a
+    //    dependency. Before the fix "references" == "dependencies" on every
+    //    asset, so B's "references" lacked A and A's "references" held B.
     // -------------------------------------------------------------------------
     {
         TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
         Payload->SetStringField(TEXT("assetPath"), ObjectPathA);
         FTestResponseCapture Capture;
         const bool bInvoked = InvokeHandlerWithCapture(TEXT("asset.references"), Payload, Capture);
-        TestTrue(TEXT("asset.references handler found"), bInvoked);
-        TestTrue(TEXT("asset.references succeeded"), Capture.bSuccess);
+        TestTrue(TEXT("asset.references(A) handler found"), bInvoked);
+        TestTrue(TEXT("asset.references(A) succeeded"), Capture.bSuccess);
 
         if (Capture.bSuccess && Capture.Result.IsValid())
         {
-            // Legacy field carries the outbound dependency on B.
-            TestTrue(TEXT("asset.references legacy 'references' contains B"),
-                JsonArrayHasObjectWithStringField(Capture.Result, TEXT("references"), TEXT("packageName"), PathB));
-            // Direction-true alias must exist and carry the same outbound dep.
-            TestTrue(TEXT("asset.references direction-true 'dependencies' alias contains B"),
+            TestTrue(TEXT("asset.references(A) 'dependencies' contains B"),
                 JsonArrayHasObjectWithStringField(Capture.Result, TEXT("dependencies"), TEXT("packageName"), PathB));
-            // A's outbound deps must NOT be reported as A referencing itself, and
-            // crucially the verb must not return inbound referencers here.
+            TestFalse(TEXT("asset.references(A) 'referencers' does not contain B (B does not reference A)"),
+                JsonArrayHasObjectWithStringField(Capture.Result, TEXT("referencers"), TEXT("packageName"), PathB));
+            TestFalse(TEXT("asset.references(A) legacy 'references' does not contain B (it is not the outbound list)"),
+                JsonArrayHasObjectWithStringField(Capture.Result, TEXT("references"), TEXT("packageName"), PathB));
             double DependencyCount = -1.0;
-            TestTrue(TEXT("asset.references emits 'dependencyCount' alias"),
+            TestTrue(TEXT("asset.references(A) emits 'dependencyCount'"),
                 Capture.Result->TryGetNumberField(TEXT("dependencyCount"), DependencyCount));
+        }
+    }
+    {
+        TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+        Payload->SetStringField(TEXT("assetPath"), ObjectPathB);
+        FTestResponseCapture Capture;
+        const bool bInvoked = InvokeHandlerWithCapture(TEXT("asset.references"), Payload, Capture);
+        TestTrue(TEXT("asset.references(B) handler found"), bInvoked);
+        TestTrue(TEXT("asset.references(B) succeeded"), Capture.bSuccess);
+
+        if (Capture.bSuccess && Capture.Result.IsValid())
+        {
+            TestTrue(TEXT("asset.references(B) 'referencers' contains A"),
+                JsonArrayHasObjectWithStringField(Capture.Result, TEXT("referencers"), TEXT("packageName"), PathA));
+            TestTrue(TEXT("asset.references(B) legacy 'references' contains A"),
+                JsonArrayHasObjectWithStringField(Capture.Result, TEXT("references"), TEXT("packageName"), PathA));
+            TestFalse(TEXT("asset.references(B) 'dependencies' does not contain A (B does not depend on A)"),
+                JsonArrayHasObjectWithStringField(Capture.Result, TEXT("dependencies"), TEXT("packageName"), PathA));
+            double ReferencerCount = -1.0, ReferenceCount = -1.0;
+            TestTrue(TEXT("asset.references(B) emits 'referencerCount'"),
+                Capture.Result->TryGetNumberField(TEXT("referencerCount"), ReferencerCount));
+            TestTrue(TEXT("asset.references(B) emits 'referenceCount'"),
+                Capture.Result->TryGetNumberField(TEXT("referenceCount"), ReferenceCount));
+            TestTrue(TEXT("asset.references(B) referencerCount >= 1"), ReferencerCount >= 1.0);
+            TestEqual(TEXT("asset.references(B) referenceCount == referencerCount"), ReferenceCount, ReferencerCount);
         }
     }
 
