@@ -16,6 +16,10 @@ class UTexture2D;
 
 namespace PinWrightTextureAssets
 {
-    UTexture2D* CreateEmptyTexture(const FString& PackagePath, const FString& TextureName, int32 Width, int32 Height, bool bHDR);
+    // Returns nullptr with OutErrorCode / OutError set on a refusal: an invalid path, or
+    // ASSET_ALREADY_EXISTS when anything (on disk or loaded, any class) already lives at the
+    // output path. Nothing is created on a refusal.
+    UTexture2D* CreateEmptyTexture(const FString& PackagePath, const FString& TextureName, int32 Width, int32 Height, bool bHDR,
+        FString& OutErrorCode, FString& OutError);
     void McpSaveTextureToDisk(const TSharedPtr<FJsonObject>& Response, UObject* Texture, bool bSave);
 }

@@ -93,10 +93,13 @@ namespace TextureAuthorHandlerHelpers
             return true;
         }
 
-        UTexture2D* Texture = PinWrightTextureAssets::CreateEmptyTexture(Path, Name, Width, Height, /*bHDR=*/false);
+        FString CreateErrorCode;
+        FString CreateError;
+        UTexture2D* Texture = PinWrightTextureAssets::CreateEmptyTexture(Path, Name, Width, Height, /*bHDR=*/false,
+            CreateErrorCode, CreateError);
         if (!Texture)
         {
-            Ctx.SendError(ErrorCodes::ERR_CREATE_FAILED, FString::Printf(TEXT("Failed to create texture '%s'"), *ObjectPath));
+            Ctx.SendError(ErrorCodes::ERR_CREATE_FAILED, FString::Printf(TEXT("Failed to create texture '%s': %s"), *ObjectPath, *CreateError));
             return true;
         }
         {

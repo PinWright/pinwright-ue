@@ -85,8 +85,11 @@ void PinWrightTextureAssets::McpSaveTextureToDisk(const TSharedPtr<FJsonObject>&
 }
 
 // Helper to create a texture with given dimensions
-UTexture2D* PinWrightTextureAssets::CreateEmptyTexture(const FString& PackagePath, const FString& TextureName, int32 Width, int32 Height, bool bHDR)
+UTexture2D* PinWrightTextureAssets::CreateEmptyTexture(const FString& PackagePath, const FString& TextureName, int32 Width, int32 Height, bool bHDR,
+    FString& OutErrorCode, FString& OutError)
 {
+    OutErrorCode.Reset();
+    OutError.Reset();
     // Guard the composition, not the result. TWO engine calls below log at **Fatal** - a
     // verbosity that is not compiled out in any configuration and ends the PROCESS, taking every
     // unsaved package in a shared editor with it: LongPackageNameToFilename
@@ -104,12 +107,34 @@ UTexture2D* PinWrightTextureAssets::CreateEmptyTexture(const FString& PackagePat
     if (!PinWrightComposeAssetPackagePath(NormalizeContentAssetPath(PackagePath), TextureName,
                                           FullPath, PathError))
     {
-        // Warning, not Error: this is a refused caller argument, not a plugin fault. The wire
-        // response is the caller's existing "Failed to create texture" refusal; the engine's own
-        // reason for the refusal is here.
+        // Warning, not Error: this is a refused caller argument, not a plugin fault. The engine's
+        // own reason for the refusal is logged here and returned in OutError.
         UE_LOG(LogPinWrightSubsystem, Warning,
             TEXT("CreateEmptyTexture refused '%s' in '%s': %s"),
             *TextureName, *PackagePath, *PathError);
+        OutErrorCode = TEXT("TEXTURE_ERROR");
+        OutError = FString::Printf(TEXT("Failed to create texture '%s' in '%s': %s"), *TextureName, *PackagePath, *PathError);
+        return nullptr;
+    }
+
+    // Refuse an existing asset at the output path BEFORE anything is created
+    // (B-combine-textures-output-overwrites-input). NewObject over a live UTexture2D of the same
+    // name re-allocates it in place and Source.Init zero-fills it - an input named as the output
+    // was wiped before it was read; over a loaded object of another class StaticAllocateObject
+    // logs Fatal; and an on-disk-only asset is not found by NewObject at all, so save:true wrote
+    // over the file. Same guard as TextureAuthorHandler's ValidateAuthoredDestination, plus a
+    // never-saved in-memory package holding a live asset under another name (CreatePackage would
+    // return it and NewObject would add a second asset to it). A package whose asset was deleted
+    // but not yet collected holds no valid asset, so this last clause does not block the name.
+    const FString ObjectPath = FullPath + TEXT(".") + TextureName;
+    const UPackage* LoadedPackage = FindPackage(nullptr, *FullPath);
+    const UObject* LoadedAsset = LoadedPackage ? LoadedPackage->FindAssetInPackage() : nullptr;
+    if (FPackageName::DoesPackageExist(FullPath) || StaticFindObject(UObject::StaticClass(), nullptr, *ObjectPath)
+        || IsValid(LoadedAsset))
+    {
+        OutErrorCode = TEXT("ASSET_ALREADY_EXISTS");
+        OutError = FString::Printf(
+            TEXT("Asset '%s' already exists; pick another output name or delete it first"), *ObjectPath);
         return nullptr;
     }
 
@@ -118,6 +143,8 @@ UTexture2D* PinWrightTextureAssets::CreateEmptyTexture(const FString& PackagePat
     UPackage* Package = CreatePackage(*FullPath);
     if (!Package)
     {
+        OutErrorCode = TEXT("TEXTURE_ERROR");
+        OutError = FString::Printf(TEXT("Failed to create package '%s'"), *FullPath);
         return nullptr;
     }
     
@@ -144,6 +171,21 @@ UTexture2D* PinWrightTextureAssets::CreateEmptyTexture(const FString& PackagePat
     Package->MarkPackageDirty();
     
     return NewTexture;
+}
+
+// Takes and at once releases the read lock the inPlace:false copy paths take on their input,
+// so its format is checked before the output asset is created (a refused input then leaves no
+// output to block a retry under the same name, B-combine-textures-output-overwrites-input).
+static bool TextureHandlerProbeSourceLock(UTexture2D* Texture, FString& OutError)
+{
+    TextureSourceMip::FScopedMipLock Probe(
+        Texture, TEXT("source"), /*bReadOnly=*/true, TextureSourceMip::EFormatPolicy::Bgra8Only);
+    if (!Probe.IsValid())
+    {
+        OutError = Probe.GetError();
+        return false;
+    }
+    return true;
 }
 
 // The noise algorithms create_noise_texture can generate. Both are lattice-based, which is
@@ -440,10 +482,13 @@ static TSharedPtr<FJsonObject> ExecuteTextureAction(const TSharedPtr<FJsonObject
         }
 
         // Create texture
-        UTexture2D* NewTexture = CreateEmptyTexture(Path, Name, Width, Height, bHDR);
+        FString CreateErrorCode;
+        FString CreateError;
+        UTexture2D* NewTexture = CreateEmptyTexture(Path, Name, Width, Height, bHDR, CreateErrorCode, CreateError);
         if (!NewTexture)
         {
-            TEXTURE_ERROR_RESPONSE(TEXT("Failed to create texture"));
+            Response->SetStringField(TEXT("errorCode"), CreateErrorCode);
+            TEXTURE_ERROR_RESPONSE(CreateError);
         }
 
         // Lock source data and fill with noise. Scoped: the guard releases on every exit
@@ -617,10 +662,13 @@ Response->SetBoolField(TEXT("success"), true);
             TEXTURE_ERROR_RESPONSE(TEXT("Name is required"));
         }
         
-        UTexture2D* NewTexture = CreateEmptyTexture(Path, Name, Width, Height, bHDR);
+        FString CreateErrorCode;
+        FString CreateError;
+        UTexture2D* NewTexture = CreateEmptyTexture(Path, Name, Width, Height, bHDR, CreateErrorCode, CreateError);
         if (!NewTexture)
         {
-            TEXTURE_ERROR_RESPONSE(TEXT("Failed to create texture"));
+            Response->SetStringField(TEXT("errorCode"), CreateErrorCode);
+            TEXTURE_ERROR_RESPONSE(CreateError);
         }
         
         TextureSourceMip::FScopedMipLock MipLock(
@@ -790,10 +838,13 @@ Response->SetBoolField(TEXT("success"), true);
             TEXTURE_ERROR_RESPONSE(TEXT("Name is required"));
         }
         
-        UTexture2D* NewTexture = CreateEmptyTexture(Path, Name, Width, Height, false);
+        FString CreateErrorCode;
+        FString CreateError;
+        UTexture2D* NewTexture = CreateEmptyTexture(Path, Name, Width, Height, false, CreateErrorCode, CreateError);
         if (!NewTexture)
         {
-            TEXTURE_ERROR_RESPONSE(TEXT("Failed to create texture"));
+            Response->SetStringField(TEXT("errorCode"), CreateErrorCode);
+            TEXTURE_ERROR_RESPONSE(CreateError);
         }
         
         TextureSourceMip::FScopedMipLock MipLock(
@@ -972,11 +1023,26 @@ Response->SetBoolField(TEXT("success"), true);
         }
         Name = SanitizedName;
         
-        // Create output texture
-        UTexture2D* NormalMap = CreateEmptyTexture(Path, Name, Width, Height, false);
+        // Lock the editor source mip for reading (always CPU-resident, never the streamed
+        // platform mip). SrcFormat is guaranteed BGRA8 or G8 by the guard above.
+        TextureSourceMip::FScopedMipLock HeightLock(
+            HeightMap, TEXT("source height map"), /*bReadOnly=*/true,
+            TextureSourceMip::EFormatPolicy::Bgra8OrG8);
+        if (!HeightLock.IsValid())
+        {
+            TEXTURE_ERROR_RESPONSE(HeightLock.GetError());
+        }
+        const uint8* HeightPixels = HeightLock.GetReadData();
+        const bool bSourceGrayscale = (SrcFormat == TSF_G8);
+
+        // Created only after the height lock passed, so a refused input leaves no output behind.
+        FString CreateErrorCode;
+        FString CreateError;
+        UTexture2D* NormalMap = CreateEmptyTexture(Path, Name, Width, Height, false, CreateErrorCode, CreateError);
         if (!NormalMap)
         {
-            TEXTURE_ERROR_RESPONSE(TEXT("Failed to create normal map texture"));
+            Response->SetStringField(TEXT("errorCode"), CreateErrorCode);
+            TEXTURE_ERROR_RESPONSE(CreateError);
         }
 
         // CreateEmptyTexture already kicked off an async DDC build with the default color
@@ -1001,18 +1067,6 @@ Response->SetBoolField(TEXT("success"), true);
         // Options: "luminance", "red", "green", "blue", "alpha", "average"
         FString ChannelMode = GetStringFieldTextAuth(Params, TEXT("channelMode"), TEXT("luminance"));
         
-        // Lock the editor source mip for reading (always CPU-resident, never the streamed
-        // platform mip). SrcFormat is guaranteed BGRA8 or G8 by the guard above.
-        TextureSourceMip::FScopedMipLock HeightLock(
-            HeightMap, TEXT("source height map"), /*bReadOnly=*/true,
-            TextureSourceMip::EFormatPolicy::Bgra8OrG8);
-        if (!HeightLock.IsValid())
-        {
-            TEXTURE_ERROR_RESPONSE(HeightLock.GetError());
-        }
-        const uint8* HeightPixels = HeightLock.GetReadData();
-        const bool bSourceGrayscale = (SrcFormat == TSF_G8);
-
         for (int32 i = 0; i < Width * Height; i++)
         {
             // BGRA8 source: index 0=B, 1=G, 2=R, 3=A. G8 source: one byte per pixel,
@@ -1553,17 +1607,6 @@ Response->SetBoolField(TEXT("success"), true);
         }
         Name = SanitizedName;
 
-        // Create the destination BEFORE locking anything. CreateEmptyTexture runs
-        // FTextureSource::Init, which asserts (Fatal) on a locked source — and NewObject
-        // re-allocates in place when the output name resolves to an existing asset, which can
-        // be the input itself. Creating first means that degenerate case ends as a refused
-        // lock below instead of killing the editor.
-        UTexture2D* NewTexture = CreateEmptyTexture(Path, Name, NewWidth, NewHeight, false);
-        if (!NewTexture)
-        {
-            TEXTURE_ERROR_RESPONSE(TEXT("Failed to create resized texture"));
-        }
-
         // Read the editor source (CPU-resident, uncompressed), never the built platform mip:
         // that one is the compressed / GPU-side copy, its BulkData lock is taken even when the
         // read returns null, and skipping the unlock on that path is what left the payload
@@ -1582,6 +1625,20 @@ Response->SetBoolField(TEXT("success"), true);
         const FColor* SrcData = reinterpret_cast<const FColor*>(SrcLock.GetReadData());
         const int32 SrcWidth = SrcLock.GetSizeX();
         const int32 SrcHeight = SrcLock.GetSizeY();
+
+        // Create the destination only after the source lock passed its format check, so a refused
+        // input leaves no output asset behind to block a retry under the same name. The output is
+        // always a fresh object: an output name that resolves to an existing asset (the input
+        // itself included) is refused by CreateEmptyTexture with ASSET_ALREADY_EXISTS, so its
+        // FTextureSource::Init never touches the read-locked source.
+        FString CreateErrorCode;
+        FString CreateError;
+        UTexture2D* NewTexture = CreateEmptyTexture(Path, Name, NewWidth, NewHeight, false, CreateErrorCode, CreateError);
+        if (!NewTexture)
+        {
+            Response->SetStringField(TEXT("errorCode"), CreateErrorCode);
+            TEXTURE_ERROR_RESPONSE(CreateError);
+        }
 
         TextureSourceMip::FScopedMipLock DstLock(
             NewTexture, TEXT("destination"), /*bReadOnly=*/false, TextureSourceMip::EFormatPolicy::Any);
@@ -1713,10 +1770,20 @@ Response->SetBoolField(TEXT("success"), true);
             }
             Name = SanitizedName;
             
-            TargetTexture = CreateEmptyTexture(Path, Name, Width, Height, false);
+            // Format-check the input before the output exists, so a refused input leaves no output
+            // asset behind to block a retry under the same name.
+            FString SourceError;
+            if (!TextureHandlerProbeSourceLock(SourceTexture, SourceError))
+            {
+                TEXTURE_ERROR_RESPONSE(SourceError);
+            }
+            FString CreateErrorCode;
+            FString CreateError;
+            TargetTexture = CreateEmptyTexture(Path, Name, Width, Height, false, CreateErrorCode, CreateError);
             if (!TargetTexture)
             {
-                TEXTURE_ERROR_RESPONSE(TEXT("Failed to create output texture"));
+                Response->SetStringField(TEXT("errorCode"), CreateErrorCode);
+                TEXTURE_ERROR_RESPONSE(CreateError);
             }
         }
         
@@ -1843,10 +1910,20 @@ Response->SetBoolField(TEXT("success"), true);
             }
             Name = SanitizedName;
             
-            TargetTexture = CreateEmptyTexture(Path, Name, Width, Height, false);
+            // Format-check the input before the output exists, so a refused input leaves no output
+            // asset behind to block a retry under the same name.
+            FString SourceError;
+            if (!TextureHandlerProbeSourceLock(SourceTexture, SourceError))
+            {
+                TEXTURE_ERROR_RESPONSE(SourceError);
+            }
+            FString CreateErrorCode;
+            FString CreateError;
+            TargetTexture = CreateEmptyTexture(Path, Name, Width, Height, false, CreateErrorCode, CreateError);
             if (!TargetTexture)
             {
-                TEXTURE_ERROR_RESPONSE(TEXT("Failed to create output texture"));
+                Response->SetStringField(TEXT("errorCode"), CreateErrorCode);
+                TEXTURE_ERROR_RESPONSE(CreateError);
             }
         }
         
@@ -2182,26 +2259,6 @@ Response->SetBoolField(TEXT("success"), true);
                 TEXT("re-import or re-create it. Retrying will not help."));
         }
 
-        UTexture2D* OutputTexture = CreateEmptyTexture(Path, Name, Width, Height, false);
-        if (!OutputTexture)
-        {
-            TEXTURE_ERROR_RESPONSE(TEXT("Failed to create output texture"));
-        }
-
-        TextureSourceMip::FScopedMipLock OutLock(
-            OutputTexture, TEXT("output"), /*bReadOnly=*/false, TextureSourceMip::EFormatPolicy::Any);
-        if (!OutLock.IsValid())
-        {
-            TEXTURE_ERROR_RESPONSE(OutLock.GetError());
-        }
-        uint8* OutData = OutLock.GetWriteData();
-
-        // After the lock, whose ctor flushed the async build CreateEmptyTexture kicked off:
-        // flipping the gamma-affecting flags while that build is still reading the source is
-        // what crashed a compile worker in B-texture-normal-from-height-crash.
-        OutputTexture->SRGB = false;
-        OutputTexture->CompressionSettings = TC_Masks;
-
         // Read each contributing channel from its EDITABLE source. The built platform mip this
         // used to lock is the compressed / GPU-side copy: FBulkData::LockReadOnly() returns
         // null for it while still TAKING the lock, so the indexed read below dereferenced
@@ -2243,6 +2300,31 @@ Response->SetBoolField(TEXT("success"), true);
         {
             TEXTURE_ERROR_RESPONSE(ChannelError);
         }
+
+        // The output is created only after every channel was read, so a refused channel leaves no
+        // output behind.
+        FString CreateErrorCode;
+        FString CreateError;
+        UTexture2D* OutputTexture = CreateEmptyTexture(Path, Name, Width, Height, false, CreateErrorCode, CreateError);
+        if (!OutputTexture)
+        {
+            Response->SetStringField(TEXT("errorCode"), CreateErrorCode);
+            TEXTURE_ERROR_RESPONSE(CreateError);
+        }
+
+        TextureSourceMip::FScopedMipLock OutLock(
+            OutputTexture, TEXT("output"), /*bReadOnly=*/false, TextureSourceMip::EFormatPolicy::Any);
+        if (!OutLock.IsValid())
+        {
+            TEXTURE_ERROR_RESPONSE(OutLock.GetError());
+        }
+        uint8* OutData = OutLock.GetWriteData();
+
+        // After the lock, whose ctor flushed the async build CreateEmptyTexture kicked off:
+        // flipping the gamma-affecting flags while that build is still reading the source is
+        // what crashed a compile worker in B-texture-normal-from-height-crash.
+        OutputTexture->SRGB = false;
+        OutputTexture->CompressionSettings = TC_Masks;
 
         int32 NumPixels = Width * Height;
         for (int32 i = 0; i < NumPixels; ++i)
@@ -2302,16 +2384,6 @@ Response->SetBoolField(TEXT("success"), true);
                 TEXT("re-create it. Retrying will not help."), *BaseTexturePath));
         }
 
-        // Create the output BEFORE locking anything: CreateEmptyTexture runs
-        // FTextureSource::Init, which asserts (Fatal) on a locked source, and NewObject
-        // re-allocates in place when the output name resolves to an existing asset — possibly
-        // one of the two inputs.
-        UTexture2D* OutputTexture = CreateEmptyTexture(Path, Name, Width, Height, false);
-        if (!OutputTexture)
-        {
-            TEXTURE_ERROR_RESPONSE(TEXT("Failed to create output texture"));
-        }
-
         // This block is the one both Critical board tickets were filed against
         // (B-combine-textures-leaks-bulkdata-lock-then-crashes,
         // B-texture-action-bulkdata-lock-assert-fatal). It used to lock the built PLATFORM
@@ -2333,6 +2405,20 @@ Response->SetBoolField(TEXT("success"), true);
         if (!OverlayLock.IsValid())
         {
             TEXTURE_ERROR_RESPONSE(OverlayLock.GetError());
+        }
+
+        // Create the output only once both inputs passed their format checks, so a refused input
+        // leaves no empty output asset behind. CreateEmptyTexture refuses an output name that
+        // resolves to any existing asset (either input included) with ASSET_ALREADY_EXISTS, so
+        // the output is always a fresh object and its FTextureSource::Init cannot touch the
+        // read-locked inputs (B-combine-textures-output-overwrites-input).
+        FString CreateErrorCode;
+        FString CreateError;
+        UTexture2D* OutputTexture = CreateEmptyTexture(Path, Name, Width, Height, false, CreateErrorCode, CreateError);
+        if (!OutputTexture)
+        {
+            Response->SetStringField(TEXT("errorCode"), CreateErrorCode);
+            TEXTURE_ERROR_RESPONSE(CreateError);
         }
         TextureSourceMip::FScopedMipLock OutLock(
             OutputTexture, TEXT("output"), /*bReadOnly=*/false, TextureSourceMip::EFormatPolicy::Any);
@@ -2542,10 +2628,20 @@ Response->SetBoolField(TEXT("success"), true);
         {
             if (Name.IsEmpty()) Name = FPaths::GetBaseFilename(AssetPath) + TEXT("_Curved");
             if (Path.IsEmpty()) Path = FPaths::GetPath(AssetPath);
-            TargetTexture = CreateEmptyTexture(Path, Name, Width, Height, false);
+            // Format-check the input before the output exists, so a refused input leaves no output
+            // asset behind to block a retry under the same name.
+            FString SourceError;
+            if (!TextureHandlerProbeSourceLock(SourceTexture, SourceError))
+            {
+                TEXTURE_ERROR_RESPONSE(SourceError);
+            }
+            FString CreateErrorCode;
+            FString CreateError;
+            TargetTexture = CreateEmptyTexture(Path, Name, Width, Height, false, CreateErrorCode, CreateError);
             if (!TargetTexture)
             {
-                TEXTURE_ERROR_RESPONSE(TEXT("Failed to create output texture"));
+                Response->SetStringField(TEXT("errorCode"), CreateErrorCode);
+                TEXTURE_ERROR_RESPONSE(CreateError);
             }
         }
         
@@ -2943,7 +3039,7 @@ REGISTER_RPC_HANDLER(Endpoint, "Texture", SummaryText, __VA_ARGS__) \
 
 REGISTER_TEXTURE_ACTION_HANDLER("texture.create_noise_texture", "create_noise_texture", "Create a procedural FBM noise texture (Perlin value noise or Worley/Voronoi cellular)",
     RPC_PARAMS(
-        RPC_PARAM_REQ("name", "string", "Asset name for the new texture"),
+        RPC_PARAM_REQ("name", "string", "Asset name for the new texture; an existing asset there is refused with ASSET_ALREADY_EXISTS"),
         RPC_PARAM_DEF("path", "path", "Destination package path", "/Game/Textures"),
         RPC_PARAM_DEF("noiseType", "string", "Noise algorithm: Perlin (smoothed value noise) or Worley / Voronoi (cellular F1 distance, dark at cell centres). Any other name is refused; the resolved algorithm is echoed back as noiseType", "Perlin"),
         RPC_PARAM_DEF("width", "integer", "Texture width in pixels", "1024"),
@@ -2958,7 +3054,7 @@ REGISTER_TEXTURE_ACTION_HANDLER("texture.create_noise_texture", "create_noise_te
         RPC_PARAM_DEF("save", "boolean", "Save the asset to disk", "true")))
 REGISTER_TEXTURE_ACTION_HANDLER("texture.create_gradient_texture", "create_gradient_texture", "Create a procedural gradient texture",
     RPC_PARAMS(
-        RPC_PARAM_REQ("name", "string", "Asset name for the new texture"),
+        RPC_PARAM_REQ("name", "string", "Asset name for the new texture; an existing asset there is refused with ASSET_ALREADY_EXISTS"),
         RPC_PARAM_DEF("path", "path", "Destination package path", "/Game/Textures"),
         RPC_PARAM_DEF("gradientType", "string", "Gradient type (Linear, Radial, Angular)", "Linear"),
         RPC_PARAM_DEF("width", "integer", "Texture width in pixels", "1024"),
@@ -2973,7 +3069,7 @@ REGISTER_TEXTURE_ACTION_HANDLER("texture.create_gradient_texture", "create_gradi
         RPC_PARAM_OPT("endColor", "object", "Gradient end color {r,g,b,a}")))
 REGISTER_TEXTURE_ACTION_HANDLER("texture.create_pattern_texture", "create_pattern_texture", "Create a procedural pattern texture",
     RPC_PARAMS(
-        RPC_PARAM_REQ("name", "string", "Asset name for the new texture"),
+        RPC_PARAM_REQ("name", "string", "Asset name for the new texture; an existing asset there is refused with ASSET_ALREADY_EXISTS"),
         RPC_PARAM_DEF("path", "path", "Destination package path", "/Game/Textures"),
         RPC_PARAM_DEF("patternType", "string", "Pattern (Checker, Grid, Brick, Stripes, Dots)", "Checker"),
         RPC_PARAM_DEF("width", "integer", "Texture width in pixels", "1024"),
@@ -2989,7 +3085,7 @@ REGISTER_TEXTURE_ACTION_HANDLER("texture.create_pattern_texture", "create_patter
 REGISTER_TEXTURE_ACTION_HANDLER("texture.create_normal_from_height", "create_normal_from_height", "Generate a normal map from height",
     RPC_PARAMS(
         RPC_PARAM_REQ("sourceTexture", "path", "Height map texture asset path"),
-        RPC_PARAM_OPT("name", "string", "Output asset name (defaults to <source>_N)"),
+        RPC_PARAM_OPT("name", "string", "Output asset name (defaults to <source>_N); an existing asset there is refused with ASSET_ALREADY_EXISTS"),
         RPC_PARAM_OPT("path", "path", "Output package path (defaults to source folder)"),
         RPC_PARAM_DEF("strength", "number", "Normal strength multiplier", "1.0"),
         RPC_PARAM_DEF("algorithm", "string", "Gradient algorithm (Sobel or finite-difference)", "Sobel"),
@@ -3132,7 +3228,7 @@ REGISTER_RPC_HANDLER("texture.get_pixel_stats", "Texture",
 REGISTER_TEXTURE_ACTION_HANDLER("texture.resize_texture", "resize_texture", "Resize texture",
     RPC_PARAMS(
         RPC_PARAM_REQ("sourcePath", "path", "Source texture asset path"),
-        RPC_PARAM_OPT("name", "string", "Output asset name (defaults to <source>_Resized)"),
+        RPC_PARAM_OPT("name", "string", "Output asset name (defaults to <source>_Resized); an existing asset there is refused with ASSET_ALREADY_EXISTS"),
         RPC_PARAM_OPT("path", "path", "Output package path (defaults to source folder)"),
         RPC_PARAM_DEF("newWidth", "integer", "Target width in pixels", "512"),
         RPC_PARAM_DEF("newHeight", "integer", "Target height in pixels", "512"),
@@ -3141,7 +3237,7 @@ REGISTER_TEXTURE_ACTION_HANDLER("texture.invert", "invert", "Invert texture",
     RPC_PARAMS(
         RPC_PARAM_REQ("assetPath", "path", "Texture asset path"),
         RPC_PARAM_DEF("inPlace", "boolean", "Edit in place instead of creating a copy", "true"),
-        RPC_PARAM_OPT("name", "string", "Output asset name when not in place"),
+        RPC_PARAM_OPT("name", "string", "Output asset name when not in place; an existing asset there is refused with ASSET_ALREADY_EXISTS"),
         RPC_PARAM_OPT("path", "path", "Output package path when not in place"),
         RPC_PARAM_DEF("save", "boolean", "Save the asset to disk", "true")))
 REGISTER_TEXTURE_ACTION_HANDLER("texture.desaturate", "desaturate", "Desaturate texture",
@@ -3149,7 +3245,7 @@ REGISTER_TEXTURE_ACTION_HANDLER("texture.desaturate", "desaturate", "Desaturate 
         RPC_PARAM_REQ("assetPath", "path", "Texture asset path"),
         RPC_PARAM_DEF("amount", "number", "Desaturation amount (0-1)", "1.0"),
         RPC_PARAM_DEF("inPlace", "boolean", "Edit in place instead of creating a copy", "true"),
-        RPC_PARAM_OPT("name", "string", "Output asset name when not in place"),
+        RPC_PARAM_OPT("name", "string", "Output asset name when not in place; an existing asset there is refused with ASSET_ALREADY_EXISTS"),
         RPC_PARAM_OPT("path", "path", "Output package path when not in place"),
         RPC_PARAM_DEF("save", "boolean", "Save the asset to disk", "true")))
 REGISTER_TEXTURE_ACTION_HANDLER("texture.adjust_levels", "adjust_levels", "Adjust levels",
@@ -3174,7 +3270,7 @@ REGISTER_TEXTURE_ACTION_HANDLER("texture.sharpen", "sharpen", "Sharpen texture",
         RPC_PARAM_DEF("save", "boolean", "Save the asset to disk", "true")))
 REGISTER_TEXTURE_ACTION_HANDLER("texture.channel_pack", "channel_pack", "Pack channels",
     RPC_PARAMS(
-        RPC_PARAM_DEF("name", "string", "Output asset name", "ChannelPacked"),
+        RPC_PARAM_DEF("name", "string", "Output asset name; an existing asset there is refused with ASSET_ALREADY_EXISTS", "ChannelPacked"),
         RPC_PARAM_OPT("redTexture", "path", "Source texture for the red channel"),
         RPC_PARAM_OPT("greenTexture", "path", "Source texture for the green channel"),
         RPC_PARAM_OPT("blueTexture", "path", "Source texture for the blue channel"),
@@ -3187,14 +3283,14 @@ REGISTER_TEXTURE_ACTION_HANDLER("texture.combine_textures", "combine_textures", 
         RPC_PARAM_REQ("overlayTexture", "path", "Overlay texture asset path (BGRA8 source); must match the base's dimensions - it is blended pixel-for-pixel from the top-left, a size mismatch smears rows or leaves the output tail transparent black (UE 5.8)"),
         RPC_PARAM_DEF("blendMode", "string", "Blend mode (Normal, Multiply, Screen, Overlay, Add); an unrecognised name falls back to Normal", "Normal"),
         RPC_PARAM_DEF("opacity", "number", "Uniform overlay opacity (0-1) over the whole image; the overlay's own alpha is ignored", "1.0"),
-        RPC_PARAM_DEF("name", "string", "Output asset name; must not name an existing asset - it is re-created in place, wiping an input named here before it is read", "Combined"),
+        RPC_PARAM_DEF("name", "string", "Output asset name; an existing asset there (either input included) is refused with ASSET_ALREADY_EXISTS", "Combined"),
         RPC_PARAM_DEF("path", "path", "Destination package path", "/Game/Textures"),
         RPC_PARAM_DEF("save", "boolean", "Save the asset to disk", "true")))
 REGISTER_TEXTURE_ACTION_HANDLER("texture.adjust_curves", "adjust_curves", "Adjust color curves",
     RPC_PARAMS(
         RPC_PARAM_REQ("assetPath", "path", "Texture asset path"),
         RPC_PARAM_DEF("inPlace", "boolean", "Edit in place instead of creating a copy", "true"),
-        RPC_PARAM_OPT("name", "string", "Output asset name when not in place"),
+        RPC_PARAM_OPT("name", "string", "Output asset name when not in place; an existing asset there is refused with ASSET_ALREADY_EXISTS"),
         RPC_PARAM_OPT("path", "path", "Output package path when not in place"),
         RPC_PARAM_DEF("save", "boolean", "Save the asset to disk", "true"),
         RPC_PARAM_OPT("input", "array", "Master curve input control points (0-1)"),

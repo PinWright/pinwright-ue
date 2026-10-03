@@ -48,18 +48,21 @@ bool FTextureCombineTexturesMethodDocTest::RunTest(const FString& Parameters)
     TestTrue(TEXT("page says opacity is the only transparency control"),
         Page.Contains(TEXT("only transparency control")));
 
-    // (4) The output is created before input validation with no existing-asset guard, so an
-    // output naming an input wipes it (B-combine-textures-output-overwrites-input).
-    TestTrue(TEXT("page warns the output must not name an existing asset"),
-        Page.Contains(TEXT("The output must not name an existing asset")));
-    TestTrue(TEXT("page says an input named as the output is wiped before it is read"),
-        Page.Contains(TEXT("that input is wiped before it is read")));
-    TestTrue(TEXT("page says a refused call leaves an empty output asset"),
-        Page.Contains(TEXT("refused by the format checks below still leaves an empty output")));
-    TestTrue(TEXT("page warns another class at the output name crashes the editor"),
-        Page.Contains(TEXT("of any other class at that name crashes the editor")));
-    TestTrue(TEXT("name param warns against naming an existing asset"),
-        Page.Contains(TEXT("must not name an existing asset - it is re-created in place")));
+    // (4) An existing asset at the output is refused, inputs included, and the format checks
+    // run before the output is created (B-combine-textures-output-overwrites-input). The old
+    // warnings described the unguarded behaviour and must not come back.
+    TestTrue(TEXT("page says an existing output asset is refused"),
+        Page.Contains(TEXT("An existing asset at the output is refused with `ASSET_ALREADY_EXISTS`")));
+    TestTrue(TEXT("page says the inputs are never touched"),
+        Page.Contains(TEXT("never touched")));
+    TestTrue(TEXT("page says a refused call leaves no output asset"),
+        Page.Contains(TEXT("leaves no output asset behind")));
+    TestTrue(TEXT("name param names the ASSET_ALREADY_EXISTS refusal"),
+        Page.Contains(TEXT("(either input included) is refused with ASSET_ALREADY_EXISTS")));
+    TestFalse(TEXT("page no longer says an input is wiped before it is read"),
+        Page.Contains(TEXT("wiped before it is read")));
+    TestFalse(TEXT("page no longer says another class at the output crashes the editor"),
+        Page.Contains(TEXT("crashes the editor")));
 
     // The blend has no colour-space conversion; the old "(sRGB-encoded) bytes" wording was wrong.
     TestFalse(TEXT("page no longer claims the bytes are sRGB-encoded"),

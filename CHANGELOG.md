@@ -2,6 +2,18 @@
 
 ## 1.0.0
 
+- Fixed: texture verbs that write a new asset (`create_noise_texture`, `create_gradient_texture`,
+  `create_pattern_texture`, `create_normal_from_height`, `resize_texture`, `channel_pack`,
+  `combine_textures`, and `invert` / `desaturate` / `adjust_curves` with `inPlace: false`) now
+  refuse an output `<path>/<name>` that already holds an asset with `ASSET_ALREADY_EXISTS`, before
+  anything is created. The shared helper used to re-create such a texture in place: an output naming
+  an input wiped that input before it was read, another texture was silently replaced (and saved
+  over on disk), and a loaded asset of another class at that name crashed the editor. Each of these
+  verbs now checks its inputs before it creates the output, so a refused input leaves no empty asset
+  behind to block a retry under the same name. Behaviour change: re-running one of these verbs with
+  the same output name, including a defaulted name such as `Combined` or `<source>_Inverted`, is now
+  refused instead of overwriting. A refused output path on these verbs now quotes the engine's
+  reason on the wire (`TEXTURE_ERROR`) instead of a bare `Failed to create texture`.
 - Changed: `asset.dump_folder` no longer re-freezes the editor on an asset whose dump never
   returned. The sweep journals the asset it enters in `<dump root>/.dump-inflight.tmp`; a marker
   left behind because the editor stopped inside that dump (froze, crashed or was killed, including

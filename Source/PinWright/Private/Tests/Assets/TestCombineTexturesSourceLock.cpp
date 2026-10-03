@@ -213,8 +213,7 @@ bool FCombineTexturesFailedLockReleasesSourceLockTest::RunTest(const FString& Pa
     {
         if (BaseTex) { BaseTex->GetOutermost()->SetDirtyFlag(false); }
         if (OverlayTex) { OverlayTex->GetOutermost()->SetDirtyFlag(false); }
-        // The output package is created before the overlay lock is refused, so it exists even
-        // though the call failed.
+        // Only reached if the output was (wrongly) created before the overlay was refused.
         if (UObject* Out = StaticFindObject(UTexture2D::StaticClass(), nullptr, *ToObjectPath(OutPkg)))
         {
             Out->GetOutermost()->SetDirtyFlag(false);
@@ -238,6 +237,10 @@ bool FCombineTexturesFailedLockReleasesSourceLockTest::RunTest(const FString& Pa
     // The old message named neither the asset nor which side failed; the ticket asked for both.
     TestTrue(*FString::Printf(TEXT("refusal names the overlay side (message: %s)"), *CombineCapture.Message),
         CombineCapture.Message.Contains(TEXT("overlay")));
+    // Both input format checks run before the output is created, so a refused input leaves no
+    // empty output asset behind (B-combine-textures-output-overwrites-input).
+    TestNull(TEXT("a combine refused on its overlay leaves no output asset"),
+        StaticFindObject(UTexture2D::StaticClass(), nullptr, *ToObjectPath(OutPkg)));
 
     // The leak detector: an in-place invert needs a ReadWrite lock on the base's own
     // FTextureSource. A read lock left behind by the failed combine makes that lock refused
@@ -258,6 +261,439 @@ bool FCombineTexturesFailedLockReleasesSourceLockTest::RunTest(const FString& Pa
                  *InvertCapture.ErrorCode, *InvertCapture.Message),
         InvertCapture.bSuccess);
 
+    return true;
+}
+
+// Regression tests for board B-combine-textures-output-overwrites-input.
+//
+// Every texture verb that writes a new asset goes through CreateEmptyTexture (TextureHandler.cpp),
+// which used to run NewObject on the output name with no existing-asset guard. NewObject over a
+// live UTexture2D of the same name re-allocates it in place and Source.Init zero-fills it, so an
+// output naming an input wiped that input before it was read, and any other existing texture was
+// silently replaced. The helper now refuses an existing asset with ASSET_ALREADY_EXISTS before
+// creating anything. Reverting the guard turns both refusals below into a wipe of the fixture's
+// pixels (and, for create_noise_texture, a success).
+namespace CombineTexturesOutputGuardTestHelpers
+{
+    // Reads the first BGRA pixel of a texture's editor source; false when unreadable.
+    bool ReadFirstSourcePixel(UTexture2D* Texture, uint8 (&OutBgra)[4])
+    {
+        if (!Texture || !Texture->Source.IsValid())
+        {
+            return false;
+        }
+        const uint8* Pixels = Texture->Source.LockMipReadOnly(0);
+        if (!Pixels)
+        {
+            return false;
+        }
+        FMemory::Memcpy(OutBgra, Pixels, 4);
+        Texture->Source.UnlockMip(0);
+        return true;
+    }
+
+    // A /Game texture with an editable G8 source: it has data (so every size check passes) but is
+    // not BGRA8, which the BGRA8-only input locks refuse.
+    UTexture2D* MakeG8SourceTexture(const FString& PkgPath, int32 N)
+    {
+        UTexture2D* Texture = MakeConstantSourceTexture(PkgPath, N, 0, 0, 0, 255, /*bWithSource=*/false);
+        if (Texture)
+        {
+            TArray<uint8> Gray;
+            Gray.Init(128, N * N);
+            Texture->Source.Init(N, N, 1, 1, TSF_G8, Gray.GetData());
+        }
+        return Texture;
+    }
+
+    // Runs Verb on an input the verb refuses and asserts the refusal left no output asset at
+    // <Folder>/<OutName>: the input check must run before the output is created, or the orphan
+    // output blocks a retry under the same name with ASSET_ALREADY_EXISTS.
+    void ExpectRefusedInputLeavesNoOutput(FAutomationTestBase& Test, const TCHAR* Verb,
+        const TSharedPtr<FJsonObject>& Payload, const FString& OutPkg)
+    {
+        ON_SCOPE_EXIT
+        {
+            if (UObject* Out = StaticFindObject(UTexture2D::StaticClass(), nullptr, *ToObjectPath(OutPkg)))
+            {
+                Out->GetOutermost()->SetDirtyFlag(false);
+            }
+        };
+        FTestResponseCapture Capture;
+        if (!Test.TestTrue(FString::Printf(TEXT("%s handler registered"), Verb),
+                InvokeHandlerWithCapture(Verb, Payload, Capture)))
+        {
+            return;
+        }
+        Test.TestFalse(FString::Printf(TEXT("%s refuses the unsupported input"), Verb), Capture.bSuccess);
+        Test.TestNull(FString::Printf(TEXT("%s refused on its input leaves no output asset (message: %s)"),
+                          Verb, *Capture.Message),
+            StaticFindObject(UTexture2D::StaticClass(), nullptr, *ToObjectPath(OutPkg)));
+    }
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCombineTexturesOutputNamingAnInputIsRefusedTest,
+    "PinWright.texture.combine_textures.OutputNamingAnInputIsRefused",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FCombineTexturesOutputNamingAnInputIsRefusedTest::RunTest(const FString& Parameters)
+{
+    using namespace CombineTexturesOutputGuardTestHelpers;
+    const int32 N = 16;
+    const FString Suffix = FGuid::NewGuid().ToString(EGuidFormats::Digits);
+    const FString Folder = TEXT("/Game/PinWrightTests");
+    const FString BaseName = FString::Printf(TEXT("T_GuardBase_%s"), *Suffix);
+    const FString BasePkg = FString::Printf(TEXT("%s/%s"), *Folder, *BaseName);
+    const FString OverlayPkg = FString::Printf(TEXT("%s/T_GuardOvl_%s"), *Folder, *Suffix);
+
+    UTexture2D* BaseTex = MakeConstantSourceTexture(BasePkg, N, 40, 80, 120, 255);
+    UTexture2D* OverlayTex = MakeConstantSourceTexture(OverlayPkg, N, 255, 255, 255, 255);
+    if (!TestNotNull(TEXT("base texture created"), BaseTex) ||
+        !TestNotNull(TEXT("overlay texture created"), OverlayTex))
+    {
+        return true;
+    }
+    ON_SCOPE_EXIT
+    {
+        if (BaseTex) { BaseTex->GetOutermost()->SetDirtyFlag(false); }
+        if (OverlayTex) { OverlayTex->GetOutermost()->SetDirtyFlag(false); }
+    };
+    uint8 Before[4];
+    if (!TestTrue(TEXT("precondition: base source readable"), ReadFirstSourcePixel(BaseTex, Before)) ||
+        !TestTrue(TEXT("precondition: base holds the fixture colour"), Before[0] == 40 && Before[1] == 80 && Before[2] == 120))
+    {
+        return true;
+    }
+
+    TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+    Payload->SetStringField(TEXT("baseTexture"), ToObjectPath(BasePkg));
+    Payload->SetStringField(TEXT("overlayTexture"), ToObjectPath(OverlayPkg));
+    Payload->SetStringField(TEXT("blendMode"), TEXT("Multiply"));
+    Payload->SetStringField(TEXT("name"), BaseName);
+    Payload->SetStringField(TEXT("path"), Folder);
+    Payload->SetBoolField(TEXT("save"), false);
+
+    FTestResponseCapture Capture;
+    if (!TestTrue(TEXT("combine_textures handler registered"),
+            InvokeHandlerWithCapture(TEXT("texture.combine_textures"), Payload, Capture)))
+    {
+        return true;
+    }
+    TestFalse(TEXT("an output naming the base is refused"), Capture.bSuccess);
+    TestEqual(*FString::Printf(TEXT("refused with ASSET_ALREADY_EXISTS (message: %s)"), *Capture.Message),
+        Capture.ErrorCode, FString(TEXT("ASSET_ALREADY_EXISTS")));
+
+    uint8 After[4];
+    if (TestTrue(TEXT("base source still readable"), ReadFirstSourcePixel(BaseTex, After)))
+    {
+        TestTrue(*FString::Printf(TEXT("base pixels unchanged (B=%d G=%d R=%d A=%d, expected 40/80/120/255)"),
+                     static_cast<int32>(After[0]), static_cast<int32>(After[1]),
+                     static_cast<int32>(After[2]), static_cast<int32>(After[3])),
+            FMemory::Memcmp(Before, After, 4) == 0);
+    }
+
+    // The refusal returns while the base and overlay are read-locked; an in-place invert needs a
+    // ReadWrite lock on the base, which LockMipInternal refuses while a read lock is left behind.
+    TSharedPtr<FJsonObject> InvertPayload = MakeShared<FJsonObject>();
+    InvertPayload->SetStringField(TEXT("assetPath"), ToObjectPath(BasePkg));
+    InvertPayload->SetBoolField(TEXT("inPlace"), true);
+    InvertPayload->SetBoolField(TEXT("save"), false);
+    FTestResponseCapture InvertCapture;
+    if (TestTrue(TEXT("invert handler registered"),
+            InvokeHandlerWithCapture(TEXT("texture.invert"), InvertPayload, InvertCapture)))
+    {
+        TestTrue(*FString::Printf(TEXT("base source is unlocked after the refusal (invert err='%s': %s)"),
+                     *InvertCapture.ErrorCode, *InvertCapture.Message),
+            InvertCapture.bSuccess);
+    }
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCreateNoiseTextureExistingOutputIsRefusedTest,
+    "PinWright.texture.create_noise_texture.ExistingOutputIsRefused",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FCreateNoiseTextureExistingOutputIsRefusedTest::RunTest(const FString& Parameters)
+{
+    using namespace CombineTexturesOutputGuardTestHelpers;
+    const int32 N = 16;
+    const FString Folder = TEXT("/Game/PinWrightTests");
+    const FString Name = FString::Printf(TEXT("T_GuardNoise_%s"), *FGuid::NewGuid().ToString(EGuidFormats::Digits));
+    const FString Pkg = FString::Printf(TEXT("%s/%s"), *Folder, *Name);
+
+    UTexture2D* Existing = MakeConstantSourceTexture(Pkg, N, 10, 20, 30, 255);
+    if (!TestNotNull(TEXT("existing texture created"), Existing))
+    {
+        return true;
+    }
+    ON_SCOPE_EXIT
+    {
+        if (Existing) { Existing->GetOutermost()->SetDirtyFlag(false); }
+    };
+    uint8 Before[4];
+    if (!TestTrue(TEXT("precondition: existing source readable"), ReadFirstSourcePixel(Existing, Before)))
+    {
+        return true;
+    }
+
+    TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+    Payload->SetStringField(TEXT("name"), Name);
+    Payload->SetStringField(TEXT("path"), Folder);
+    Payload->SetNumberField(TEXT("width"), 32);
+    Payload->SetNumberField(TEXT("height"), 32);
+    Payload->SetBoolField(TEXT("save"), false);
+
+    FTestResponseCapture Capture;
+    if (!TestTrue(TEXT("create_noise_texture handler registered"),
+            InvokeHandlerWithCapture(TEXT("texture.create_noise_texture"), Payload, Capture)))
+    {
+        return true;
+    }
+    TestFalse(TEXT("an existing texture at the output is refused, not replaced"), Capture.bSuccess);
+    TestEqual(*FString::Printf(TEXT("refused with ASSET_ALREADY_EXISTS (message: %s)"), *Capture.Message),
+        Capture.ErrorCode, FString(TEXT("ASSET_ALREADY_EXISTS")));
+
+    TestEqual(TEXT("existing texture keeps its size"), static_cast<int32>(Existing->Source.GetSizeX()), N);
+    uint8 After[4];
+    if (TestTrue(TEXT("existing source still readable"), ReadFirstSourcePixel(Existing, After)))
+    {
+        TestTrue(TEXT("existing pixels unchanged"), FMemory::Memcmp(Before, After, 4) == 0);
+    }
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FResizeTextureRefusedInputLeavesNoOutputTest,
+    "PinWright.texture.resize_texture.RefusedInputLeavesNoOutput",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FResizeTextureRefusedInputLeavesNoOutputTest::RunTest(const FString& Parameters)
+{
+    const FString Suffix = FGuid::NewGuid().ToString(EGuidFormats::Digits);
+    const FString Folder = TEXT("/Game/PinWrightTests");
+    const FString SrcPkg = FString::Printf(TEXT("%s/T_GuardResizeSrc_%s"), *Folder, *Suffix);
+    const FString OutName = FString::Printf(TEXT("T_GuardResizeOut_%s"), *Suffix);
+
+    // No editor source: the resize source lock refuses it.
+    UTexture2D* Source = MakeConstantSourceTexture(SrcPkg, 16, 0, 0, 0, 255, /*bWithSource=*/false);
+    if (!TestNotNull(TEXT("sourceless input created"), Source))
+    {
+        return true;
+    }
+    ON_SCOPE_EXIT { if (Source) { Source->GetOutermost()->SetDirtyFlag(false); } };
+    TestFalse(TEXT("precondition: input has no editor source"), Source->Source.IsValid());
+
+    TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+    Payload->SetStringField(TEXT("sourcePath"), ToObjectPath(SrcPkg));
+    Payload->SetStringField(TEXT("name"), OutName);
+    Payload->SetStringField(TEXT("path"), Folder);
+    Payload->SetNumberField(TEXT("newWidth"), 8);
+    Payload->SetNumberField(TEXT("newHeight"), 8);
+    Payload->SetBoolField(TEXT("save"), false);
+    CombineTexturesOutputGuardTestHelpers::ExpectRefusedInputLeavesNoOutput(
+        *this, TEXT("texture.resize_texture"), Payload, FString::Printf(TEXT("%s/%s"), *Folder, *OutName));
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FInvertCopyRefusedInputLeavesNoOutputTest,
+    "PinWright.texture.invert.RefusedCopyInputLeavesNoOutput",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FInvertCopyRefusedInputLeavesNoOutputTest::RunTest(const FString& Parameters)
+{
+    const int32 N = 16;
+    const FString Suffix = FGuid::NewGuid().ToString(EGuidFormats::Digits);
+    const FString Folder = TEXT("/Game/PinWrightTests");
+    const FString SrcPkg = FString::Printf(TEXT("%s/T_GuardInvSrc_%s"), *Folder, *Suffix);
+    const FString OutName = FString::Printf(TEXT("T_GuardInvOut_%s"), *Suffix);
+
+    UTexture2D* Source = CombineTexturesOutputGuardTestHelpers::MakeG8SourceTexture(SrcPkg, N);
+    if (!TestNotNull(TEXT("input created"), Source))
+    {
+        return true;
+    }
+    ON_SCOPE_EXIT { if (Source) { Source->GetOutermost()->SetDirtyFlag(false); } };
+    if (!TestEqual(TEXT("precondition: input source is G8"), static_cast<int32>(Source->Source.GetFormat()),
+            static_cast<int32>(TSF_G8)))
+    {
+        return true;
+    }
+
+    TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+    Payload->SetStringField(TEXT("assetPath"), ToObjectPath(SrcPkg));
+    Payload->SetBoolField(TEXT("inPlace"), false);
+    Payload->SetStringField(TEXT("name"), OutName);
+    Payload->SetStringField(TEXT("path"), Folder);
+    Payload->SetBoolField(TEXT("save"), false);
+    CombineTexturesOutputGuardTestHelpers::ExpectRefusedInputLeavesNoOutput(
+        *this, TEXT("texture.invert"), Payload, FString::Printf(TEXT("%s/%s"), *Folder, *OutName));
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDesaturateCopyRefusedInputLeavesNoOutputTest,
+    "PinWright.texture.desaturate.RefusedCopyInputLeavesNoOutput",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FDesaturateCopyRefusedInputLeavesNoOutputTest::RunTest(const FString& Parameters)
+{
+    const FString Suffix = FGuid::NewGuid().ToString(EGuidFormats::Digits);
+    const FString Folder = TEXT("/Game/PinWrightTests");
+    const FString SrcPkg = FString::Printf(TEXT("%s/T_GuardDesatSrc_%s"), *Folder, *Suffix);
+    const FString OutName = FString::Printf(TEXT("T_GuardDesatOut_%s"), *Suffix);
+
+    UTexture2D* Source = CombineTexturesOutputGuardTestHelpers::MakeG8SourceTexture(SrcPkg, 16);
+    if (!TestNotNull(TEXT("G8 input created"), Source))
+    {
+        return true;
+    }
+    ON_SCOPE_EXIT { if (Source) { Source->GetOutermost()->SetDirtyFlag(false); } };
+    if (!TestEqual(TEXT("precondition: input source is G8"), static_cast<int32>(Source->Source.GetFormat()),
+            static_cast<int32>(TSF_G8)))
+    {
+        return true;
+    }
+
+    TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+    Payload->SetStringField(TEXT("assetPath"), ToObjectPath(SrcPkg));
+    Payload->SetBoolField(TEXT("inPlace"), false);
+    Payload->SetStringField(TEXT("name"), OutName);
+    Payload->SetStringField(TEXT("path"), Folder);
+    Payload->SetBoolField(TEXT("save"), false);
+    CombineTexturesOutputGuardTestHelpers::ExpectRefusedInputLeavesNoOutput(
+        *this, TEXT("texture.desaturate"), Payload, FString::Printf(TEXT("%s/%s"), *Folder, *OutName));
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAdjustCurvesCopyRefusedInputLeavesNoOutputTest,
+    "PinWright.texture.adjust_curves.RefusedCopyInputLeavesNoOutput",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAdjustCurvesCopyRefusedInputLeavesNoOutputTest::RunTest(const FString& Parameters)
+{
+    const FString Suffix = FGuid::NewGuid().ToString(EGuidFormats::Digits);
+    const FString Folder = TEXT("/Game/PinWrightTests");
+    const FString SrcPkg = FString::Printf(TEXT("%s/T_GuardCurvesSrc_%s"), *Folder, *Suffix);
+    const FString OutName = FString::Printf(TEXT("T_GuardCurvesOut_%s"), *Suffix);
+
+    UTexture2D* Source = CombineTexturesOutputGuardTestHelpers::MakeG8SourceTexture(SrcPkg, 16);
+    if (!TestNotNull(TEXT("G8 input created"), Source))
+    {
+        return true;
+    }
+    ON_SCOPE_EXIT { if (Source) { Source->GetOutermost()->SetDirtyFlag(false); } };
+    if (!TestEqual(TEXT("precondition: input source is G8"), static_cast<int32>(Source->Source.GetFormat()),
+            static_cast<int32>(TSF_G8)))
+    {
+        return true;
+    }
+
+    TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+    Payload->SetStringField(TEXT("assetPath"), ToObjectPath(SrcPkg));
+    Payload->SetBoolField(TEXT("inPlace"), false);
+    Payload->SetStringField(TEXT("name"), OutName);
+    Payload->SetStringField(TEXT("path"), Folder);
+    Payload->SetBoolField(TEXT("save"), false);
+    CombineTexturesOutputGuardTestHelpers::ExpectRefusedInputLeavesNoOutput(
+        *this, TEXT("texture.adjust_curves"), Payload, FString::Printf(TEXT("%s/%s"), *Folder, *OutName));
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FChannelPackRefusedInputLeavesNoOutputTest,
+    "PinWright.texture.channel_pack.RefusedInputLeavesNoOutput",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FChannelPackRefusedInputLeavesNoOutputTest::RunTest(const FString& Parameters)
+{
+    const FString Suffix = FGuid::NewGuid().ToString(EGuidFormats::Digits);
+    const FString Folder = TEXT("/Game/PinWrightTests");
+    const FString SrcPkg = FString::Printf(TEXT("%s/T_GuardPackSrc_%s"), *Folder, *Suffix);
+    const FString OutName = FString::Printf(TEXT("T_GuardPackOut_%s"), *Suffix);
+
+    UTexture2D* Source = CombineTexturesOutputGuardTestHelpers::MakeG8SourceTexture(SrcPkg, 16);
+    if (!TestNotNull(TEXT("G8 input created"), Source))
+    {
+        return true;
+    }
+    ON_SCOPE_EXIT { if (Source) { Source->GetOutermost()->SetDirtyFlag(false); } };
+    if (!TestEqual(TEXT("precondition: input source is G8"), static_cast<int32>(Source->Source.GetFormat()),
+            static_cast<int32>(TSF_G8)))
+    {
+        return true;
+    }
+
+    TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+    // Red is the first supplied channel, so it also sets the output size: a G8 source passes the
+    // size check and is refused only by the BGRA8 channel read.
+    Payload->SetStringField(TEXT("redTexture"), ToObjectPath(SrcPkg));
+    Payload->SetStringField(TEXT("name"), OutName);
+    Payload->SetStringField(TEXT("path"), Folder);
+    Payload->SetBoolField(TEXT("save"), false);
+    CombineTexturesOutputGuardTestHelpers::ExpectRefusedInputLeavesNoOutput(
+        *this, TEXT("texture.channel_pack"), Payload, FString::Printf(TEXT("%s/%s"), *Folder, *OutName));
+    return true;
+}
+
+// A never-saved package holding a live asset under ANOTHER name: CreatePackage would return it and
+// NewObject would add a second asset to it, so the output name (the package leaf) is refused. Once
+// that asset is deleted (garbage, not yet collected) the same name is accepted again.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCreateNoiseTexturePackageHoldingOtherAssetIsRefusedTest,
+    "PinWright.texture.create_noise_texture.PackageHoldingOtherAssetIsRefused",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FCreateNoiseTexturePackageHoldingOtherAssetIsRefusedTest::RunTest(const FString& Parameters)
+{
+    const FString Suffix = FGuid::NewGuid().ToString(EGuidFormats::Digits);
+    const FString Folder = TEXT("/Game/PinWrightTests");
+    const FString Name = FString::Printf(TEXT("T_GuardPkg_%s"), *Suffix);
+    const FString Pkg = FString::Printf(TEXT("%s/%s"), *Folder, *Name);
+
+    UPackage* Package = CreatePackage(*Pkg);
+    if (!TestNotNull(TEXT("package created"), Package))
+    {
+        return true;
+    }
+    UTexture2D* Other = NewObject<UTexture2D>(Package, *FString::Printf(TEXT("Other_%s"), *Suffix),
+        RF_Public | RF_Standalone);
+    ON_SCOPE_EXIT { Package->SetDirtyFlag(false); };
+    if (!TestNotNull(TEXT("other-named asset created"), Other) ||
+        !TestTrue(TEXT("precondition: the package reports the other-named asset"),
+            Package->FindAssetInPackage() == Other) ||
+        !TestNull(TEXT("precondition: nothing exists under the output name"),
+            StaticFindObject(UObject::StaticClass(), nullptr, *ToObjectPath(Pkg))))
+    {
+        return true;
+    }
+
+    TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+    Payload->SetStringField(TEXT("name"), Name);
+    Payload->SetStringField(TEXT("path"), Folder);
+    Payload->SetNumberField(TEXT("width"), 32);
+    Payload->SetNumberField(TEXT("height"), 32);
+    Payload->SetBoolField(TEXT("save"), false);
+
+    FTestResponseCapture Capture;
+    if (!TestTrue(TEXT("create_noise_texture handler registered"),
+            InvokeHandlerWithCapture(TEXT("texture.create_noise_texture"), Payload, Capture)))
+    {
+        return true;
+    }
+    TestFalse(TEXT("a package holding another live asset is refused"), Capture.bSuccess);
+    TestEqual(*FString::Printf(TEXT("refused with ASSET_ALREADY_EXISTS (message: %s)"), *Capture.Message),
+        Capture.ErrorCode, FString(TEXT("ASSET_ALREADY_EXISTS")));
+    TestNull(TEXT("no second asset was added to the package"),
+        StaticFindObject(UObject::StaticClass(), nullptr, *ToObjectPath(Pkg)));
+
+    // Delete the other asset the way asset deletion does (drop RF_Standalone, mark garbage); until
+    // GC runs it is still in the package but no longer a valid asset, so it must not block the name.
+    Other->ClearFlags(RF_Standalone | RF_Public);
+    Other->MarkAsGarbage();
+    FTestResponseCapture Retry;
+    if (TestTrue(TEXT("create_noise_texture handler registered (retry)"),
+            InvokeHandlerWithCapture(TEXT("texture.create_noise_texture"), Payload, Retry)))
+    {
+        TestTrue(*FString::Printf(TEXT("retry after deleting the other asset succeeds (err='%s': %s)"),
+                     *Retry.ErrorCode, *Retry.Message),
+            Retry.bSuccess);
+    }
     return true;
 }
 

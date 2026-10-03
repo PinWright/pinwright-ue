@@ -47,10 +47,23 @@ taking every unsaved package in it with it. `SanitizeAssetName` did not catch it
 `/` is not in its invalid-character list. The same defect was measured end-to-end
 on `foliage.add_type`; see that verb on the [`foliage`](foliage.md) page.
 
-The procedural creators share one helper, so the refusal on them arrives as the
-generic `Failed to create texture`, with the engine's own reason for the refusal
-in the editor log at Warning. `channel_extract` and `create_render_target` refuse
-with `INVALID_ARGUMENT` and quote the reason on the wire.
+The procedural creators share one helper, so the refusal on them arrives as
+`TEXTURE_ERROR` with the engine's own reason quoted on the wire (and in the editor
+log at Warning). `channel_extract` and `create_render_target` refuse with
+`INVALID_ARGUMENT` and quote the reason on the wire.
+
+## An existing asset at the output is refused
+
+The same shared helper serves `create_noise_texture`, `create_gradient_texture`,
+`create_pattern_texture`, `create_normal_from_height`, `resize_texture`,
+`channel_pack`, `combine_textures`, and `invert` / `desaturate` / `adjust_curves`
+when they write a new asset (`inPlace: false`). It refuses an output `<path>/<name>`
+that already holds an asset — loaded or only on disk, of any class, an input of
+the same call included — with `ASSET_ALREADY_EXISTS`, before anything is created.
+An existing asset is never replaced, so pick a fresh name or delete the old asset
+first. Each of these verbs checks its inputs before it creates the output, so a call
+refused on an input leaves no output asset behind to block a retry under the same
+name.
 
 ## See also
 
@@ -74,13 +87,10 @@ reconciles the two row strides. On a mismatch the call still returns `success: t
   created without data (unverified on 5.3-5.7) — it is not the base's pixels. Combining a small
   overlay into a large base discards the tail of the base.
 
-**The output must not name an existing asset — above all not one of the inputs.** The output
-asset at `<path>/<name>` is created before either input's format is checked, and nothing guards
-an existing asset there: a texture of that name is re-created in place (its pixels are lost), and
-when it is `baseTexture` or `overlayTexture` that input is wiped before it is read. A loaded asset
-of any other class at that name crashes the editor (engine Fatal: cannot replace an existing object
-of a different class). A call refused by the format checks below still leaves an empty output
-asset behind.
+**An existing asset at the output is refused with `ASSET_ALREADY_EXISTS`**, whatever its class,
+loaded or only on disk, and including `baseTexture` or `overlayTexture` themselves: the inputs are
+never touched. Both inputs' format checks run before the output is created, so a refused call
+leaves no output asset behind.
 
 **Overlay alpha is ignored.** Only R, G and B are blended; the output's alpha is
 copied from the base. A transparent overlay region composites as if fully opaque.
