@@ -2216,6 +2216,16 @@ REGISTER_RPC_HANDLER("material.authoring.create_material_instance", "material.au
     return true;
 }
 
+// Defined with the instance helpers below; declared here so the typed setters share its
+// wrong-class answer (B-material-param-setters-wrong-class-error). BaseMaterialRoute is appended
+// when the asset is a base UMaterial. The default suits the parameter verbs: no verb edits a base
+// Material's parameter default (F-base-material-param-default-setter), so the route is an instance.
+namespace
+{
+    UMaterialInstanceConstant* LoadMaterialInstanceOrError(FHandlerContext& Ctx, const FString& AssetPath,
+        const TCHAR* BaseMaterialRoute = TEXT(" This verb takes a material instance: create one from this Material with material.authoring.create_material_instance (parentMaterial = this path) and pass the instance's path. To read the base Material use material.authoring.get_material_info."));
+}
+
 // --------------------------------------------------------------------------
 // set_scalar_parameter_value
 // --------------------------------------------------------------------------
@@ -2234,12 +2244,8 @@ REGISTER_RPC_HANDLER("material.authoring.set_scalar_parameter_value", "material.
     if (!Ctx.RequireString(TEXT("parameterName"), ParamName)) return true;
     double Value = Ctx.GetNumber(TEXT("value"), 0.0);
 
-    UMaterialInstanceConstant* Instance = LoadObject<UMaterialInstanceConstant>(nullptr, *AssetPath);
-    if (!Instance)
-    {
-        Ctx.SendError(TEXT("ASSET_NOT_FOUND"), TEXT("Could not load material instance."));
-        return true;
-    }
+    UMaterialInstanceConstant* Instance = LoadMaterialInstanceOrError(Ctx, AssetPath);
+    if (!Instance) return true;
 
     Instance->SetScalarParameterValueEditorOnly(FName(*ParamName), Value);
     Instance->PostEditChange();
@@ -2272,12 +2278,8 @@ REGISTER_RPC_HANDLER("material.authoring.set_vector_parameter_value", "material.
     FString ParamName;
     if (!Ctx.RequireString(TEXT("parameterName"), ParamName)) return true;
 
-    UMaterialInstanceConstant* Instance = LoadObject<UMaterialInstanceConstant>(nullptr, *AssetPath);
-    if (!Instance)
-    {
-        Ctx.SendError(TEXT("ASSET_NOT_FOUND"), TEXT("Could not load material instance."));
-        return true;
-    }
+    UMaterialInstanceConstant* Instance = LoadMaterialInstanceOrError(Ctx, AssetPath);
+    if (!Instance) return true;
 
     FLinearColor Color(1.0f, 1.0f, 1.0f, 1.0f);
     TSharedPtr<FJsonObject> ValueObj = Ctx.GetObject(TEXT("value"));
@@ -2323,12 +2325,8 @@ REGISTER_RPC_HANDLER("material.authoring.set_texture_parameter_value", "material
     FString TexturePath;
     if (!Ctx.RequireAssetPath(TEXT("texturePath"), TexturePath)) return true;
 
-    UMaterialInstanceConstant* Instance = LoadObject<UMaterialInstanceConstant>(nullptr, *AssetPath);
-    if (!Instance)
-    {
-        Ctx.SendError(TEXT("ASSET_NOT_FOUND"), TEXT("Could not load material instance."));
-        return true;
-    }
+    UMaterialInstanceConstant* Instance = LoadMaterialInstanceOrError(Ctx, AssetPath);
+    if (!Instance) return true;
 
     UTexture* Texture = LoadObject<UTexture>(nullptr, *TexturePath);
     if (!Texture)
@@ -2358,7 +2356,8 @@ namespace
     // Loads a UMaterialInstanceConstant for the given asset path; emits the
     // mirror of get_material_info's UNSUPPORTED_ASSET_CLASS branch when the
     // asset exists but isn't an instance.
-    UMaterialInstanceConstant* LoadMaterialInstanceOrError(FHandlerContext& Ctx, const FString& AssetPath)
+    UMaterialInstanceConstant* LoadMaterialInstanceOrError(FHandlerContext& Ctx, const FString& AssetPath,
+        const TCHAR* BaseMaterialRoute)
     {
         if (UMaterialInstanceConstant* Instance = LoadObject<UMaterialInstanceConstant>(nullptr, *AssetPath))
         {
@@ -2366,11 +2365,15 @@ namespace
         }
         if (UObject* RawAsset = LoadObject<UObject>(nullptr, *AssetPath))
         {
-            Ctx.SendError(
-                TEXT("UNSUPPORTED_ASSET_CLASS"),
-                FString::Printf(
-                    TEXT("Asset is not a UMaterialInstanceConstant. Received class: %s"),
-                    *RawAsset->GetClass()->GetName()));
+            FString Message = FString::Printf(
+                TEXT("Asset is not a UMaterialInstanceConstant. Received class: %s"),
+                *RawAsset->GetClass()->GetName());
+            if (RawAsset->IsA<UMaterial>())
+            {
+                // Name the caller-supplied route for a base Material (see the forward declaration).
+                Message += BaseMaterialRoute;
+            }
+            Ctx.SendError(TEXT("UNSUPPORTED_ASSET_CLASS"), Message);
             return nullptr;
         }
         Ctx.SendError(TEXT("ASSET_NOT_FOUND"), TEXT("Could not load material instance."));
@@ -2863,8 +2866,9 @@ REGISTER_RPC_HANDLER("material.authoring.set_material_instance_base_property_ove
     if (!Ctx.RequireAssetPath(MaterialHandlerUtils::MaterialAssetPathKeys(), AssetPath)) return true;
 
     // Same wrong-class vocabulary the UMaterial-only verbs now use, mirrored: a UMaterial here
-    // gets UNSUPPORTED_ASSET_CLASS naming the class, not ASSET_NOT_FOUND.
-    UMaterialInstanceConstant* Instance = LoadMaterialInstanceOrError(Ctx, AssetPath);
+    // gets UNSUPPORTED_ASSET_CLASS naming the class, not ASSET_NOT_FOUND, and the base-property verbs.
+    UMaterialInstanceConstant* Instance = LoadMaterialInstanceOrError(Ctx, AssetPath,
+        TEXT(" To change blendMode / shadingModel / twoSided on the base Material itself use material.authoring.set_blend_mode / set_shading_model / set_two_sided; to override them per-instance, create one with material.authoring.create_material_instance (parentMaterial = this path) and pass its path."));
     if (!Instance) return true;
 
     const TSharedPtr<FJsonObject>& Payload = Ctx.GetRawPayload();

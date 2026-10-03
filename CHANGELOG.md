@@ -10,6 +10,13 @@
   The list is local state: newly seeded dump roots gitignore it. **Behaviour change:** remove a
   package's line from `dump-stalled.txt` to retry it; `force` does not override the list. One asset
   still cannot be preempted while it runs.
+- Fixed: `material.authoring.set_scalar_parameter_value`, `set_vector_parameter_value` and
+  `set_texture_parameter_value` answer `UNSUPPORTED_ASSET_CLASS` naming the class found when handed
+  a base `UMaterial`, instead of `ASSET_NOT_FOUND` for an asset that loaded fine. For a base
+  `UMaterial` the material-instance verbs' message now also names the route:
+  `material.authoring.create_material_instance`, or `get_material_info` to read it;
+  `set_material_instance_base_property_overrides` names `set_blend_mode` / `set_shading_model` /
+  `set_two_sided` on the base instead.
 - Fixed: `niagara.validate`, `niagara.inspect` and `niagara.compile_status` no longer stay at
   `scriptCompileCheck: "unverified"` with `COMPILE_STATE_UNINITIALIZED` after a completed compile.
   Emitter spawn/update scripts compile into the system scripts and never get a status of their own;
