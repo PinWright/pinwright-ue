@@ -77,6 +77,12 @@
   recipe now always carries `master.loopCrossfadeMs`, so recipe digests of existing candidates
   change. `audio.synth.cookbook` gains an "Ambience and loops" family. `audio.analysis` documents
   `startDiscontinuity`/`endDiscontinuity`.
+- Added: `audio.list_active_sounds`, a read-only snapshot of the audio device's active sounds (one
+  row per `FActiveSound`: `soundPath`, `location`, `playbackTimeSeconds`, `startWorldTimeSeconds`,
+  `virtualized`, `playingAudio`, owning `audioComponentPath`). It sees fire-and-forget sounds
+  (`PlaySoundAtLocation` / `PlaySound2D`) that have no `UAudioComponent`, and looping sounds the
+  device has virtualized. With no audio device (for example `-nosound`) it returns the new
+  `AUDIO_DEVICE_UNAVAILABLE` error, not an empty list.
 - Fixed: a BPIR literal on a by-reference parameter (`const T&` without `AutoCreateRefTerm`, e.g.
   `UBlackboardComponent` `KeyName`) was written as a pin default the Blueprint compiler then
   rejected ("by ref" params expect a valid input). Bool, int, int64, real, name, string, text and

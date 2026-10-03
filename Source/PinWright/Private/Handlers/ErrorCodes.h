@@ -130,6 +130,9 @@ namespace ErrorCodes
     // The audio verbs reuse DECODE_FAILED / ENCODE_FAILED / FILE_NOT_FOUND rather than adding
     // AUDIO_-prefixed synonyms of them; only failures those cannot express get a code here.
     //
+    // audio.list_active_sounds: the editor has no audio device (e.g. -nosound), so what is
+    // playing cannot be observed. An error, not an empty list - zero rows means "nothing plays".
+    inline constexpr TCHAR ERR_AUDIO_DEVICE_UNAVAILABLE[]                   = TEXT("AUDIO_DEVICE_UNAVAILABLE");
     // The operation has no samples to work on - a zero-length render, a recipe whose layers
     // produced nothing, an analysis handed an unfilled buffer. An error rather than a
     // zero-length success: an empty render and a silent one are different outcomes.

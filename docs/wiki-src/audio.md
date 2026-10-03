@@ -23,3 +23,27 @@ Same WorldSettings ownership as `audio.spawn_sound_at_location`: the new `UAudio
 ### audio.create_ambient_sound
 
 Spawns an `AAmbientSound` actor (resolvable by label via the `actor.*` verbs through its `actorPath` / `actorLabel`), but the audible `UAudioComponent` it drives is also returned as `componentPath` in the response. For a direct component readback (location / volume / sound binding) feed that `componentPath` to `call("system.inspect.inspect_object", ...)` / `call("property.get", ...)`.
+
+### audio.list_active_sounds
+
+Read-only snapshot of what the audio device is playing **right now**. Use it to check runtime audio claims - did a sound fire once or twice, which asset played for a given surface, was a sound cut off, is a looping sound audible or virtualized. It sees sounds that have no `UAudioComponent`, which `system.inspect.find_objects_by_class {className: "AudioComponent"}` cannot. `UGameplayStatics::PlaySoundAtLocation` / `PlaySound2D` (fire-and-forget one-shots) create no component, so that query returns 0 while they play.
+
+No parameters. One row per engine `FActiveSound` on every audio device (PIE clients can have their own), sorted by `playOrder`, which is the device's dispatch order. Two rows with the same `soundPath` and close `startWorldTimeSeconds` mean two dispatches.
+
+| field | meaning |
+|---|---|
+| `soundPath` | the asset actually playing (a cue, wave or MetaSound source) |
+| `location {x,y,z}`, `hasLocation` | world position; `hasLocation: false` for 2D sounds, whose location means nothing |
+| `virtualized` | `true` when the row came from the device's virtual-loop map (a looping sound past its audible range or concurrency limit is tracked there and is inaudible). `false` means it is in the active list. It is never re-derived from flags. |
+| `playingAudio` | the device is rendering voices for it. A non-virtualized sound can still be silent because of voice limits. |
+| `stopping` | the device has begun stopping it (a stop or fade-out is in progress), so it is on its way out of the list |
+| `playbackTimeSeconds` | time since the sound started, scaled by pitch |
+| `startWorldTimeSeconds` | `world time - unscaled playback time`, the engine's own WorldTimeWhenPlayed. Left out of virtualized rows because unscaled time stops advancing while a sound is virtual. |
+| `requestedStartTime`, `volumeMultiplier`, `pitchMultiplier` | as passed to the play call |
+| `audioComponentPath`, `audioComponentId` | the owning component; `null` / `0` for fire-and-forget sounds, which is the signal for that case |
+| `ownerName` | the owning actor name passed to the play call, or `null` |
+| `soundClassPath`, `looping`, `deviceId`, `playOrder`, `world`, `worldType` | identification |
+
+Top level: `devicesInspected`, `count`, `virtualizedEnumerated`, `virtualizedCount`. **Errors with `AUDIO_DEVICE_UNAVAILABLE` when the editor has no audio device**, for example when it was started with `-nosound`. The error payload carries `canEverRenderAudio`. It is never an empty list, because zero rows means "nothing is playing".
+
+Limits: a sound issued on the same game-thread frame is visible, because the audio thread is suspended after its queued play commands run. Whether the virtual-loop map can be read depends on the engine version. Where it cannot be read, `virtualizedEnumerated` is `false`, virtualized sounds are missing, and a warning says so. Concurrency-group state and resolved attenuation are not reported.
