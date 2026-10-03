@@ -388,6 +388,52 @@ bool FDriveConditionTargetRequiredTest::RunTest(const FString& Parameters)
     return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveConditionUnknownKeyRefusedTest,
+    "PinWright.drive.contract.ConditionUnknownKeyRefused",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FDriveConditionUnknownKeyRefusedTest::RunTest(const FString& Parameters)
+{
+    // A key the parser does not read used to be dropped: `handle` beside (or instead of)
+    // `target`, or `expected` for `expected_text`, polled the full timeout and read as unmet.
+    FDriveCondition Unused;
+    FString Error;
+
+    TSharedPtr<FJsonObject> WithHandle = MakeShared<FJsonObject>();
+    WithHandle->SetStringField(TEXT("type"), TEXT("widget_visible"));
+    WithHandle->SetStringField(TEXT("target"), TEXT("NextButton"));
+    WithHandle->SetStringField(TEXT("handle"), TEXT("W_Root_C_0/NextButton/SCommonButton"));
+    TestFalse(TEXT("a condition carrying 'handle' is rejected even with a target"),
+              FDriveJson::ParseCondition(WithHandle, Unused, &Error));
+    TestTrue(FString::Printf(TEXT("the error names 'handle' and points at 'target' (%s)"), *Error),
+             Error.Contains(TEXT("'handle'")) && Error.Contains(TEXT("'target'")));
+
+    TSharedPtr<FJsonObject> Misspelled = MakeShared<FJsonObject>();
+    Misspelled->SetStringField(TEXT("type"), TEXT("text_equals"));
+    Misspelled->SetStringField(TEXT("target"), TEXT("ScoreLabel"));
+    Misspelled->SetStringField(TEXT("expected"), TEXT("100"));
+    Error.Reset();
+    TestFalse(TEXT("'expected' (for expected_text) is rejected"),
+              FDriveJson::ParseCondition(Misspelled, Unused, &Error));
+    TestTrue(FString::Printf(TEXT("the error names the key and lists expected_text (%s)"), *Error),
+             Error.Contains(TEXT("'expected'")) && Error.Contains(TEXT("expected_text")));
+
+    // The same closed set applies to an action verb's wait_for, which shares the parser.
+    TSharedPtr<FJsonObject> Settle = MakeShared<FJsonObject>();
+    Settle->SetObjectField(TEXT("wait_for"), WithHandle);
+    FDriveSettleConfig Config;
+    Error.Reset();
+    TestFalse(TEXT("a wait_for carrying 'handle' is rejected"),
+              FDriveJson::ParseSettleConfig(Settle, Config, &Error));
+    TestTrue(FString::Printf(TEXT("the wait_for error names 'handle' (%s)"), *Error),
+             Error.Contains(TEXT("'handle'")));
+
+    // Precondition the refusals above depend on: the same object minus the stray key parses.
+    WithHandle->RemoveField(TEXT("handle"));
+    TestTrue(TEXT("the condition parses once the stray key is removed"),
+             FDriveJson::ParseCondition(WithHandle, Unused));
+    return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveSettleConfigParseTest,
     "PinWright.drive.contract.SettleConfigParse",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)

@@ -136,10 +136,10 @@ namespace DriveWebHandlersLocal
             SendNoBrowser(Ctx, BrowserIndex);
             return nullptr;
         }
-        if (!FDriveJson::ParseSettleConfig(Ctx.GetRawPayload(), Out.Config))
+        FString WaitForError;
+        if (!FDriveJson::ParseSettleConfig(Ctx.GetRawPayload(), Out.Config, &WaitForError))
         {
-            Ctx.SendError(ErrorCodes::ERR_CONDITION_INVALID,
-                TEXT("The 'wait_for' object has an unrecognized 'type', or has no 'target' (every type but journal_severity needs one)."));
+            Ctx.SendError(ErrorCodes::ERR_CONDITION_INVALID, TEXT("Invalid 'wait_for': ") + WaitForError);
             return nullptr;
         }
         const TOptional<int32> TimeoutMs = Ctx.GetIntFirstOf({ TEXT("timeout_ms") });
@@ -796,10 +796,10 @@ void FDriveWebHandlers::ExpectWeb(FHandlerContext& Ctx)
 {
     // Self-contained condition parse so ExpectWeb evaluates exactly one queried DOM.
     FDriveCondition Condition;
-    if (!FDriveJson::ParseCondition(Ctx.GetObject(TEXT("condition")), Condition))
+    FString ConditionError;
+    if (!FDriveJson::ParseCondition(Ctx.GetObject(TEXT("condition")), Condition, &ConditionError))
     {
-        Ctx.SendError(ErrorCodes::ERR_CONDITION_INVALID,
-            TEXT("The 'condition' object is missing, has an unrecognized 'type', or has no 'target' (every type but journal_severity needs one)."));
+        Ctx.SendError(ErrorCodes::ERR_CONDITION_INVALID, TEXT("Invalid 'condition': ") + ConditionError);
         return;
     }
 
@@ -1111,10 +1111,10 @@ void FDriveWebHandlers::DragWeb(FHandlerContext& Ctx)
 void FDriveWebHandlers::WaitForWeb(FHandlerContext& Ctx)
 {
     FDriveCondition Condition;
-    if (!FDriveJson::ParseCondition(Ctx.GetObject(TEXT("condition")), Condition))
+    FString ConditionError;
+    if (!FDriveJson::ParseCondition(Ctx.GetObject(TEXT("condition")), Condition, &ConditionError))
     {
-        Ctx.SendError(ErrorCodes::ERR_CONDITION_INVALID,
-            TEXT("The 'condition' object is missing, has an unrecognized 'type', or has no 'target' (every type but journal_severity needs one)."));
+        Ctx.SendError(ErrorCodes::ERR_CONDITION_INVALID, TEXT("Invalid 'condition': ") + ConditionError);
         return;
     }
 

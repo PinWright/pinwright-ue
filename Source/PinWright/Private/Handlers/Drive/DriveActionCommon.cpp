@@ -284,10 +284,10 @@ void FDriveActionCommon::RunAction(FHandlerContext& Ctx, const FString& Handle, 
     // Settle / wait_for tuning. ParseSettleConfig reads the budgets and an optional
     // `wait_for` sub-object; a present-but-malformed wait_for is a CONDITION_INVALID.
     FDriveSettleConfig Config;
-    if (!FDriveJson::ParseSettleConfig(Ctx.GetRawPayload(), Config))
+    FString WaitForError;
+    if (!FDriveJson::ParseSettleConfig(Ctx.GetRawPayload(), Config, &WaitForError))
     {
-        Ctx.SendError(ErrorCodes::ERR_CONDITION_INVALID,
-            TEXT("The 'wait_for' object has an unrecognized 'type', or has no 'target' (every type but journal_severity needs one)."));
+        Ctx.SendError(ErrorCodes::ERR_CONDITION_INVALID, TEXT("Invalid 'wait_for': ") + WaitForError);
         return;
     }
     // The action-verb wire name for the wait_for timeout is `timeout_ms`; honor it

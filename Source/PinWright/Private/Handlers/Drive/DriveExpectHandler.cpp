@@ -25,14 +25,14 @@ REGISTER_RPC_HANDLER("drive.expect", "drive",
         DRIVE_WORLD_SELECTOR_PARAM,
         DRIVE_BROWSER_SELECTOR_PARAM,
         DRIVE_WINDOW_SELECTOR_PARAMS,
-        RPC_PARAM_REQ("condition", "object", "Condition to evaluate (type + target/expected_text/expected_count/count_op/expected_bounds/severity).")
+        RPC_PARAM_REQ("condition", "object", "Condition to evaluate (type + target/expected_text/expected_count/count_op/expected_bounds/severity; any other key is refused with CONDITION_INVALID).")
     ))
 {
     FDriveCondition Condition;
-    if (!FDriveJson::ParseCondition(Ctx.GetObject(TEXT("condition")), Condition))
+    FString ConditionError;
+    if (!FDriveJson::ParseCondition(Ctx.GetObject(TEXT("condition")), Condition, &ConditionError))
     {
-        Ctx.SendError(ErrorCodes::ERR_CONDITION_INVALID,
-            TEXT("The 'condition' object is missing, has an unrecognized 'type', or has no 'target' (every type but journal_severity needs one)."));
+        Ctx.SendError(ErrorCodes::ERR_CONDITION_INVALID, TEXT("Invalid 'condition': ") + ConditionError);
         return true;
     }
 

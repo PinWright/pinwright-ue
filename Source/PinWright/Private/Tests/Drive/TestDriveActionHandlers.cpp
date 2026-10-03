@@ -219,6 +219,53 @@ bool FDriveWaitForMissingConditionTest::RunTest(const FString& Parameters)
 }
 
 // ============================================================================
+// Test: drive.wait_for / drive.expect refuse a condition with an unknown key up front
+// ============================================================================
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveWaitForUnknownConditionKeyTest,
+    "PinWright.drive.actions.WaitForUnknownConditionKeyInvalid",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FDriveWaitForUnknownConditionKeyTest::RunTest(const FString& Parameters)
+{
+    // The reported call: `handle` where the condition takes `target`. With the key ignored the
+    // verb went on to poll (or, with no PIE, to the live-UI pre-check's error) instead of naming
+    // the argument mistake. Both shapes - handle alone, and handle beside a valid target - must
+    // come back CONDITION_INVALID synchronously, naming the key.
+    TSharedPtr<FJsonObject> HandleOnly = MakeShared<FJsonObject>();
+    HandleOnly->SetStringField(TEXT("type"), TEXT("widget_visible"));
+    HandleOnly->SetStringField(TEXT("handle"), TEXT("W_OverallUILayout_C_0/NextButton_Step_8/SCommonButton"));
+
+    TSharedPtr<FJsonObject> HandleAndTarget = MakeShared<FJsonObject>();
+    HandleAndTarget->SetStringField(TEXT("type"), TEXT("widget_visible"));
+    HandleAndTarget->SetStringField(TEXT("target"), TEXT("NextButton_Step_8"));
+    HandleAndTarget->SetStringField(TEXT("handle"), TEXT("W_OverallUILayout_C_0/NextButton_Step_8/SCommonButton"));
+
+    for (const TCHAR* Verb : { TEXT("drive.wait_for"), TEXT("drive.expect") })
+    {
+        for (const TSharedPtr<FJsonObject>& Condition : { HandleOnly, HandleAndTarget })
+        {
+            TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+            Payload->SetObjectField(TEXT("condition"), Condition);
+
+            FTestResponseCapture Capture;
+            const bool bFound = InvokeHandlerWithCapture(Verb, Payload, Capture);
+            const FString Label = FString::Printf(TEXT("%s (target %s)"), Verb,
+                Condition->HasField(TEXT("target")) ? TEXT("present") : TEXT("absent"));
+
+            TestTrue(*FString::Printf(TEXT("%s: handler found"), *Label), bFound);
+            TestTrue(*FString::Printf(TEXT("%s: answered synchronously"), *Label), Capture.bWasCalled);
+            TestFalse(*FString::Printf(TEXT("%s: not a success"), *Label), Capture.bSuccess);
+            TestEqual(*FString::Printf(TEXT("%s: error code is CONDITION_INVALID (message: %s)"), *Label, *Capture.Message),
+                Capture.ErrorCode, FString(ErrorCodes::ERR_CONDITION_INVALID));
+            TestTrue(*FString::Printf(TEXT("%s: message names 'handle' (%s)"), *Label, *Capture.Message),
+                Capture.Message.Contains(TEXT("'handle'")));
+        }
+    }
+    return true;
+}
+
+// ============================================================================
 // Test: drive.click with no live PIE returns a clean coded error (no hang/crash)
 // ============================================================================
 

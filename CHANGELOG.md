@@ -51,6 +51,12 @@
   component (`UActorComponent`) property is refused. It was refused `CONSTRUCTION_FAILED`
   (`ImportText left trailing input`). `widget.import_xml` and BPIR `node_props` errors now carry
   both the apply error and the ImportText fallback error (the fallback used to overwrite it).
+- Fixed: a `drive.wait_for` / `drive.expect` `condition` (and an action verb's `wait_for`) is a
+  closed key set: `type`, `target`, `expected_text`, `expected_count`, `count_op`,
+  `expected_bounds`, `severity`. **Behaviour change:** any other key, e.g. `handle` for `target`,
+  was ignored and the wait polled to `outcome:timeout`; it is now refused `CONDITION_INVALID`
+  before polling, and the message names the key (and every `CONDITION_INVALID` parse refusal now
+  says which rule failed).
 - Fixed: `widget.set_image_brush` accepts any brush resource Slate can draw — a `UMaterialInterface`
   or any `UTexture`, not only `UTexture2D` — through `resourcePath` (`texturePath` kept as an alias).
   An undrawable class is refused with `INVALID_ASSET_TYPE` (was `ASSET_NOT_FOUND`). A material has no

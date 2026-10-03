@@ -273,17 +273,44 @@ TSharedPtr<FJsonObject> FDriveJson::WriteJournalDelta(const FDriveJournalDelta& 
     return Obj;
 }
 
-bool FDriveJson::ParseCondition(const TSharedPtr<FJsonObject>& Json, FDriveCondition& OutCondition)
+bool FDriveJson::ParseCondition(const TSharedPtr<FJsonObject>& Json, FDriveCondition& OutCondition,
+                                FString* OutError)
 {
+    auto Fail = [OutError](const FString& Reason)
+    {
+        if (OutError)
+        {
+            *OutError = Reason;
+        }
+        return false;
+    };
+
     if (!Json.IsValid())
     {
-        return false;
+        return Fail(TEXT("The condition object is missing."));
+    }
+
+    // Closed key set: an unread key (`handle` for `target`, `expected` for `expected_text`)
+    // used to be dropped silently, so the condition polled the full timeout and read as unmet.
+    static const TArray<FString> AllowedKeys = {
+        TEXT("type"), TEXT("target"), TEXT("expected_text"), TEXT("expected_count"),
+        TEXT("count_op"), TEXT("expected_bounds"), TEXT("severity")
+    };
+    // Case-insensitive, matching FJsonObject's own field lookup, so `Target` keeps working.
+    TArray<FString> Unknown;
+    if (!RejectUnknownKeys(Json, AllowedKeys, Unknown, ERejectUnknownKeysMode::First, ESearchCase::IgnoreCase))
+    {
+        return Fail(FString::Printf(
+            TEXT("Unknown condition key '%s'%s. Accepted keys: %s."),
+            *Unknown[0],
+            Unknown[0] == TEXT("handle") ? TEXT(" (a condition names its element with 'target')") : TEXT(""),
+            *FString::Join(AllowedKeys, TEXT(", "))));
     }
 
     const FString TypeToken = GetJsonStringField(Json, TEXT("type"));
     if (!ConditionTypeFromString(TypeToken, OutCondition.Type))
     {
-        return false;
+        return Fail(FString::Printf(TEXT("Unrecognized condition type '%s'."), *TypeToken));
     }
 
     OutCondition.Target = GetJsonStringField(Json, TEXT("target"));
@@ -291,7 +318,9 @@ bool FDriveJson::ParseCondition(const TSharedPtr<FJsonObject>& Json, FDriveCondi
     // matches nothing, which widget_absent (and count == 0) would report as met.
     if (OutCondition.Target.IsEmpty() && OutCondition.Type != EDriveConditionType::JournalSeverity)
     {
-        return false;
+        return Fail(FString::Printf(
+            TEXT("Condition type '%s' needs a non-empty 'target' (every type but journal_severity does)."),
+            *TypeToken));
     }
     OutCondition.ExpectedText = GetJsonStringField(Json, TEXT("expected_text"));
     OutCondition.ExpectedCount = GetJsonIntField(Json, TEXT("expected_count"), OutCondition.ExpectedCount);
@@ -312,7 +341,8 @@ bool FDriveJson::ParseCondition(const TSharedPtr<FJsonObject>& Json, FDriveCondi
     return true;
 }
 
-bool FDriveJson::ParseSettleConfig(const TSharedPtr<FJsonObject>& Json, FDriveSettleConfig& OutConfig)
+bool FDriveJson::ParseSettleConfig(const TSharedPtr<FJsonObject>& Json, FDriveSettleConfig& OutConfig,
+                                   FString* OutError)
 {
     if (!Json.IsValid())
     {
@@ -328,7 +358,7 @@ bool FDriveJson::ParseSettleConfig(const TSharedPtr<FJsonObject>& Json, FDriveSe
     if (Json->TryGetObjectField(TEXT("wait_for"), WaitForObj) && WaitForObj && WaitForObj->IsValid())
     {
         FDriveCondition Condition;
-        if (!ParseCondition(*WaitForObj, Condition))
+        if (!ParseCondition(*WaitForObj, Condition, OutError))
         {
             return false;
         }

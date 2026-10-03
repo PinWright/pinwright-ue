@@ -26,7 +26,7 @@ REGISTER_RPC_HANDLER("drive.wait_for", "drive",
         RPC_PARAM_OPT("root_index", "integer", "Live UMG root selector: the Nth root (0-based). Takes precedence over instance_name."),
         DRIVE_WORLD_SELECTOR_PARAM,
         DRIVE_BROWSER_SELECTOR_PARAM,
-        RPC_PARAM_REQ("condition", "object", "Condition to wait for (type + target/expected_text/expected_count/count_op/expected_bounds/severity)."),
+        RPC_PARAM_REQ("condition", "object", "Condition to wait for (type + target/expected_text/expected_count/count_op/expected_bounds/severity; any other key is refused with CONDITION_INVALID)."),
         RPC_PARAM_DEF("timeout_ms", "number", "How long to poll before timing out, in ms (default 5000).", "5000"),
         RPC_PARAM_DEF("stable_ticks", "number", "Consecutive stable ticks required before settled (carried for parity; default 2).", "2"),
         RPC_PARAM_DEF("quiet_budget_ms", "number", "No-change budget, in ms (carried for parity; default 500).", "500"),
@@ -38,10 +38,10 @@ REGISTER_RPC_HANDLER("drive.wait_for", "drive",
     ))
 {
     FDriveCondition Condition;
-    if (!FDriveJson::ParseCondition(Ctx.GetObject(TEXT("condition")), Condition))
+    FString ConditionError;
+    if (!FDriveJson::ParseCondition(Ctx.GetObject(TEXT("condition")), Condition, &ConditionError))
     {
-        Ctx.SendError(ErrorCodes::ERR_CONDITION_INVALID,
-            TEXT("The 'condition' object is missing, has an unrecognized 'type', or has no 'target' (every type but journal_severity needs one)."));
+        Ctx.SendError(ErrorCodes::ERR_CONDITION_INVALID, TEXT("Invalid 'condition': ") + ConditionError);
         return true;
     }
 

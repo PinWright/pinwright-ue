@@ -53,7 +53,7 @@
     RPC_PARAM_DEF("quiet_budget_ms", "number", "Budget for the no-change phase before reporting a clean quiet, in ms (default 500).", "500"), \
     RPC_PARAM_DEF("settle_budget_ms", "number", "Budget for the overall settle phase, in ms (default 1500).", "1500"), \
     RPC_PARAM_DEF("timeout_ms", "number", "Timeout for an explicit wait_for condition, in ms (default 5000).", "5000"), \
-    RPC_PARAM_OPT("wait_for", "object", "Optional condition to wait for after the action instead of settle-on-change."), \
+    RPC_PARAM_OPT("wait_for", "object", "Optional condition to wait for after the action instead of settle-on-change (same closed key set as drive.wait_for's condition)."), \
     RPC_PARAM_DEF("observe", "string", "Observation detail in the response: none | list | list+screenshot (default none -> compact result with no full element list/screenshot).", "none"), \
     RPC_PARAM_DEF("full_diff", "boolean", "Return the full appeared/disappeared/changed handle lists instead of the compact diff summary (default false).", "false"), \
     RPC_PARAM_DEF("include_journal", "boolean", "Attach a top-level journal delta since journal_since (default false).", "false"), \

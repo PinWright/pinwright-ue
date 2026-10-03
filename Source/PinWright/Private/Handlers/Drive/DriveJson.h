@@ -35,16 +35,19 @@ public:
     // the default diff form embedded in action results.
     static TSharedPtr<FJsonObject> WriteDiffSummary(const FDriveDiff& Diff);
 
-    // Parses a condition from a handler's args object. Returns false when a `type`
-    // field is present but unrecognized (or the object is null), and when `target` is
-    // empty for any type but journal_severity; missing optional fields fall back to
-    // FDriveCondition defaults.
-    static bool ParseCondition(const TSharedPtr<FJsonObject>& Json, FDriveCondition& OutCondition);
+    // Parses a condition from a handler's args object. Returns false when the object is
+    // null, `type` is unrecognized, it carries a key outside the condition vocabulary
+    // (e.g. `handle` for `target`, which would otherwise be dropped and poll to timeout),
+    // or `target` is empty for any type but journal_severity; OutError (when given) names
+    // which. Missing optional fields fall back to FDriveCondition defaults.
+    static bool ParseCondition(const TSharedPtr<FJsonObject>& Json, FDriveCondition& OutCondition,
+                               FString* OutError = nullptr);
 
     // Parses a settle config from a handler's args object. Missing fields keep the
     // FDriveSettleConfig defaults. Returns false only when a `wait_for` sub-object is
-    // present but fails to parse as a condition.
-    static bool ParseSettleConfig(const TSharedPtr<FJsonObject>& Json, FDriveSettleConfig& OutConfig);
+    // present but fails to parse as a condition (OutError carries ParseCondition's reason).
+    static bool ParseSettleConfig(const TSharedPtr<FJsonObject>& Json, FDriveSettleConfig& OutConfig,
+                                  FString* OutError = nullptr);
 
     // Enum <-> wire-string converters (snake_case). The From* variants are
     // case-insensitive and return false on an unrecognized token.
