@@ -15,6 +15,12 @@
 
 #include "Handlers/ErrorCodes.h"
 #include "Engine/UserDefinedEnum.h"
+#include "EdGraph/EdGraph.h"
+#include "K2Node.h"
+#include "K2Node_Select.h"
+#include "K2Node_SwitchEnum.h"
+#include "NodeDependingOnEnumInterface.h"
+#include "UObject/UObjectIterator.h"
 // UserDefinedStruct.h moved from Engine/ to StructUtils/ (CoreUObject) in UE 5.8.
 #if __has_include("StructUtils/UserDefinedStruct.h")
 #include "StructUtils/UserDefinedStruct.h"
@@ -367,6 +373,17 @@ namespace
             }
 
 #if MCP_HAS_ENUM_EDITOR_UTILS
+            // IsProperNameForUserDefinedEnumerator also rejects every name the enum already has,
+            // so say why. Reached from create_enum and set_enum_entries, so keep it verb-neutral.
+            if (EnumAsset && EnumAsset->GetIndexByName(FName(*EnumAsset->GenerateFullEnumName(*Sanitized))) != INDEX_NONE)
+            {
+                OutError = FString::Printf(
+                    TEXT("Enum entry '%s' already exists in this enum and cannot be reused as a new entry name. "
+                         "Entries are replaced, not merged; to append while keeping the existing names use "
+                         "blueprint.add_enum_entries."),
+                    *Sanitized);
+                return false;
+            }
             if (EnumAsset && !FEnumEditorUtils::IsProperNameForUserDefinedEnumerator(EnumAsset, Sanitized))
             {
                 OutError = FString::Printf(
@@ -922,7 +939,7 @@ REGISTER_RPC_HANDLER("blueprint.create_enum", "blueprint", "Create a UUserDefine
 }
 
 // ---- blueprint.set_enum_entries ----
-REGISTER_RPC_HANDLER("blueprint.set_enum_entries", "blueprint", "Replace user-defined Blueprint enum entries",
+REGISTER_RPC_HANDLER("blueprint.set_enum_entries", "blueprint", "Replace user-defined Blueprint enum entries with new names. A name the enum already has is refused; to append while keeping existing names use blueprint.add_enum_entries.",
     RPC_PARAMS(
         RPC_PARAM_REQ("path", "path", "Enum asset path"),
         RPC_PARAM_REQ("entries", "array", "New array of enum entry names")
@@ -974,6 +991,154 @@ REGISTER_RPC_HANDLER("blueprint.set_enum_entries", "blueprint", "Replace user-de
     Ctx.SendSuccess(Response);
     return true;
 }
+
+// ---- blueprint.add_enum_entries ----
+#if MCP_HAS_ENUM_EDITOR_UTILS
+// The enum editor's "Add Enumerator" path: FEnumEditorUtils mints the next NewEnumeratorN name,
+// keeps every existing internal name, and broadcasts the change so loaded Select / Switch-on-enum
+// nodes reconstruct with the new pin. SetEnums (set_enum_entries) does none of the last part.
+REGISTER_RPC_HANDLER("blueprint.add_enum_entries", "blueprint", "Append enumerators to an existing user-defined enum, keeping every existing internal name (and so every pin that references one). Internal names are minted by the engine (NewEnumeratorN), exactly as the enum editor's Add Enumerator button does, and loaded dependent Select / Switch nodes are refreshed.",
+    RPC_PARAMS(
+        RPC_PARAM_REQ("path", "path", "Enum asset path"),
+        RPC_PARAM_REQ("displayNames", "array", "Display names of the enumerators to append, in order. Each must be non-empty and unique among the enum's display names. Internal names are chosen by the engine and returned in added[].")
+    ))
+{
+    const FString Path = Ctx.GetString(TEXT("path"));
+    const TArray<TSharedPtr<FJsonValue>>* DisplayNameValues = nullptr;
+    if (!Ctx.GetRawPayload()->TryGetArrayField(TEXT("displayNames"), DisplayNameValues) || !DisplayNameValues || DisplayNameValues->Num() == 0)
+    {
+        Ctx.SendError(TEXT("INVALID_ARGUMENT"), TEXT("displayNames must be a non-empty array of strings"));
+        return true;
+    }
+
+    FString NormalizedPath;
+    FString LoadError;
+    UUserDefinedEnum* EnumAsset = Cast<UUserDefinedEnum>(LoadAssetByRequestPath(Path, NormalizedPath, LoadError));
+    if (!EnumAsset)
+    {
+        Ctx.SendError(TEXT("ENUM_NOT_FOUND"), LoadError.IsEmpty() ? TEXT("Enum asset not found") : LoadError);
+        return true;
+    }
+
+    // Validate everything before the first mutation, so a refusal leaves the enum untouched.
+    TArray<FString> DisplayNames;
+    for (const TSharedPtr<FJsonValue>& Value : *DisplayNameValues)
+    {
+        FString DisplayName;
+        if (!Value.IsValid() || !Value->TryGetString(DisplayName) || DisplayName.TrimStartAndEnd().IsEmpty())
+        {
+            Ctx.SendError(TEXT("INVALID_ARGUMENT"), TEXT("displayNames must contain only non-empty strings"));
+            return true;
+        }
+        DisplayName = DisplayName.TrimStartAndEnd();
+        if (DisplayNames.Contains(DisplayName) ||
+            !FEnumEditorUtils::IsEnumeratorDisplayNameValid(EnumAsset, INDEX_NONE, FText::FromString(DisplayName)))
+        {
+            Ctx.SendError(TEXT("INVALID_ARGUMENT"), FString::Printf(
+                TEXT("Display name '%s' is invalid or already used by this enum; the enum was not modified."),
+                *DisplayName));
+            return true;
+        }
+        DisplayNames.Add(DisplayName);
+    }
+
+    const TArray<FString> NamesBefore = GetEnumEntryNames(EnumAsset);
+
+    FScopedTransaction Transaction(FText::FromString(TEXT("MCP: blueprint.add_enum_entries")));
+    TArray<FString> AddedNames;
+    TArray<TSharedPtr<FJsonValue>> Added;
+    for (const FString& DisplayName : DisplayNames)
+    {
+        FEnumEditorUtils::AddNewEnumeratorForUserDefinedEnum(EnumAsset);
+        const int32 Index = EnumAsset->NumEnums() - 2; // last entry before _MAX
+        const FString Name = BlueprintHandlerUtils::StripEnumScope(EnumAsset->GetNameStringByIndex(Index));
+        if (!FEnumEditorUtils::SetEnumeratorDisplayName(EnumAsset, Index, FText::FromString(DisplayName)))
+        {
+            Ctx.SendError(TEXT("ENUM_UPDATE_FAILED"), FString::Printf(
+                TEXT("Appended '%s' at index %d but could not set its display name '%s'; %d of %d entries were added."),
+                *Name, Index, *DisplayName, AddedNames.Num() + 1, DisplayNames.Num()));
+            return true;
+        }
+        AddedNames.Add(Name);
+        TSharedPtr<FJsonObject> Entry = MakeShared<FJsonObject>();
+        Entry->SetNumberField(TEXT("index"), Index);
+        Entry->SetStringField(TEXT("name"), Name);
+        Entry->SetStringField(TEXT("displayName"), EnumAsset->GetDisplayNameTextByIndex(Index).ToString());
+        Added.Add(MakeShared<FJsonValueObject>(Entry));
+    }
+
+    // Measured, not assumed: the old names are still a prefix and the new ones follow them.
+    const TArray<FString> NamesAfter = GetEnumEntryNames(EnumAsset);
+    TArray<FString> Expected = NamesBefore;
+    Expected.Append(AddedNames);
+    if (!(NamesAfter == Expected))
+    {
+        Ctx.SendError(TEXT("ENUM_UPDATE_FAILED"), FString::Printf(
+            TEXT("Enum verification failed: expected [%s] but the asset has [%s]"),
+            *FString::Join(Expected, TEXT(", ")), *FString::Join(NamesAfter, TEXT(", "))));
+        return true;
+    }
+
+    // Consumer coverage: every loaded node the engine reconstructs on an enum change is counted, and
+    // its Blueprint is dirtied and needs saving by the caller. Only Select and Switch-on-enum have a
+    // pin per enumerator; enum / bitmask literals and the like do not, so only those two are pin-checked.
+    TSet<FString> DependentBlueprints;
+    int32 DependentNodes = 0;
+    TArray<TSharedPtr<FJsonValue>> StaleNodes;
+    for (TObjectIterator<UK2Node> It(RF_Transient); It; ++It)
+    {
+        UK2Node* Node = *It;
+        const INodeDependingOnEnumInterface* Dependent = Cast<INodeDependingOnEnumInterface>(Node);
+        if (!IsValid(Node) || !Dependent || Dependent->GetEnum() != EnumAsset ||
+            !Dependent->ShouldBeReconstructedAfterEnumChanged() ||
+            !Cast<UEdGraph>(Node->GetOuter()) || !Node->HasValidBlueprint())
+        {
+            continue;
+        }
+        ++DependentNodes;
+        DependentBlueprints.Add(Node->GetBlueprint()->GetPathName());
+        if (!Cast<UK2Node_SwitchEnum>(Node) && !Cast<UK2Node_Select>(Node))
+        {
+            continue;
+        }
+        for (const FString& Name : AddedNames)
+        {
+            if (!Node->FindPin(FName(*Name)))
+            {
+                StaleNodes.Add(MakeShared<FJsonValueString>(FString::Printf(
+                    TEXT("%s:%s"), *Node->GetBlueprint()->GetPathName(), *Node->GetName())));
+                break;
+            }
+        }
+    }
+
+    McpSafeAssetSave(EnumAsset);
+
+    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+    Response->SetBoolField(TEXT("success"), true);
+    Response->SetStringField(TEXT("path"), EnumAsset->GetPathName());
+    Response->SetArrayField(TEXT("added"), Added);
+    TArray<TSharedPtr<FJsonValue>> EntryValues;
+    for (const FString& Entry : NamesAfter)
+    {
+        EntryValues.Add(MakeShared<FJsonValueString>(Entry));
+    }
+    Response->SetArrayField(TEXT("entries"), EntryValues);
+    TSharedPtr<FJsonObject> Dependents = MakeShared<FJsonObject>();
+    Dependents->SetNumberField(TEXT("nodes"), DependentNodes);
+    TArray<TSharedPtr<FJsonValue>> BlueprintValues;
+    for (const FString& BlueprintPath : DependentBlueprints)
+    {
+        BlueprintValues.Add(MakeShared<FJsonValueString>(BlueprintPath));
+    }
+    Dependents->SetArrayField(TEXT("blueprints"), BlueprintValues);
+    Dependents->SetArrayField(TEXT("nodesMissingNewPins"), StaleNodes);
+    Response->SetObjectField(TEXT("dependents"), Dependents);
+    AddAssetVerification(Response, EnumAsset);
+    Ctx.SendSuccess(Response);
+    return true;
+}
+#endif // MCP_HAS_ENUM_EDITOR_UTILS
 
 // ---- blueprint.create_struct ----
 REGISTER_RPC_HANDLER("blueprint.create_struct", "blueprint", "Create a UUserDefinedStruct asset usable in Blueprint variables and as a TMap value type. Optionally seed with fields at creation; edit afterwards via blueprint.add_struct_field / remove_struct_field.",

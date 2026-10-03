@@ -124,6 +124,7 @@ Not listed: internal plumbing namespaces, not intended for direct use - `pipelin
 | --- | --- |
 | `blueprint.add_construction_script` | Ensure a construction script graph exists on a blueprint |
 | `blueprint.add_dispatcher` | Add an Event Dispatcher member variable and delegate signature graph to a Blueprint. |
+| `blueprint.add_enum_entries` | Append enumerators to an existing user-defined enum, keeping every existing internal name (and so every pin that references one). |
 | `blueprint.add_event` | Add an event entry node to a Blueprint's EventGraph. |
 | `blueprint.add_function` | Create a new UFunction graph on a Blueprint with caller-specified input/output pins. |
 | `blueprint.add_interface` | Make a Blueprint implement a Blueprint Interface. |
@@ -197,7 +198,7 @@ Not listed: internal plumbing namespaces, not intended for direct use - `pipelin
 | `blueprint.search` | Search all indexed Blueprint assets using UE's Find-in-Blueprints system |
 | `blueprint.search_api` | Keyword search over the API index built by blueprint.build_api_index |
 | `blueprint.set_default` | Mutate the Blueprint's class default object (CDO) so every newly spawned instance starts with this value. |
-| `blueprint.set_enum_entries` | Replace user-defined Blueprint enum entries |
+| `blueprint.set_enum_entries` | Replace user-defined Blueprint enum entries with new names. |
 | `blueprint.set_function_settings` | Set Blueprint function settings (access, pure/const/exec, call-in-editor, category) |
 | `blueprint.set_metadata` | Set metadata on a blueprint asset |
 | `blueprint.set_struct_field_default` | Set the default value for an existing user-defined struct field. |

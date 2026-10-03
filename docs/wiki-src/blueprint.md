@@ -206,6 +206,14 @@ Surface impact:
 - `bpir.txt` files in asset dumps emit one `# BPIR_WARN: <text>` or `# BPIR_ERROR: <text>` comment line per warning instead of the previous single `# BPIR_FAILED: <first>` line. Consumers grepping the dump corpus for true decompiler failures should filter on `BPIR_ERROR:`; graph-hygiene notes from authored source live under `BPIR_WARN:`.
 - `blueprint.decompile` JSON serializes `warnings` as an array of `{ "text": "...", "severity": "warn" | "error" }` objects instead of bare strings. Callers that previously iterated warnings as `FString` must read `.text` (and optionally branch on `.severity`).
 
+### blueprint.add_enum_entries
+
+Appends enumerators to an existing `UUserDefinedEnum` and keeps every existing internal name at its index, so pin defaults, `Select` option pins, `Switch on <Enum>` case pins and wires keyed by those names keep resolving. It is the enum editor's **Add Enumerator** button: the engine mints each internal name (`NewEnumerator<N>`, the next unused one) and the verb then sets the display name you passed in `displayNames`. You cannot choose the internal name.
+
+Every display name is validated before the first append (non-empty, not already used by the enum, not repeated in the request), so a refusal is `INVALID_ARGUMENT` and leaves the enum untouched. The engine's change broadcast reconstructs loaded dependent nodes. The response reports `added: [{index, name, displayName}]` and the full `entries` list, both read back off the asset, plus `dependents: {nodes, blueprints, nodesMissingNewPins}`. `nodes` counts every loaded node the engine reconstructs for this enum (Select, Switch on enum, enum literals and similar), and `nodesMissingNewPins` lists any Select or Switch-on-enum node that still lacks a pin for an appended enumerator. Only those two node types have a pin per enumerator, so they are the only ones checked. The reconstruction dirties the Blueprints listed in `blueprints`, so save them along with the enum. Blueprints that are not loaded pick up the new entries when they next load.
+
+`blueprint.set_enum_entries` is the other verb for enums. It replaces every entry with the new names you pass. That breaks every reference to an old name, and it refuses a name the enum already has. To add an entry, use this verb instead.
+
 ### blueprint.create_struct
 
 Creates a `UUserDefinedStruct` asset. UE forbids a zero-field user-defined struct, so the engine always seeds a new struct with one default bool member named `MemberVar_0` — an "empty" create still starts with one field.
