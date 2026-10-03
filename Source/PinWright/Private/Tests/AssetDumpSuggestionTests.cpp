@@ -14,8 +14,8 @@
 // The helper answers "should the caller be nudged to (re)dump this subject?" by
 // deriving the expected dump-mirror directory under <ProjectSavedDir>/PinWright/
 // asset-dumps/ from a package path and reporting whether it exists / is fresh.
-// A missing mirror yields a non-empty imperative hint naming asset.dump_folder
-// targets; a fresh mirror yields "".
+// A missing mirror yields a non-empty imperative hint that leads with asset.dump
+// of the subject; a fresh mirror yields "".
 //
 // These cases exercise only the missing-mirror and empty-input branches, which
 // need no filesystem setup (a bogus package path is guaranteed to have no
@@ -38,31 +38,51 @@ bool FAssetDumpSuggestionEmptyPathTest::RunTest(const FString& Parameters)
     return true;
 }
 
+// E-property-stale-dump-hint-suggests-whole-project: the staleness is per asset and the
+// editor is often shared, so the Asset-kind hint leads with the single-asset asset.dump
+// (interpolated, not templated), offers only the asset's own folder as the wider sweep with
+// a cost line, and never names a project root such as /Game as a folder target.
+namespace AssetDumpSuggestionTestsHelpers
+{
+    void ExpectNarrowAssetHint(FAutomationTestBase& Test, const FString& PackagePath, const FString& ContainingFolder)
+    {
+        const FString Hint = AssetDumpSuggestion::BuildDumpSuggestionHint(
+            PackagePath, AssetDumpSuggestion::EDumpSubjectKind::Asset);
+        Test.TestFalse(TEXT("Missing mirror yields a hint"), Hint.IsEmpty());
+
+        const FString SingleAsset = FString::Printf(TEXT("asset.dump({\"assetPath\":\"%s\"})"), *PackagePath);
+        const FString FolderSweep = FString::Printf(TEXT("asset.dump_folder({\"folderPath\":\"%s\"})"), *ContainingFolder);
+        const int32 SingleAt = Hint.Find(SingleAsset, ESearchCase::CaseSensitive);
+        const int32 FolderAt = Hint.Find(FolderSweep, ESearchCase::CaseSensitive);
+        Test.TestTrue(TEXT("Hint names the single-asset asset.dump with this request's path"), SingleAt != INDEX_NONE);
+        Test.TestTrue(TEXT("Hint offers the asset's own containing folder as the wider sweep"), FolderAt != INDEX_NONE);
+        Test.TestTrue(TEXT("The single-asset dump leads; the folder sweep comes after it"),
+            SingleAt != INDEX_NONE && FolderAt != INDEX_NONE && SingleAt < FolderAt);
+        Test.TestTrue(TEXT("The folder sweep states its cost"), Hint.Contains(TEXT("dumps every non-level asset under that path")));
+
+        // Count folderPath payloads: only the containing folder may appear, never /Game or a mount root.
+        int32 FolderPayloads = 0;
+        for (int32 At = Hint.Find(TEXT("\"folderPath\"")); At != INDEX_NONE;
+             At = Hint.Find(TEXT("\"folderPath\""), ESearchCase::CaseSensitive, ESearchDir::FromStart, At + 1))
+        {
+            ++FolderPayloads;
+        }
+        Test.TestEqual(TEXT("Exactly one folder target is offered"), FolderPayloads, 1);
+        Test.TestFalse(TEXT("No copy-pasteable whole-project /Game dump"), Hint.Contains(TEXT("{\"folderPath\":\"/Game\"}")));
+    }
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpSuggestionMissingPluginMountTest,
     "PinWright.AssetDumpSuggestion.MissingPluginMount",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 bool FAssetDumpSuggestionMissingPluginMountTest::RunTest(const FString& Parameters)
 {
-    // A subject under a plugin mount with no dump mirror must produce a hint that
-    // names the asset.dump_folder RPC, the mount root derived from the path, the
-    // containing folder, and the always-suggested /Game default.
-    //
-    // Each target is asserted as a whole {"folderPath":"<x>"} payload, NOT as a bare
-    // substring: the opener interpolates the subject's package path verbatim, so a bare
-    // Contains("/PwSuggestTestPlugin") is satisfied by the echoed path alone and would
-    // still pass with the MountRoot/ContainingFolder derivation blocks deleted.
-    const FString Hint = AssetDumpSuggestion::BuildDumpSuggestionHint(
-        TEXT("/PwSuggestTestPlugin/Foo/BP_Fake"), AssetDumpSuggestion::EDumpSubjectKind::Asset);
-    TestFalse(TEXT("Missing plugin-mount mirror yields a hint"), Hint.IsEmpty());
-    TestTrue(TEXT("Hint names the asset.dump_folder RPC"),
-        Hint.Contains(TEXT("asset.dump_folder")));
-    TestTrue(TEXT("Hint offers the derived mount root as a dump target"),
+    const FString PackagePath = TEXT("/PwSuggestTestPlugin/Foo/BP_Fake");
+    AssetDumpSuggestionTestsHelpers::ExpectNarrowAssetHint(*this, PackagePath, TEXT("/PwSuggestTestPlugin/Foo"));
+    const FString Hint = AssetDumpSuggestion::BuildDumpSuggestionHint(PackagePath, AssetDumpSuggestion::EDumpSubjectKind::Asset);
+    TestFalse(TEXT("The plugin mount root is not offered as a dump target"),
         Hint.Contains(TEXT("{\"folderPath\":\"/PwSuggestTestPlugin\"}")));
-    TestTrue(TEXT("Hint offers the derived containing folder as a dump target"),
-        Hint.Contains(TEXT("{\"folderPath\":\"/PwSuggestTestPlugin/Foo\"}")));
-    TestTrue(TEXT("Hint always offers the /Game default as a dump target"),
-        Hint.Contains(TEXT("{\"folderPath\":\"/Game\"}")));
     return true;
 }
 
@@ -72,23 +92,41 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpSuggestionMissingGameMountTest,
 
 bool FAssetDumpSuggestionMissingGameMountTest::RunTest(const FString& Parameters)
 {
-    // A subject under /Game with no dump mirror must still produce a hint naming
-    // the asset.dump_folder RPC and the /Game target. As above, the targets are asserted
-    // as whole {"folderPath":"<x>"} payloads because the opener echoes the package path
-    // (which starts with /Game) and would satisfy a bare Contains("/Game") on its own.
-    const FString Hint = AssetDumpSuggestion::BuildDumpSuggestionHint(
-        TEXT("/Game/__PinWrightTest_NoSuchDir__/BP_Fake"), AssetDumpSuggestion::EDumpSubjectKind::Asset);
-    TestFalse(TEXT("Missing /Game mirror yields a hint"), Hint.IsEmpty());
-    TestTrue(TEXT("Hint names the asset.dump_folder RPC"),
-        Hint.Contains(TEXT("asset.dump_folder")));
-    TestTrue(TEXT("Hint offers the full-project /Game dump target"),
-        Hint.Contains(TEXT("{\"folderPath\":\"/Game\"}")));
-    TestTrue(TEXT("Hint offers the derived containing folder as the narrower target"),
-        Hint.Contains(TEXT("{\"folderPath\":\"/Game/__PinWrightTest_NoSuchDir__\"}")));
-    // The under-/Game branch is distinct from the plugin-mount branch: it must not
-    // re-list /Game as a third fallback, so its plugin-specific wording is absent.
-    TestFalse(TEXT("An under-/Game subject does not take the plugin-mount wording"),
-        Hint.Contains(TEXT("this plugin, where you're working")));
+    AssetDumpSuggestionTestsHelpers::ExpectNarrowAssetHint(*this,
+        TEXT("/Game/__PinWrightTest_NoSuchDir__/BP_Fake"), TEXT("/Game/__PinWrightTest_NoSuchDir__"));
+    return true;
+}
+
+// A subject directly under a mount root has the mount root itself as its folder, so a folder
+// sweep there is a whole-project (or whole-plugin) dump. Both the Asset and the missing-Level
+// hint must then offer only the single-subject asset.dump and no folderPath at all.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpSuggestionMissingRootLevelAssetTest,
+    "PinWright.AssetDumpSuggestion.MissingRootLevelAsset",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAssetDumpSuggestionMissingRootLevelAssetTest::RunTest(const FString& Parameters)
+{
+    struct FCase { const TCHAR* Path; AssetDumpSuggestion::EDumpSubjectKind Kind; const TCHAR* Label; };
+    const FCase Cases[] = {
+        { TEXT("/Game/__PwSuggestRootFake_BP"), AssetDumpSuggestion::EDumpSubjectKind::Asset, TEXT("asset") },
+        { TEXT("/Game/__PwSuggestRootFake_Level"), AssetDumpSuggestion::EDumpSubjectKind::Level, TEXT("level") },
+        { TEXT("/PwSuggestTestPlugin/BP_Fake"), AssetDumpSuggestion::EDumpSubjectKind::Asset, TEXT("plugin-root asset") },
+    };
+    for (const FCase& Case : Cases)
+    {
+        // Precondition: no mirror on disk, so the subject takes the missing-mirror branch.
+        const FString DumpDir = AssetDumpWriter::ResolveDumpDir(Case.Path, TEXT(""));
+        if (!TestFalse(FString::Printf(TEXT("%s: fixture path has no dump mirror"), Case.Label),
+                IFileManager::Get().DirectoryExists(*DumpDir)))
+        {
+            continue;
+        }
+        const FString Hint = AssetDumpSuggestion::BuildDumpSuggestionHint(Case.Path, Case.Kind);
+        TestTrue(FString::Printf(TEXT("%s: hint offers the single-subject asset.dump"), Case.Label),
+            Hint.Contains(FString::Printf(TEXT("asset.dump({\"assetPath\":\"%s\"})"), Case.Path)));
+        TestFalse(FString::Printf(TEXT("%s: hint offers no folder sweep of the mount root"), Case.Label),
+            Hint.Contains(TEXT("\"folderPath\"")));
+    }
     return true;
 }
 
@@ -107,8 +145,10 @@ bool FAssetDumpSuggestionLevelKindTest::RunTest(const FString& Parameters)
     // prose — the flag is useless to a caller unless it is inside the dump_folder payload.
     TestTrue(TEXT("Level hint sets includeLevels on the derived folder target"),
         Hint.Contains(TEXT("{\"folderPath\":\"/Game/__PinWrightTest_NoSuchDir__\",\"includeLevels\":true}")));
-    TestTrue(TEXT("Level hint offers the single-subject asset.dump alternative"),
-        Hint.Contains(TEXT("asset.dump({\"assetPath\":\"/Game/__PinWrightTest_NoSuchDir__/MyLevel\"})")));
+    const int32 SingleAt = Hint.Find(TEXT("asset.dump({\"assetPath\":\"/Game/__PinWrightTest_NoSuchDir__/MyLevel\"})"));
+    TestTrue(TEXT("Level hint offers the single-subject asset.dump"), SingleAt != INDEX_NONE);
+    TestTrue(TEXT("Level hint leads with the single-subject asset.dump, before the folder sweep"),
+        SingleAt != INDEX_NONE && SingleAt < Hint.Find(TEXT("asset.dump_folder")));
     return true;
 }
 

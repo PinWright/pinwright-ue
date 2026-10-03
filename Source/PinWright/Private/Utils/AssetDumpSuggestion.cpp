@@ -86,38 +86,22 @@ FString BuildDumpSuggestionHint(const FString& PackagePath, EDumpSubjectKind Kin
         }
     }
 
-    // Derive suggestion targets purely from the package path — never a hardcoded mount
-    // list, since this plugin ships to third-party projects with their own mounts.
-    // MountRoot is the first path segment (e.g. /MyPlugin/Sub/BP_X -> /MyPlugin).
-    FString MountRoot;
-    {
-        FString Trimmed = PackagePath;
-        Trimmed.RemoveFromStart(TEXT("/"));
-        FString First;
-        FString Rest;
-        if (Trimmed.Split(TEXT("/"), &First, &Rest))
-        {
-            MountRoot = TEXT("/") + First;
-        }
-        else
-        {
-            MountRoot = TEXT("/") + Trimmed;
-        }
-    }
-
     // ContainingFolder is the package path minus its asset-name segment
-    // (e.g. /MyPlugin/Sub/BP_X -> /MyPlugin/Sub).
+    // (e.g. /MyPlugin/Sub/BP_X -> /MyPlugin/Sub). Derived from the path, never a
+    // hardcoded mount list, since this plugin ships to projects with their own mounts.
     FString ContainingFolder;
     {
         FString AssetName;
         if (!PackagePath.Split(TEXT("/"), &ContainingFolder, &AssetName, ESearchCase::IgnoreCase, ESearchDir::FromEnd)
             || ContainingFolder.IsEmpty())
         {
-            ContainingFolder = MountRoot;
+            ContainingFolder = PackagePath;
         }
     }
 
-    const bool bUnderGame = (MountRoot == TEXT("/Game"));
+    // A subject directly under a mount root (/Game/BP_X) has the mount root as its folder,
+    // i.e. a whole-project or whole-plugin sweep; offer only the single-subject dump then.
+    const bool bOfferFolder = ContainingFolder.Find(TEXT("/"), ESearchCase::CaseSensitive, ESearchDir::FromEnd) > 0;
 
     if (Kind == EDumpSubjectKind::Level && bStale)
     {
@@ -130,51 +114,42 @@ FString BuildDumpSuggestionHint(const FString& PackagePath, EDumpSubjectKind Kin
 
     if (Kind == EDumpSubjectKind::Level)
     {
-        // Levels are excluded from folder dumps by default, so includeLevels is required;
-        // asset.dump is the single-subject alternative.
-        return FString::Printf(
+        // Lead with the single-level dump; the folder form needs includeLevels because
+        // levels are excluded from folder dumps by default.
+        FString Hint = FString::Printf(
             TEXT("No asset-dump mirror for level %s — dump it before further inspection: ")
-            TEXT("asset.dump_folder({\"folderPath\":\"%s\",\"includeLevels\":true}) or ")
-            TEXT("asset.dump({\"assetPath\":\"%s\"}). Levels are skipped by default, so ")
-            TEXT("includeLevels:true is required to include maps/worlds in a folder dump."),
-            *PackagePath, *ContainingFolder, *PackagePath);
+            TEXT("asset.dump({\"assetPath\":\"%s\"})."),
+            *PackagePath, *PackagePath);
+        if (bOfferFolder)
+        {
+            Hint += FString::Printf(
+                TEXT(" To dump every asset in its folder instead: ")
+                TEXT("asset.dump_folder({\"folderPath\":\"%s\",\"includeLevels\":true}). Folder dumps skip ")
+                TEXT("levels by default, so includeLevels:true is required to include maps/worlds."),
+                *ContainingFolder);
+        }
+        return Hint;
     }
 
-    // Asset kind: opener depends on missing vs stale; the target choices follow.
-    FString Opener;
-    if (bStale)
-    {
-        Opener = FString::Printf(
-            TEXT("The asset-dump mirror for %s is STALE (source changed since last dump) — ")
-            TEXT("re-running asset.dump_folder is incremental, so no force is needed."),
-            *PackagePath);
-    }
-    else
-    {
-        Opener = FString::Printf(
-            TEXT("No asset-dump mirror for %s — repeated inspection is far cheaper from the cache."),
-            *PackagePath);
-    }
+    // Asset kind: opener depends on missing vs stale. The staleness is per asset and the
+    // editor may be shared, so lead with the single-asset refresh; a folder sweep is only
+    // offered for this asset's own folder, and never when that folder is a mount root.
+    FString Hint = bStale
+        ? FString::Printf(TEXT("The asset-dump mirror for %s is STALE (source changed since last dump)."), *PackagePath)
+        : FString::Printf(TEXT("No asset-dump mirror for %s — repeated inspection is far cheaper from the cache."), *PackagePath);
 
-    if (bUnderGame)
+    Hint += FString::Printf(
+        TEXT(" Dump just this asset before further inspection: asset.dump({\"assetPath\":\"%s\"})."),
+        *PackagePath);
+    if (bOfferFolder)
     {
-        // Subject already lives under /Game — full project dump is the obvious default;
-        // the containing folder is the narrower option. Don't re-list /Game as a fallback.
-        return Opener + FString::Printf(
-            TEXT(" Run a dump before further inspection: asset.dump_folder({\"folderPath\":\"/Game\"}) ")
-            TEXT("for a full project dump (the usual default), or narrow to ")
-            TEXT("{\"folderPath\":\"%s\"} if only that part of /Game matters."),
+        Hint += FString::Printf(
+            TEXT(" To refresh its whole folder instead, asset.dump_folder({\"folderPath\":\"%s\"}) ")
+            TEXT("dumps every non-level asset under that path (levels are skipped by default; ")
+            TEXT("incremental: unchanged assets are skipped)."),
             *ContainingFolder);
     }
-
-    // Subject under a plugin/other mount: lead with the mount root (where the agent is
-    // working), then the containing folder, then /Game as the usual full-dump default.
-    return Opener + FString::Printf(
-        TEXT(" Pick a dump scope and run it before further inspection: ")
-        TEXT("asset.dump_folder({\"folderPath\":\"%s\"}) (this plugin, where you're working), or ")
-        TEXT("{\"folderPath\":\"%s\"} for just this folder, or ")
-        TEXT("{\"folderPath\":\"/Game\"} for a full project dump (the usual default)."),
-        *MountRoot, *ContainingFolder);
+    return Hint;
 }
 
 }

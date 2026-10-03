@@ -31,6 +31,12 @@
   The list is local state: newly seeded dump roots gitignore it. **Behaviour change:** remove a
   package's line from `dump-stalled.txt` to retry it; `force` does not override the list. One asset
   still cannot be preempted while it runs.
+- Changed: the missing/stale asset-dump `hint` on `property.get`, `property.list`,
+  `blueprint.inspect`, `widget.export_xml` and level reads now leads with
+  `asset.dump {"assetPath":"<the inspected asset>"}` and offers `asset.dump_folder` only for that
+  asset's own folder, noting it dumps every non-level asset under the path; for an asset directly
+  under a mount root it offers `asset.dump` alone. It no longer suggests a `/Game` or
+  plugin-mount-root sweep, which occupied a shared editor for every agent on it.
 - Fixed: `material.authoring.set_scalar_parameter_value`, `set_vector_parameter_value` and
   `set_texture_parameter_value` answer `UNSUPPORTED_ASSET_CLASS` naming the class found when handed
   a base `UMaterial`, instead of `ASSET_NOT_FOUND` for an asset that loaded fine. For a base

@@ -13,6 +13,7 @@ namespace AssetDumpSuggestion
     };
 
     // Empty string when the subject's dump mirror exists and is fresh; otherwise an
-    // imperative hint proposing asset.dump_folder targets derived from PackagePath.
+    // imperative hint that leads with asset.dump of PackagePath and offers
+    // asset.dump_folder of its containing folder as the wider option.
     PINWRIGHT_API FString BuildDumpSuggestionHint(const FString& PackagePath, EDumpSubjectKind Kind);
 }
