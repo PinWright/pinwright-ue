@@ -122,13 +122,17 @@ public:
     // bVisibleOnly drops elements whose effective bVisible is false (collapsed/hidden or wholly
     // clipped) BEFORE either cap, so hidden CommonUI screens kept in the tree cannot crowd the
     // on-screen controls out of a capped list; the drop is a filter, not counted as omitted.
+    // LabelContains / HandleContains (empty = off) keep only elements whose Label / Handle contains
+    // the text case-insensitively, also BEFORE the caps and also not counted as omitted.
     static void FilterObservationElements(
         TArray<FDriveElement>& Elements,
         bool bInteractablesOnly,
         int32 MaxElements,
         int32 MaxBytes,
         int32& OutOmittedCount,
-        bool bVisibleOnly = false);
+        bool bVisibleOnly = false,
+        const FString& LabelContains = FString(),
+        const FString& HandleContains = FString());
 
     // Assemble a full observation: elements (required), an optional Set-of-Mark
     // screenshot, and an optional journal delta, stamped with the current frame and
@@ -157,5 +161,7 @@ public:
         int32 MaxElements = 0,
         bool bScreenshotToFile = false,
         int32 MaxBytes = 0,
-        bool bVisibleOnly = false);
+        bool bVisibleOnly = false,
+        const FString& LabelContains = FString(),
+        const FString& HandleContains = FString());
 };

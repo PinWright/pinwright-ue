@@ -734,6 +734,8 @@ void FDriveWebHandlers::ObserveWeb(FHandlerContext& Ctx)
     const int32 MarkCap = Ctx.GetInt(TEXT("mark_cap"), 50);
     const bool bInteractablesOnly = Ctx.GetBool(TEXT("interactables_only"), false);
     const bool bVisibleOnly = Ctx.GetBool(TEXT("visible_only"), false);
+    const FString LabelContains = Ctx.GetStringFirstOf({ TEXT("label_contains"), TEXT("filter") });
+    const FString HandleContains = Ctx.GetString(TEXT("handle_contains"));
     const int32 MaxElements = Ctx.GetInt(TEXT("max_elements"), 0);
     const int32 MaxBytes = Ctx.GetInt(TEXT("max_bytes"), 0);
     const bool bIncludeJournal = Ctx.GetBool(TEXT("include_journal"), false);
@@ -743,7 +745,7 @@ void FDriveWebHandlers::ObserveWeb(FHandlerContext& Ctx)
     TSharedRef<FAsyncResponseToken> Token = Ctx.MakeAsyncToken();
 
     FDriveWebBridge::QueryElements(Browser,
-        [Token, bScreenshot, bScreenshotToFile, MarkCap, bInteractablesOnly, bVisibleOnly, MaxElements, MaxBytes, bIncludeJournal, JournalSince]
+        [Token, bScreenshot, bScreenshotToFile, MarkCap, bInteractablesOnly, bVisibleOnly, LabelContains, HandleContains, MaxElements, MaxBytes, bIncludeJournal, JournalSince]
         (bool bOk, TArray<FDriveElement> Elements)
         {
             if (!bOk)
@@ -759,10 +761,11 @@ void FDriveWebHandlers::ObserveWeb(FHandlerContext& Ctx)
             Observation.Elements = MoveTemp(Elements);
 
             // Compact the list before the screenshot reads it, mirroring the game/editor
-            // observe path (interactables_only / visible_only filters, then the max_elements cap, then the
-            // max_bytes serialized-size cap).
+            // observe path (interactables_only / visible_only / label / handle filters, then the max_elements cap,
+            // then the max_bytes serialized-size cap).
             FDriveHandlerCommon::FilterObservationElements(
-                Observation.Elements, bInteractablesOnly, MaxElements, MaxBytes, Observation.OmittedCount, bVisibleOnly);
+                Observation.Elements, bInteractablesOnly, MaxElements, MaxBytes, Observation.OmittedCount, bVisibleOnly,
+                LabelContains, HandleContains);
 
             // Set-of-Mark screenshot is best-effort and captures the GAME viewport (the CEF HUD
             // composites into it via OSR); a capture miss just leaves the screenshot unset.

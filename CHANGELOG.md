@@ -172,6 +172,10 @@
   was ignored and the wait polled to `outcome:timeout`; it is now refused `CONDITION_INVALID`
   before polling, and the message names the key (and every `CONDITION_INVALID` parse refusal now
   says which rule failed).
+- Added: `drive.observe` takes `label_contains` (alias `filter`) and `handle_contains`, which keep
+  only elements whose label / handle contains the text, case-insensitively (Unicode lower-casing,
+  so Cyrillic labels match in either case), before `max_elements` / `max_bytes`. Finding one
+  control by its label no longer needs a full observe plus a grep of the spilled element list.
 - Added: `drive.observe` takes `visible_only` (default false), which drops every `visible:false`
   element (collapsed/hidden, or wholly clipped) before `max_elements` / `max_bytes`. Inactive
   CommonUI screens kept in the widget tree no longer crowd the on-screen controls out of a

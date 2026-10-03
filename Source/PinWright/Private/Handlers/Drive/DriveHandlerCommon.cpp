@@ -14,6 +14,7 @@
 #include "JournalLiveTail.h"
 #include "JournalTypes.h"
 
+#include "Internationalization/TextTransformer.h"
 #include "Misc/DateTime.h"
 
 namespace
@@ -279,7 +280,9 @@ void FDriveHandlerCommon::FilterObservationElements(
     int32 MaxElements,
     int32 MaxBytes,
     int32& OutOmittedCount,
-    bool bVisibleOnly)
+    bool bVisibleOnly,
+    const FString& LabelContains,
+    const FString& HandleContains)
 {
     OutOmittedCount = 0;
 
@@ -291,6 +294,21 @@ void FDriveHandlerCommon::FilterObservationElements(
     if (bVisibleOnly)
     {
         Elements.RemoveAll([](const FDriveElement& Element) { return !Element.bVisible; });
+    }
+
+    // Text filters use ICU Unicode lower-casing, not FString::Contains(IgnoreCase), which folds
+    // ASCII only: an upper-case Cyrillic label must match a lower-case label_contains.
+    const auto FoldCase = [](const FString& Text) { return FTextTransformer::ToLower(Text); };
+    if (!LabelContains.IsEmpty())
+    {
+        const FString Needle = FoldCase(LabelContains);
+        Elements.RemoveAll([&](const FDriveElement& Element) { return !FoldCase(Element.Label).Contains(Needle, ESearchCase::CaseSensitive); });
+    }
+
+    if (!HandleContains.IsEmpty())
+    {
+        const FString Needle = FoldCase(HandleContains);
+        Elements.RemoveAll([&](const FDriveElement& Element) { return !FoldCase(Element.Handle).Contains(Needle, ESearchCase::CaseSensitive); });
     }
 
     if (MaxElements > 0 && Elements.Num() > MaxElements)
@@ -340,7 +358,9 @@ bool FDriveHandlerCommon::BuildObservation(
     int32 MaxElements,
     bool bScreenshotToFile,
     int32 MaxBytes,
-    bool bVisibleOnly)
+    bool bVisibleOnly,
+    const FString& LabelContains,
+    const FString& HandleContains)
 {
     Out = FDriveObservation();
     Out.Surface = Surface;
@@ -370,7 +390,8 @@ bool FDriveHandlerCommon::BuildObservation(
 
     // Compact the list before anything reads it (so the screenshot marks the same set the
     // caller receives). A no-op unless the explicit observe asked for filtering.
-    FilterObservationElements(Out.Elements, bInteractablesOnly, MaxElements, MaxBytes, Out.OmittedCount, bVisibleOnly);
+    FilterObservationElements(Out.Elements, bInteractablesOnly, MaxElements, MaxBytes, Out.OmittedCount, bVisibleOnly,
+        LabelContains, HandleContains);
 
     // Screenshot is best-effort: a capture failure leaves the screenshot unset and
     // the observation still succeeds with its element list. The surface + window
