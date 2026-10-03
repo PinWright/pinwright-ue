@@ -241,7 +241,7 @@ REGISTER_RPC_HANDLER("blueprint.add_function", "blueprint", "Create a new UFunct
     ParseNamedTypePinParams(Outputs, ParsedOutputs, EParsedPinParamMode::AllowWildcardFallback, ParamParseError, TEXT("output param"));
 
     // New-function path: reject any input/output token that would silently become a
-    // wildcard pin (e.g. the documented-but-unsupported 'class:/Script/X.Y' form)
+    // wildcard pin (e.g. the unsupported 'class:/Script/X.Y' form)
     // instead of returning success with a malformed pin that only fails at a later
     // compile. The override path below has its own stricter signature-match check.
     if (!bOverride && RejectWildcardPinParams(Ctx, ParsedInputs, ParsedOutputs))

@@ -39,7 +39,7 @@ REGISTER_RPC_HANDLER("blueprint.add_variable", "blueprint", "Add a member variab
     RPC_PARAMS(
         BlueprintPathParamReq(TEXT("path"), TEXT("path"), TEXT("Blueprint asset path.")),
         RPC_PARAM_REQ("variableName", "string", "Identifier for the new variable."),
-        RPC_PARAM_OPT("variableType", "string", "Type token: built-in primitive (float, int, bool, string, name, text, vector, rotator, transform), or 'class:/Script/X.Y' for object/class refs, 'struct:/Game/...' for struct refs. Container wrappers: array<T>, set<T>, map<K,V> (e.g. 'set<name>', 'map<string,int>')."),
+        RPC_PARAM_OPT("variableType", "string", "Type token: primitive (bool, int, int64, float, double, byte, string, name, text); builtin struct (vector, rotator, transform, FLinearColor); struct or class short name or full path (/Script/Module.Type, /Game/Path/BP_Asset); or a wrapper: array<T>, set<T>, map<K,V>, object<T>, struct<T>, enum<T>, class<T>, softobject<T>, softclass<T>, interface<T> (e.g. 'object<MaterialInstanceDynamic>', 'interface<BPI_MyInterface_C>', 'set<name>', 'map<string,int>'). Object refs use object<T>; there is no 'class:'/'struct:' prefix form."),
         RPC_PARAM_OPT("defaultValue", "string", "Default value as JSON-compatible string; type-coerced to the variable's type."),
         RPC_PARAM_OPT("category", "string", "Display category in the Blueprint editor's Variables panel."),
         RPC_PARAM_DEF("isReplicated", "boolean", "Marks variable as replicated; defaults to false. For full replication settings (RepCondition, RepNotify) use blueprint.set_variable_settings.", "false"),

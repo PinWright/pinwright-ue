@@ -629,7 +629,7 @@ PINWRIGHT_API const TCHAR* GetAcceptedPinTypeFormsText();
 PINWRIGHT_API bool ResolvesToConcretePin(const FParsedPinParam& Param);
 
 // Scan parsed pin params for the first token that would silently degrade to a
-// wildcard pin — either a parse miss (bParseOk==false, e.g. the documented-but-
+// wildcard pin — either a parse miss (bParseOk==false, e.g. the
 // unparseable 'class:/Script/X.Y' form) or a token that parses yet resolves to no
 // UClass/UEnum/UScriptStruct (ResolvesToConcretePin returns false). On the first
 // such token, fills OutErrorMessage with a TYPE_NOT_FOUND-style message listing the

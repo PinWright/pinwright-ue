@@ -568,7 +568,7 @@ REGISTER_RPC_HANDLER("networking.create_rpc_function", "networking", "Create a n
         ParamParseError, TEXT("output param"));
 
     // Reject any input/output token that would silently become a wildcard pin
-    // (e.g. the documented-but-unsupported 'class:/Script/X.Y' form) instead of
+    // (e.g. the unsupported 'class:/Script/X.Y' form) instead of
     // returning success with a malformed pin that only fails at a later compile.
     // Mirrors blueprint.add_variable's loud TYPE_NOT_FOUND rejection.
     if (BlueprintHandlerUtils::RejectWildcardPinParams(Ctx, ParsedInputs, ParsedOutputs))

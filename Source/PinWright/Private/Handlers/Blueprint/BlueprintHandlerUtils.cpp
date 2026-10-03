@@ -1607,7 +1607,7 @@ bool FindFirstPinParamWildcardFallback(
     {
         if (!P.bParseOk)
         {
-            // Token never parsed (e.g. the documented-but-unsupported
+            // Token never parsed (e.g. the unsupported
             // 'class:/Script/X.Y' path form). Surface the structured parse detail.
             OutErrorMessage = FString::Printf(
                 TEXT("Could not resolve %s '%s' type '%s': %s. %s"),
@@ -1637,7 +1637,7 @@ bool RejectWildcardPinParams(
     const TArray<FParsedPinParam>& Outputs)
 {
     // Reject any input/output token that would silently become a wildcard pin (e.g.
-    // the documented-but-unsupported 'class:/Script/X.Y' form) instead of returning
+    // the unsupported 'class:/Script/X.Y' form) instead of returning
     // success with a malformed pin that only fails at a later compile. Mirrors
     // blueprint.add_variable's loud TYPE_NOT_FOUND rejection.
     FString WildcardError;
