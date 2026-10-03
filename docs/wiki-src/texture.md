@@ -56,6 +56,60 @@ with `INVALID_ARGUMENT` and quote the reason on the wire.
 
 - [`asset`](asset.md) for the shared dump sidecar schema and dump-parity live read policy.
 
+### texture.combine_textures
+
+A **full-frame blend, not a compositor**. Every output pixel `i` is `blend(base[i], overlay[i])`
+over one flat pixel index, so the parameter list is the whole interface: there is **no placement**
+— no offset, origin, rect, anchor or scale. Both images are consumed from pixel 0 (top-left). A
+stencil, logo or label cannot be stamped anywhere but the top-left corner at full size.
+
+**Use two textures of the same dimensions.** The output is created at the **base's** source size,
+and the loop is bounded by the smallest pixel count of base, overlay and output — nothing
+reconciles the two row strides. On a mismatch the call still returns `success: true`:
+
+- an overlay of a different **width** reads one scanline out of phase per output row, so the
+  overlay lands as a diagonal smear, not a corner placement;
+- an overlay with **fewer pixels** than the base stops the blend early, and the rest of the output
+  is left **zero-filled (transparent black)** on UE 5.8, where the engine zero-fills a source
+  created without data (unverified on 5.3-5.7) — it is not the base's pixels. Combining a small
+  overlay into a large base discards the tail of the base.
+
+**The output must not name an existing asset — above all not one of the inputs.** The output
+asset at `<path>/<name>` is created before either input's format is checked, and nothing guards
+an existing asset there: a texture of that name is re-created in place (its pixels are lost), and
+when it is `baseTexture` or `overlayTexture` that input is wiped before it is read. A loaded asset
+of any other class at that name crashes the editor (engine Fatal: cannot replace an existing object
+of a different class). A call refused by the format checks below still leaves an empty output
+asset behind.
+
+**Overlay alpha is ignored.** Only R, G and B are blended; the output's alpha is
+copied from the base. A transparent overlay region composites as if fully opaque.
+`opacity` (clamped to 0-1) is a uniform scalar over the whole image and is the only transparency control:
+`out.rgb = lerp(base.rgb, blend(base.rgb, overlay.rgb), opacity)`.
+
+Other limits: both inputs must have an 8-bit BGRA (`TSF_BGRA8`) editable source — any other source
+format is refused; the blend runs on the stored 8-bit bytes as-is, with no colour-space conversion
+(the output is always flagged sRGB, whatever the inputs' flags); an
+unrecognised `blendMode` is not refused, it falls through to `Normal` (the response `message` echoes
+the name you sent). Check the result with [`texture.get_pixel_stats`](texture.get_pixel_stats.md)
+(`region` / `tileGrid`) rather than trusting the success flag.
+
+### texture.create_from_pixels
+
+Creates a `BGRA8` texture from **your own pixels** — the general route for any shape, stencil, mask
+or marking you rasterise yourself. `data` is base64 of raw bytes, row-major from the top-left, no
+PNG or other container: `format: "RGBA8"` (default, 4 bytes R,G,B,A per pixel) or `"Gray8"` (1 byte
+per pixel, written as R=G=B with alpha 255). The decoded length must be **exactly**
+`width * height * bytesPerPixel`; anything else is refused with `INVALID_ARGUMENT` naming both counts
+rather than padded or truncated. `width`/`height` are 1..4096, but the practical bound is the request
+body limit (`HttpMaxRequestBodyBytes`, 1 MiB by default): about 440x440 RGBA8 or 880x880 Gray8 per
+call. For a file already on disk use `asset.import` instead.
+
+Bytes are stored as given — no colour-space conversion; the texture is sRGB like the other creators.
+An existing asset at `<path>/<name>` is refused with `ASSET_ALREADY_EXISTS`, never replaced in place.
+The response carries `pixelStats` (the [`texture.get_pixel_stats`](texture.get_pixel_stats.md) block
+read back from the written source mip), so `hash` / `mean` confirm what landed.
+
 ### texture.create_noise_texture
 
 Two algorithms, selected by `noiseType`: `Perlin` (smoothed value-noise FBM) and

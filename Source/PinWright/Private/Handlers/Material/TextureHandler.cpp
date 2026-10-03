@@ -3181,13 +3181,13 @@ REGISTER_TEXTURE_ACTION_HANDLER("texture.channel_pack", "channel_pack", "Pack ch
         RPC_PARAM_OPT("alphaTexture", "path", "Source texture for the alpha channel"),
         RPC_PARAM_DEF("path", "path", "Destination package path", "/Game/Textures"),
         RPC_PARAM_DEF("save", "boolean", "Save the asset to disk", "true")))
-REGISTER_TEXTURE_ACTION_HANDLER("texture.combine_textures", "combine_textures", "Combine textures",
+REGISTER_TEXTURE_ACTION_HANDLER("texture.combine_textures", "combine_textures", "Full-frame blend of two same-size textures (no placement; overlay alpha ignored)",
     RPC_PARAMS(
-        RPC_PARAM_REQ("baseTexture", "path", "Base texture asset path"),
-        RPC_PARAM_REQ("overlayTexture", "path", "Overlay texture asset path"),
-        RPC_PARAM_DEF("blendMode", "string", "Blend mode (Normal, Multiply, Screen, Overlay, Add)", "Normal"),
-        RPC_PARAM_DEF("opacity", "number", "Overlay opacity (0-1)", "1.0"),
-        RPC_PARAM_DEF("name", "string", "Output asset name", "Combined"),
+        RPC_PARAM_REQ("baseTexture", "path", "Base texture asset path (BGRA8 source); sets the output size and the output alpha"),
+        RPC_PARAM_REQ("overlayTexture", "path", "Overlay texture asset path (BGRA8 source); must match the base's dimensions - it is blended pixel-for-pixel from the top-left, a size mismatch smears rows or leaves the output tail transparent black (UE 5.8)"),
+        RPC_PARAM_DEF("blendMode", "string", "Blend mode (Normal, Multiply, Screen, Overlay, Add); an unrecognised name falls back to Normal", "Normal"),
+        RPC_PARAM_DEF("opacity", "number", "Uniform overlay opacity (0-1) over the whole image; the overlay's own alpha is ignored", "1.0"),
+        RPC_PARAM_DEF("name", "string", "Output asset name; must not name an existing asset - it is re-created in place, wiping an input named here before it is read", "Combined"),
         RPC_PARAM_DEF("path", "path", "Destination package path", "/Game/Textures"),
         RPC_PARAM_DEF("save", "boolean", "Save the asset to disk", "true")))
 REGISTER_TEXTURE_ACTION_HANDLER("texture.adjust_curves", "adjust_curves", "Adjust color curves",
