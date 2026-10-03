@@ -1450,6 +1450,8 @@ namespace ErrorCodes
     inline constexpr TCHAR ERR_SECTION_CREATION_FAILED[]                    = TEXT("SECTION_CREATION_FAILED");
     inline constexpr TCHAR ERR_SECTION_FAILED[]                             = TEXT("SECTION_FAILED");
     inline constexpr TCHAR ERR_SECTION_NOT_FOUND[]                          = TEXT("SECTION_NOT_FOUND");
+    // widget.set_animation_section_range: a matched section is locked or its MovieScene is read-only, so the engine would ignore the write.
+    inline constexpr TCHAR ERR_SECTION_READ_ONLY[]                          = TEXT("SECTION_READ_ONLY");
     inline constexpr TCHAR ERR_SECTION_TYPE_MISMATCH[]                      = TEXT("SECTION_TYPE_MISMATCH");
     inline constexpr TCHAR ERR_SECURITY_VIOLATION[]                         = TEXT("SECURITY_VIOLATION");
     inline constexpr TCHAR ERR_SEQUENCE_INVALID[]                           = TEXT("SEQUENCE_INVALID");

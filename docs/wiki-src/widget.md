@@ -901,3 +901,41 @@ Always returns `[NOT_SUPPORTED]`; no `speed` succeeds. Playback speed is a runti
 speed, wire `PlayAnimation(Animation, 0.0, 1, EUMGSequencePlayMode::Forward, PlaybackSpeed)` in
 Blueprint via BPIR/graph authoring or in C++. This deliberate guard ensures the impossible intent
 **fails loudly** instead of silently no-op'ing.
+
+### widget.get_animation_section_ranges
+
+Read-only. Lists every section of one animation (bound tracks in binding order, then root tracks),
+narrowed by `widgetName`, `propertyName` (property path, property name or `trackName`) and
+`sectionIndex` (index within each matched track). Each entry carries `range` in the same shape as
+`export_animations_json` (tick frames; an open side is `startBounded`/`endBounded: false`),
+`keyCount`, `firstKeyFrame`/`lastKeyFrame`, `keysInsideSection`, `locked`, and
+`compiledCopyMatches` plus `compiledRange` for the compiled class's `<Anim>_INST` duplicate. The
+response has `tickResolution`, `displayRate`, `playbackRange` and `compileRequired`. An empty
+match returns `[SECTION_NOT_FOUND]`. `trackName` is the track's object name (for example
+`MovieSceneFloatTrack_0`), never `None`. `keysInsideSection`, `firstKeyFrame` and `lastKeyFrame` are
+omitted when `keyCount` is 0. `compiledCopyMatches: false` with no `compiledRange` means the
+compiled class has no matching copy of this section (never compiled, or its tracks or sections
+changed since the last compile).
+
+`keysInsideSection: false` is the "final pose never shows" pattern: a section `[0, K)` whose last
+key sits at `K` never evaluates that key, because the section's end is exclusive.
+
+### widget.set_animation_section_range
+
+Sets `start` and/or `end` on every matched section (same filters as the read verb). Each side is a
+number in `units` (`ticks`, the default and the frames the read verbs report; `displayFrames`;
+`seconds`) or `"unbounded"` for an open side, the UMG default. An omitted side keeps its current
+bound. Ticks must be integers.
+
+Every matched section is validated before any write: an empty resulting range returns
+`[INVALID_PARAMETER]` and a locked section or a read-only MovieScene returns
+`[SECTION_READ_ONLY]`, both with nothing changed. The writes are one transaction (one editor undo).
+Each entry echoes `before`, `requested` (the target range in ticks after unit conversion), the
+read-back `range`, `applied` and `changed`; a section that did not take the value fails the call
+with `[VERIFICATION_FAILED]` (sections that did change are still marked modified).
+
+The verb edits the blueprint's animation and does not compile. Running widgets evaluate the
+compiled `<Anim>_INST` copy, which keeps the old range until `blueprint.compile`.
+`compileRequired` and per-section `compiledCopyMatches` compare that copy with the source, so
+they tell you whether the edit has reached the class. The blueprint is marked modified and the
+`saved` / `pendingFlush` fields report persistence.

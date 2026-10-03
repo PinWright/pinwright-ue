@@ -17,6 +17,12 @@
   that shape (as `position`), but `location` was declared an untyped alias of the `array` param
   `locations`, so the type gate refused the object with `PARAM_TYPE_MISMATCH` before the handler
   ran. `location` is now a typed alias declared `array|object`.
+- Added: `widget.get_animation_section_ranges` reads each widget-animation section's range (open
+  sides as `endBounded: false`), whether every key lies inside it, and whether the compiled
+  class's copy carries the same range. `widget.set_animation_section_range` sets `start` / `end`
+  (a value in ticks, display frames or seconds, or `"unbounded"`) on the matched sections in one
+  undoable transaction with per-section read-back; it reports `compileRequired` instead of
+  compiling.
 - Fixed: the `{Key=Value,...}` text `widget.export_xml` emits is accepted back unedited.
   `widget.set` (and every other `ApplyJsonValueToProperty` caller: `property.set`,
   `blueprint.set_default`) now reads a brace-form struct string (`Brush`, `ColorAndOpacity`, `Font`)
