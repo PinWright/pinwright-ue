@@ -2,6 +2,16 @@
 
 ## 1.0.0
 
+- Added: `actor.add_instances` and `actor.remove_instances` fill and empty an existing ISM/HISM
+  component's instances, which before only `python.execute` could do. `add_instances` appends a
+  `transforms[]` batch (the shape `spatial.scatter_layout` returns), reads every new instance back,
+  and reports `addedIndices[]`. With `replace: true` it validates every row first, then clears and
+  refills in one editor transaction, so a bad row leaves the old scatter as it was. `remove_instances`
+  removes the listed `indices` (which require `expectedCount`) or, with `all: true`, every instance.
+  Both verbs refuse the whole call on any bad input, refuse foliage components with
+  `INVALID_TARGET_KIND`, and echo each removed instance's transform in `removedInstances[]`. That
+  array can be passed straight back to `add_instances`, and `editor.undo` reverts either call when
+  the response reports `undoable: true`. Both report the level as marked dirty, not saved.
 - Fixed: texture verbs that write a new asset (`create_noise_texture`, `create_gradient_texture`,
   `create_pattern_texture`, `create_normal_from_height`, `resize_texture`, `channel_pack`,
   `combine_textures`, and `invert` / `desaturate` / `adjust_curves` with `inPlace: false`) now

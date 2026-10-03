@@ -573,6 +573,9 @@ bool FNestedParamKeyGateAdoptionRatchetTest::RunTest(const FString& Parameters)
         TEXT("mrq.set_preset_settings:sampling"),
         // New verb, closed from its first release: surface-type entries are exactly {index, name}.
         TEXT("physics.set_surface_types:surfaces"),
+        // New verb, closed from its first release: instance rows are exactly
+        // {location, rotation, scale, space, index}.
+        TEXT("actor.add_instances:transforms"),
         // The gate fixture in this file.
         TEXT("_test.nested_param_gate:grid"),
         TEXT("_test.nested_param_gate:states"),

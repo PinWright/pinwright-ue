@@ -247,6 +247,25 @@ Use it for one-off level tweaks. For "every instance of this BP must have this c
 
 `StaticMeshComponent`s auto-load `meshPath`; lights are forced to `Movable`. A property failure is reported in `warnings` without failing the call, and so is a `properties` map that leaves the new component with `bAutoActivate:false` — see the same note under `actor.set_component_properties`.
 
+### actor.add_instances
+
+Appends a batch of instances to an ISM/HISM component and returns `{actor, actorPath, component, componentClass, instanceCount, previousCount, requested, added, addedIndices[], replaced, removedInstances[]?, mismatchedCount?, mismatched[]?, undoable, warnings[]?, saveRequested, markedForSave, saved, pendingFlush, space, spaceFrom?, units, axis}`. Create the empty component first with `actor.add_component {componentType: "HierarchicalInstancedStaticMeshComponent", meshPath}`. A foliage component (an `InstancedFoliageActor`'s, or any `FoliageInstancedStaticMeshComponent`) is refused with `INVALID_TARGET_KIND`: its instances belong to the foliage ledger, so use `foliage.add_instances` / `foliage.remove`. While PIE runs, the verb edits the PIE world, and that copy is discarded when PIE ends.
+
+- **`replace: true` is the safe re-scatter.** Every row is validated first. Only then does the verb clear and refill, in one editor transaction, and `removedInstances[]` echoes the old scatter, complete and uncapped. A bad row refuses the call and the old scatter stays as it was.
+- **Rows are `{location, rotation?, scale?}`.** `location` is required; a missing one is `MISSING_REQUIRED_PARAM`. Each of the three must be an object carrying all three numbers (`x, y, z` or `pitch, yaw, roll`) and nothing else, so `scale: 2` or `scale: {x: 2}` is `INVALID_ARGUMENT`, not a default. Any row key other than `location` / `rotation` / `scale` / `space` / `index` is `UNKNOWN_NESTED_PARAMS`, so a misspelled `rotation` cannot fall back to zero. `index` is accepted only so a removal record can be replayed, and it is ignored: new instances are always appended.
+- **`added` is measured.** Each new instance is read back and compared with its row. A disagreement, or an instance count other than the expected one, is `VERIFICATION_FAILED` with the same payload.
+- **Pass `expectedCount`.** With `replace`, a scatter that changed since you read it is refused (`MATCH_COUNT_MISMATCH`) rather than discarded. An append is not idempotent: a retry after a timeout adds the batch twice, and `expectedCount` makes that retry fail instead. `replace: true` is idempotent.
+
+### actor.remove_instances
+
+Removes the listed `indices`, or every instance with `all: true`. Exactly one of the two is required. Returns `{actor, actorPath, component, componentClass, instanceCount, previousCount, requested, removed, all, removedInstances[], undoable, warnings[]?, saveRequested, markedForSave, saved, pendingFlush}`. Foliage components are refused with `INVALID_TARGET_KIND`, and the PIE note under `actor.add_instances` applies here too.
+
+- **All or nothing.** An out-of-range, repeated or non-integer index, an empty component, or a disagreeing `expectedCount` refuses the call with nothing removed.
+- **`indices` requires `expectedCount`.** A removal by index is not idempotent: a retry after a timeout would delete whichever instances the first call renumbered into those slots. Without `expectedCount` the call is `MISSING_REQUIRED_PARAM`. `all: true` needs no guard, because its retry finds an empty component and is refused.
+- **`removedInstances[]` is the undo record, for transforms.** Each row is `{index, space: "world", location, rotation, scale}`, read before the removal. The record is complete and uncapped, so clearing a large scatter returns a response that spills to a file. The array is a valid `actor.add_instances` `transforms` value as it is, so passing it back restores the instances' transforms at new, appended indices. Per-instance custom data is not recorded; when the component has any, `warnings[]` says so. `editor.undo` restores everything, custom data included, when `undoable` is `true` (the component was recorded in the undo buffer).
+- **Removal renumbers.** The engine closes the gap left by each removed index, so a surviving instance's index can change. Re-read with `actor.get_instances` before you address an instance by index again.
+- `removed` is the instance count before minus after. It is not copied from the request.
+
 ### actor.set_component_properties
 
 Sets UPROPERTY values on one named component. `Mobility` is applied first so later edits are accepted by a Static component; `SimulatePhysics` has a dedicated path. Per-property failures go to `warnings` while the call succeeds.

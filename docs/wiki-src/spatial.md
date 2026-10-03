@@ -450,8 +450,9 @@ call({
     exclude: [{ center: {x: 0, y: 0, z: 400}, radius: 2200 }]
   }
 })
-// -> feed data.transforms straight to foliage.add_instances, then seat with
-//    spatial.ground_instances - the Z above is the region plane, not the ground.
+// -> feed data.transforms straight to foliage.add_instances (or to actor.add_instances
+//    for a HISM you own), then seat with spatial.ground_instances - the Z above is the
+//    region plane, not the ground.
 ```
 
 Response: `{count, latticePoints, outsideRegion, excluded, region:{mode,center,min,max,radius?}, layout:{pattern,spacing,rowStep,jitter,jitterCm,seed,scaleMin,scaleMax,randomYaw,columns,rows,maxPoints,excludeRegions}, transforms[], units, axis}`. `count + outsideRegion + excluded == latticePoints` always — nothing is dropped unattributed. Each `transforms[]` entry is `{location, rotation, scale}`, the shape `foliage.add_instances`, `actor.spawn_batch` and `actor.set_instance_transforms` already consume.
