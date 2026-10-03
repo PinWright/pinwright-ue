@@ -1972,6 +1972,36 @@ namespace
         {
             const FPendingDumpEntry Entry = State.PendingAssets.Pop(EAllowShrinking::No);
 
+            // A package whose earlier dump never returned would freeze this editor
+            // too. Refuse it loudly instead of loading it again.
+            if (State.Kind == EAsyncAssetDumpKind::Folder
+                && State.StalledPackages.Contains(Entry.PackageName))
+            {
+                ++State.SkipCount;
+                const FString ExistingDumpDir = AssetDumpWriter::ResolveDumpDir(
+                    Entry.PackageName, State.OutRoot);
+                const bool bHasPriorDump =
+                    IFileManager::Get().DirectoryExists(*ExistingDumpDir);
+                if (bHasPriorDump)
+                {
+                    State.LiveDumpDirs.Add(FPaths::ConvertRelativePathToFull(ExistingDumpDir));
+                }
+                const FString StalledMessage = FString::Printf(
+                    TEXT("An earlier dump of this asset never returned (the editor stopped inside it: froze, crashed or was killed), so folder sweeps skip it; %s. Remove its line from %s to retry."),
+                    bHasPriorDump ? TEXT("prior dump preserved") : TEXT("no dump exists for this asset"),
+                    *AssetDumpHandler::GetStalledDumpListPath(State.OutRoot));
+                State.AssetSkips.Add({
+                    Entry.ObjectPath,
+                    AssetDumpErrorCodes::AssetDumpStalled,
+                    StalledMessage});
+                UE_LOG(LogPinWrightSubsystem, Warning,
+                    TEXT("asset dump skipped '%s': %s: %s"),
+                    *Entry.ObjectPath,
+                    AssetDumpErrorCodes::AssetDumpStalled,
+                    *StalledMessage);
+                continue;
+            }
+
             // This is the cooperative boundary: publish what is about to run
             // before entering synchronous UObject code. Once DumpSingleAsset
             // begins, the ticker cannot hard-preempt a slow engine call.
@@ -2001,6 +2031,13 @@ namespace
                 State.SweepLoadedPackages.Add(FName(*Entry.PackageName));
             }
 
+            // ponytail: journals a freeze for the next sweep; a real per-asset bound
+            // needs yieldable load/build/write phases (see the board ticket).
+            const FString InFlightMarkerPath =
+                AssetDumpHandler::GetInFlightDumpMarkerPath(State.OutRoot);
+            FFileHelper::SaveStringToFile(Entry.ObjectPath, *InFlightMarkerPath,
+                FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
+
             const double AssetStartedSeconds = FPlatformTime::Seconds();
             AssetDumpHandler::FDumpSingleResult R =
                 AssetDumpHandler::DumpSingleAsset(Entry.ObjectPath, State.OutRoot,
@@ -2008,6 +2045,13 @@ namespace
                     State.bIncludeWidgetScreenshot,
                     State.BaselineDirty,
                     /*bDeferAsyncCompilation=*/true);
+            if (!IFileManager::Get().Delete(*InFlightMarkerPath,
+                    /*RequireExists=*/false, /*EvenReadOnly=*/true, /*Quiet=*/true))
+            {
+                UE_LOG(LogPinWrightSubsystem, Warning,
+                    TEXT("asset dump: could not delete %s; the next folder sweep will list '%s' as stalled."),
+                    *InFlightMarkerPath, *Entry.ObjectPath);
+            }
             State.LastAssetElapsedSeconds = FMath::Max(
                 0.0, FPlatformTime::Seconds() - AssetStartedSeconds);
 
@@ -2329,6 +2373,53 @@ namespace AssetDumpHandler
     int32 ComputeDeferredRequeueIndex(int32 PendingCount, int32 Backlog)
     {
         return FMath::Max(0, PendingCount - FMath::Max(1, Backlog));
+    }
+
+    FString GetInFlightDumpMarkerPath(const FString& OutRoot)
+    {
+        return AssetDumpWriter::ResolveDumpRoot(OutRoot) / TEXT(".dump-inflight.tmp");
+    }
+
+    FString GetStalledDumpListPath(const FString& OutRoot)
+    {
+        return AssetDumpWriter::ResolveDumpRoot(OutRoot) / TEXT("dump-stalled.txt");
+    }
+
+    TSet<FString> LoadStalledDumpPackages(const FString& OutRoot)
+    {
+        const FString MarkerPath = GetInFlightDumpMarkerPath(OutRoot);
+        const FString ListPath = GetStalledDumpListPath(OutRoot);
+
+        // Only a dump that never returned leaves the marker behind: the process stopped
+        // (froze, crashed or was killed) inside it. Journal that asset before anything else runs.
+        FString Stuck;
+        if (FFileHelper::LoadFileToString(Stuck, *MarkerPath))
+        {
+            Stuck.TrimStartAndEndInline();
+            if (!Stuck.IsEmpty())
+            {
+                UE_LOG(LogPinWrightSubsystem, Warning,
+                    TEXT("asset dump: a previous dump never returned from '%s'; folder sweeps now skip it (listed in %s)."),
+                    *Stuck, *ListPath);
+                FFileHelper::SaveStringToFile(Stuck + LINE_TERMINATOR, *ListPath,
+                    FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM,
+                    &IFileManager::Get(), FILEWRITE_Append);
+            }
+            IFileManager::Get().Delete(*MarkerPath, /*RequireExists=*/false, /*EvenReadOnly=*/true, /*Quiet=*/true);
+        }
+
+        TSet<FString> Packages;
+        TArray<FString> Lines;
+        FFileHelper::LoadFileToStringArray(Lines, *ListPath);
+        for (FString& Line : Lines)
+        {
+            Line.TrimStartAndEndInline();
+            if (!Line.IsEmpty())
+            {
+                Packages.Add(FPackageName::ObjectPathToPackageName(Line));
+            }
+        }
+        return Packages;
     }
 
     TSet<FName> FilterReleasablePackages(
@@ -3030,6 +3121,9 @@ namespace AssetDumpHandler
             return Result;
         }
 
+        // Promote a leftover marker before this dump's own marker overwrites it.
+        LoadStalledDumpPackages(OutRoot);
+
         State.Kind = EAsyncAssetDumpKind::SingleAsset;
         State.RootDir = Result.DumpDir;
         State.AssetPath = NormalizedPath;
@@ -3136,6 +3230,7 @@ namespace AssetDumpHandler
             State.bIncludeLevels = bIncludeLevels;
             State.bForce = bForce;
             State.bPreflightPending = true;
+            State.StalledPackages = LoadStalledDumpPackages(OutRoot);
             State.BaselineDirty = DumpDirtyGuard_Snapshot();
             State.WorkStartedSeconds = FPlatformTime::Seconds();
             BeginAsyncDumpPhase(State, TEXT("scanning_registry"), FolderPath);
@@ -3248,6 +3343,7 @@ namespace AssetDumpHandler
         State.SkipCount = 0;
         State.PendingAssets = MoveTemp(Pending);
         State.LiveDumpDirs = MoveTemp(LiveDumpDirs);
+        State.StalledPackages = LoadStalledDumpPackages(OutRoot);
         State.BaselineDirty = DumpDirtyGuard_Snapshot();
         State.WorkStartedSeconds = FPlatformTime::Seconds();
         BeginAsyncDumpPhase(State, TEXT("queued"));

@@ -69,6 +69,8 @@ struct FAsyncFolderDumpState
     // not a deadline an asset can hit just because the sweep is long.
     int32 LastRemainingCompileCount = 0;
     TSet<FString>   LiveDumpDirs;
+    // Package names from the dump root's dump-stalled.txt; folder sweeps skip them.
+    TSet<FString>   StalledPackages;
     // Packages this sweep brought into memory itself (absent from memory when the
     // sweep reached them). The release step unloads only these, so packages the user,
     // the editor world or an open asset editor already had resident are never touched.

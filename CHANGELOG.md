@@ -2,6 +2,14 @@
 
 ## 1.0.0
 
+- Changed: `asset.dump_folder` no longer re-freezes the editor on an asset whose dump never
+  returned. The sweep journals the asset it enters in `<dump root>/.dump-inflight.tmp`; a marker
+  left behind because the editor stopped inside that dump (froze, crashed or was killed, including
+  an out-of-memory kill) moves to `<dump root>/dump-stalled.txt` at the next async dump, and every
+  folder sweep then skips the packages listed there as `ASSET_DUMP_STALLED`, keeping any prior dump.
+  The list is local state: newly seeded dump roots gitignore it. **Behaviour change:** remove a
+  package's line from `dump-stalled.txt` to retry it; `force` does not override the list. One asset
+  still cannot be preempted while it runs.
 - Changed: the PinWright Setup screen no longer opens at launch in an `-unattended` editor (the
   automation suite, offscreen/headless `editor_start`), even with `bShowSetupScreenOnLaunch` or a
   port-conflict alert; the conflict is still logged. On a real display its window covered the

@@ -143,7 +143,9 @@ void EnsureDumpRootScaffold(const FString& DumpRoot)
         { TEXT(".gitignore"),
           TEXT("# PinWright dump-cache bookkeeping (engine/plugin versions, package hashes) - transient, never commit.\n")
           TEXT(".dumpcache.json\n")
-          TEXT("*.tmp\n") },
+          TEXT("*.tmp\n")
+          TEXT("# Packages whose dump never returned on this machine; local, see asset.dump_folder.\n")
+          TEXT("dump-stalled.txt\n") },
         { TEXT(".gitattributes"),
           TEXT("# Machine-generated dump tree: the dumper writes LF on every platform; keep it LF in git and on checkout.\n")
           TEXT("* text=auto eol=lf\n") },

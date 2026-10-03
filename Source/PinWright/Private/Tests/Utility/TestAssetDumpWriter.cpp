@@ -851,6 +851,8 @@ bool FAssetDumpWriterEnsureDumpRootScaffoldTest::RunTest(const FString& Paramete
         GitignoreContent.Contains(TEXT(".dumpcache.json")));
     TestTrue(TEXT(".gitignore lists *.tmp"),
         GitignoreContent.Contains(TEXT("*.tmp")));
+    TestTrue(TEXT(".gitignore lists dump-stalled.txt"),
+        GitignoreContent.Contains(TEXT("dump-stalled.txt")));
 
     FString GitattributesContent;
     FFileHelper::LoadFileToString(GitattributesContent, *GitattributesPath);

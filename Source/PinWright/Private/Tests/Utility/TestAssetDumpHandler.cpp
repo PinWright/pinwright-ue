@@ -1378,6 +1378,149 @@ bool FAssetDumpHandlerAsyncFolderDumpForceRequeuesFreshCacheTest::RunTest(const 
     return true;
 }
 
+// ============================================================================
+// AssetDumpHandler.AsyncFolderDump.StalledAssetIsSkipped
+// The ticker cannot preempt one synchronous asset dump, so a pathological asset
+// froze the editor and the next sweep froze on it again. A sweep journals the
+// asset it enters; a marker left behind (the process died inside the dump) makes
+// every later folder sweep skip that package with ASSET_DUMP_STALLED.
+// Board: B-dump-folder-unbounded-asset.
+// ============================================================================
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpHandlerAsyncFolderDumpStalledAssetIsSkippedTest,
+    "PinWright.asset.dump.AsyncFolderDump.StalledAssetIsSkipped",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetDumpHandlerAsyncFolderDumpStalledAssetIsSkippedTest::RunTest(const FString& Parameters)
+{
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
+        / TEXT("AssetDumpHandlerTests") / FGuid::NewGuid().ToString();
+    ON_SCOPE_EXIT
+    {
+        IFileManager::Get().DeleteDirectory(*ScratchRoot, /*RequireExists=*/false, /*Tree=*/true);
+    };
+    const FString MarkerPath = AssetDumpHandler::GetInFlightDumpMarkerPath(ScratchRoot);
+    const FString StalledListPath = AssetDumpHandler::GetStalledDumpListPath(ScratchRoot);
+
+    // Seed: a normal sweep dumps the asset and leaves no journal behind. A marker that
+    // outlived its dump would quarantine a healthy asset on the next sweep.
+    const AssetDumpHandler::FFolderDumpStart Seed =
+        AssetDumpHandler::StartAsyncFolderDump(AsyncDumpTestFolder, /*bRecursive=*/false, ScratchRoot);
+    TestTrue(TEXT("Seed start must succeed"), Seed.ErrorCode.IsEmpty());
+    if (Seed.AssetCount != 1)
+    {
+        AddError(FString::Printf(TEXT("Fixture precondition: %s must hold exactly one dumpable package, found %d."),
+            AsyncDumpTestFolder, Seed.AssetCount));
+        DrainFolderDump();
+        return false;
+    }
+    FJobTicket SeedTicket;
+    TestTrue(TEXT("Seed folder dump completes"), CompleteCurrentFolderDump(SeedTicket));
+    if (SeedTicket.Result.IsValid())
+    {
+        TestEqual(TEXT("Seed dumps the asset"), SeedTicket.Result->GetIntegerField(TEXT("dumped")), 1);
+    }
+    TestFalse(TEXT("A dump that returned removes its in-flight marker"),
+        IFileManager::Get().FileExists(*MarkerPath));
+    TestFalse(TEXT("A clean sweep journals no stalled asset"),
+        IFileManager::Get().FileExists(*StalledListPath));
+    const TArray<FString> SeedMeta = FindFilesNamed(ScratchRoot, DumpFileNames::Meta);
+    if (!TestEqual(TEXT("Seed writes one meta.json"), SeedMeta.Num(), 1))
+    {
+        return false;
+    }
+
+    // Simulate a process that died inside the dump: the marker names the asset.
+    TArray<FAssetData> Assets;
+    IAssetRegistry::GetChecked().GetAssetsByPath(FName(AsyncDumpTestFolder), Assets, /*bRecursive=*/false);
+    if (!TestEqual(TEXT("Fixture precondition: one registry row"), Assets.Num(), 1))
+    {
+        return false;
+    }
+    const FString ObjectPath = AssetDumpHandler::MakePendingDumpPath(Assets[0]);
+    TestTrue(TEXT("Write the leftover in-flight marker"),
+        FFileHelper::SaveStringToFile(ObjectPath, *MarkerPath));
+
+    for (int32 Run = 0; Run < 2; ++Run)
+    {
+        // Run 0 promotes the marker; run 1 proves the quarantine persists.
+        const AssetDumpHandler::FFolderDumpStart Start = AssetDumpHandler::StartAsyncFolderDump(
+            AsyncDumpTestFolder, /*bRecursive=*/false, ScratchRoot,
+            /*bIncludeLevels=*/false, /*bIncludeWidgetScreenshot=*/false, /*bForce=*/true);
+        TestTrue(TEXT("Start after the stall must succeed"), Start.ErrorCode.IsEmpty());
+        FJobTicket Ticket;
+        if (!TestTrue(TEXT("Sweep after the stall completes"), CompleteCurrentFolderDump(Ticket)))
+        {
+            return false;
+        }
+        TestEqual(TEXT("Stalled asset is not dumped again"), Ticket.Result->GetIntegerField(TEXT("dumped")), 0);
+        TestEqual(TEXT("Stalled asset is counted as a skip"), Ticket.Result->GetIntegerField(TEXT("skipCount")), 1);
+        const TArray<TSharedPtr<FJsonValue>>* Skipped = nullptr;
+        if (TestTrue(TEXT("Result lists skipped assets"), Ticket.Result->TryGetArrayField(TEXT("skipped"), Skipped))
+            && TestEqual(TEXT("One skip entry"), Skipped->Num(), 1))
+        {
+            const TSharedPtr<FJsonObject> Entry = (*Skipped)[0]->AsObject();
+            TestEqual(TEXT("Skip names the asset"), Entry->GetStringField(TEXT("assetPath")), ObjectPath);
+            TestEqual(TEXT("Skip carries ASSET_DUMP_STALLED"), Entry->GetStringField(TEXT("code")),
+                FString(AssetDumpErrorCodes::AssetDumpStalled));
+            TestTrue(TEXT("Skip message names the stalled list"),
+                Entry->GetStringField(TEXT("message")).Contains(TEXT("dump-stalled.txt")));
+        }
+        TestFalse(TEXT("The marker is consumed"), IFileManager::Get().FileExists(*MarkerPath));
+        FString StalledList;
+        TestTrue(TEXT("The stalled list exists"), FFileHelper::LoadFileToString(StalledList, *StalledListPath));
+        TestTrue(TEXT("The stalled list names the asset"), StalledList.Contains(ObjectPath));
+        TestTrue(TEXT("The prior dump survives reconciliation"),
+            IFileManager::Get().FileExists(*SeedMeta[0]));
+    }
+    return true;
+}
+
+// A world asset.dump runs through the same tick loop and writes its own marker. It must
+// promote a leftover marker first, or it overwrites the only evidence of the freeze and
+// the next folder sweep freezes on that asset again.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpHandlerAsyncSingleWorldDumpPromotesStalledMarkerTest,
+    "PinWright.asset.dump.AsyncSingleWorldDump.PromotesStalledMarker",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetDumpHandlerAsyncSingleWorldDumpPromotesStalledMarkerTest::RunTest(const FString& Parameters)
+{
+    const FString WorldPath = TEXT("/Engine/Maps/Entry");
+    if (!AssetDumpHandler::IsWorldAssetPath(WorldPath))
+    {
+        PinWrightTestSkip::SkipAssertions(*this, TEXT("fixture-unavailable"),
+            TEXT("/Engine/Maps/Entry is not available as a UWorld in this configuration."));
+        return true;
+    }
+
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
+        / TEXT("AssetDumpHandlerTests") / FGuid::NewGuid().ToString();
+    ON_SCOPE_EXIT
+    {
+        IFileManager::Get().DeleteDirectory(*ScratchRoot, /*RequireExists=*/false, /*Tree=*/true);
+    };
+    const FString MarkerPath = AssetDumpHandler::GetInFlightDumpMarkerPath(ScratchRoot);
+    const FString StalledListPath = AssetDumpHandler::GetStalledDumpListPath(ScratchRoot);
+    const FString PlantedPath = TEXT("/Game/PinWrightTests/StalledProbe/SM_Stalled.SM_Stalled");
+    if (!TestTrue(TEXT("Write the leftover in-flight marker"),
+            FFileHelper::SaveStringToFile(PlantedPath, *MarkerPath)))
+    {
+        return false;
+    }
+
+    const AssetDumpHandler::FSingleAssetDumpStart Start =
+        AssetDumpHandler::StartAsyncSingleAssetDump(WorldPath, ScratchRoot, /*bDiff=*/false);
+    TestTrue(TEXT("World dump start must succeed"), Start.ErrorCode.IsEmpty());
+    TestTrue(TEXT("World dump completes within MaxTicks"), DrainFolderDump() < 64);
+
+    TestFalse(TEXT("The world dump leaves no marker behind"), IFileManager::Get().FileExists(*MarkerPath));
+    FString StalledList;
+    TestTrue(TEXT("The stalled list exists"), FFileHelper::LoadFileToString(StalledList, *StalledListPath));
+    TestTrue(TEXT("The stalled list names the planted asset"), StalledList.Contains(PlantedPath));
+    TestFalse(TEXT("The world dump itself is not listed"), StalledList.Contains(WorldPath));
+    return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpHandlerAsyncFolderDumpCacheVersionInvalidationTest,
     "PinWright.asset.dump.AsyncFolderDump.CacheVersionInvalidation",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
@@ -1478,10 +1621,9 @@ bool FAssetDumpHandlerAsyncFolderDumpCacheVersionInvalidationTest::RunTest(const
     if (CacheJson.IsValid() && AspectVersions.IsValid())
     {
         FString FirstAspect;
-        for (const TPair<FString, TSharedPtr<FJsonValue>> Pair : AspectVersions->Values)
+        if (AspectVersions->Values.Num() > 0)
         {
-            FirstAspect = Pair.Key;
-            break;
+            FirstAspect = AspectVersions->Values.CreateConstIterator()->Key;
         }
         TestFalse(TEXT("aspectVersions has at least one entry"), FirstAspect.IsEmpty());
         if (!FirstAspect.IsEmpty())

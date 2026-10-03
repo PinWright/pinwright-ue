@@ -73,6 +73,8 @@ namespace AssetDumpErrorCodes
     inline constexpr const TCHAR* DumpWriteFailed  = TEXT("DUMP_WRITE_FAILED");
     inline constexpr const TCHAR* AssetNoBaseline  = TEXT("ASSET_NO_BASELINE");
     inline constexpr const TCHAR* AssetCompileTimeout = TEXT("ASSET_COMPILE_TIMEOUT");
+    // A previous dump of this package never returned (the editor froze, crashed or was killed inside it).
+    inline constexpr const TCHAR* AssetDumpStalled = TEXT("ASSET_DUMP_STALLED");
     inline constexpr const TCHAR* NotSupported     = TEXT("NOT_SUPPORTED");
 }
 
@@ -143,6 +145,18 @@ namespace AssetDumpHandler
     PINWRIGHT_API int32 ComputeDeferredRequeueIndex(
         int32 PendingCount,
         int32 Backlog = DeferredRequeueBacklog);
+
+    // Freeze/crash journal. The ticker cannot preempt a synchronous asset dump, so the
+    // sweep writes the object path it is entering to <dump root>/.dump-inflight.tmp and
+    // deletes the file when the dump returns. A leftover marker means the process stopped
+    // (froze, crashed or was killed) inside that dump: the next async dump appends it to
+    // <dump root>/dump-stalled.txt, and folder sweeps skip every package listed there
+    // with ASSET_DUMP_STALLED.
+    PINWRIGHT_API FString GetInFlightDumpMarkerPath(const FString& OutRoot);
+    PINWRIGHT_API FString GetStalledDumpListPath(const FString& OutRoot);
+    // Moves a leftover in-flight marker into the stalled list, then returns the listed
+    // package names.
+    PINWRIGHT_API TSet<FString> LoadStalledDumpPackages(const FString& OutRoot);
 
     // Tracked sweep packages minus the ones still waiting on compilation. The release
     // step unloads only the result: unloading a deferred package throws away the
