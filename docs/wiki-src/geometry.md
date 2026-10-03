@@ -476,7 +476,10 @@ result is decided by whatever grouping the generator left behind. Both extremes 
 | Coarse (one group per face, wall or cap) | The intended chamfer, on the edges between those faces. |
 | One group per **quad** | Chamfers **every interior quad boundary** — a grid of notches that reads as surface damage, at roughly 3x the triangle cost. One example model spent 30,000 triangles producing an artifact. |
 
-The per-quad warning fires at **>= 32 distinct polygroups and `groups * 3 >= triangles`**. The
+The per-quad warning fires at **>= 32 distinct polygroups and `groups * 3 >= triangles`**, both
+counted over the polygroups the selected edges border — the whole mesh without a filter box, only
+the groups the `filter_box_*` edges touch with one, so a filtered bevel is not warned about dense
+geometry it never walks. The
 absolute floor of 32 is what separates a dense revolved surface from a default `create_box` — 6
 groups over 12 triangles, the same 1:2 ratio, and a mesh anyone should bevel.
 

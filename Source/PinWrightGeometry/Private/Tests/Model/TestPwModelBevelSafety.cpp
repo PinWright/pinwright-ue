@@ -246,3 +246,65 @@ bool FPwModelNestedBooleanBevelHistoryTest::RunTest(const FString& Parameters)
 
     return true;
 }
+
+namespace TestPwModelBevelSafetyPerQuadHelpers
+{
+bool HasPerQuadWarning(const TArray<FPwDiagnostic>& Diagnostics)
+{
+    for (const FPwDiagnostic& Diagnostic : Diagnostics)
+    {
+        if (Diagnostic.Code == PwModelDiagnosticCodes::PWMODEL_STAGE_WARNING
+            && Diagnostic.Message.Contains(TEXT("group per quad"), ESearchCase::IgnoreCase))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+// A per-quad torus (128 groups over 256 triangles) at the origin and a plain box far away, then
+// one bevel. BevelLine is the bevel statement.
+FPwModelCompileResult CompileTorusAndBox(const TCHAR* BevelLine)
+{
+    FPwModelCompileOptions Options;
+    Options.bValidateOnly = true;
+    Options.bSave = false;
+    return FPwModelCompiler::Compile(FString::Printf(
+        TEXT("pwmodel 0\n")
+        TEXT("part torus_and_box allow_floating=true {\n")
+        TEXT("    torus major_radius=50 minor_radius=20 major_segments=16 minor_segments=8\n")
+        TEXT("    box size=(20, 20, 20) at=(500, 0, 0)\n")
+        TEXT("    %s\n")
+        TEXT("}\n"), BevelLine), Options);
+}
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPwModelBevelPerQuadWarningHonoursFilterBoxTest,
+    "PinWright.Model.Bevel.PerQuadWarningMeasuresOnlyFilterBoxSelection",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FPwModelBevelPerQuadWarningHonoursFilterBoxTest::RunTest(const FString& Parameters)
+{
+    // The filter box is bevel's documented way out of the one-group-per-quad case. The warning
+    // used to count the WHOLE mesh, so a bevel boxed to the coarse block still warned about the
+    // dense torus it never touched.
+    using namespace TestPwModelBevelSafetyPerQuadHelpers;
+
+    // Control first: unfiltered, the bevel walks every torus quad edge and must still warn, or
+    // the filtered assertion below proves nothing.
+    const FPwModelCompileResult Unfiltered = CompileTorusAndBox(TEXT("bevel distance=1 segments=0"));
+    TestTrue(TEXT("unfiltered model validates"), Unfiltered.bSuccess);
+    TestTrue(TEXT("unfiltered bevel over the per-quad torus raises the per-quad warning"),
+        HasPerQuadWarning(Unfiltered.Diagnostics));
+
+    const FPwModelCompileResult Filtered = CompileTorusAndBox(
+        TEXT("bevel distance=1 segments=0 filter_box_min=(480, -20, -20) filter_box_max=(520, 20, 20) fully_contained=true"));
+    TestTrue(TEXT("filtered model validates"), Filtered.bSuccess);
+    TestTrue(*FString::Printf(TEXT("the filtered bevel chamfered the box (%d triangles > 268)"),
+            Filtered.MeshTriangleCount),
+        Filtered.MeshTriangleCount > 268);
+    TestFalse(TEXT("a bevel boxed to the coarse block does not raise the per-quad warning"),
+        HasPerQuadWarning(Filtered.Diagnostics));
+
+    return true;
+}

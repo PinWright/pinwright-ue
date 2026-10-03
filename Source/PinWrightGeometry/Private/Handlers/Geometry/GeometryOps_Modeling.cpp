@@ -1543,47 +1543,31 @@ FOpResult Bevel(UDynamicMesh* Mesh, const FBevelParams& Params)
         Result.Warnings.Add(TEXT(
             "Mesh has no polygroups, and bevel operates on polygroup edges only - nothing will change"));
     }
-    else
-    {
-        // THE OPPOSITE FAILURE, and the more expensive one: a mesh where EVERY QUAD is its own
-        // polygroup, so every interior quad boundary is a polygroup edge and bevel chamfers all
-        // of them. The result is a grid of notches over the whole surface that reads as damage
-        // rather than as a chamfer, at roughly 3x the triangle cost - one example model spent
-        // 30,000 triangles producing an artifact.
-        //
-        // It is not a hypothetical mesh, it is what the REVOLVED primitives hand you. torus,
-        // arch and revolve all go through FBaseRevolveGenerator, which never reads
-        // FGeometryScriptPrimitiveOptions::PolygroupMode at all and defaults its own
-        // PolygonGroupingMode to EProfileSweepPolygonGrouping::PerFace - and for a sweep "face"
-        // means one QUAD: PolygonId = SweepIndex * NumProfileSegments + ProfileIndex
-        // (RevolveGenerator.h, SweepGenerator.cpp). torus majorSegments=16 minorSegments=8 is
-        // 128 groups over 256 triangles. Nothing upstream can turn that off, and nothing else
-        // reports it.
-        //
-        // The test is DISTINCT groups against the triangle count, with an absolute floor.
-        // Per-quad grouping puts the group count at half the triangle count - but so does a
-        // default box (6 groups, 12 triangles), which is a mesh anyone should bevel. The floor
-        // is what separates them: this fires on the dense revolved surfaces where the cost is
-        // real and stays quiet on the coarse hand-grouped ones where it is not.
-        const UE::Geometry::FDynamicMesh3& Read = Mesh->GetMeshRef();
-        TSet<int32> DistinctGroups;
-        for (const int32 TriangleID : Read.TriangleIndicesItr())
-        {
-            DistinctGroups.Add(Read.GetTriangleGroup(TriangleID));
-        }
-        const int32 GroupCount = DistinctGroups.Num();
-        const int32 TriangleCount = Read.TriangleCount();
-        if (GroupCount >= 32 && GroupCount * 3 >= TriangleCount)
-        {
-            Result.Warnings.Add(FString::Printf(
-                TEXT("Mesh has %d polygroups over %d triangles - close to one group per quad, which is "
-                     "what the revolved primitives (torus, arch, revolve) produce. bevel chamfers EVERY "
-                     "polygroup edge, so on this mesh it will notch every interior quad boundary rather "
-                     "than the silhouette edges, at roughly 3x the triangle cost. Bevel a box or a "
-                     "boolean result instead, or regroup the mesh first."),
-                GroupCount, TriangleCount));
-        }
-    }
+    // THE OPPOSITE FAILURE, and the more expensive one: a mesh where EVERY QUAD is its own
+    // polygroup, so every interior quad boundary is a polygroup edge and bevel chamfers all
+    // of them. The result is a grid of notches over the whole surface that reads as damage
+    // rather than as a chamfer, at roughly 3x the triangle cost - one example model spent
+    // 30,000 triangles producing an artifact.
+    //
+    // It is not a hypothetical mesh, it is what the REVOLVED primitives hand you. torus,
+    // arch and revolve all go through FBaseRevolveGenerator, which never reads
+    // FGeometryScriptPrimitiveOptions::PolygroupMode at all and defaults its own
+    // PolygonGroupingMode to EProfileSweepPolygonGrouping::PerFace - and for a sweep "face"
+    // means one QUAD: PolygonId = SweepIndex * NumProfileSegments + ProfileIndex
+    // (RevolveGenerator.h, SweepGenerator.cpp). torus majorSegments=16 minorSegments=8 is
+    // 128 groups over 256 triangles. Nothing upstream can turn that off, and nothing else
+    // reports it.
+    //
+    // The test is DISTINCT groups against the triangle count, with an absolute floor.
+    // Per-quad grouping puts the group count at half the triangle count - but so does a
+    // default box (6 groups, 12 triangles), which is a mesh anyone should bevel. The floor
+    // is what separates them: this fires on the dense revolved surfaces where the cost is
+    // real and stays quiet on the coarse hand-grouped ones where it is not.
+    //
+    // MEASURED OVER THE SELECTION, not the whole mesh - see the EditMesh block below. The
+    // filter box is the documented way out of this case, so a whole-mesh count would warn
+    // on exactly the spelling that avoids it (an earlier dense or already-bevelled solid
+    // elsewhere in the part kept the ratio over the floor for a bevel that never touched it).
 
     // HARD EDITOR CRASH GUARD, a second one, found by auditing the shell crash's siblings.
     // FMeshBevel::ComputeUVs early-outs on HasAttributes() == false and then takes
@@ -1652,6 +1636,40 @@ FOpResult Bevel(UDynamicMesh* Mesh, const FBevelParams& Params)
         UE::Geometry::FGroupTopology Topology(&EditMesh, true);
         GeometryOpsModeling_SelectBevelGroupEdges(
             EditMesh, Topology, Params, SelectedGroupEdges);
+
+        // Per-quad heuristic over the groups the selected edges border and those groups'
+        // triangles. With no filter box every group edge is selected, so this is the whole
+        // mesh minus any group that borders no group edge (a single-group closed component);
+        // with one, it is only what the bevel will walk.
+        TSet<int32> SelectedGroups;
+        for (const int32 GroupEdgeID : SelectedGroupEdges)
+        {
+            if (!Topology.Edges.IsValidIndex(GroupEdgeID))
+            {
+                continue;
+            }
+            // A mesh-boundary group edge's B side is InvalidID, not a group.
+            const UE::Geometry::FIndex2i Groups = Topology.Edges[GroupEdgeID].Groups;
+            if (Groups.A >= 0) { SelectedGroups.Add(Groups.A); }
+            if (Groups.B >= 0) { SelectedGroups.Add(Groups.B); }
+        }
+        int32 SelectedTriangleCount = 0;
+        for (const int32 TriangleID : EditMesh.TriangleIndicesItr())
+        {
+            SelectedTriangleCount += SelectedGroups.Contains(EditMesh.GetTriangleGroup(TriangleID)) ? 1 : 0;
+        }
+        const int32 GroupCount = SelectedGroups.Num();
+        if (GroupCount >= 32 && GroupCount * 3 >= SelectedTriangleCount)
+        {
+            Result.Warnings.Add(FString::Printf(
+                TEXT("Bevel's selected edges border %d polygroups over %d triangles - close to one group "
+                     "per quad, which is what the revolved primitives (torus, arch, revolve) produce. "
+                     "bevel chamfers EVERY selected polygroup edge, so here it will notch every interior "
+                     "quad boundary rather than the silhouette edges, at roughly 3x the triangle cost. "
+                     "Bevel a box or a boolean result instead, regroup the mesh first, or restrict the "
+                     "bevel with filter_box_min / filter_box_max."),
+                GroupCount, SelectedTriangleCount));
+        }
         GeometryOpsModeling_PreflightBevelEdges(
             EditMesh, Topology, SelectedGroupEdges, Params.PriorBevelGroupIDs,
             SafeGroupEdges, MeshBoundaryEdgeCount, InvalidSpanCount, PriorBevelEdgeCount);

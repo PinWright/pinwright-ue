@@ -757,8 +757,9 @@ See [Divergences from engine naming](#divergences-from-engine-naming) for the fu
   [Segment counts below the engine's floor](#segment-counts-below-the-engines-floor).
 - **`bevel` operates on polygroup edges only, and warns at both extremes.** A mesh with no
   polygroups is returned unchanged. A mesh carrying roughly one polygroup per quad — the warning
-  fires at ≥ 32 distinct groups *and* `groups * 3 >= triangles` — has every interior quad boundary
-  chamfered instead of its silhouette edges. See
+  fires at ≥ 32 distinct groups *and* `groups * 3 >= triangles`, counted over the polygroups the
+  bevel's selected edges border (all of them without a filter box, only those inside it with one) —
+  has every interior quad boundary chamfered instead of its silhouette edges. See
   [Polygroups, and what `bevel` actually chamfers](#polygroups-and-what-bevel-actually-chamfers).
 - **`extrude` with no face filter selects the whole mesh**, which *duplicates* a closed solid
   rather than thickening it.
@@ -1202,9 +1203,11 @@ default `box`, which is 6 groups over 12 triangles — the same 1:2 ratio as per
 mesh anyone should bevel.
 
 **`filter_box_min` / `filter_box_max` are the way out of the per-quad case**, and the only edge
-filter the engine offers. They bound a box **in mesh space** that the bevelled edges must lie in,
-so a box drawn round the silhouette chamfers the silhouette and leaves the interior quad
-boundaries alone. Both corners are required: the filter applies when both are present and is off
+filter the engine offers. The warning honours them: it counts only the polygroups the filtered
+edges border and those groups' triangles, so a bevel boxed to a coarse block stays quiet even when
+a dense or already-bevelled solid sits elsewhere in the same part. They bound a box **in mesh
+space** that the bevelled edges must lie in, so a box drawn round the silhouette chamfers the
+silhouette and leaves the interior quad boundaries alone. Both corners are required: the filter applies when both are present and is off
 otherwise, which is why there is no separate `apply_filter_box` — a flag with no box, and a box
 with the flag off, are two spellings of a request that silently does nothing. `fully_contained`
 (default true) admits only edges entirely inside the box; false admits any edge with one endpoint

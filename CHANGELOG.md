@@ -268,6 +268,10 @@
   the request is `ev100Requested`, and `fixed` is new. An explicit auto request now draws one frame.
 - Added: `render.capture_open_level` emits `pieWorldWarning` when a PIE world is live and the
   capture was of the editor world.
+- Fixed: `bevel` (`geometry.bevel` and `.pwmodel`) measures its one-group-per-quad warning over
+  the polygroups its selected edges border instead of the whole mesh, so a `filter_box_min` /
+  `filter_box_max` bevel no longer warns about dense geometry outside the box. **The message text
+  changed** ("Bevel's selected edges border N polygroups over M triangles ..."); the code did not.
 - Changed: the `LEVEL_NOT_LOADED` error from `level.get_info` / `get_actors` / `get_bounds` names
   the non-mutating readers first: `level.describe_offline({"levelPath":...})` and
   `asset.dump({"assetPath":...})` both read the unopened map without touching the active world.
