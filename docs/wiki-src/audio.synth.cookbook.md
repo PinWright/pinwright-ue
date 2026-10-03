@@ -1,6 +1,6 @@
 # audio.synth.cookbook
 
-Concrete recipes for the four SFX families the `audio.synth` recipe grammar is built to cover, with starting values, target metric ranges, and the traps that cost the most iterations. Read `call("audio.synth.describe_schema")` for what is legal and this page for what is good.
+Concrete recipes for the four one-shot SFX families the `audio.synth` recipe grammar is built to cover, plus the sustained ambience loop, with starting values, target metric ranges, and the traps that cost the most iterations. Read `call("audio.synth.describe_schema")` for what is legal and this page for what is good.
 
 ## Read this part first
 
@@ -206,6 +206,66 @@ Order is where authors lose time: distortion and filtering belong on the layer c
 Targets, magic one-shot: `attackMs 5-40`, `decayMs 800-2500`, `centroidHz 1500-5000`, `flatness 0.20-0.50`, `crestDb 8-16`, `stereoCorrelation { min: 0.2, max: 0.9 }` for a wide but mono-compatible image. UI: `durationMs { max: 250 }`, `attackMs { max: 3 }`, `peakDb { min: -3, max: -1 }`, `crestDb 10-18`, `clippedSamples { max: 0 }`.
 
 Width is the last step: place layers with `pan` first (three at -0.4, 0, +0.4 are already wide), then add a master `width` of 1.2 to 1.6 if it still needs it. Check `stereoCorrelation` afterwards; below about 0.1 the sound partially cancels when a player's setup folds to mono.
+
+## Ambience and loops
+
+The fifth family is the bed that loops forever under a level: wind, sea, room tone, machinery. Its rules are the opposite of the one-shot advice above, and none of them is visible in the grammar.
+
+**Set `master.loopCrossfadeMs`; do not fade the edges.** A one-shot fades to silence at both ends so it cannot click; a bed that does the same dips to silence once per loop. With `loopCrossfadeMs` > 0 the renderer runs that far past `durationMs` and crossfades the overhang onto the head before normalize, so the last sample flows into the first as an ordinary step of the same signal. The crossfade law follows the correlation of the two segments: equal power for noise, equal gain for a drone that repeats itself, so neither bumps nor dips. The parser rejects it with a nonzero `fadeInMs` / `fadeOutMs`, and above `durationMs / 2`. Use 300 to 1000 ms. Shorter crossfades are audible as a texture change on slow material. Two side effects of the longer render: `render.layers[].framesMixed` counts the overhang, and a `granular` layer's `positionStart`..`positionEnd` sweep spans `durationMs + loopCrossfadeMs`.
+
+**End every `ampEnvelope` on the value it starts on.** Past its last point an envelope holds that value through the overhang, so a layer that ends at 0.3 and starts at 0.9 crossfades a 10 dB level ramp into the head on every pass. The loop is seamless, but the bed pumps.
+
+**Periodic parts must complete whole cycles in `durationMs`.** That covers `osc` frequencies and every `modulation.rateHz`: pick `n / (durationMs / 1000)`, so `0.25` Hz in a 12000 ms bed (3 cycles), not `0.18`. The crossfade smooths a phase mismatch but cannot repair one, and a half-cycle mismatch is anti-phase material that cancels to a hole in the middle of the crossfade.
+
+**Align the layers' swells; do not stagger them.** The time-offset-layers trick for filter motion in one-shots flattens a bed. Four layers each swinging 0.25 to 0.95 on staggered timings fill each other's troughs, and the sum measured `loudnessRangeLu 1.27` with a waveform that was one flat band. Put every layer on one gust rhythm and offset them by 300 to 500 ms, as the wind below does. Ebb and flow then shows in `loudnessRangeLu` and in the waveform plot.
+
+**Keep master reverb and delay short, or leave them off.** They start from silence at sample 0, so the head is drier than the tail until their decay has passed. A `decayMs` under `loopCrossfadeMs` is hidden by the crossfade. Anything longer is a once-per-loop change in wetness.
+
+**Gate the loop on `loopSeamRatio`, not on the edge discontinuities.** `analysis.technical.startDiscontinuity` / `endDiscontinuity` are the absolute first and last mono sample, linear 0 to 1, i.e. the step from silence at playback start and stop. They are the gate for a one-shot (want 0) and say nothing about a wrap. A correct loop has both nonzero, and both at 0 means the edges were faded and the bed ducks. `loopSeamRatio` is the wrap step `|last - first|` divided by the RMS of every adjacent-sample step in the buffer. Below about 3, the wrap is a step the signal already makes. Well above that, it clicks once per loop: the wind bed below, hard-cut, lands above 3 on most seeds and can reach the tens (the wrap step is one random draw, so a single render can land low by luck). It works on any wave, including one already exported: `audio.analysis.analyze { assetPath }`.
+
+**Export does not make the asset loop.** `audio.synth.export` leaves `bLooping` at the engine default `false`, so a perfectly seamless bed plays once and stops. Set it with `audio.authoring.set_sound_wave_properties { assetPath, bLooping: true }` and read it back from `audio.authoring.describe_sound_wave`. Keep a loop PCM: block codecs pad to whole blocks and ramp in their first block, which breaks the sample-exact seam (see [`audio.music`](audio.music.md)).
+
+A 12 s coastal wind bed, ready to render. `PinWright.audio.synth.loop.CookbookWindBedIsSeamless` renders this exact recipe and asserts `loopSeamRatio` < 3 with no level step across the wrap:
+
+```json
+{
+  "durationMs": 12000,
+  "seed": 21,
+  "layers": [
+    {
+      "gainDb": -3, "pan": -0.2,
+      "generator": { "kind": "noise", "params": { "color": "brown", "lowCutHz": 40, "highCutHz": 900 } },
+      "ampEnvelope": [
+        { "timeMs": 0, "value": 0.55, "curve": "scurve" }, { "timeMs": 2500, "value": 0.9, "curve": "scurve" },
+        { "timeMs": 5000, "value": 0.45, "curve": "scurve" }, { "timeMs": 8000, "value": 1.0, "curve": "scurve" },
+        { "timeMs": 10500, "value": 0.6, "curve": "scurve" }, { "timeMs": 12000, "value": 0.55 }
+      ]
+    },
+    {
+      "gainDb": -10, "pan": 0.25,
+      "generator": { "kind": "noise", "params": { "color": "pink", "lowCutHz": 300, "highCutHz": 2500 } },
+      "ampEnvelope": [
+        { "timeMs": 0, "value": 0.5, "curve": "scurve" }, { "timeMs": 2900, "value": 0.85, "curve": "scurve" },
+        { "timeMs": 5400, "value": 0.4, "curve": "scurve" }, { "timeMs": 8400, "value": 0.95, "curve": "scurve" },
+        { "timeMs": 10900, "value": 0.55, "curve": "scurve" }, { "timeMs": 12000, "value": 0.5 }
+      ]
+    },
+    {
+      "gainDb": -24,
+      "generator": { "kind": "noise", "params": { "color": "white", "lowCutHz": 2500, "highCutHz": 7000 } },
+      "modulation": { "am": { "depth": 0.5, "rateHz": 0.25 } }
+    }
+  ],
+  "master": {
+    "normalize": { "mode": "lufs", "target": -20 },
+    "loopCrossfadeMs": 500
+  }
+}
+```
+
+The brown layer is the body, the pink layer is the gust edge on the same rhythm 400 ms late, and the white whistle carries 3 AM cycles in 12 s. For room tone, use one `brown` or `pink` layer with no envelope swing plus a quiet `osc` hum at a frequency that fits whole cycles. For machinery, add an `osc` `saw` at the engine rate under a lowpass, with `modulation.am` at a whole-cycle rate for the load wobble.
+
+A bed is checked differently from a one-shot: `attackMs` and `decayMs` describe nothing in a loop. Read these off `analysis.technical` in the `generate` response (they are analysis fields, not recipe `targets` metrics): `loopSeamRatio` below 3, `startDiscontinuity` and `endDiscontinuity` above 0, and `clippedSamples` at 0. For level, use `lufs` normalize, typically -24 to -18 for a bed under a mix. `loudnessRangeLu` measures the motion: about 1 LU reads as static.
 
 ## See also
 

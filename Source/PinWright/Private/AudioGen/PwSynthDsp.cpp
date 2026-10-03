@@ -361,6 +361,49 @@ namespace PwSynthDspInternal
         }
     }
 
+    // Seamless-loop construction: Bus holds Frames + X frames, where the last X are the render's
+    // continuation past the loop end. Crossfading that overhang onto the head and truncating
+    // makes out[Frames - 1] -> out[0] the step x[Frames - 1] -> x[Frames], i.e. an ordinary
+    // adjacent-sample step of the continuous render, so the wrap neither clicks nor ducks.
+    //
+    // The crossfade law adapts to the correlation r of the two segments: linear gains sum to
+    // unity for identical material (an integer-cycle drone, r = 1), equal power keeps the
+    // level for independent material (noise, r = 0), and 1 / sqrt(a^2 + b^2 + 2rab) covers
+    // both and everything between. A fixed equal-power law would bump a drone by 3 dB.
+    // Master reverb/delay still build up from silence at the head; that is the recipe's
+    // concern (keep their decay under the crossfade), not something the fold can invent.
+    void FoldLoopOverhang(FPwAudioBuffer& Bus, int32 Frames)
+    {
+        const int32 Overhang = Bus.NumFrames() - Frames;
+        double SumHeadTail = 0.0, SumHead2 = 0.0, SumTail2 = 0.0;
+        for (const TArray<float>* Channel : { &Bus.Left, &Bus.Right })
+        {
+            for (int32 Index = 0; Index < Overhang; ++Index)
+            {
+                const double Head = (*Channel)[Index];
+                const double Tail = (*Channel)[Frames + Index];
+                SumHeadTail += Head * Tail;
+                SumHead2 += Head * Head;
+                SumTail2 += Tail * Tail;
+            }
+        }
+        const double Denominator = FMath::Sqrt(SumHead2 * SumTail2);
+        const double Correlation = Denominator > 0.0
+            ? FMath::Clamp(SumHeadTail / Denominator, 0.0, 1.0) : 1.0;
+
+        for (int32 Index = 0; Index < Overhang; ++Index)
+        {
+            const double In = static_cast<double>(Index) / static_cast<double>(Overhang);
+            const double Out = 1.0 - In;
+            const double Norm = 1.0 / FMath::Sqrt(In * In + Out * Out + 2.0 * Correlation * In * Out);
+            const float HeadGain = static_cast<float>(In * Norm);
+            const float TailGain = static_cast<float>(Out * Norm);
+            Bus.Left[Index] = Bus.Left[Index] * HeadGain + Bus.Left[Frames + Index] * TailGain;
+            Bus.Right[Index] = Bus.Right[Index] * HeadGain + Bus.Right[Frames + Index] * TailGain;
+        }
+        Bus.SetNumFrames(Frames);
+    }
+
     // Clamps to [-1, 1] and returns the number of samples the clamp actually MOVED, counted
     // across both channels. NaN is deliberately left alone: it is neither > 1 nor < -1, so a
     // generator bug surfaces in the exported file instead of being quietly rewritten to a
@@ -438,9 +481,15 @@ bool PwRenderRecipe(const FPwSynthRecipe& Recipe, FPwAudioBuffer& Out, FPwRender
         return false;
     }
 
+    // A loop renders LoopFrames past the end, then folds that overhang onto the head (see
+    // FoldLoopOverhang). Envelopes hold their last value past the final point, so the overhang
+    // is the bed's natural continuation rather than new material.
+    const int32 LoopFrames = MsToFrames(Recipe.Master.LoopCrossfadeMs, Recipe.SampleRate);
+    const int32 RenderFrames = TotalFrames + FMath::Clamp(LoopFrames, 0, TotalFrames);
+
     FPwAudioBuffer Bus;
     Bus.SampleRate = Recipe.SampleRate;
-    Bus.SetNumFrames(TotalFrames);
+    Bus.SetNumFrames(RenderFrames);
 
     // Root of every substream in this render. Derive() hashes this seed with an index and
     // advances nothing, so no stage's randomness depends on what another stage drew.
@@ -469,9 +518,10 @@ bool PwRenderRecipe(const FPwSynthRecipe& Recipe, FPwAudioBuffer& Out, FPwRender
 
         const int32 StartFrame = MsToFrames(Layer.StartMs, Recipe.SampleRate);
 
-        // A layer occupies the render from its own start to the end of the timeline.
-        const int32 LayerFrames = TotalFrames - StartFrame;
-        if (LayerFrames <= 0)
+        // A layer occupies the render from its own start to the end of the timeline (including
+        // a loop's overhang).
+        const int32 LayerFrames = RenderFrames - StartFrame;
+        if (StartFrame >= TotalFrames)
         {
             // Starts at or past the end of the render. This is a MEASURED nothing, not a skip:
             // the row is emitted with bMeasured true and FramesMixed 0, so a caller can tell it
@@ -594,7 +644,7 @@ bool PwRenderRecipe(const FPwSynthRecipe& Recipe, FPwAudioBuffer& Out, FPwRender
     FPwDspSpan MasterSpan;
     MasterSpan.Left = Bus.Left.GetData();
     MasterSpan.Right = Bus.Right.GetData();
-    MasterSpan.NumFrames = TotalFrames;
+    MasterSpan.NumFrames = RenderFrames;
 
     for (int32 FxIndex = 0; FxIndex < Recipe.Master.Fx.Num(); ++FxIndex)
     {
@@ -604,6 +654,11 @@ bool PwRenderRecipe(const FPwSynthRecipe& Recipe, FPwAudioBuffer& Out, FPwRender
         {
             return Fail(FString::Printf(TEXT("master.fx[%d]"), FxIndex));
         }
+    }
+
+    if (RenderFrames > TotalFrames)
+    {
+        FoldLoopOverhang(Bus, TotalFrames);
     }
 
     // ---- normalize -------------------------------------------------------------------

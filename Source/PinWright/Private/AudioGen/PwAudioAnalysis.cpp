@@ -366,6 +366,20 @@ bool PwAnalyzeBuffer(const FPwAudioBuffer& In, FPwAudioAnalysis& Out,
         : 0.0;
     Technical.StartDiscontinuity = FMath::Abs(static_cast<double>(Mono[0]));
     Technical.EndDiscontinuity = FMath::Abs(static_cast<double>(Mono[NumFrames - 1]));
+    {
+        double SumStep2 = 0.0;
+        for (int32 Index = 1; Index < NumFrames; ++Index)
+        {
+            const double Step = static_cast<double>(Mono[Index]) - static_cast<double>(Mono[Index - 1]);
+            SumStep2 += Step * Step;
+        }
+        if (SumStep2 > 0.0)
+        {
+            const double StepRms = FMath::Sqrt(SumStep2 / (NumFrames - 1));
+            Technical.LoopSeamRatio =
+                FMath::Abs(static_cast<double>(Mono[NumFrames - 1]) - static_cast<double>(Mono[0])) / StepRms;
+        }
+    }
 
     // -----------------------------------------------------------------------------------------
     // Digital silence: named here and answered here. Everything below this point is a level or a
@@ -989,6 +1003,7 @@ TSharedPtr<FJsonObject> SerializeAudioAnalysis(const FPwAudioAnalysis& In, bool 
         SetOptNum(Object, TEXT("activeDurationMs"), In.Technical.ActiveDurationMs, 2);
         SetNum(Object, TEXT("startDiscontinuity"), In.Technical.StartDiscontinuity, 4);
         SetNum(Object, TEXT("endDiscontinuity"), In.Technical.EndDiscontinuity, 4);
+        SetOptNum(Object, TEXT("loopSeamRatio"), In.Technical.LoopSeamRatio, 2);
         if (bFullDetail)
         {
             Object->SetNumberField(TEXT("frames"), In.Technical.NumFrames);

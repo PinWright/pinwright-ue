@@ -34,7 +34,14 @@ Degenerate inputs are answered where they are detected, in a fixed order: empty 
 
 Six families are reported. **Technical** survives even for silence: duration, rate, frame count,
 peak, `peakDb` / `rmsDb`, clipped-sample count, signed `dcOffset`, zero-crossing rate, active
-duration, and start/end discontinuities that predict playback or loop clicks. **Envelope** uses a
+duration, start/end discontinuities and `loopSeamRatio`. `startDiscontinuity` / `endDiscontinuity`
+are the absolute first and last mono sample (linear 0..1): the step from silence when playback starts
+and stops, so a one-shot wants both at 0. They say nothing about a wrap. `loopSeamRatio` does: the
+wrap step `|last - first|` divided by the RMS of every adjacent-sample step, so below about 3 the
+end flows into the start like any other sample pair and well above it the loop clicks once per pass.
+A loop with both edge discontinuities at 0 was faded at the edges and ducks at every wrap (see the
+`Ambience and loops` section of [`audio.synth.cookbook`](audio.synth.cookbook.md)).
+`loopSeamRatio` is omitted when the buffer never moves. **Envelope** uses a
 10 ms RMS block envelope: `onsetMs` (leading silence), `attackMs` (from onset, not sample 0),
 `decayMs`, `tailMs` (a subset, not an addition), `temporalCentroidMs`, `crestDb`, and transient
 count/onset list. **Loudness** is gated BS.1770. **Spectral** is time-averaged STFT data:

@@ -15,8 +15,10 @@ It is neither a free node graph nor a closed template enum:
 ```
 recipe { version, seed, sampleRate, durationMs, layers[<=8], master, targets }
   layer  { startMs, gainDb, pan, generator, ampEnvelope[], pitchEnvelope[], modulation, fx[<=4] }
-  master { fx[<=6], normalize { mode, target }, fadeInMs, fadeOutMs }
+  master { fx[<=6], normalize { mode, target }, fadeInMs, fadeOutMs, loopCrossfadeMs }
 ```
+
+`master.loopCrossfadeMs` is the one switch between a one-shot (0, the default) and a seamless loop: the render runs that far past `durationMs`, then the overhang is crossfaded onto the head before normalize, so the last sample flows into the first. The `Ambience and loops` section of [`audio.synth.cookbook`](audio.synth.cookbook.md) has the rules and a worked bed.
 
 Six generator kinds (`osc`, `noise`, `modal`, `formant`, `granular`, `sample`) and fifteen effect kinds. Every generator is mono; the stereo mix bus and the layer's `pan` are the only stereo placement in the system, which is why `width` is rejected in a layer chain and accepted only on the master. Layer effects process the layer's mono signal before pan; master effects process the stereo bus.
 

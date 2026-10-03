@@ -18,6 +18,7 @@
 //       fx[]                       (cap PwSynthLimits::MaxMasterFx, ordered)
 //       normalize { mode: peak|lufs, target }
 //       fadeInMs, fadeOutMs
+//       loopCrossfadeMs            0 = one-shot; > 0 = seamless loop (fold)
 //     targets                      optional metric ranges, all optional
 //
 // Generators are mono; the mix bus is stereo and each layer's `pan` places it.
@@ -363,6 +364,11 @@ struct FPwSynthMaster
     FPwSynthNormalize Normalize;
     double FadeInMs = PwSynthLimits::DefaultFadeMs;
     double FadeOutMs = PwSynthLimits::DefaultFadeMs;
+    // 0 renders a one-shot. > 0 renders a seamless loop: the render runs this much past
+    // durationMs and the overhang is crossfaded onto the head (PwRenderRecipe), so the last
+    // sample flows into the first. The parser requires both fades at 0 alongside it, since a
+    // fade to silence at the wrap is a once-per-loop duck, and caps it at durationMs / 2.
+    double LoopCrossfadeMs = 0.0;
 };
 
 // One optional metric range. At least one of Min / Max is always set: an empty

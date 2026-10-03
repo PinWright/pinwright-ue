@@ -245,9 +245,9 @@ namespace PwSynthSchemaHandler
         Topology->SetStringField(TEXT("channels"),
             TEXT("Generators are mono. The mix bus is stereo and each layer's pan (-1..1) places it. No generator takes stereo parameters."));
         Topology->SetStringField(TEXT("timing"),
-            TEXT("durationMs is the whole render. A layer starts at its startMs; its envelope times are relative to that start, not absolute."));
+            TEXT("durationMs is the whole render. A layer starts at its startMs; its envelope times are relative to that start, not absolute. master.loopCrossfadeMs > 0 (1 ms .. durationMs/2, fades must be 0) renders a seamless loop: the render runs that far past durationMs (envelopes hold their last value) and the overhang is crossfaded onto the head before normalize, so the last sample flows into the first; analysis.technical.loopSeamRatio measures the wrap."));
         Topology->SetStringField(TEXT("recipe"),
-            TEXT("{version, seed, sampleRate, durationMs, layers[], master{fx[],normalize{mode,target},fadeInMs,fadeOutMs}, targets{}}"));
+            TEXT("{version, seed, sampleRate, durationMs, layers[], master{fx[],normalize{mode,target},fadeInMs,fadeOutMs,loopCrossfadeMs}, targets{}}"));
         Topology->SetStringField(TEXT("layer"),
             TEXT("{startMs, gainDb, pan, generator{kind,params}, ampEnvelope[{timeMs,value,curve}], pitchEnvelope[{timeMs,semitones}], modulation{fm|am|ring:{depth,rateHz,source}}, fx[{kind,params}]}"));
         Result->SetObjectField(TEXT("topology"), Topology);
@@ -268,6 +268,7 @@ namespace PwSynthSchemaHandler
         Defaults->SetStringField(TEXT("layers[].modulation.*.source"), PwSynthModSourceToString(EPwSynthModSource::Sine));
         Defaults->SetNumberField(TEXT("master.fadeInMs"), PwSynthLimits::DefaultFadeMs);
         Defaults->SetNumberField(TEXT("master.fadeOutMs"), PwSynthLimits::DefaultFadeMs);
+        Defaults->SetNumberField(TEXT("master.loopCrossfadeMs"), 0.0);
         Result->SetObjectField(TEXT("defaults"), Defaults);
 
         TArray<FString> Required = {

@@ -234,6 +234,16 @@ struct FPwAudioTechnical
      */
     double StartDiscontinuity = 0.0;
     double EndDiscontinuity = 0.0;
+
+    /**
+     * The wrap step |last - first| (mono) divided by the RMS of every adjacent-sample step in the
+     * buffer: how the end -> start seam of a looping playback compares with the signal's own
+     * sample-to-sample motion. About 0-3 is a seam the body already contains; well above that the
+     * wrap is a step the content never makes, i.e. a click per loop. 0 also results from edges
+     * faded to silence, which is click-free but ducks once per loop. Unset when the buffer never
+     * moves (fewer than two frames, or constant), where there is no motion to compare against.
+     */
+    TOptional<double> LoopSeamRatio;
 };
 
 // ---------------------------------------------------------------------------------------------

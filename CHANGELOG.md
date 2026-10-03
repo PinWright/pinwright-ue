@@ -69,6 +69,14 @@
 - Fixed: `niagara.set_static_switch` refuses a fractional, non-integer-string, null, array or
   object value for an Integer switch (and a fractional index for an enum switch) with
   `INVALID_VALUE` instead of truncating it or reading it as branch 0.
+- Added: `audio.synth` recipes take `master.loopCrossfadeMs` (default 0, one-shot). Above 0 the
+  render runs that far past `durationMs` and crossfades the overhang onto the head, using a
+  correlation-adaptive law, so the result loops seamlessly with no fade. It is refused with nonzero
+  `fadeInMs`/`fadeOutMs` or above `durationMs / 2`. `analysis.technical` gains `loopSeamRatio`, the
+  wrap step divided by the RMS adjacent-sample step, below about 3 when seamless. The canonical
+  recipe now always carries `master.loopCrossfadeMs`, so recipe digests of existing candidates
+  change. `audio.synth.cookbook` gains an "Ambience and loops" family. `audio.analysis` documents
+  `startDiscontinuity`/`endDiscontinuity`.
 - Fixed: a BPIR literal on a by-reference parameter (`const T&` without `AutoCreateRefTerm`, e.g.
   `UBlackboardComponent` `KeyName`) was written as a pin default the Blueprint compiler then
   rejected ("by ref" params expect a valid input). Bool, int, int64, real, name, string, text and

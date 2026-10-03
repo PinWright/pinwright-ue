@@ -1599,7 +1599,7 @@ namespace PwSynthParseInternal
         }
 
         static const TArray<FString> Known = {
-            TEXT("fx"), TEXT("normalize"), TEXT("fadeInMs"), TEXT("fadeOutMs")
+            TEXT("fx"), TEXT("normalize"), TEXT("fadeInMs"), TEXT("fadeOutMs"), TEXT("loopCrossfadeMs")
         };
         if (!RejectUnknownKeys(Obj, Path, Known, Err))
         {
@@ -1611,9 +1611,29 @@ namespace PwSynthParseInternal
             !ReadOptionalNumber(Obj, TEXT("fadeInMs"), Path, 0.0, PwSynthLimits::MaxDurationMs,
                 PwSynthLimits::DefaultFadeMs, TEXT("ms"), Out.FadeInMs, Err) ||
             !ReadOptionalNumber(Obj, TEXT("fadeOutMs"), Path, 0.0, PwSynthLimits::MaxDurationMs,
-                PwSynthLimits::DefaultFadeMs, TEXT("ms"), Out.FadeOutMs, Err))
+                PwSynthLimits::DefaultFadeMs, TEXT("ms"), Out.FadeOutMs, Err) ||
+            !ReadOptionalNumber(Obj, TEXT("loopCrossfadeMs"), Path, 0.0, PwSynthLimits::MaxDurationMs,
+                0.0, TEXT("ms"), Out.LoopCrossfadeMs, Err))
         {
             return false;
+        }
+
+        if (Out.LoopCrossfadeMs > 0.0)
+        {
+            const FString LoopPath = Join(Path, TEXT("loopCrossfadeMs"));
+            if (Out.LoopCrossfadeMs < 1.0 || Out.LoopCrossfadeMs > DurationMs * 0.5)
+            {
+                return Fail(Err, ErrorCodes::ERR_INVALID_RECIPE, LoopPath,
+                    FString::Printf(TEXT("loopCrossfadeMs %g must be 0 (one-shot) or between 1 ms and half the ")
+                        TEXT("recipe's durationMs (%g ms)."), Out.LoopCrossfadeMs, DurationMs * 0.5));
+            }
+            if (Out.FadeInMs > 0.0 || Out.FadeOutMs > 0.0)
+            {
+                return Fail(Err, ErrorCodes::ERR_INVALID_RECIPE, LoopPath,
+                    FString::Printf(TEXT("a loop needs fadeInMs and fadeOutMs at 0 (got %g / %g): a fade to ")
+                        TEXT("silence at the wrap is a once-per-loop duck, and the crossfade already makes ")
+                        TEXT("the last sample flow into the first."), Out.FadeInMs, Out.FadeOutMs));
+            }
         }
 
         if (Out.FadeInMs + Out.FadeOutMs > DurationMs)
@@ -1972,6 +1992,7 @@ TSharedPtr<FJsonObject> SerializeSynthRecipe(const FPwSynthRecipe& In)
     }
     MasterObj->SetNumberField(TEXT("fadeInMs"), In.Master.FadeInMs);
     MasterObj->SetNumberField(TEXT("fadeOutMs"), In.Master.FadeOutMs);
+    MasterObj->SetNumberField(TEXT("loopCrossfadeMs"), In.Master.LoopCrossfadeMs);
     Root->SetObjectField(TEXT("master"), MasterObj);
 
     if (In.Targets.Num() > 0)
