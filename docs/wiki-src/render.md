@@ -11,6 +11,7 @@ Choose the surface by the pixels you need:
 | Need | Start with |
 | --- | --- |
 | A static or skeletal mesh without opening its editor or using the active level | `render.capture_mesh` |
+| One actor (a class spawned transient, or an existing editor/PIE actor) without touching the level | `render.capture_actor_preview` |
 | An asset-editor preview (static mesh, skeletal mesh, animation or Niagara) | `render.capture_asset_preview` |
 | The active level viewport | `render.capture_open_level` |
 | That viewport or preview with measured overlays | `render.capture_annotated` |
@@ -290,7 +291,7 @@ Capture verbs in this namespace and most camera capture verbs default to **768 x
 
 ## No renderer (headless mode)
 
-`render.capture_mesh`, `render.capture_asset_preview`, `render.capture_open_level`, `render.capture_animation_preview`, `render.capture_annotated`, `render.capture_ortho_tiles`, `render.detect_z_fighting`, `render.lumen_update_scene` need a GPU renderer. In an editor launched with `-NullRHI` (mode `headless`, or a commandlet) they refuse with `RENDERING_UNAVAILABLE` before reading any parameter; the error data carries `method` and `renderingModes: ["offscreen", "visible"]`. Relaunch in mode `offscreen` or `visible`.
+`render.capture_mesh`, `render.capture_actor_preview`, `render.capture_asset_preview`, `render.capture_open_level`, `render.capture_animation_preview`, `render.capture_annotated`, `render.capture_ortho_tiles`, `render.detect_z_fighting`, `render.lumen_update_scene` need a GPU renderer. In an editor launched with `-NullRHI` (mode `headless`, or a commandlet) they refuse with `RENDERING_UNAVAILABLE` before reading any parameter; the error data carries `method` and `renderingModes: ["offscreen", "visible"]`. Relaunch in mode `offscreen` or `visible`.
 
 ## See also
 
@@ -334,6 +335,21 @@ call({
 `previewScene` has the same key/sky/floor/environment request shape as `render.capture_asset_preview`, but the floor and environment are transient components rather than shared profile state. `viewMode` uses the scene-capture subset documented in [`render.view-modes`](render.view-modes.md), including `front_back_face`; renderer-only modes are refused rather than returned as Lit under another label.
 
 Success returns the shared `path`, size, camera, projection, `viewport.previewScene`, `imageStats`, `blank`, and renderer fields. `imageStats` additionally carries the shared flat-region measurement. The transient rig reports `disposed:true` rather than fabricating a restore ledger for state destroyed with the RPC. `assetEditorOpened:false` and `activeWorldUsed:false` state the two isolation guarantees directly; a set adds `shots[]`, `count`, and each shot's azimuth/elevation. This route does not animate a skeletal mesh; use `render.capture_animation_preview` when the pose needs an animation time.
+
+### render.capture_actor_preview
+
+Capture **one actor**, framed to its component bounds, as an exact-size PNG, without spawning anything into the user's level. Pass exactly one of `classPath` or `actorPath`:
+
+- `classPath` (UClass name, `/Script` path or Blueprint asset path) spawns an `RF_Transient` instance into a private `FPreviewScene` world at the origin; the instance and the world are destroyed on every exit path, and `transientDestroyed` is read back afterwards rather than assumed. Construction scripts run; `BeginPlay` does not, so state an actor only gets in a running game needs `actorPath` on a PIE actor instead.
+- `actorPath` (object path, internal name or unique label; PIE world searched first when a session runs, then the editor world) draws that actor **in its own world, under its own lights**. The actor is never moved, hidden or modified, and the level's dirty flag is preserved.
+
+```js
+call({ path: "render.capture_actor_preview", args: { classPath: "/Game/BP_Pickup.BP_Pickup", width: 512, height: 512, exposure: 0 } })
+```
+
+Only the subject's primitives are drawn (a show-only list, including the actors of its Child Actor Components), so floors, skies and neighbours never occlude or crowd it. `measureCoverage` (default true) draws the same pose again with **no** primitive at all and reports `subjectCoverage`, the fraction of pixels the actor changed. Camera: orbit framing at `azimuth` (default 0) / `elevation` (default 20) with `padding` 1.25, or an explicit `location` + `rotation`; `projectionMode`, `fov`, `orthoWidth` (fitted when omitted), `exposure` and the scene-capture subset of `viewMode` match `render.capture_mesh`. `previewScene` is **refused** with `INVALID_ARGUMENT`: the subject is drawn show-only, so a floor or environment would never appear. An `RF_Transient` editor actor resolves by object path only, not by label. PNGs go under `Saved/Screenshots/ActorPreview`.
+
+Success returns the shared shot fields (`path`, size, `cameraLocation`/`cameraRotation`, `renderer: sceneCapture2D`, `imageStats`, `blank`), `actor {class, name, label, path, world}` (`world` is `preview` | `editor` | `pie` | `game` | `other`), `spawnedTransient`, `transientDestroyed` (spawned only), `bounds {origin, radius}`, `subjectCoverage` when measured, `exposure {pinned, ev100Applied}` when pinned, and the same `viewport` block as `render.capture_mesh` (`type` is `TransientPreviewScene` for `classPath`, `ActorWorld` for `actorPath`; `viewModeOverride` says whether a requested `viewMode` applied and lists `showFlagMismatches`; `previewScene` is `{sceneAvailable:false}` because no rig is drawn). `skyCaptureIncomplete: true` with `skyCaptureWarning` appears only when a `classPath` world's sky capture was still queued after its update (typically while assets compile), so the frame may lack sky lighting. Refusals: `INVALID_ARGUMENT` (neither or both sources), `CLASS_NOT_FOUND`, `CLASS_NOT_INSTANTIABLE` (abstract / non-actor), `ACTOR_NOT_FOUND`, `AMBIGUOUS_ACTOR_NAME` (with candidates), `BOUNDS_EMPTY` (no renderable primitive), `ACTOR_SPAWN_FAILED`, `SCENE_CAPTURE_FAILED`, `READ_PIXELS_FAILED`, `WRITE_FAILED` (PNG encode), `SAVE_FAILED` (PNG write).
 
 ### render.capture_asset_preview
 

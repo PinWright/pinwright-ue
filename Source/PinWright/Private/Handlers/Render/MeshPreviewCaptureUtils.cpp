@@ -34,14 +34,15 @@ namespace
         Values.SetCreatePhysicsScene(false).ShouldSimulatePhysics(false).SetTransactional(false);
         return Values;
     }
+}
 
-    void ConfigureMeshPreviewOutput(const FMeshCaptureRequest& Request,
+    void ConfigureMeshPreviewOutput(const PinWrightRenderCapture::FViewportCaptureRequest& Request,
         const PinWrightSceneCaptureProbe::FColorCaptureRequest& ColorRequest,
         const PinWrightSceneCaptureProbe::FColorCaptureMetadata& Metadata,
         PinWrightRenderCapture::FViewportCaptureOutput& Out)
     {
-        const EViewModeIndex Mode = Request.Capture.ViewMode.bRequested
-            ? Request.Capture.ViewMode.ViewMode : VMI_Lit;
+        const EViewModeIndex Mode = Request.ViewMode.bRequested
+            ? Request.ViewMode.ViewMode : VMI_Lit;
         Out.Width = ColorRequest.Width;
         Out.Height = ColorRequest.Height;
         Out.RenderWidth = ColorRequest.Width;
@@ -59,11 +60,11 @@ namespace
         Out.ViewMode = PinWrightViewModes::GetDisplayName(Mode);
         Out.ViewModeKey = PinWrightRenderCapture::GetViewModeKey(Mode);
         Out.ViewModeValue = static_cast<int32>(Mode);
-        Out.bViewModeOverrideRequested = Request.Capture.ViewMode.bRequested;
-        Out.ViewModeRequestedKey = Request.Capture.ViewMode.Key;
-        Out.ViewModeRequestedValue = static_cast<int32>(Request.Capture.ViewMode.ViewMode);
+        Out.bViewModeOverrideRequested = Request.ViewMode.bRequested;
+        Out.ViewModeRequestedKey = Request.ViewMode.Key;
+        Out.ViewModeRequestedValue = static_cast<int32>(Request.ViewMode.ViewMode);
         Out.bViewModeApplied = Metadata.bViewModeApplied;
-        Out.ViewModeShowFlags = Request.Capture.ViewMode.DistinguishingShowFlags;
+        Out.ViewModeShowFlags = Request.ViewMode.DistinguishingShowFlags;
         Out.ViewModeShowFlagMismatches = Metadata.ViewModeShowFlagMismatches;
         Out.bViewModeRestored = true;
         Out.bLitViewMode = PinWrightRenderCapture::IsLitViewMode(Mode);
@@ -71,19 +72,18 @@ namespace
         Out.EffectiveLocation = ColorRequest.Location;
         Out.EffectiveRotation = ColorRequest.Rotation;
         Out.bCameraAimApplied = true;
-        Out.ExposureMode = Request.Capture.Exposure.Mode;
-        Out.bExposurePinRequested = Request.Capture.Exposure.WantsPin();
+        Out.ExposureMode = Request.Exposure.Mode;
+        Out.bExposurePinRequested = Request.Exposure.WantsPin();
         Out.bExposurePinned = Metadata.bExposurePinned;
-        Out.Ev100Requested = Request.Capture.Exposure.Ev100;
+        Out.Ev100Requested = Request.Exposure.Ev100;
         Out.bExposureFixedApplied = Metadata.bExposurePinned;
         Out.Ev100Applied = Metadata.ExposureEv100Applied;
         Out.bExposureRestored = true;
-        Out.bPreviewSceneRigRequested = Request.Capture.PreviewSceneRig.WantsRig();
+        Out.bPreviewSceneRigRequested = Request.PreviewSceneRig.WantsRig();
         Out.bSharedProfilesRestored = true;
         Out.bConfigFileUnchanged = true;
         Out.bWarmupMeasured = false;
     }
-}
 
 struct FMeshCaptureSession::FImpl
 {
@@ -363,7 +363,7 @@ bool FMeshCaptureSession::Capture(const FMeshCaptureRequest& Request,
                 Request.Capture.PreviewSceneRig, OutCapture.Capture.PreviewSceneRigDrawn);
     }
 
-    ConfigureMeshPreviewOutput(Request, ColorRequest, Metadata, OutCapture.Capture);
+    ConfigureMeshPreviewOutput(Request.Capture, ColorRequest, Metadata, OutCapture.Capture);
     OutCapture.Capture.ImageStats = PinWrightRenderCapture::CalculateCaptureImageStats(
         OutCapture.Capture.Pixels);
     OutCapture.FlatRegion = PinWrightFlatRegion::MeasureLargestFlatRegion(

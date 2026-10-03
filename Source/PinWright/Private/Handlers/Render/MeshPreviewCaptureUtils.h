@@ -6,6 +6,12 @@
 #include "Handlers/Render/FlatRegionStats.h"
 #include "Handlers/Render/PreviewViewportCaptureUtils.h"
 
+namespace PinWrightSceneCaptureProbe
+{
+    struct FColorCaptureRequest;
+    struct FColorCaptureMetadata;
+}
+
 namespace PinWrightMeshPreviewCapture
 {
     // Production boundary shared by the RPC and the GPU-gated automation test. Each call owns a
@@ -57,4 +63,11 @@ namespace PinWrightMeshPreviewCapture
 
     bool CaptureMeshToPng(const FMeshCaptureRequest& Request, FMeshCaptureOutput& OutCapture,
         FString& OutErrCode, FString& OutErrMsg);
+
+    // Fills the `viewport` block's view-mode, exposure and render fields for one scene-capture
+    // probe draw. Shared with render.capture_actor_preview so both verbs report the same block.
+    void ConfigureMeshPreviewOutput(const PinWrightRenderCapture::FViewportCaptureRequest& Request,
+        const PinWrightSceneCaptureProbe::FColorCaptureRequest& ColorRequest,
+        const PinWrightSceneCaptureProbe::FColorCaptureMetadata& Metadata,
+        PinWrightRenderCapture::FViewportCaptureOutput& Out);
 }

@@ -613,6 +613,13 @@ namespace CaptureVerbParameterParityTest
           GRenderHandler, 1999,
           TEXT("`render.capture_open_level` parses then clears `previewScene`"),
           TEXT("The registration delegates through PinWrightOpenLevelCapture::Handle, which parses the shared pin but clears it because a live level viewport has no FPreviewScene rig to apply.") },
+        // Declared so the shared parser's read is declared, but always refused: the shared prose
+        // ("Light this capture with an explicit preview-scene rig") would describe a rig this verb
+        // never applies.
+        { TEXT("render.capture_actor_preview"), TEXT("previewScene"), GapKind::Description,
+          TEXT("Source/PinWright/Private/Handlers/Render/ActorPreviewCaptureHandler.cpp"), 18,
+          TEXT("`previewScene` is declared only to be REFUSED"),
+          TEXT("Reasoned refusal: PRM_UseShowOnlyList draws only the subject's primitives, so the rig's floor and environment components are unreachable, and an actorPath subject lives in a level or PIE world with no FPreviewScene. Any value is refused with INVALID_ARGUMENT.") },
 
         // ---- P2: render.capture_asset_preview welds BOTH inputs of ComputeFitDistance
         { TEXT("render.capture_asset_preview"), TEXT("fit.padding"), GapKind::Declaration, GPlan, 659,

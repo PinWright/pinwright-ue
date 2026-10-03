@@ -212,6 +212,14 @@
   gate's own measurement (new `HttpResponseSpill::MeasureInlineCharacters`, one condensed copy)
   instead of a pretty print, so **pages can hold more kinds and `pageCount` may drop**. Handlers
   that budget their own response should measure with that helper.
+- Added: `render.capture_actor_preview` renders ONE actor framed to its bounds as an exact-size PNG
+  without placing anything in the level: `classPath` spawns a transient instance into a private
+  preview world (destroyed on every exit, `transientDestroyed` measured), `actorPath` draws an
+  existing editor or PIE actor in its own world, untouched. Only the subject's primitives (and its
+  Child Actor Components' actors) are drawn; `subjectCoverage` is measured against a no-primitive
+  reference frame. The response carries `render.capture_mesh`'s `viewport` block, so a `viewMode`
+  that did not apply is reported, and `skyCaptureIncomplete` when the sky light was not recaptured.
+  `previewScene` is declared and refused with `INVALID_ARGUMENT`.
 - Added: `editor.screenshot` takes `location` / `rotation`. On the game/PIE viewport they override
   the local player's view point for the capture draw only (nothing persistent moves) and the
   response carries a measured `aim` block; a view not drawn from the pose fails

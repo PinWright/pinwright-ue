@@ -12,6 +12,8 @@
 #include "Engine/TextureRenderTarget2D.h"
 #include "Engine/World.h"
 #include "Engine/PostProcessVolume.h"
+#include "GameFramework/Actor.h"
+#include "Misc/ScopeExit.h"
 #include "PixelFormat.h"
 #include "RenderingThread.h"
 #include "TextureResource.h"
@@ -341,8 +343,25 @@ namespace PinWrightSceneCaptureProbe
         USceneCaptureComponent2D* Component = CaptureComponent.Get();
         Component->TextureTarget = RenderTarget.Get();
         Component->CaptureSource = SCS_FinalColorLDR;
-        Component->PrimitiveRenderMode =
-            ESceneCapturePrimitiveRenderMode::PRM_RenderScenePrimitives;
+        Component->PrimitiveRenderMode = Request.bShowOnlyActors
+            ? ESceneCapturePrimitiveRenderMode::PRM_UseShowOnlyList
+            : ESceneCapturePrimitiveRenderMode::PRM_RenderScenePrimitives;
+        Component->ShowOnlyActors.Reset();
+        for (AActor* ShowOnly : Request.ShowOnlyActors)
+        {
+            if (ShowOnly)
+            {
+                Component->ShowOnlyActors.Add(ShowOnly);
+            }
+        }
+        // Dropped once the frame is read back, so the probe never pins an actor (or, through it,
+        // a PIE world) past the capture that named it. The render mode goes back too: Capture()
+        // never sets it, so a show-only draw would otherwise blank the probe's next Capture().
+        ON_SCOPE_EXIT
+        {
+            Component->ShowOnlyActors.Reset();
+            Component->PrimitiveRenderMode = ESceneCapturePrimitiveRenderMode::PRM_RenderScenePrimitives;
+        };
         // No view state and no AA show flag: this path reports AAM_None and produces one
         // deterministic spatial sample rather than carrying temporal history between shots.
         Component->bAlwaysPersistRenderingState = false;

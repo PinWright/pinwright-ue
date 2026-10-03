@@ -9,6 +9,7 @@
 #include "PixelFormat.h"
 #include "UObject/StrongObjectPtr.h"
 
+class AActor;
 class UWorld;
 class USceneCaptureComponent2D;
 class UTextureRenderTarget2D;
@@ -101,6 +102,11 @@ namespace PinWrightSceneCaptureProbe
         EViewModeIndex ViewMode = VMI_Lit;
         FString ViewModeKey;
         TArray<FString> DistinguishingShowFlags;
+        // Draw ONLY these actors' primitives (PRM_UseShowOnlyList); lights still apply. An empty
+        // list with the flag set draws no primitive at all, which is the subject-free reference
+        // frame render.capture_actor_preview measures coverage against without touching the actor.
+        bool bShowOnlyActors = false;
+        TArray<AActor*> ShowOnlyActors;
     };
 
     struct FColorCaptureMetadata

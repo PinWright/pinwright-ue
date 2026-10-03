@@ -218,6 +218,7 @@ bool FSafePointKnownVictimsAreGatedTest::RunTest(const FString& Parameters)
         // Re-entrant Slate tick / viewport draw / render flush.
         TEXT("render.capture_open_level"),
         TEXT("render.capture_asset_preview"),
+        TEXT("render.capture_actor_preview"),
         TEXT("render.capture_annotated"),
         TEXT("render.capture_animation_preview"),
         TEXT("render.detect_z_fighting"),

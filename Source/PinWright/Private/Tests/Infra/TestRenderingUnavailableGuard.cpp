@@ -20,6 +20,7 @@ namespace
     // the guard to a verb means adding it here, so the refusal is asserted for it too.
     const TCHAR* const PWRenderGuardedVerbs[] = {
         TEXT("render.capture_mesh"),
+        TEXT("render.capture_actor_preview"),
         TEXT("render.capture_asset_preview"),
         TEXT("render.capture_open_level"),
         TEXT("render.capture_animation_preview"),
