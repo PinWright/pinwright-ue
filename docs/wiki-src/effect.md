@@ -32,6 +32,14 @@ The verb returns the normal open-level capture response plus `effect`. `steps` a
 
 This is a single-instant placed-world capture. For isolated asset-preview time series use [`render.capture-time`](render.capture-time.md). For how auto and fixed exposure are measured, see [`render.capture-exposure`](render.capture-exposure.md).
 
+## Debug shapes
+
+`effect.draw_debug_shape` draws into the editor world's line batcher. Each shape draws with a fixed set of controls, and passing a control the shape would not use is refused with `INVALID_ARGUMENT` naming the controls that shape accepts — nothing is drawn. sphere: `size`, `scale`, `color`, `thickness`. box and plane: `size` or `boxSize` (not both), `rotation`, `scale`, `color`, `thickness`. circle: `size`, `scale`, `color`, `thickness`. line: `endLocation`, `color`, `thickness`. point: `size`, `scale`, `color`. coordinate: `size`, `rotation`, `scale`, `thickness` (axis colors are fixed). cylinder and arrow: `size`, `endLocation`, `scale`, `color`, `thickness`. cone: `direction`, `length`, `angle`, `scale`, `color`, `thickness`. capsule: `size`, `halfHeight`, `rotation`, `scale`, `color`, `thickness`.
+
+`scale` is a non-negative multiplier on the shape's dimensions, never on `location` / `endLocation`. box and plane take `[x,y,z]` and multiply the half-extent per axis (`boxSize`, default `size` on every axis; plane default `[size, size, 1]`). Every other shape takes one uniform factor (a number, or an `[x,y,z]` with equal components) on its radius / size / axis length / cone `length` / capsule `halfHeight`; a non-uniform scale is refused, and line refuses `scale` because it has no dimension to scale. `boxSize` must be exactly three finite non-negative numbers.
+
+Lifetime: `autoDestroy: true` (the default) draws lines that expire after `duration` seconds (default `5`; `0` = one frame). `autoDestroy: false` draws persistent lines that stay until `effect.clear_debug_shapes`; `duration` is refused with it. A negative or non-finite `duration`, `size`, `thickness`, `length`, `angle` or `halfHeight` is refused. The response echoes what was handed to the draw call: `scale` `[x,y,z]`, a `geometry` object (for example `extent` and `rotation` for box/plane, `radius` for sphere/circle/cylinder/capsule, `endLocation`, `length` / `angleDegrees` / `direction` for cone), `autoDestroy`, `persistent`, and `duration` for an auto-destroying shape only.
+
 ## Cross-cluster overlap
 
 Particle authoring helpers such as `effect.add_*` are not part of the persistent Niagara asset workflow. Niagara systems, emitters, renderers, parameters, stack entries, and graph edits go through the read-first `niagara.*` workflow: `asset.dump` or `niagara.inspect`, then one individual `niagara.*` edit RPC, then `niagara.validate`.

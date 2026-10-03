@@ -286,6 +286,83 @@ REGISTER_RPC_HANDLER("effect.clear_debug_shapes", "effect", "Clear all persisten
     }
 }
 
+namespace PinWrightDrawDebugShape
+{
+    // Controls whose meaning depends on the shape. A supplied control the selected shape does not
+    // draw with is refused, never dropped (rpc-design.md §21; board B-effect-debug-options-ignored).
+    static const TCHAR* const ShapeControls[] = {
+        TEXT("size"), TEXT("scale"), TEXT("rotation"), TEXT("color"), TEXT("thickness"), TEXT("boxSize"),
+        TEXT("endLocation"), TEXT("direction"), TEXT("length"), TEXT("angle"), TEXT("halfHeight")};
+
+    // Shape -> the ShapeControls it draws with. nullptr = unsupported shape.
+    static const TArray<FString>* AcceptedControls(const FString& LowerShape)
+    {
+        static const TMap<FString, TArray<FString>> Table = {
+            {TEXT("sphere"),     {TEXT("size"), TEXT("scale"), TEXT("color"), TEXT("thickness")}},
+            {TEXT("box"),        {TEXT("size"), TEXT("boxSize"), TEXT("rotation"), TEXT("scale"), TEXT("color"), TEXT("thickness")}},
+            {TEXT("plane"),      {TEXT("size"), TEXT("boxSize"), TEXT("rotation"), TEXT("scale"), TEXT("color"), TEXT("thickness")}},
+            {TEXT("circle"),     {TEXT("size"), TEXT("scale"), TEXT("color"), TEXT("thickness")}},
+            {TEXT("line"),       {TEXT("endLocation"), TEXT("color"), TEXT("thickness")}},
+            {TEXT("point"),      {TEXT("size"), TEXT("scale"), TEXT("color")}},
+            {TEXT("coordinate"), {TEXT("size"), TEXT("rotation"), TEXT("scale"), TEXT("thickness")}},
+            {TEXT("cylinder"),   {TEXT("size"), TEXT("endLocation"), TEXT("scale"), TEXT("color"), TEXT("thickness")}},
+            {TEXT("cone"),       {TEXT("direction"), TEXT("length"), TEXT("angle"), TEXT("scale"), TEXT("color"), TEXT("thickness")}},
+            {TEXT("capsule"),    {TEXT("size"), TEXT("halfHeight"), TEXT("rotation"), TEXT("scale"), TEXT("color"), TEXT("thickness")}},
+            {TEXT("arrow"),      {TEXT("size"), TEXT("endLocation"), TEXT("scale"), TEXT("color"), TEXT("thickness")}},
+        };
+        return Table.Find(LowerShape);
+    }
+
+    // Reads an optional [x,y,z] of finite non-negative numbers (or, when bAllowScalar, one number
+    // applied to every axis). Absent leaves InOut untouched; anything malformed is an error.
+    static bool ReadNonNegativeVec3(const TSharedPtr<FJsonObject>& Payload, const TCHAR* Key,
+        const bool bAllowScalar, FVector& InOut, FString& OutError)
+    {
+        const TSharedPtr<FJsonValue> Val = Payload->TryGetField(Key);
+        if (!Val.IsValid())
+        {
+            return true;
+        }
+        TArray<double> Parts;
+        if (Val->Type == EJson::Number && bAllowScalar)
+        {
+            Parts = {Val->AsNumber(), Val->AsNumber(), Val->AsNumber()};
+        }
+        else if (Val->Type == EJson::Array && Val->AsArray().Num() == 3)
+        {
+            for (const TSharedPtr<FJsonValue>& Elem : Val->AsArray())
+            {
+                if (!Elem.IsValid() || Elem->Type != EJson::Number)
+                {
+                    break;
+                }
+                Parts.Add(Elem->AsNumber());
+            }
+        }
+        for (const double Part : Parts)
+        {
+            if (!FMath::IsFinite(Part) || Part < 0.0)
+            {
+                Parts.Reset();
+                break;
+            }
+        }
+        if (Parts.Num() != 3)
+        {
+            OutError = FString::Printf(TEXT("%s must be %s of finite non-negative numbers."), Key,
+                bAllowScalar ? TEXT("one number or an [x,y,z] array") : TEXT("an [x,y,z] array"));
+            return false;
+        }
+        InOut = FVector(Parts[0], Parts[1], Parts[2]);
+        return true;
+    }
+
+    static TArray<TSharedPtr<FJsonValue>> VecJson(const FVector& V)
+    {
+        return {MakeShared<FJsonValueNumber>(V.X), MakeShared<FJsonValueNumber>(V.Y), MakeShared<FJsonValueNumber>(V.Z)};
+    }
+}
+
 // ===========================================================================
 // effect.draw_debug_shape (was "particle" sub-action of create_effect)
 // ===========================================================================
@@ -294,19 +371,19 @@ REGISTER_RPC_HANDLER("effect.draw_debug_shape", "effect", "Draw a debug shape in
         RPC_PARAM_REQ("preset", "string", "Preset name (unused but required for particle compat)"),
         RPC_PARAM_OPT("shapeType", "string", "Shape type: sphere, box, circle, line, point, coordinate, cylinder, cone, capsule, arrow, plane"),
         RPC_PARAM_OPT("location", "array|object", "Location [x,y,z] or {x,y,z}"),
-        RPC_PARAM_OPT("rotation", "array", "Rotation [pitch,yaw,roll]"),
-        RPC_PARAM_OPT("scale", "array|number", "Scale [x,y,z] or uniform scale"),
-        RPC_PARAM_OPT("color", "array", "Color [r,g,b,a] (0-255)"),
-        RPC_PARAM_OPT("duration", "number", "Duration in seconds (default 5.0)"),
-        RPC_PARAM_OPT("size", "number", "Size/radius (default 100.0)"),
-        RPC_PARAM_OPT("thickness", "number", "Line thickness (default 2.0)"),
-        RPC_PARAM_OPT("autoDestroy", "boolean", "Persist the shape (false, default) or draw it as a one-frame/auto-destroying draw (true)"),
+        RPC_PARAM_OPT("rotation", "array", "Rotation [pitch,yaw,roll] of the box, plane, coordinate and capsule shapes; refused for other shapes"),
+        RPC_PARAM_OPT("scale", "array|number", "Non-negative multiplier on the shape's dimensions: [x,y,z] per axis for box and plane extents; other shapes take one uniform factor (on size, halfHeight, cone length) and refuse a non-uniform one; refused for line. Never moves location/endLocation"),
+        RPC_PARAM_OPT("color", "array", "Color [r,g,b,a] (0-255); refused for coordinate, which draws fixed axis colors"),
+        RPC_PARAM_OPT("duration", "number", "Seconds before an autoDestroy shape disappears (default 5.0; 0 = one frame); refused with autoDestroy false"),
+        RPC_PARAM_OPT("size", "number", "Size/radius (default 100.0); refused for line and cone, and together with boxSize"),
+        RPC_PARAM_OPT("thickness", "number", "Line thickness (default 2.0); refused for point"),
+        RPC_PARAM_OPT("autoDestroy", "boolean", "true (default): the shape disappears after duration seconds; false: it persists until effect.clear_debug_shapes"),
         RPC_PARAM_OPT("endLocation", "array|object", "Far end [x,y,z] or {x,y,z} of the line, cylinder and arrow shapes (default: location offset 100 units)"),
         RPC_PARAM_OPT("direction", "array|object", "Cone axis [x,y,z] or {x,y,z} (default: up)"),
         RPC_PARAM_OPT("length", "number", "Cone length in units (default 100.0)"),
         RPC_PARAM_OPT("angle", "number", "Cone half-angle in DEGREES, applied to both the width and height angles (default 45)"),
         RPC_PARAM_OPT("halfHeight", "number", "Capsule half-height in units (default: size)"),
-        RPC_PARAM_OPT("boxSize", "array", "Box and plane extent [x,y,z] (default: size on every axis)")
+        RPC_PARAM_OPT("boxSize", "array", "Box and plane half-extent [x,y,z] of finite non-negative numbers (default: size on every axis; plane default [size,size,1])")
     ))
 {
     const TSharedPtr<FJsonObject>& LocalPayload = Ctx.GetRawPayload();
@@ -318,40 +395,88 @@ REGISTER_RPC_HANDLER("effect.draw_debug_shape", "effect", "Draw a debug shape in
         return true;
     }
 
-    // Location
-    FVector Loc = ParseLocationFromPayload(LocalPayload, TEXT("location"));
+    FString ShapeType = TEXT("sphere");
+    LocalPayload->TryGetStringField(TEXT("shapeType"), ShapeType);
+    const FString LowerShapeType = ShapeType.ToLower();
 
-    // Rotation
-    TArray<double> RotArr = {0, 0, 0};
-    const TArray<TSharedPtr<FJsonValue>>* RA = nullptr;
-    if (LocalPayload->TryGetArrayField(TEXT("rotation"), RA) && RA && RA->Num() >= 3)
+    const TArray<FString>* Accepted = PinWrightDrawDebugShape::AcceptedControls(LowerShapeType);
+    if (!Accepted)
     {
-        RotArr[0] = (*RA)[0]->AsNumber();
-        RotArr[1] = (*RA)[1]->AsNumber();
-        RotArr[2] = (*RA)[2]->AsNumber();
+        Ctx.SendError(ErrorCodes::ERR_UNSUPPORTED_SHAPE,
+            FString::Printf(TEXT("Unsupported shape type: %s. Supported: sphere, box, circle, line, point, coordinate, cylinder, cone, capsule, arrow, plane"), *ShapeType));
+        return true;
     }
-
-    // Scale
-    TArray<double> ScaleArr = {1, 1, 1};
-    const TArray<TSharedPtr<FJsonValue>>* ScaleJsonArr = nullptr;
-    if (LocalPayload->TryGetArrayField(TEXT("scale"), ScaleJsonArr) && ScaleJsonArr && ScaleJsonArr->Num() >= 3)
+    for (const TCHAR* Control : PinWrightDrawDebugShape::ShapeControls)
     {
-        ScaleArr[0] = (*ScaleJsonArr)[0]->AsNumber();
-        ScaleArr[1] = (*ScaleJsonArr)[1]->AsNumber();
-        ScaleArr[2] = (*ScaleJsonArr)[2]->AsNumber();
-    }
-    else if (LocalPayload->TryGetNumberField(TEXT("scale"), ScaleArr[0]))
-    {
-        ScaleArr[1] = ScaleArr[2] = ScaleArr[0];
+        if (LocalPayload->HasField(Control) && !Accepted->Contains(Control))
+        {
+            Ctx.SendError(ErrorCodes::ERR_INVALID_ARGUMENT,
+                FString::Printf(TEXT("%s does not apply to shapeType '%s'; it would be ignored. Controls this shape draws with: %s."),
+                    Control, *LowerShapeType, *FString::Join(*Accepted, TEXT(", "))));
+            return true;
+        }
     }
 
     const bool bAutoDestroy = LocalPayload->HasField(TEXT("autoDestroy"))
         ? GetJsonBoolField(LocalPayload, TEXT("autoDestroy"))
-        : false;
+        : true;
+    if (!bAutoDestroy && LocalPayload->HasField(TEXT("duration")))
+    {
+        Ctx.SendError(ErrorCodes::ERR_INVALID_ARGUMENT,
+            TEXT("duration does not apply with autoDestroy false: the shape persists until effect.clear_debug_shapes. Omit duration, or set autoDestroy true."));
+        return true;
+    }
 
     const float Duration = LocalPayload->HasField(TEXT("duration"))
         ? (float)GetJsonNumberField(LocalPayload, TEXT("duration"))
         : 5.0f;
+    if (!FMath::IsFinite(Duration) || Duration < 0.0f)
+    {
+        Ctx.SendError(ErrorCodes::ERR_INVALID_ARGUMENT, TEXT("duration must be a finite number of seconds >= 0 (0 = one frame)."));
+        return true;
+    }
+    // Engine semantics (DrawDebugHelpers.cpp GetDebugLineLifeTime): persistent lines live until
+    // FlushPersistentDebugLines; otherwise LifeTime seconds, or one frame for LifeTime 0.
+    const bool bPersistent = !bAutoDestroy;
+
+    if (LocalPayload->HasField(TEXT("size")) && LocalPayload->HasField(TEXT("boxSize")))
+    {
+        Ctx.SendError(ErrorCodes::ERR_INVALID_ARGUMENT, TEXT("Pass size or boxSize, not both: boxSize replaces size for box and plane."));
+        return true;
+    }
+
+    FString ParseError;
+    FVector Scale = FVector::OneVector;
+    if (!PinWrightDrawDebugShape::ReadNonNegativeVec3(LocalPayload, TEXT("scale"), true, Scale, ParseError))
+    {
+        Ctx.SendError(ErrorCodes::ERR_INVALID_ARGUMENT, ParseError);
+        return true;
+    }
+    const bool bExtentShape = LowerShapeType == TEXT("box") || LowerShapeType == TEXT("plane");
+    if (!bExtentShape && !(Scale.X == Scale.Y && Scale.Y == Scale.Z))
+    {
+        Ctx.SendError(ErrorCodes::ERR_INVALID_ARGUMENT,
+            FString::Printf(TEXT("A non-uniform scale applies only to box and plane; shapeType '%s' takes one uniform scale factor."), *LowerShapeType));
+        return true;
+    }
+    const float UniformScale = (float)Scale.X;
+
+    for (const TCHAR* Key : {TEXT("size"), TEXT("thickness"), TEXT("length"), TEXT("angle"), TEXT("halfHeight")})
+    {
+        if (LocalPayload->HasField(Key))
+        {
+            const double Value = GetJsonNumberField(LocalPayload, Key);
+            if (!FMath::IsFinite(Value) || Value < 0.0)
+            {
+                Ctx.SendError(ErrorCodes::ERR_INVALID_ARGUMENT,
+                    FString::Printf(TEXT("%s must be a finite non-negative number (got %g)."), Key, Value));
+                return true;
+            }
+        }
+    }
+
+    // Location
+    FVector Loc = ParseLocationFromPayload(LocalPayload, TEXT("location"));
 
     const float Size = LocalPayload->HasField(TEXT("size"))
         ? (float)GetJsonNumberField(LocalPayload, TEXT("size"))
@@ -375,9 +500,6 @@ REGISTER_RPC_HANDLER("effect.draw_debug_shape", "effect", "Draw a debug shape in
         }
     }
 
-    FString ShapeType = TEXT("sphere");
-    LocalPayload->TryGetStringField(TEXT("shapeType"), ShapeType);
-
     if (!GEditor)
     {
         Ctx.SendError(ErrorCodes::ERR_EDITOR_NOT_AVAILABLE, TEXT("Editor not available for debug drawing"));
@@ -392,151 +514,116 @@ REGISTER_RPC_HANDLER("effect.draw_debug_shape", "effect", "Draw a debug shape in
     }
 
     const FColor DebugColor((uint8)ColorArr[0], (uint8)ColorArr[1], (uint8)ColorArr[2], (uint8)ColorArr[3]);
-    const FString LowerShapeType = ShapeType.ToLower();
+    const FRotator Rot = ParseRotationArray(LocalPayload, TEXT("rotation"));
+
+    // The effective geometry handed to DrawDebug*, echoed so an applied control is visible.
+    TSharedPtr<FJsonObject> Geometry = MakeShared<FJsonObject>();
 
     if (LowerShapeType == TEXT("sphere"))
     {
-        DrawDebugSphere(World, Loc, Size, 16, DebugColor, false, Duration, 0, Thickness);
+        const float Radius = Size * UniformScale;
+        Geometry->SetNumberField(TEXT("radius"), Radius);
+        DrawDebugSphere(World, Loc, Radius, 16, DebugColor, bPersistent, Duration, 0, Thickness);
     }
-    else if (LowerShapeType == TEXT("box"))
+    else if (bExtentShape)
     {
-        FVector BoxSize = FVector(Size);
-        if (LocalPayload->HasField(TEXT("boxSize")))
+        FVector BoxSize = LowerShapeType == TEXT("plane") ? FVector(Size, Size, 1.0f) : FVector(Size);
+        if (!PinWrightDrawDebugShape::ReadNonNegativeVec3(LocalPayload, TEXT("boxSize"), false, BoxSize, ParseError))
         {
-            const TArray<TSharedPtr<FJsonValue>>* BoxSizeArr = nullptr;
-            if (LocalPayload->TryGetArrayField(TEXT("boxSize"), BoxSizeArr) && BoxSizeArr && BoxSizeArr->Num() >= 3)
-            {
-                BoxSize = FVector((float)(*BoxSizeArr)[0]->AsNumber(),
-                                  (float)(*BoxSizeArr)[1]->AsNumber(),
-                                  (float)(*BoxSizeArr)[2]->AsNumber());
-            }
+            Ctx.SendError(ErrorCodes::ERR_INVALID_ARGUMENT, ParseError);
+            return true;
         }
-        DrawDebugBox(World, Loc, BoxSize, FRotator::ZeroRotator.Quaternion(), DebugColor, false, Duration, 0, Thickness);
+        const FVector Extent = BoxSize * Scale;
+        Geometry->SetArrayField(TEXT("extent"), PinWrightDrawDebugShape::VecJson(Extent));
+        Geometry->SetArrayField(TEXT("rotation"), PinWrightDrawDebugShape::VecJson(FVector(Rot.Pitch, Rot.Yaw, Rot.Roll)));
+        DrawDebugBox(World, Loc, Extent, Rot.Quaternion(), DebugColor, bPersistent, Duration, 0, Thickness);
     }
     else if (LowerShapeType == TEXT("circle"))
     {
-        DrawDebugCircle(World, Loc, Size, 32, DebugColor, false, Duration, 0, Thickness, FVector::UpVector);
+        const float Radius = Size * UniformScale;
+        Geometry->SetNumberField(TEXT("radius"), Radius);
+        DrawDebugCircle(World, Loc, Radius, 32, DebugColor, bPersistent, Duration, 0, Thickness, FVector::UpVector);
     }
     else if (LowerShapeType == TEXT("line"))
     {
-        FVector EndLoc = Loc + FVector(100, 0, 0);
-        if (LocalPayload->HasField(TEXT("endLocation")))
-        {
-            EndLoc = ParseLocationFromPayload(LocalPayload, TEXT("endLocation"), EndLoc);
-        }
-        DrawDebugLine(World, Loc, EndLoc, DebugColor, false, Duration, 0, Thickness);
+        const FVector EndLoc = ParseLocationFromPayload(LocalPayload, TEXT("endLocation"), Loc + FVector(100, 0, 0));
+        Geometry->SetArrayField(TEXT("endLocation"), PinWrightDrawDebugShape::VecJson(EndLoc));
+        DrawDebugLine(World, Loc, EndLoc, DebugColor, bPersistent, Duration, 0, Thickness);
     }
     else if (LowerShapeType == TEXT("point"))
     {
-        DrawDebugPoint(World, Loc, Size, DebugColor, false, Duration);
+        const float PointSize = Size * UniformScale;
+        Geometry->SetNumberField(TEXT("size"), PointSize);
+        DrawDebugPoint(World, Loc, PointSize, DebugColor, bPersistent, Duration);
     }
     else if (LowerShapeType == TEXT("coordinate"))
     {
-        FRotator Rot = FRotator::ZeroRotator;
-        if (LocalPayload->HasField(TEXT("rotation")))
-        {
-            const TArray<TSharedPtr<FJsonValue>>* RotJsonArr = nullptr;
-            if (LocalPayload->TryGetArrayField(TEXT("rotation"), RotJsonArr) && RotJsonArr && RotJsonArr->Num() >= 3)
-            {
-                Rot = FRotator((float)(*RotJsonArr)[0]->AsNumber(),
-                               (float)(*RotJsonArr)[1]->AsNumber(),
-                               (float)(*RotJsonArr)[2]->AsNumber());
-            }
-        }
-        DrawDebugCoordinateSystem(World, Loc, Rot, Size, false, Duration, 0, Thickness);
+        const float AxisLength = Size * UniformScale;
+        Geometry->SetNumberField(TEXT("axisLength"), AxisLength);
+        Geometry->SetArrayField(TEXT("rotation"), PinWrightDrawDebugShape::VecJson(FVector(Rot.Pitch, Rot.Yaw, Rot.Roll)));
+        DrawDebugCoordinateSystem(World, Loc, Rot, AxisLength, bPersistent, Duration, 0, Thickness);
     }
     else if (LowerShapeType == TEXT("cylinder"))
     {
-        FVector EndLoc = Loc + FVector(0, 0, 100);
-        if (LocalPayload->HasField(TEXT("endLocation")))
-        {
-            EndLoc = ParseLocationFromPayload(LocalPayload, TEXT("endLocation"), EndLoc);
-        }
-        DrawDebugCylinder(World, Loc, EndLoc, Size, 16, DebugColor, false, Duration, 0, Thickness);
+        const FVector EndLoc = ParseLocationFromPayload(LocalPayload, TEXT("endLocation"), Loc + FVector(0, 0, 100));
+        const float Radius = Size * UniformScale;
+        Geometry->SetNumberField(TEXT("radius"), Radius);
+        Geometry->SetArrayField(TEXT("endLocation"), PinWrightDrawDebugShape::VecJson(EndLoc));
+        DrawDebugCylinder(World, Loc, EndLoc, Radius, 16, DebugColor, bPersistent, Duration, 0, Thickness);
     }
     else if (LowerShapeType == TEXT("cone"))
     {
-        FVector Direction = FVector::UpVector;
-        if (LocalPayload->HasField(TEXT("direction")))
-        {
-            Direction = ParseLocationFromPayload(LocalPayload, TEXT("direction"), Direction);
-        }
+        const FVector Direction = ParseLocationFromPayload(LocalPayload, TEXT("direction"), FVector::UpVector);
         float Length = 100.0f;
         if (LocalPayload->HasField(TEXT("length")))
         {
             Length = (float)GetJsonNumberField(LocalPayload, TEXT("length"));
         }
-        float AngleWidth = FMath::DegreesToRadians(45.0f);
-        float AngleHeight = FMath::DegreesToRadians(45.0f);
-        if (LocalPayload->HasField(TEXT("angle")))
-        {
-            float AngleDeg = (float)GetJsonNumberField(LocalPayload, TEXT("angle"));
-            AngleWidth = AngleHeight = FMath::DegreesToRadians(AngleDeg);
-        }
-        DrawDebugCone(World, Loc, Direction, Length, AngleWidth, AngleHeight, 16, DebugColor, false, Duration, 0, Thickness);
+        Length *= UniformScale;
+        const float AngleDeg = LocalPayload->HasField(TEXT("angle"))
+            ? (float)GetJsonNumberField(LocalPayload, TEXT("angle"))
+            : 45.0f;
+        const float AngleRad = FMath::DegreesToRadians(AngleDeg);
+        Geometry->SetNumberField(TEXT("length"), Length);
+        Geometry->SetNumberField(TEXT("angleDegrees"), AngleDeg);
+        Geometry->SetArrayField(TEXT("direction"), PinWrightDrawDebugShape::VecJson(Direction));
+        DrawDebugCone(World, Loc, Direction, Length, AngleRad, AngleRad, 16, DebugColor, bPersistent, Duration, 0, Thickness);
     }
     else if (LowerShapeType == TEXT("capsule"))
     {
-        FQuat Rot = FQuat::Identity;
-        if (LocalPayload->HasField(TEXT("rotation")))
-        {
-            const TArray<TSharedPtr<FJsonValue>>* RotJsonArr = nullptr;
-            if (LocalPayload->TryGetArrayField(TEXT("rotation"), RotJsonArr) && RotJsonArr && RotJsonArr->Num() >= 3)
-            {
-                Rot = FRotator((float)(*RotJsonArr)[0]->AsNumber(),
-                               (float)(*RotJsonArr)[1]->AsNumber(),
-                               (float)(*RotJsonArr)[2]->AsNumber()).Quaternion();
-            }
-        }
         float HalfHeight = Size;
         if (LocalPayload->HasField(TEXT("halfHeight")))
         {
             HalfHeight = (float)GetJsonNumberField(LocalPayload, TEXT("halfHeight"));
         }
-        DrawDebugCapsule(World, Loc, HalfHeight, Size, Rot, DebugColor, false, Duration, 0, Thickness);
+        HalfHeight *= UniformScale;
+        const float Radius = Size * UniformScale;
+        Geometry->SetNumberField(TEXT("radius"), Radius);
+        Geometry->SetNumberField(TEXT("halfHeight"), HalfHeight);
+        Geometry->SetArrayField(TEXT("rotation"), PinWrightDrawDebugShape::VecJson(FVector(Rot.Pitch, Rot.Yaw, Rot.Roll)));
+        DrawDebugCapsule(World, Loc, HalfHeight, Radius, Rot.Quaternion(), DebugColor, bPersistent, Duration, 0, Thickness);
     }
-    else if (LowerShapeType == TEXT("arrow"))
+    else // arrow (AcceptedControls rejected every other shape above)
     {
-        FVector EndLoc = Loc + FVector(100, 0, 0);
-        if (LocalPayload->HasField(TEXT("endLocation")))
-        {
-            EndLoc = ParseLocationFromPayload(LocalPayload, TEXT("endLocation"), EndLoc);
-        }
-        float ArrowSize = Size > 0 ? Size : 10.0f;
-        DrawDebugDirectionalArrow(World, Loc, EndLoc, ArrowSize, DebugColor, false, Duration, 0, Thickness);
-    }
-    else if (LowerShapeType == TEXT("plane"))
-    {
-        FVector BoxSize = FVector(Size, Size, 1.0f);
-        if (LocalPayload->HasField(TEXT("boxSize")))
-        {
-            // parsing placeholder - original code had empty branch
-        }
-        FQuat Rot = FQuat::Identity;
-        if (LocalPayload->HasField(TEXT("rotation")))
-        {
-            const TArray<TSharedPtr<FJsonValue>>* RotJsonArr = nullptr;
-            if (LocalPayload->TryGetArrayField(TEXT("rotation"), RotJsonArr) && RotJsonArr && RotJsonArr->Num() >= 3)
-            {
-                Rot = FRotator((float)(*RotJsonArr)[0]->AsNumber(),
-                               (float)(*RotJsonArr)[1]->AsNumber(),
-                               (float)(*RotJsonArr)[2]->AsNumber()).Quaternion();
-            }
-        }
-        DrawDebugBox(World, Loc, BoxSize, Rot, DebugColor, false, Duration, 0, Thickness);
-    }
-    else
-    {
-        Ctx.SendError(ErrorCodes::ERR_UNSUPPORTED_SHAPE,
-            FString::Printf(TEXT("Unsupported shape type: %s. Supported: sphere, box, circle, line, point, coordinate, cylinder, cone, capsule, arrow, plane"), *ShapeType));
-        return true;
+        const FVector EndLoc = ParseLocationFromPayload(LocalPayload, TEXT("endLocation"), Loc + FVector(100, 0, 0));
+        const float ArrowSize = (Size > 0 ? Size : 10.0f) * UniformScale;
+        Geometry->SetNumberField(TEXT("arrowSize"), ArrowSize);
+        Geometry->SetArrayField(TEXT("endLocation"), PinWrightDrawDebugShape::VecJson(EndLoc));
+        DrawDebugDirectionalArrow(World, Loc, EndLoc, ArrowSize, DebugColor, bPersistent, Duration, 0, Thickness);
     }
 
     TSharedPtr<FJsonObject> Resp = MakeShared<FJsonObject>();
     Resp->SetBoolField(TEXT("success"), true);
     Resp->SetStringField(TEXT("shapeType"), ShapeType);
     Resp->SetStringField(TEXT("location"), FString::Printf(TEXT("%.2f,%.2f,%.2f"), Loc.X, Loc.Y, Loc.Z));
-    Resp->SetNumberField(TEXT("duration"), Duration);
+    Resp->SetArrayField(TEXT("scale"), PinWrightDrawDebugShape::VecJson(Scale));
+    Resp->SetObjectField(TEXT("geometry"), Geometry);
+    Resp->SetBoolField(TEXT("autoDestroy"), bAutoDestroy);
+    Resp->SetBoolField(TEXT("persistent"), bPersistent);
+    if (bAutoDestroy)
+    {
+        Resp->SetNumberField(TEXT("duration"), Duration);
+    }
     Ctx.SendSuccess(Resp);
     return true;
 }

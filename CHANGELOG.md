@@ -23,6 +23,17 @@
   not loaded in this editor. Malformed or crafted name / import / export tables and property data
   are refused with `PARSE_FAILED` rather than reaching an engine assert (the package summary is
   still read by the engine's own serializer).
+- Fixed: `effect.draw_debug_shape` applies `scale` (per-axis for box/plane extents, one uniform
+  factor for other shapes), parses plane `boxSize`, and maps `autoDestroy` to real line lifetime
+  (`false` = persistent until `effect.clear_debug_shapes`). Box now honours `rotation`. All three
+  used to be parsed and dropped while the verb reported success. **Behaviour change:** a control
+  the selected shape does not draw with (e.g. `boxSize` on a sphere, `color` on coordinate,
+  `scale` on line, a non-uniform scale on a sphere), `size` with `boxSize`, `duration` with
+  `autoDestroy: false`, a malformed `scale` / `boxSize`, or a negative or non-finite `duration` /
+  `size` / `thickness` / `length` / `angle` / `halfHeight` is now refused
+  with `INVALID_ARGUMENT`; the documented `autoDestroy` default is now `true`, matching what the
+  verb always did. The response adds `scale`, `geometry`, `autoDestroy` and `persistent`, and
+  omits `duration` for a persistent shape.
 - Added: time-driven pose sets (`render.capture_asset_preview` with `times`,
   `render.capture_animation_preview`, `camera.animation_shots`) now measure
   `poseSet.poseRepeatability` through a subject state checkpoint: the subject is rewound to its

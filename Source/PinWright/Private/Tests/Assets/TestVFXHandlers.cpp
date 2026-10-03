@@ -9,15 +9,22 @@
 //   - Niagara module authoring (modules 1–30): add_spawn_rate_module through add_simulation_stage
 #include "Misc/AutomationTest.h"
 #include "Dispatch/SafePoint.h"
+#include "Handlers/ErrorCodes.h"
 #include "Handlers/HandlerContext.h"
 #include "Handlers/HandlerRegistration.h"
 #include "Handlers/ParamSpec.h"
+#include "Components/LineBatchComponent.h"
 #include "Dom/JsonObject.h"
+#include "DrawDebugHelpers.h"
+#include "Editor.h"
+#include "Engine/World.h"
 #include "Interfaces/IPluginManager.h"
+#include "Misc/EngineVersionComparison.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "Tests/TestUtils.h"
 
+#include <initializer_list>
 #include <limits>
 
 namespace PinWrightVFXHandlerTests
@@ -132,6 +139,243 @@ bool FVFXDrawDebugShapeValidParamsNoCrashTest::RunTest(const FString& Parameters
     Payload->SetStringField(TEXT("shapeType"), TEXT("sphere"));
     Payload->SetNumberField(TEXT("size"), 50.0);
     TestTrue(TEXT("Handler found and invoked"), InvokeHandler(TEXT("effect.draw_debug_shape"), Payload));
+    return true;
+}
+
+// ============================================================================
+// effect.draw_debug_shape honours scale, plane boxSize and autoDestroy, and refuses a
+// control the selected shape does not draw with (board B-effect-debug-options-ignored).
+// The assertions read the editor world's persistent line batcher directly, so a
+// response echo cannot stand in for the draw. Before the fix: scale and plane boxSize
+// never changed the lines, autoDestroy:false still drew a 5 s timed shape, and every
+// refused case below returned success.
+// ============================================================================
+
+namespace PinWrightVFXDebugShapeTests
+{
+    UWorld* EditorWorld()
+    {
+        return GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+    }
+
+    // Timed (duration > 0) and persistent draws both land in the WorldPersistent batcher
+    // (DrawDebugHelpers.cpp GetDebugLineBatcher).
+    ULineBatchComponent* PersistentBatcher(UWorld* World)
+    {
+#if UE_VERSION_NEWER_THAN_OR_EQUAL(5, 6, 0)
+        return World->GetLineBatcher(UWorld::ELineBatcherType::WorldPersistent);
+#else
+        return World->PersistentLineBatcher;
+#endif
+    }
+
+    TSharedPtr<FJsonObject> ShapePayload(const TCHAR* Shape)
+    {
+        TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+        Payload->SetStringField(TEXT("preset"), TEXT("default"));
+        Payload->SetStringField(TEXT("shapeType"), Shape);
+        return Payload;
+    }
+
+    TArray<TSharedPtr<FJsonValue>> Numbers(std::initializer_list<double> Values)
+    {
+        TArray<TSharedPtr<FJsonValue>> Out;
+        for (const double V : Values)
+        {
+            Out.Add(MakeShared<FJsonValueNumber>(V));
+        }
+        return Out;
+    }
+
+    // Half-size of the axis-aligned box spanned by every batched line endpoint, relative to Center.
+    FVector LineHalfExtent(const ULineBatchComponent* Batcher, const FVector& Center)
+    {
+        FVector Max = FVector::ZeroVector;
+        for (const FBatchedLine& Line : Batcher->BatchedLines)
+        {
+            Max = Max.ComponentMax((Line.Start - Center).GetAbs());
+            Max = Max.ComponentMax((Line.End - Center).GetAbs());
+        }
+        return Max;
+    }
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVFXDrawDebugShapeScaleAndBoxSizeReachDrawnLinesTest,
+    "PinWright.effect.draw_debug_shape.ScaleAndBoxSizeReachDrawnLines",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FVFXDrawDebugShapeScaleAndBoxSizeReachDrawnLinesTest::RunTest(const FString& Parameters)
+{
+    using namespace PinWrightVFXDebugShapeTests;
+    UWorld* World = EditorWorld();
+    ULineBatchComponent* Batcher = World ? PersistentBatcher(World) : nullptr;
+    if (!TestNotNull(TEXT("editor world has a persistent line batcher"), Batcher))
+    {
+        return false;
+    }
+    const FVector Center(1000.0, 2000.0, 3000.0);
+
+    // Plane: boxSize [100,50,10] times per-axis scale [2,3,1] -> half-extent (200,150,10).
+    FlushPersistentDebugLines(World);
+    TSharedPtr<FJsonObject> Plane = ShapePayload(TEXT("plane"));
+    Plane->SetArrayField(TEXT("location"), Numbers({Center.X, Center.Y, Center.Z}));
+    Plane->SetArrayField(TEXT("boxSize"), Numbers({100.0, 50.0, 10.0}));
+    Plane->SetArrayField(TEXT("scale"), Numbers({2.0, 3.0, 1.0}));
+    Plane->SetNumberField(TEXT("duration"), 30.0);
+    FTestResponseCapture PlaneCapture;
+    InvokeHandlerWithCapture(TEXT("effect.draw_debug_shape"), Plane, PlaneCapture);
+    TestTrue(FString::Printf(TEXT("plane draw succeeds (%s: %s)"), *PlaneCapture.ErrorCode, *PlaneCapture.Message),
+        PlaneCapture.bSuccess);
+    TestEqual(TEXT("plane draws 12 box edges"), Batcher->BatchedLines.Num(), 12);
+    TestTrue(TEXT("plane lines span boxSize * scale = (200,150,10)"),
+        LineHalfExtent(Batcher, Center).Equals(FVector(200.0, 150.0, 10.0), 0.01));
+    const TSharedPtr<FJsonObject>* Geometry = nullptr;
+    const TArray<TSharedPtr<FJsonValue>>* Extent = nullptr;
+    if (TestTrue(TEXT("plane response echoes geometry.extent"),
+            PlaneCapture.Result.IsValid() && PlaneCapture.Result->TryGetObjectField(TEXT("geometry"), Geometry)
+            && (*Geometry)->TryGetArrayField(TEXT("extent"), Extent) && Extent->Num() == 3))
+    {
+        TestEqual(TEXT("echoed extent x"), (*Extent)[0]->AsNumber(), 200.0);
+        TestEqual(TEXT("echoed extent y"), (*Extent)[1]->AsNumber(), 150.0);
+    }
+
+    // Box: size 10 with a uniform scalar scale 3 -> half-extent 30 on every axis.
+    FlushPersistentDebugLines(World);
+    TSharedPtr<FJsonObject> Box = ShapePayload(TEXT("box"));
+    Box->SetArrayField(TEXT("location"), Numbers({Center.X, Center.Y, Center.Z}));
+    Box->SetNumberField(TEXT("size"), 10.0);
+    Box->SetNumberField(TEXT("scale"), 3.0);
+    FTestResponseCapture BoxCapture;
+    InvokeHandlerWithCapture(TEXT("effect.draw_debug_shape"), Box, BoxCapture);
+    TestTrue(TEXT("box draw succeeds"), BoxCapture.bSuccess);
+    TestTrue(TEXT("box lines span size * scale = 30"),
+        LineHalfExtent(Batcher, Center).Equals(FVector(30.0), 0.01));
+
+    // Sphere: radius 10 with scale 3 -> every endpoint within radius 30 and reaching past 27.
+    FlushPersistentDebugLines(World);
+    TSharedPtr<FJsonObject> Sphere = ShapePayload(TEXT("sphere"));
+    Sphere->SetArrayField(TEXT("location"), Numbers({Center.X, Center.Y, Center.Z}));
+    Sphere->SetNumberField(TEXT("size"), 10.0);
+    Sphere->SetNumberField(TEXT("scale"), 3.0);
+    FTestResponseCapture SphereCapture;
+    InvokeHandlerWithCapture(TEXT("effect.draw_debug_shape"), Sphere, SphereCapture);
+    TestTrue(TEXT("sphere draw succeeds"), SphereCapture.bSuccess);
+    const double SphereReach = LineHalfExtent(Batcher, Center).GetMax();
+    TestTrue(FString::Printf(TEXT("sphere radius is size * scale = 30 (measured %.3f)"), SphereReach),
+        SphereReach > 27.0 && SphereReach < 30.01);
+
+    FlushPersistentDebugLines(World);
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVFXDrawDebugShapeAutoDestroyMapsToLineLifetimeTest,
+    "PinWright.effect.draw_debug_shape.AutoDestroyMapsToLineLifetime",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FVFXDrawDebugShapeAutoDestroyMapsToLineLifetimeTest::RunTest(const FString& Parameters)
+{
+    using namespace PinWrightVFXDebugShapeTests;
+    UWorld* World = EditorWorld();
+    ULineBatchComponent* Batcher = World ? PersistentBatcher(World) : nullptr;
+    if (!TestNotNull(TEXT("editor world has a persistent line batcher"), Batcher))
+    {
+        return false;
+    }
+
+    // autoDestroy false: persistent lines (engine lifetime -1) that only clear_debug_shapes removes.
+    FlushPersistentDebugLines(World);
+    TSharedPtr<FJsonObject> Persistent = ShapePayload(TEXT("sphere"));
+    Persistent->SetBoolField(TEXT("autoDestroy"), false);
+    FTestResponseCapture PersistentCapture;
+    InvokeHandlerWithCapture(TEXT("effect.draw_debug_shape"), Persistent, PersistentCapture);
+    TestTrue(TEXT("persistent draw succeeds"), PersistentCapture.bSuccess);
+    TestTrue(TEXT("persistent draw added lines"), Batcher->BatchedLines.Num() > 0);
+    bool bAllPersistent = Batcher->BatchedLines.Num() > 0;
+    for (const FBatchedLine& Line : Batcher->BatchedLines)
+    {
+        bAllPersistent &= Line.RemainingLifeTime == -1.0f;
+    }
+    TestTrue(TEXT("autoDestroy false draws persistent lines (lifetime -1)"), bAllPersistent);
+    bool bPersistentEcho = false;
+    TestTrue(TEXT("response echoes persistent true"), PersistentCapture.Result.IsValid()
+        && PersistentCapture.Result->TryGetBoolField(TEXT("persistent"), bPersistentEcho) && bPersistentEcho);
+    TestFalse(TEXT("persistent response carries no duration"),
+        PersistentCapture.Result.IsValid() && PersistentCapture.Result->HasField(TEXT("duration")));
+
+    // Default (autoDestroy true): the lines expire after `duration` seconds.
+    FlushPersistentDebugLines(World);
+    TSharedPtr<FJsonObject> Timed = ShapePayload(TEXT("sphere"));
+    Timed->SetNumberField(TEXT("duration"), 7.0);
+    FTestResponseCapture TimedCapture;
+    InvokeHandlerWithCapture(TEXT("effect.draw_debug_shape"), Timed, TimedCapture);
+    TestTrue(TEXT("timed draw succeeds"), TimedCapture.bSuccess);
+    bool bAllTimed = Batcher->BatchedLines.Num() > 0;
+    for (const FBatchedLine& Line : Batcher->BatchedLines)
+    {
+        bAllTimed &= FMath::IsNearlyEqual(Line.RemainingLifeTime, 7.0f);
+    }
+    TestTrue(TEXT("default draw expires after duration (lifetime 7)"), bAllTimed);
+    bool bTimedPersistentEcho = true;
+    TestTrue(TEXT("response echoes persistent false"), TimedCapture.Result.IsValid()
+        && TimedCapture.Result->TryGetBoolField(TEXT("persistent"), bTimedPersistentEcho) && !bTimedPersistentEcho);
+
+    FlushPersistentDebugLines(World);
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVFXDrawDebugShapeRefusesIgnoredControlsTest,
+    "PinWright.effect.draw_debug_shape.RefusesIgnoredControls",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FVFXDrawDebugShapeRefusesIgnoredControlsTest::RunTest(const FString& Parameters)
+{
+    using namespace PinWrightVFXDebugShapeTests;
+    UWorld* World = EditorWorld();
+    ULineBatchComponent* Batcher = World ? PersistentBatcher(World) : nullptr;
+    if (!TestNotNull(TEXT("editor world has a persistent line batcher"), Batcher))
+    {
+        return false;
+    }
+
+    TArray<TPair<FString, TSharedPtr<FJsonObject>>> Cases;
+    auto Add = [&Cases](const TCHAR* Label, const TCHAR* Shape) -> TSharedPtr<FJsonObject>
+    {
+        TSharedPtr<FJsonObject> Payload = ShapePayload(Shape);
+        Payload->SetNumberField(TEXT("duration"), 30.0);
+        Cases.Emplace(Label, Payload);
+        return Payload;
+    };
+    Add(TEXT("line has no dimension to scale"), TEXT("line"))->SetNumberField(TEXT("scale"), 2.0);
+    Add(TEXT("sphere cannot take a non-uniform scale"), TEXT("sphere"))->SetArrayField(TEXT("scale"), Numbers({1.0, 2.0, 3.0}));
+    Add(TEXT("sphere does not draw with boxSize"), TEXT("sphere"))->SetArrayField(TEXT("boxSize"), Numbers({1.0, 2.0, 3.0}));
+    Add(TEXT("coordinate does not draw with color"), TEXT("coordinate"))->SetArrayField(TEXT("color"), Numbers({255.0, 0.0, 0.0}));
+    Add(TEXT("point does not draw with thickness"), TEXT("point"))->SetNumberField(TEXT("thickness"), 4.0);
+    Add(TEXT("plane boxSize must have three numbers"), TEXT("plane"))->SetArrayField(TEXT("boxSize"), Numbers({1.0, 2.0}));
+    Add(TEXT("box scale must be non-negative"), TEXT("box"))->SetArrayField(TEXT("scale"), Numbers({1.0, -1.0, 1.0}));
+    Add(TEXT("negative duration"), TEXT("sphere"))->SetNumberField(TEXT("duration"), -1.0);
+    Add(TEXT("negative size"), TEXT("sphere"))->SetNumberField(TEXT("size"), -10.0);
+    Add(TEXT("negative thickness"), TEXT("box"))->SetNumberField(TEXT("thickness"), -2.0);
+    Add(TEXT("negative cone length"), TEXT("cone"))->SetNumberField(TEXT("length"), -100.0);
+    Add(TEXT("negative cone angle"), TEXT("cone"))->SetNumberField(TEXT("angle"), -45.0);
+    Add(TEXT("negative capsule halfHeight"), TEXT("capsule"))->SetNumberField(TEXT("halfHeight"), -50.0);
+    {
+        TSharedPtr<FJsonObject> Both = Add(TEXT("size and boxSize together"), TEXT("box"));
+        Both->SetNumberField(TEXT("size"), 10.0);
+        Both->SetArrayField(TEXT("boxSize"), Numbers({1.0, 2.0, 3.0}));
+    }
+    Add(TEXT("duration with autoDestroy false"), TEXT("sphere"))->SetBoolField(TEXT("autoDestroy"), false);
+
+    for (const TPair<FString, TSharedPtr<FJsonObject>>& Case : Cases)
+    {
+        FlushPersistentDebugLines(World);
+        FTestResponseCapture Capture;
+        InvokeHandlerWithCapture(TEXT("effect.draw_debug_shape"), Case.Value, Capture);
+        TestFalse(FString::Printf(TEXT("%s: refused"), *Case.Key), Capture.bSuccess);
+        TestEqual(FString::Printf(TEXT("%s: INVALID_ARGUMENT"), *Case.Key), Capture.ErrorCode, FString(ErrorCodes::ERR_INVALID_ARGUMENT));
+        TestEqual(FString::Printf(TEXT("%s: nothing drawn"), *Case.Key), Batcher->BatchedLines.Num(), 0);
+    }
+
+    FlushPersistentDebugLines(World);
     return true;
 }
 
