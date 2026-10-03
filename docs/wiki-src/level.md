@@ -47,10 +47,14 @@ without a separate `level.get_info` probe. Omitting the field keeps the legacy u
   without waiting for garbage collection, so it matches `actor.list` for a before/after cleanup check.
 - `level.get_info` / `level.get_actors` / `level.get_bounds` inspect **only levels loaded into the
   active world** (persistent level plus loaded sublevels). An on-disk but unloaded `levelPath`
-  errors `LEVEL_NOT_LOADED` ("exists on disk but is not loaded… `level.load` it first"), distinct
-  from `LEVEL_NOT_FOUND` (no `.umap` on disk). Load it first, or omit `levelPath` for the active
-  level. `level.list` still enumerates every on-disk map, so it can list a map these getters reject
-  until it is loaded.
+  errors `LEVEL_NOT_LOADED` ("exists on disk but is not loaded…"), distinct from `LEVEL_NOT_FOUND`
+  (no `.umap` on disk). To inspect a map **without opening it**, `call("level.describe_offline",
+  {levelPath})` lists its actors straight from the `.umap`, and `call("asset.dump", {assetPath})`
+  dumps the unopened map in full (`world_settings.json`, `level_bp.txt`, `sublevels.json`,
+  `actors/manifest.json`, one JSON per actor; runs as a job, `wait:false` returns a ticket).
+  Neither touches the active world. `level.load` also works but **replaces the active world**; or
+  omit `levelPath` for the active level. `level.list` still enumerates every on-disk map, so it
+  can list a map these getters reject until it is loaded.
 
 ## Auditing a level
 

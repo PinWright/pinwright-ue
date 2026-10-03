@@ -1366,7 +1366,7 @@ REGISTER_RPC_HANDLER("level.duplicate", "level", "Duplicate an existing level pa
 // ---- level.get_info ----
 REGISTER_RPC_HANDLER("level.get_info", "level", "Return descriptive metadata about a level: name, package path, owning world, and actor count. Reads from the loaded world when no path is provided.",
     RPC_PARAMS(
-        RPC_PARAM_OPT_ALIAS("levelPath", "path", "Level package path to inspect. Must already be loaded into the active world (the persistent level or a loaded sublevel) — this getter reads only loaded levels; an on-disk-but-unloaded map errors LEVEL_NOT_LOADED (level.load it first). Defaults to the active editor level.", "level_path")
+        RPC_PARAM_OPT_ALIAS("levelPath", "path", "Level package path to inspect. Must already be loaded into the active world (the persistent level or a loaded sublevel) — this getter reads only loaded levels; an on-disk-but-unloaded map errors LEVEL_NOT_LOADED (read it unopened with level.describe_offline or asset.dump, which leave the active world untouched, or level.load it first). Defaults to the active editor level.", "level_path")
     ))
 {
     auto* Payload = Ctx.GetRawPayload().Get();
@@ -1550,7 +1550,7 @@ REGISTER_RPC_HANDLER("level.set_locked", "level", "Lock or unlock a level for ed
 // ---- level.get_actors ----
 REGISTER_RPC_HANDLER("level.get_actors", "level", "List every actor that belongs to the named level (not the entire world). Useful for inspecting a specific sublevel's contents.",
     RPC_PARAMS(
-        RPC_PARAM_OPT_ALIAS("levelPath", "path", "Package path of the level whose actors should be listed. Must already be loaded into the active world (the persistent level or a loaded sublevel) — this getter reads only loaded levels; an on-disk-but-unloaded map errors LEVEL_NOT_LOADED (level.load it first). Defaults to the active editor level.", "level_path")
+        RPC_PARAM_OPT_ALIAS("levelPath", "path", "Package path of the level whose actors should be listed. Must already be loaded into the active world (the persistent level or a loaded sublevel) — this getter reads only loaded levels; an on-disk-but-unloaded map errors LEVEL_NOT_LOADED (read it unopened with level.describe_offline or asset.dump, which leave the active world untouched, or level.load it first). Defaults to the active editor level.", "level_path")
     ))
 {
     auto* Payload = Ctx.GetRawPayload().Get();
@@ -1604,7 +1604,7 @@ REGISTER_RPC_HANDLER("level.get_actors", "level", "List every actor that belongs
 // ---- level.get_bounds ----
 REGISTER_RPC_HANDLER("level.get_bounds", "level", "Return the world-space axis-aligned bounding box that encloses every actor in the level (origin + extent). Uses the level's ALevelBounds actor when present (hasLevelBounds=true), otherwise sums each actor's component bounding box. isValid is false (and min/max are the degenerate origin box) only when no actor has finite renderable bounds.",
     RPC_PARAMS(
-        RPC_PARAM_OPT_ALIAS("levelPath", "path", "Package path of the level to measure. Must already be loaded into the active world (the persistent level or a loaded sublevel) — this getter reads only loaded levels; an on-disk-but-unloaded map errors LEVEL_NOT_LOADED (level.load it first). Defaults to the active editor level.", "level_path")
+        RPC_PARAM_OPT_ALIAS("levelPath", "path", "Package path of the level to measure. Must already be loaded into the active world (the persistent level or a loaded sublevel) — this getter reads only loaded levels; an on-disk-but-unloaded map errors LEVEL_NOT_LOADED (read it unopened with level.describe_offline or asset.dump, which leave the active world untouched, or level.load it first). Defaults to the active editor level.", "level_path")
     ))
 {
     auto* Payload = Ctx.GetRawPayload().Get();

@@ -88,6 +88,11 @@
   gate's own measurement (new `HttpResponseSpill::MeasureInlineCharacters`, one condensed copy)
   instead of a pretty print, so **pages can hold more kinds and `pageCount` may drop**. Handlers
   that budget their own response should measure with that helper.
+- Changed: the `LEVEL_NOT_LOADED` error from `level.get_info` / `get_actors` / `get_bounds` names
+  the non-mutating readers first: `level.describe_offline({"levelPath":...})` and
+  `asset.dump({"assetPath":...})` both read the unopened map without touching the active world.
+  `level.load` follows, marked as replacing the active world, and the message ends with the
+  dump-mirror hint when no mirror exists yet. **The message text changed**; the code did not.
 - Changed: a successful `blueprint.compile_bpir` now carries the persistence block
   `blueprint.set_default` emits — `saveRequested`, `markedForSave`, `saved` (measured) and
   `pendingFlush:true` while unsaved. The verb still does not save; call `asset.save` after it.

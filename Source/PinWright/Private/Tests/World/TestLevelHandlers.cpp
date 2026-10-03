@@ -11,6 +11,7 @@
 #include "Tests/TestUtils.h"
 #include "Tests/TestWorldUtils.h"
 #include "Utils/AssetUtils.h"
+#include "Utils/AssetDumpSuggestion.h"
 #include "PinWrightSubsystem.h"
 #include "Editor.h"
 #include "Engine/World.h"
@@ -1097,6 +1098,31 @@ inline void AssertGetterReportsUnloadedOnDiskMap(
     // The message must name the actionable next step.
     Test.TestTrue(FString::Printf(TEXT("%s LEVEL_NOT_LOADED message names level.load"), *MethodName),
         Capture.Message.Contains(TEXT("level.load")));
+
+    // E-level-miss-omits-asset-dump: level.load replaces the active world, so the
+    // non-mutating remedy (asset.dump reads the unopened .umap) must be named, FIRST,
+    // with a ready-to-send assetPath for this map.
+    const int32 DumpAt = Capture.Message.Find(TEXT("asset.dump"));
+    const int32 LoadAt = Capture.Message.Find(TEXT("level.load"));
+    Test.TestTrue(FString::Printf(TEXT("%s LEVEL_NOT_LOADED message names asset.dump"), *MethodName),
+        DumpAt != INDEX_NONE);
+    Test.TestTrue(FString::Printf(TEXT("%s LEVEL_NOT_LOADED message names asset.dump before level.load"),
+        *MethodName), DumpAt != INDEX_NONE && LoadAt != INDEX_NONE && DumpAt < LoadAt);
+    Test.TestTrue(FString::Printf(TEXT("%s LEVEL_NOT_LOADED message carries the level.describe_offline call for this map"),
+        *MethodName), Capture.Message.Contains(FString::Printf(
+            TEXT("level.describe_offline({\"levelPath\":\"%s\"})"), *UnloadedMapPath)));
+    Test.TestTrue(FString::Printf(TEXT("%s LEVEL_NOT_LOADED message carries the asset.dump call for this map"),
+        *MethodName), Capture.Message.Contains(FString::Printf(
+            TEXT("asset.dump({\"assetPath\":\"%s\"})"), *UnloadedMapPath)));
+    // The mirror-state hint the get_actors success path appends must ride the error
+    // path too (empty only when a mirror for this map already exists).
+    const FString ExpectedHint = AssetDumpSuggestion::BuildDumpSuggestionHint(
+        UnloadedMapPath, AssetDumpSuggestion::EDumpSubjectKind::Level);
+    if (!ExpectedHint.IsEmpty())
+    {
+        Test.TestTrue(FString::Printf(TEXT("%s LEVEL_NOT_LOADED message appends the dump-suggestion hint"),
+            *MethodName), Capture.Message.Contains(ExpectedHint));
+    }
 }
 
 // Asserts the levelPath param doc on a getter warns that the path must already be
@@ -1115,6 +1141,9 @@ inline void AssertGetterLevelPathDocWarnsLoadedOnly(
         Test.TestTrue(FString::Printf(
             TEXT("%s levelPath doc names the LEVEL_NOT_LOADED verdict"), *MethodName),
             Spec->Description.Contains(TEXT("LEVEL_NOT_LOADED")));
+        Test.TestTrue(FString::Printf(
+            TEXT("%s levelPath doc names the non-mutating asset.dump remedy"), *MethodName),
+            Spec->Description.Contains(TEXT("asset.dump")));
     }
 }
 
