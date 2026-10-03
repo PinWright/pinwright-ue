@@ -7,9 +7,16 @@
 #include "Dom/JsonValue.h"
 #include "UObject/UnrealType.h"
 
+// TargetContainer may be a scratch base (value pointer minus the property's offset) for staging,
+// EXCEPT when IsInstancedSubobjectText() holds: that path builds a subobject outered to the
+// container, so the container must be the real owning UObject.
 PINWRIGHT_API bool ApplyJsonValueToProperty(void* TargetContainer, FProperty* Property,
                                const TSharedPtr<FJsonValue>& ValueField,
                                FString& OutError);
+
+// True when ApplyJsonValueToProperty would rebuild an Instanced subobject from brace text
+// ({Field=Value,...,_kind=<class path>}) rather than resolve an object path.
+PINWRIGHT_API bool IsInstancedSubobjectText(const FProperty* Property, const TSharedPtr<FJsonValue>& ValueField);
 
 // Parse and atomically assign a JSON array into an already-initialized direct array value.
 // The caller owns the direct value and controls its lifetime.

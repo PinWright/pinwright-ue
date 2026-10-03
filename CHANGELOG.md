@@ -100,6 +100,20 @@
   `SKEL_BPI_X_C::Fn`. BPIR compile errors raised while setting up an entry (override resolution
   and signature mismatches, input-action loads) report the `entry` line instead of `-1`.
 
+- Fixed: `blueprint.set_default` can set container defaults. **`value` is now declared `any`**
+  (it was `string`, so the dispatcher refused every JSON array/object): pass a JSON array for an
+  array or set, a JSON object keyed by the map key for a map (`{"SurfaceType1": 14.0}`), or the
+  same as JSON text. The shared JSON-to-property importer gained `TSet` / `TMap` support, so
+  `property.set` takes them too (staged, so a failed one leaves the object undirtied); a set or map
+  write is all-or-nothing, and a duplicate element or key is refused. A value that does not convert is refused with `CONVERSION_FAILED` **before**
+  the Blueprint is modified, and the message says the property was not modified (except Instanced
+  brace text such as `Navigation`, which is validated in place: the property is all-or-nothing,
+  but the Blueprint is marked modified); an unsupported type names the supported set.
+- Fixed: `misc.set_replication` **refuses a non-Actor Blueprint with `INVALID_BLUEPRINT_CLASS`**
+  and leaves it unmodified (it used to dirty the Blueprint, change nothing and echo the request as
+  success). On an Actor Blueprint the returned `replicates` / `replicateMovement` are read back
+  from the CDO.
+
 - Fixed: `blueprint.compile_bpir` — **`break<T>` on a struct with a native break function
   (`Rotator`, `Vector`, `HitResult`, `Transform`, ...) now emits that function** (`BreakRotator`,
   `BreakHitResult`, ...) instead of a generic Break Struct node the Blueprint compiler warned on

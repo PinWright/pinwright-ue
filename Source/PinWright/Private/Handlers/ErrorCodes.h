@@ -644,6 +644,9 @@ namespace ErrorCodes
     inline constexpr TCHAR ERR_INVALID_BLEND_MODE[]                         = TEXT("INVALID_BLEND_MODE");
     inline constexpr TCHAR ERR_INVALID_BLUEPRINT[]                          = TEXT("INVALID_BLUEPRINT");
     inline constexpr TCHAR ERR_INVALID_BLUEPRINT_CANDIDATES[]               = TEXT("INVALID_BLUEPRINT_CANDIDATES");
+    // misc.set_replication: the Blueprint's generated class is not the base class the verb
+    // writes (an Actor). Refused before Modify(), so the Blueprint is left untouched.
+    inline constexpr TCHAR ERR_INVALID_BLUEPRINT_CLASS[]                    = TEXT("INVALID_BLUEPRINT_CLASS");
     inline constexpr TCHAR ERR_INVALID_BLUEPRINT_PATH[]                     = TEXT("INVALID_BLUEPRINT_PATH");
     inline constexpr TCHAR ERR_INVALID_BLUEPRINT_TYPE[]                     = TEXT("INVALID_BLUEPRINT_TYPE");
     inline constexpr TCHAR ERR_INVALID_BONE_CONTROL_SPACE[]                 = TEXT("INVALID_BONE_CONTROL_SPACE");

@@ -641,7 +641,7 @@ Not listed: internal plumbing namespaces, not intended for direct use - `pipelin
 | `misc.create_post_process_volume` | Spawn an APostProcessVolume actor in the active level. |
 | `misc.set_camera_fov` | Set the FieldOfView property on an existing camera actor (degrees). |
 | `misc.set_game_speed` | Set the global TimeDilation on the active world (1.0 = real-time, 0.5 = half-speed slow-mo, 2.0 = double-speed). |
-| `misc.set_replication` | Configure replication flags (bReplicates, bAlwaysRelevant, bNetLoadOnClient, etc.) on the actor CDO. |
+| `misc.set_replication` | Set bReplicates and bReplicateMovement on an Actor Blueprint's CDO; non-Actor Blueprints are refused. |
 
 </details>
 

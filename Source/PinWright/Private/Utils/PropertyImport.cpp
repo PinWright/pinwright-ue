@@ -17,6 +17,7 @@
 #include "UObject/UnrealType.h"
 #include "UObject/SoftObjectPtr.h"
 #include "Misc/PackageName.h"
+#include "Misc/ScopeExit.h"
 
 namespace
 {
@@ -507,6 +508,14 @@ TSharedPtr<FJsonValue> CoerceStringToJsonValueByProperty(const FString& StringVa
 bool IsJsonScalarProperty(const FProperty* Property)
 {
     return IsJsonScalarPropertyImpl(Property);
+}
+
+bool IsInstancedSubobjectText(const FProperty* Property, const TSharedPtr<FJsonValue>& ValueField)
+{
+    const FObjectProperty* OP = CastField<FObjectProperty>(Property);
+    return OP && ValueField.IsValid() && ValueField->Type == EJson::String
+        && OP->HasAnyPropertyFlags(CPF_InstancedReference | CPF_PersistentInstance)
+        && ValueField->AsString().TrimStartAndEnd().StartsWith(TEXT("{"));
 }
 
 bool TryStageJsonValueForProperty(FProperty* Property,
@@ -1189,7 +1198,87 @@ bool ApplyJsonValueToProperty(void* TargetContainer, FProperty* Property,
         return ApplyJsonValueToArrayDirect(
             AP, AP->ContainerPtrToValuePtr<void>(TargetContainer), ValueField, OutError);
     }
-    OutError = TEXT("Unsupported property type for JSON assignment");
+
+    // Sets and maps are built in a scratch value and copied over the property only once every
+    // element converted, so a failure leaves the property exactly as it was.
+    if (FSetProperty* SetProp = CastField<FSetProperty>(Property))
+    {
+        if (ValueField->Type != EJson::Array)
+        {
+            OutError = TEXT("Expected a JSON array [element, ...] for set property");
+            return false;
+        }
+        void* Scratch = SetProp->AllocateAndInitializeValue();
+        ON_SCOPE_EXIT { SetProp->DestroyValue(Scratch); FMemory::Free(Scratch); };
+        FScriptSetHelper Helper(SetProp, Scratch);
+        const TArray<TSharedPtr<FJsonValue>>& Src = ValueField->AsArray();
+        for (int32 i = 0; i < Src.Num(); ++i)
+        {
+            FString ElemError;
+            void* Elem = PropertyImportContainerHelpers::StageValue(SetProp->ElementProp, Src[i], ElemError);
+            if (!Elem)
+            {
+                OutError = FString::Printf(TEXT("Set element %d: %s"), i, *ElemError);
+                return false;
+            }
+            const int32 Before = Helper.Num();
+            Helper.AddElement(Elem);
+            PropertyImportContainerHelpers::FreeValue(SetProp->ElementProp, Elem);
+            if (Helper.Num() == Before)
+            {
+                OutError = FString::Printf(TEXT("Set element %d duplicates an earlier element"), i);
+                return false;
+            }
+        }
+        SetProp->CopyCompleteValue(SetProp->ContainerPtrToValuePtr<void>(TargetContainer), Scratch);
+        return true;
+    }
+    if (FMapProperty* MapProp = CastField<FMapProperty>(Property))
+    {
+        if (ValueField->Type != EJson::Object || !ValueField->AsObject().IsValid())
+        {
+            OutError = TEXT("Expected a JSON object {\"key\": value, ...} for map property");
+            return false;
+        }
+        void* Scratch = MapProp->AllocateAndInitializeValue();
+        ON_SCOPE_EXIT { MapProp->DestroyValue(Scratch); FMemory::Free(Scratch); };
+        FScriptMapHelper Helper(MapProp, Scratch);
+        for (const TPair<FString, TSharedPtr<FJsonValue>> Pair : ValueField->AsObject()->Values)
+        {
+            // JSON object keys are always strings; scalar keys (int, enum name, bool) parse
+            // that spelling exactly as a scalar property written from a string does.
+            FString ElemError;
+            void* Key = PropertyImportContainerHelpers::StageValue(
+                MapProp->KeyProp, MakeShared<FJsonValueString>(Pair.Key), ElemError);
+            if (!Key)
+            {
+                OutError = FString::Printf(TEXT("Map key '%s': %s"), *Pair.Key, *ElemError);
+                return false;
+            }
+            void* Value = PropertyImportContainerHelpers::StageValue(MapProp->ValueProp, Pair.Value, ElemError);
+            if (!Value)
+            {
+                PropertyImportContainerHelpers::FreeValue(MapProp->KeyProp, Key);
+                OutError = FString::Printf(TEXT("Map value for key '%s': %s"), *Pair.Key, *ElemError);
+                return false;
+            }
+            const int32 Before = Helper.Num();
+            Helper.AddPair(Key, Value);
+            PropertyImportContainerHelpers::FreeValue(MapProp->KeyProp, Key);
+            PropertyImportContainerHelpers::FreeValue(MapProp->ValueProp, Value);
+            if (Helper.Num() == Before)
+            {
+                OutError = FString::Printf(TEXT("Map key '%s' resolves to the same key as an earlier entry"), *Pair.Key);
+                return false;
+            }
+        }
+        MapProp->CopyCompleteValue(MapProp->ContainerPtrToValuePtr<void>(TargetContainer), Scratch);
+        return true;
+    }
+
+    OutError = FString::Printf(
+        TEXT("Unsupported property type '%s' for JSON assignment (supported: bool, numeric, enum, string, name, text, object/class/soft references, structs, arrays, sets, maps)"),
+        *Property->GetClass()->GetName());
     return false;
 }
 

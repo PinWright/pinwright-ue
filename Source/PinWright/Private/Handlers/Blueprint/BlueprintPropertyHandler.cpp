@@ -18,6 +18,9 @@
 #include "EditorAssetLibrary.h"
 #include "JsonObjectConverter.h"
 #include "ScopedTransaction.h"
+#include "Misc/ScopeExit.h"
+#include "Serialization/JsonReader.h"
+#include "Serialization/JsonSerializer.h"
 
 using namespace BlueprintHandlerUtils;
 
@@ -415,7 +418,7 @@ REGISTER_RPC_HANDLER("blueprint.set_default", "blueprint", "Mutate the Blueprint
     RPC_PARAMS(
         BlueprintPathParamReq(TEXT("path"), TEXT("path"), TEXT("Blueprint asset path.")),
         RPC_PARAM_REQ("propertyName", "string", "UPROPERTY name on the Blueprint's class (case-sensitive FName lookup)."),
-        RPC_PARAM_REQ("value", "string", "JSON-compatible string value; type-coerced to the property's type via reflection."),
+        RPC_PARAM_REQ("value", "any", "New value, type-coerced to the property's type via reflection: a JSON scalar for bool/numeric/enum/string/name/text/object-reference properties, a JSON object or struct text for structs, a JSON array for arrays and sets, a JSON object keyed by the map key for maps. A container may also be given as its JSON text. A value that does not convert is refused with CONVERSION_FAILED before anything is modified, except Instanced subobject brace text ({Field=Value,...,_kind=<class path>}), which is validated in place: the property stays unchanged but the Blueprint is marked modified."),
         BlueprintReinstancingGuard::AllowReinstancingParam()
     ))
 {
@@ -498,12 +501,45 @@ REGISTER_RPC_HANDLER("blueprint.set_default", "blueprint", "Mutate the Blueprint
         return true;
     }
 
+    // `value` was once declared "string", so container callers send JSON text: decode it
+    // once the target is known to be a container (E-set-default-rejects-container-typed-properties).
+    TSharedPtr<FJsonValue> EffectiveValue = ValueField;
+    if (ValueField->Type == EJson::String
+        && (CastField<FArrayProperty>(Property) || CastField<FSetProperty>(Property) || CastField<FMapProperty>(Property)))
+    {
+        TSharedPtr<FJsonValue> Parsed;
+        const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(ValueField->AsString());
+        if (FJsonSerializer::Deserialize(Reader, Parsed) && Parsed.IsValid())
+        {
+            EffectiveValue = Parsed;
+        }
+    }
+
+    // Convert into a copy of the current value first, so a value that does not convert is
+    // refused before Modify() and the caller knows the property was not touched. Skipped for
+    // Instanced brace text: its import builds a subobject outered to the container, which must be
+    // the real owning UObject, and that path assigns only once every field applied.
+    FString ConversionError;
+    if (!IsInstancedSubobjectText(Property, EffectiveValue))
+    {
+        void* Scratch = Property->AllocateAndInitializeValue();
+        ON_SCOPE_EXIT { Property->DestroyValue(Scratch); FMemory::Free(Scratch); };
+        Property->CopyCompleteValue(Scratch, Property->ContainerPtrToValuePtr<void>(TargetContainer));
+        uint8* ScratchContainer = static_cast<uint8*>(Scratch) - Property->GetOffset_ForInternal();
+        if (!ApplyJsonValueToProperty(ScratchContainer, Property, EffectiveValue, ConversionError))
+        {
+            Ctx.SendError(TEXT("CONVERSION_FAILED"), FString::Printf(
+                TEXT("%s. Property '%s' (%s) was not modified."),
+                *ConversionError, *PropertyName, *Property->GetCPPType()));
+            return true;
+        }
+    }
+
     FScopedTransaction Transaction(FText::FromString(TEXT("MCP: blueprint.set_default")));
     Blueprint->Modify();
     CDO->Modify();
 
-    FString ConversionError;
-    if (!ApplyJsonValueToProperty(TargetContainer, Property, ValueField, ConversionError))
+    if (!ApplyJsonValueToProperty(TargetContainer, Property, EffectiveValue, ConversionError))
     {
         Ctx.SendError(TEXT("CONVERSION_FAILED"), ConversionError);
         return true;
@@ -558,7 +594,7 @@ REGISTER_RPC_HANDLER("blueprint.set_default", "blueprint", "Mutate the Blueprint
         return true;
     }
 
-    if (!ApplyJsonValueToProperty(TargetContainer, Property, ValueField, ConversionError))
+    if (!ApplyJsonValueToProperty(TargetContainer, Property, EffectiveValue, ConversionError))
     {
         Ctx.SendError(TEXT("CONVERSION_FAILED"), ConversionError);
         return true;

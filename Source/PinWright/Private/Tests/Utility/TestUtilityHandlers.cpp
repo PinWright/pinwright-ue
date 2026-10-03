@@ -15,6 +15,8 @@
 #include "Components/SceneComponent.h"
 #include "Kismet2/KismetEditorUtilities.h"
 #include "Engine/Blueprint.h"
+#include "Engine/BlueprintGeneratedClass.h"
+#include "GameFramework/Actor.h"
 #include "Compat/EngineVersionCompat.h"
 // FOverridableManager (Overridable Serialization) arrived in UE 5.4; the header is absent on
 // 5.3. The override-clearing test below is gated to engines that ship the manager.
@@ -164,6 +166,93 @@ bool FMiscSetReplicationValidParamsTest::RunTest(const FString& Parameters)
     Payload->SetStringField(TEXT("blueprintPath"), TEXT("/Game/NonExistentBlueprint"));
     Payload->SetBoolField(TEXT("replicates"), true);
     TestTrue(TEXT("misc.set_replication invoked"), InvokeHandler(TEXT("misc.set_replication"), Payload));
+    return true;
+}
+
+// B-set-replication-nonactor-blueprint-noop: the verb used to treat a null Actor-CDO cast as a
+// no-op, dirty the Blueprint and echo the request flags as success.
+namespace TestMiscSetReplicationHelpers
+{
+    static UBlueprint* MakeBlueprint(UClass* Parent, const FString& AssetPath)
+    {
+        UPackage* Pkg = CreatePackage(*AssetPath);
+        return FKismetEditorUtilities::CreateBlueprint(
+            Parent, Pkg, FName(*FPackageName::GetLongPackageAssetName(AssetPath)),
+            BPTYPE_Normal, UBlueprint::StaticClass(), UBlueprintGeneratedClass::StaticClass());
+    }
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMiscSetReplicationNonActorRefusedTest,
+    "PinWright.misc.set_replication.NonActorBlueprintRefusedUnmodified",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FMiscSetReplicationNonActorRefusedTest::RunTest(const FString& Parameters)
+{
+    const FString AssetPath = FString::Printf(TEXT("/Game/PinWrightTests/__PW_GatewayTests/BP_RepNonActor_%s"),
+        *FGuid::NewGuid().ToString(EGuidFormats::Digits));
+    UBlueprint* BP = TestMiscSetReplicationHelpers::MakeBlueprint(UObject::StaticClass(), AssetPath);
+    if (!TestNotNull(TEXT("non-Actor Blueprint created"), BP) || !TestNotNull(TEXT("generated class"), BP->GeneratedClass.Get()))
+    {
+        CleanupTestAsset(AssetPath);
+        return true;
+    }
+    TestNull(TEXT("precondition: CDO is not an Actor"), Cast<AActor>(BP->GeneratedClass->GetDefaultObject()));
+    UPackage* Pkg = BP->GetOutermost();
+    Pkg->SetDirtyFlag(false);
+
+    TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+    Payload->SetStringField(TEXT("blueprintPath"), AssetPath);
+    Payload->SetBoolField(TEXT("replicates"), true);
+    Payload->SetBoolField(TEXT("replicateMovement"), true);
+    FTestResponseCapture Capture;
+    TestTrue(TEXT("handler found"), InvokeHandlerWithCapture(TEXT("misc.set_replication"), Payload, Capture));
+    TestFalse(TEXT("non-Actor Blueprint is refused, not a success"), Capture.bSuccess);
+    TestEqual(TEXT("error code"), Capture.ErrorCode, FString(TEXT("INVALID_BLUEPRINT_CLASS")));
+    TestFalse(TEXT("Blueprint package left clean"), Pkg->IsDirty());
+
+    CleanupTestAsset(AssetPath);
+    return true;
+}
+
+// Success-path pin only: the requested flags and the CDO agree here, so a revert to echoing the
+// request would still pass. NonActorBlueprintRefusedUnmodified is the failure-direction test.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMiscSetReplicationActorReadbackTest,
+    "PinWright.misc.set_replication.ActorBlueprintReportsCdoReadback",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FMiscSetReplicationActorReadbackTest::RunTest(const FString& Parameters)
+{
+    const FString AssetPath = FString::Printf(TEXT("/Game/PinWrightTests/__PW_GatewayTests/BP_RepActor_%s"),
+        *FGuid::NewGuid().ToString(EGuidFormats::Digits));
+    UBlueprint* BP = TestMiscSetReplicationHelpers::MakeBlueprint(AActor::StaticClass(), AssetPath);
+    AActor* CDO = BP && BP->GeneratedClass ? Cast<AActor>(BP->GeneratedClass->GetDefaultObject()) : nullptr;
+    if (!TestNotNull(TEXT("Actor Blueprint CDO"), CDO))
+    {
+        CleanupTestAsset(AssetPath);
+        return true;
+    }
+    TestFalse(TEXT("precondition: CDO does not replicate"), CDO->GetIsReplicated());
+
+    TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+    Payload->SetStringField(TEXT("blueprintPath"), AssetPath);
+    Payload->SetBoolField(TEXT("replicates"), true);
+    Payload->SetBoolField(TEXT("replicateMovement"), false);
+    FTestResponseCapture Capture;
+    TestTrue(TEXT("handler found"), InvokeHandlerWithCapture(TEXT("misc.set_replication"), Payload, Capture));
+    TestTrue(TEXT("Actor Blueprint succeeds"), Capture.bSuccess);
+    TestTrue(TEXT("CDO now replicates"), CDO->GetIsReplicated());
+    TestFalse(TEXT("CDO movement replication off"), CDO->IsReplicatingMovement());
+    if (TestTrue(TEXT("response captured"), Capture.Result.IsValid()))
+    {
+        bool bReplicates = false;
+        bool bMovement = true;
+        TestTrue(TEXT("replicates field"), Capture.Result->TryGetBoolField(TEXT("replicates"), bReplicates));
+        TestTrue(TEXT("replicateMovement field"), Capture.Result->TryGetBoolField(TEXT("replicateMovement"), bMovement));
+        TestEqual(TEXT("replicates matches CDO"), bReplicates, CDO->GetIsReplicated());
+        TestEqual(TEXT("replicateMovement matches CDO"), bMovement, CDO->IsReplicatingMovement());
+    }
+
+    CleanupTestAsset(AssetPath);
     return true;
 }
 

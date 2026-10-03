@@ -1371,6 +1371,7 @@ REGISTER_RPC_HANDLER("property.set", "property", "Set a UPROPERTY value on a UOb
     const bool bStageScalar = IsJsonScalarProperty(Property);
     FArrayProperty* ArrayProperty = CastField<FArrayProperty>(Property);
     const bool bStageArray = ArrayProperty != nullptr;
+    const bool bStageContainer = CastField<FSetProperty>(Property) || CastField<FMapProperty>(Property);
     if (bStageScalar)
     {
         if (!TryStageJsonValueForProperty(Property, ValueField, StagedValue, ConversionError))
@@ -1423,14 +1424,28 @@ REGISTER_RPC_HANDLER("property.set", "property", "Set a UPROPERTY value on a UOb
             return true;
         }
     }
+    else if (bStageContainer)
+    {
+        // Sets and maps convert into a standalone value (the importer adds the property offset
+        // to the container it is given, so hand it the base that lands on StagedValue).
+        StagedValue = Property->AllocateAndInitializeValue();
+        if (!ApplyJsonValueToProperty(static_cast<uint8*>(StagedValue) - Property->GetOffset_ForInternal(),
+                Property, ValueField, ConversionError))
+        {
+            Property->DestroyValue(StagedValue);
+            FMemory::Free(StagedValue);
+            Ctx.SendError(TEXT("PROPERTY_CONVERSION_FAILED"), ConversionError);
+            return true;
+        }
+    }
 
     // Modify(bAlwaysMarkDirty) — with no open transaction SaveToTransactionBuffer returns false
     // and Modify() would fall back to MarkPackageDirty(); passing bMarkDirty suppresses that at
-    // the source instead of undoing it. Scalar and array conversion was staged above, so malformed
+    // the source instead of undoing it. Scalar, array, set and map conversion was staged above, so malformed
     // input cannot dirty or notify the object before this point.
     RootObject->Modify(/*bAlwaysMarkDirty=*/bMarkDirty);
 
-    if (bStageScalar || bStageArray)
+    if (bStageScalar || bStageArray || bStageContainer)
     {
         Property->CopySingleValue(
             Property->ContainerPtrToValuePtr<void>(TargetContainer), StagedValue);

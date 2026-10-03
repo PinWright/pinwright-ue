@@ -312,7 +312,7 @@ REGISTER_RPC_HANDLER("misc.set_game_speed", "misc", "Set the global TimeDilation
 }
 
 // ---- misc.set_replication ----
-REGISTER_RPC_HANDLER("misc.set_replication", "misc", "Configure replication flags (bReplicates, bAlwaysRelevant, bNetLoadOnClient, etc.) on the actor CDO of a Blueprint asset. Asset-level change; recompiles the Blueprint.",
+REGISTER_RPC_HANDLER("misc.set_replication", "misc", "Set bReplicates and bReplicateMovement on the actor CDO of an Actor Blueprint asset (non-Actor Blueprints are refused with INVALID_BLUEPRINT_CLASS). Asset-level change; marks the Blueprint modified, does not compile or save. Response flags are read back from the CDO.",
     RPC_PARAMS(
         RPC_PARAM_REQ("blueprintPath", "path", "Blueprint asset path"),
         RPC_PARAM_OPT("replicates", "boolean", "Enable replication (default true)"),
@@ -343,20 +343,27 @@ REGISTER_RPC_HANDLER("misc.set_replication", "misc", "Configure replication flag
         return true;
     }
 
+    // Replication flags live on AActor only: refuse any other base class before touching the
+    // Blueprint, rather than dirtying it and echoing the request as if it had been applied.
     AActor* CDO = Cast<AActor>(Blueprint->GeneratedClass->GetDefaultObject());
-    if (CDO)
+    if (!CDO)
     {
-        CDO->SetReplicates(bReplicates);
-        CDO->SetReplicateMovement(bReplicateMovement);
+        Ctx.SendError(TEXT("INVALID_BLUEPRINT_CLASS"),
+            FString::Printf(TEXT("Blueprint %s generates %s, which is not an Actor class; replication flags exist only on Actor Blueprints. Nothing was modified."),
+                *BlueprintPath, *Blueprint->GeneratedClass->GetPathName()));
+        return true;
     }
 
     Blueprint->Modify();
+    CDO->SetReplicates(bReplicates);
+    CDO->SetReplicateMovement(bReplicateMovement);
     FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
 
+    // Read the flags back off the CDO, not from the request.
     TSharedPtr<FJsonObject> ResponseJson = MakeShared<FJsonObject>();
     ResponseJson->SetStringField(TEXT("blueprintPath"), BlueprintPath);
-    ResponseJson->SetBoolField(TEXT("replicates"), bReplicates);
-    ResponseJson->SetBoolField(TEXT("replicateMovement"), bReplicateMovement);
+    ResponseJson->SetBoolField(TEXT("replicates"), CDO->GetIsReplicated());
+    ResponseJson->SetBoolField(TEXT("replicateMovement"), CDO->IsReplicatingMovement());
     AddAssetVerification(ResponseJson, Blueprint);
     Ctx.SendSuccess(ResponseJson);
     return true;

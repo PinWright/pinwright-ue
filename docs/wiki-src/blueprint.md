@@ -328,6 +328,18 @@ Applies arbitrary key-value metadata to a Blueprint variable via the `metadata` 
 
 Writes a property value directly onto a Blueprint's Class Default Object (CDO), then compiles and saves the Blueprint. Distinct from `property.set` (which operates on any live UObject) — `blueprint.set_default` specifically targets the CDO and always triggers a recompile. For non-CDO live objects, or for `DataAsset` fields, prefer `call("property.set")`. To read CDO defaults back, `call("property.list")` and `call("property.get")` auto-resolve `/Game/...` Blueprint paths to the CDO.
 
+#### Container values
+
+`value` takes any JSON type. Arrays and sets take a JSON array, maps a JSON object keyed by the map key (scalar keys by spelling: `"3"`, an enumerator name; a struct key by its struct text, e.g. a `FGameplayTag` key as `"(TagName=\"A.B\")"`), and any of the three may instead be passed as its JSON text (`"[\"A\", \"B\"]"`), the form a caller of the old string-typed slot sends. The whole container is replaced.
+
+```json
+{ "method": "blueprint.set_default",
+  "params": { "path": "/Game/Weapons/BP_Weapon", "propertyName": "ImpactDecalSizes",
+              "value": { "SurfaceType1": 14.0, "SurfaceType6": 30.0 } } }
+```
+
+The value is converted into a copy of the current one first, so a value that does not convert (a key that is no enumerator, a duplicate set element or map key, a wrong JSON shape) is refused with `CONVERSION_FAILED` before the Blueprint is touched; the message ends `Property '<name>' (<type>) was not modified.` One exception: Instanced brace text (`{Down={Rule=Escape},_kind=/Script/UMG.WidgetNavigation}` for a widget's `Navigation`) builds a subobject outered to the CDO, so it is validated in place. The property is still all-or-nothing, but a refused value leaves the Blueprint marked modified and the message has no `was not modified` suffix.
+
 #### TSoftClassPtr path resolution
 
 When the target property is a `TSoftClassPtr<>`, the value is resolved to the `UClass` it names before it is stored, on any mount point (`/Game/`, a plugin content root such as `/MyPlugin/`, `/Engine/`, `/Script/`). A Blueprint asset resolves to its generated class:
