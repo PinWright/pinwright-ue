@@ -4,11 +4,24 @@
 
 ## Install
 
-Open your AI coding assistant (Claude Code, Codex CLI, Cursor in agent mode, Gemini CLI, Cline) in your Unreal project's folder and paste this prompt. Paste it again later to update. To install by hand, see [Install it yourself](#install-it-yourself).
+Open your AI coding assistant (Claude Code, Codex CLI, Cursor in agent mode, Gemini CLI, Cline) in your Unreal project's folder and give it this prompt. Give it the same prompt again later to update. To install by hand, see [Install it yourself](#install-it-yourself).
 
 ```text
 Install PinWright into this Unreal project and connect yourself to it by following https://github.com/PinWright/pinwright-ue/blob/master/AGENT_INSTALL.md
 ```
+
+## How it compares
+
+PinWright fully supports more features than any other Unreal MCP tool. Each product was graded on 341 features from its own source code ([full matrix with evidence](https://pinwright.com/compare); graded 2026-09-28, PinWright re-checked 2026-10-03):
+
+| | Yes | Partial | No |
+|---|---:|---:|---:|
+| **PinWright** | **224** | 87 | 30 |
+| ue-mcp | 177 | 115 | 49 |
+| Monolith | 110 | 151 | 79 |
+| ChiR24 Unreal_mcp | 100 | 132 | 109 |
+| Epic UE 5.8 MCP | 73 | 124 | 142 |
+| VibeUE | 59 | 188 | 94 |
 
 ## What you can ask for
 
