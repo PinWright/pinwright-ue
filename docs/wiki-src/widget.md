@@ -518,6 +518,15 @@ JSON shapes:
    ```json
    { "slot": { "LayoutData": "{\"Offsets\":{\"Left\":10}}" } }
    ```
+4. **The `{Key=Value,...}` text `widget.export_xml` emits**, copied unedited (its braces are read as
+   the ExportText parens of form 2): `{ "properties": { "ColorAndOpacity": "{SpecifiedColor={R=0.29,G=0.5,B=0.7,A=1.0},ColorUseRule=UseColor_Specified}" } }`.
+   An Instanced subobject property such as `Navigation` takes its exported
+   `{Down={Rule=Explicit,WidgetToFocus=Next,...},_kind=/Script/UMG.WidgetNavigation}` form too: a fresh
+   subobject of the `_kind` class replaces the old one; empty weak references and unbound-delegate markers are
+   skipped. A component property (any `UActorComponent` pointer) is refused: use the component verbs.
+   Not round-trippable: an array leaf, a text leaf containing `{`/`}`, a bound delegate (`bindingStatus=bound`),
+   and a nested Instanced subobject or instanced struct inside the rebuilt subobject (the last two are refused
+   with no partial write).
 
 Prefer nested objects: errors identify exact paths such as `LayoutData.Offsets.Left`; string forms
 report one parse error for the blob. This applies to both fields.

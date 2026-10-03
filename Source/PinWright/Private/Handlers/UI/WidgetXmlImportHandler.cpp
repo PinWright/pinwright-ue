@@ -243,9 +243,10 @@ bool ApplyAttributeToObject(void* Target, UStruct* TargetStruct,
         FString ApplyError;
         if (ApplyJsonValueToProperty(CurrentContainer, CurrentProp, JsonVal, ApplyError))
             return true;
-        if (ImportTextToProperty(CurrentContainer, CurrentProp, Value, ApplyError))
+        FString ImportError;
+        if (ImportTextToProperty(CurrentContainer, CurrentProp, Value, ImportError))
             return true;
-        OutError = ApplyError;
+        OutError = ApplyError + TEXT("; ImportText fallback: ") + ImportError;
         return false;
     }
 
@@ -271,9 +272,10 @@ bool ApplyAttributeToObject(void* Target, UStruct* TargetStruct,
     FString ApplyError;
     if (ApplyJsonValueToProperty(Target, Prop, JsonVal, ApplyError))
         return true;
-    if (ImportTextToProperty(Target, Prop, Value, ApplyError))
+    FString ImportError;
+    if (ImportTextToProperty(Target, Prop, Value, ImportError))
         return true;
-    OutError = ApplyError;
+    OutError = ApplyError + TEXT("; ImportText fallback: ") + ImportError;
     return false;
 }
 

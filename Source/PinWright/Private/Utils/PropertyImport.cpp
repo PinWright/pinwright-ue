@@ -7,6 +7,8 @@
 #include "Utils/PropertyInspection.h"
 
 #include "Compat/EngineVersionCompat.h"
+#include "Compat/JsonKeyCompat.h"
+#include "Components/ActorComponent.h"
 #include "Engine/Blueprint.h"
 #include "Internationalization/Text.h"
 #include "Utils/GuardedLoad.h"
@@ -444,31 +446,10 @@ TSharedPtr<FJsonValue> CoerceStringToJsonValueByProperty(const FString& StringVa
             {
                 return MakeShared<FJsonValueObject>(Obj);
             }
-            // Not valid JSON: this is the widget-XML exporter's brace/`=` struct
-            // hybrid `{Key=Value,...}` (JsonValueToAttrString, EJson::Object case in
-            // Handlers/UI/WidgetXmlUtils.h). Rewriting the structural braces to an
-            // ExportText struct literal `(Key=Value,...)` lets ImportText_Direct
-            // consume it downstream, so an exported widget tree round-trips back
-            // through import. A genuine JSON object already returned above, and a paren
-            // literal never entered this branch, so only the exporter's unparseable
-            // hybrid reaches here.
-            //
-            // KNOWN LIMITATION: this is a blind character swap, not a grammar-aware
-            // one. The supported input is a struct of scalar / nested-struct leaves,
-            // whose only braces are the structural delimiters. It does NOT round-trip
-            // two exporter forms because they are ambiguous once flattened: (1) a
-            // string/text leaf that itself contains a brace — the exporter emits leaf
-            // strings verbatim and unquoted (EJson::String case), so an FText holding
-            // a `{0}` format placeholder is swapped to `(0)`; and (2) an array-valued
-            // field — the exporter joins array elements with bare commas and no
-            // brackets (EJson::Array case), which ImportText_Direct cannot reconstruct.
-            FString AsExportTextLiteral = Trimmed;
-            for (TCHAR& Ch : AsExportTextLiteral)
-            {
-                if (Ch == TEXT('{')) { Ch = TEXT('('); }
-                else if (Ch == TEXT('}')) { Ch = TEXT(')'); }
-            }
-            return MakeShared<FJsonValueString>(AsExportTextLiteral);
+            // Not valid JSON: the widget-XML exporter's `{Key=Value,...}` hybrid stays a
+            // string; ApplyJsonValueToProperty's struct string branch rewrites it to an
+            // ExportText literal for every caller (widget.set too), see
+            // PropertyImportBraceHelpers::BraceHybridToExportText.
         }
         return MakeShared<FJsonValueString>(StringValue);
     }
@@ -813,6 +794,250 @@ bool ApplyJsonValueToArrayDirect(FArrayProperty* AP, void* DirectArrayValue,
     return true;
 }
 
+// widget.export_xml flattens every JSON object to `{Key=Value,...}` (JsonValueToAttrString,
+// EJson::Object case in Handlers/UI/WidgetXmlUtils.h). These helpers read that form back.
+namespace PropertyImportBraceHelpers
+{
+    // Struct text: swapping the structural braces for parens gives the ExportText literal
+    // `(Key=Value,...)` that ImportText_Direct consumes.
+    // KNOWN LIMITATION: a blind character swap, not grammar-aware. A string/text leaf holding a
+    // brace (an FText `{0}` placeholder) is swapped too, and an array field (exported as bare
+    // comma-joined elements, EJson::Array case) cannot be reconstructed by ImportText_Direct.
+    FString BraceHybridToExportText(const FString& Trimmed)
+    {
+        FString Out = Trimmed;
+        for (TCHAR& Ch : Out)
+        {
+            if (Ch == TEXT('{')) { Ch = TEXT('('); }
+            else if (Ch == TEXT('}')) { Ch = TEXT(')'); }
+        }
+        return Out;
+    }
+
+    // Parse `{Key=Value,...}` at Text[Pos] into a JSON object with string leaves; nested
+    // `{...}` values become nested objects. Returns null on malformed input or nesting deeper
+    // than 64 levels.
+    // ponytail: a leaf ends at the first ',' or '}' outside parens, so a flattened array leaf
+    // is mis-split; quote leaves in the exporter if a real round-trip needs one.
+    TSharedPtr<FJsonObject> ParseBraceHybrid(const FString& Text, int32& Pos, int32 Depth = 0)
+    {
+        if (Depth > 64 || Pos >= Text.Len() || Text[Pos] != TEXT('{'))
+        {
+            return nullptr;
+        }
+        ++Pos;
+        TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
+        while (Pos < Text.Len() && Text[Pos] != TEXT('}'))
+        {
+            int32 Eq = Pos;
+            while (Eq < Text.Len() && Text[Eq] != TEXT('=') && Text[Eq] != TEXT(',')
+                && Text[Eq] != TEXT('{') && Text[Eq] != TEXT('}'))
+            {
+                ++Eq;
+            }
+            const FString Key = Text.Mid(Pos, Eq - Pos).TrimStartAndEnd();
+            if (Eq >= Text.Len() || Text[Eq] != TEXT('=') || Key.IsEmpty())
+            {
+                return nullptr;
+            }
+            Pos = Eq + 1;
+            if (Pos < Text.Len() && Text[Pos] == TEXT('{'))
+            {
+                TSharedPtr<FJsonObject> Child = ParseBraceHybrid(Text, Pos, Depth + 1);
+                if (!Child)
+                {
+                    return nullptr;
+                }
+                Obj->SetObjectField(Key, Child);
+            }
+            else
+            {
+                const int32 ValueStart = Pos;
+                int32 ParenDepth = 0;
+                while (Pos < Text.Len()
+                    && (ParenDepth > 0 || (Text[Pos] != TEXT(',') && Text[Pos] != TEXT('}'))))
+                {
+                    ParenDepth += Text[Pos] == TEXT('(') ? 1 : Text[Pos] == TEXT(')') ? -1 : 0;
+                    ++Pos;
+                }
+                Obj->SetStringField(Key, Text.Mid(ValueStart, Pos - ValueStart));
+            }
+            if (Pos < Text.Len() && Text[Pos] == TEXT(','))
+            {
+                ++Pos;
+            }
+        }
+        if (Pos >= Text.Len())
+        {
+            return nullptr;
+        }
+        ++Pos;
+        return Obj;
+    }
+
+    // Drop the export's readback-only leaves that the importer cannot write and that carry no
+    // authored value: an empty weak/lazy reference (a null one exports as "") and an unbound
+    // delegate marker (`{_kind=FDelegateProperty,...,bindingStatus=empty}`, PropertyExport.cpp).
+    // Every other leaf, empty or not, is applied: the export is a sparse diff, so an empty string
+    // there is an authored empty value.
+    void PruneUnwritableFields(const TSharedPtr<FJsonObject>& Obj, UStruct* Struct)
+    {
+        TArray<FString> Drop;
+        for (const auto& Pair : Obj->Values)
+        {
+            const FString Key = EARGCompat::JsonKeyToString(Pair.Key);
+            FProperty* Field = FindPropertyCI(Struct, Key);
+            if (!Field)
+            {
+                continue;
+            }
+            FString Status;
+            if ((CastField<FWeakObjectProperty>(Field) || CastField<FLazyObjectProperty>(Field))
+                && Pair.Value->Type == EJson::String && Pair.Value->AsString().IsEmpty())
+            {
+                Drop.Add(Key);
+            }
+            else if ((CastField<FDelegateProperty>(Field) || CastField<FMulticastDelegateProperty>(Field))
+                && Pair.Value->Type == EJson::Object
+                && Pair.Value->AsObject()->TryGetStringField(TEXT("bindingStatus"), Status) && Status == TEXT("empty"))
+            {
+                Drop.Add(Key);
+            }
+            else if (FStructProperty* StructField = CastField<FStructProperty>(Field))
+            {
+                if (Pair.Value->Type == EJson::Object)
+                {
+                    PruneUnwritableFields(Pair.Value->AsObject(), StructField->Struct);
+                }
+            }
+        }
+        for (const FString& Key : Drop)
+        {
+            Obj->RemoveField(Key);
+        }
+    }
+
+    // An Instanced object property (UWidget::Navigation) exports as the subobject's sparse field
+    // diff tagged `_kind=<class path>` (PropertyExport.cpp ExpandInstancedSubobject). Rebuild it as
+    // a fresh subobject of that class outered to the owning object, each field applied, and assign
+    // it only once every field applied.
+    bool ApplyInstancedSubobjectText(void* TargetContainer, FObjectProperty* Property,
+                                     const FString& Text, FString& OutError)
+    {
+        // UActorComponent is DefaultToInstanced, so every component pointer carries
+        // CPF_InstancedReference; a component built here would be unregistered and unowned by the
+        // actor's component lists. Components are authored through the component/SCS verbs.
+        if (Property->PropertyClass->IsChildOf(UActorComponent::StaticClass()))
+        {
+            OutError = FString::Printf(
+                TEXT("Component property '%s' cannot be rebuilt from text; add or edit the component with the component verbs"),
+                *Property->GetName());
+            return false;
+        }
+        UClass* OwnerClass = Property->GetOwner<UClass>();
+        if (!OwnerClass)
+        {
+            OutError = FString::Printf(
+                TEXT("Instanced property '%s' can only be rebuilt from text on a UObject, not inside a struct"),
+                *Property->GetName());
+            return false;
+        }
+        int32 Pos = 0;
+        TSharedPtr<FJsonObject> Fields = ParseBraceHybrid(Text, Pos);
+        if (!Fields || Pos != Text.Len())
+        {
+            OutError = FString::Printf(
+                TEXT("Instanced property '%s' expects the export form {Field=Value,...,_kind=<class path>}"),
+                *Property->GetName());
+            return false;
+        }
+        UClass* Class = Property->PropertyClass;
+        FString KindPath;
+        if (Fields->TryGetStringField(TEXT("_kind"), KindPath))
+        {
+            Fields->RemoveField(TEXT("_kind"));
+            Class = IsPlausibleObjectPathForLoad(KindPath) ? LoadObject<UClass>(nullptr, *KindPath) : nullptr;
+        }
+        if (!Class || !Class->IsChildOf(Property->PropertyClass) || Class->HasAnyClassFlags(CLASS_Abstract)
+            || Class->IsChildOf(UActorComponent::StaticClass()))
+        {
+            OutError = FString::Printf(TEXT("_kind '%s' is not a concrete non-component %s class"),
+                *KindPath, *Property->PropertyClass->GetName());
+            return false;
+        }
+        PruneUnwritableFields(Fields, Class);
+
+        // Same flags the UMG designer gives a new UWidgetNavigation (WidgetNavigationCustomization.cpp).
+        UObject* Outer = static_cast<UObject*>(TargetContainer);
+        EObjectFlags Flags = RF_Transactional;
+        if (Outer->IsTemplate())
+        {
+            Flags |= Outer->GetMaskedFlags(RF_PropagateToSubObjects) | RF_DefaultSubObject;
+        }
+        UObject* Subobject = NewObject<UObject>(Outer, Class, NAME_None, Flags);
+        for (const auto& Pair : Fields->Values)
+        {
+            const FString Key = EARGCompat::JsonKeyToString(Pair.Key);
+            FProperty* Field = FindPropertyCI(Class, Key);
+            FString FieldError = Field ? FString() : TEXT("unknown field");
+            if (!Field || !ApplyJsonValueToProperty(Subobject, Field, Pair.Value, FieldError))
+            {
+                Subobject->MarkAsGarbage();
+                OutError = FString::Printf(TEXT("Instanced %s field '%s': %s"),
+                    *Class->GetName(), *Key, *FieldError);
+                return false;
+            }
+        }
+        // The replaced subobject would otherwise linger under the owner as an unreferenced
+        // subobject; Rename is transactional, so undo restores it. A CDO's constructor-made
+        // default subobject stays put: FObjectInitializer finds it by name for later instances.
+        // On a Blueprint CDO that is one inherited by name (archetype = a parent CDO's subobject);
+        // one this importer built usually has no namesake under the parent CDO, so its archetype
+        // is its class CDO. A native CDO's own subobjects also archetype to the class CDO, so
+        // every one there is kept.
+        if (UObject* Replaced = Property->GetObjectPropertyValue_InContainer(TargetContainer))
+        {
+            const bool bNamedCdoSubobject = Outer->HasAnyFlags(RF_ClassDefaultObject)
+                && Replaced->HasAnyFlags(RF_DefaultSubObject)
+                && (!Outer->GetClass()->HasAnyClassFlags(CLASS_CompiledFromBlueprint)
+                    || !Replaced->GetArchetype()->HasAnyFlags(RF_ClassDefaultObject));
+            if (Replaced->GetOuter() == Outer && !bNamedCdoSubobject)
+            {
+                Replaced->Rename(nullptr, GetTransientPackage(), REN_DontCreateRedirectors | MCP_REN_NO_RESET_LOADERS);
+            }
+        }
+        Property->SetObjectPropertyValue_InContainer(TargetContainer, Subobject);
+        return true;
+    }
+}
+
+namespace PropertyImportContainerHelpers
+{
+    // A standalone value of Prop holding ValueField, written through ApplyJsonValueToProperty
+    // so set elements and map keys/values take every type that function takes. Null (and the
+    // value freed) on failure; otherwise the caller releases it with FreeValue.
+    static void* StageValue(FProperty* Prop, const TSharedPtr<FJsonValue>& ValueField, FString& OutError)
+    {
+        void* Staged = Prop->AllocateAndInitializeValue();
+        // ApplyJsonValueToProperty takes a container and adds the property's offset (a map
+        // value's offset is the pair's value offset), so hand it the base that lands on Staged.
+        uint8* Container = static_cast<uint8*>(Staged) - Prop->GetOffset_ForInternal();
+        if (ApplyJsonValueToProperty(Container, Prop, ValueField, OutError))
+        {
+            return Staged;
+        }
+        Prop->DestroyValue(Staged);
+        FMemory::Free(Staged);
+        return nullptr;
+    }
+
+    static void FreeValue(FProperty* Prop, void* Staged)
+    {
+        Prop->DestroyValue(Staged);
+        FMemory::Free(Staged);
+    }
+}
+
 bool ApplyJsonValueToProperty(void* TargetContainer, FProperty* Property,
                               const TSharedPtr<FJsonValue>& ValueField,
                               FString& OutError)
@@ -942,6 +1167,11 @@ bool ApplyJsonValueToProperty(void* TargetContainer, FProperty* Property,
     // Object reference
     if (FObjectProperty* OP = CastField<FObjectProperty>(Property))
     {
+        if (IsInstancedSubobjectText(OP, ValueField))
+        {
+            return PropertyImportBraceHelpers::ApplyInstancedSubobjectText(
+                TargetContainer, OP, ValueField->AsString().TrimStartAndEnd(), OutError);
+        }
         if (ValueField->Type == EJson::String)
         {
             const FString Path = ValueField->AsString();
@@ -1175,9 +1405,13 @@ bool ApplyJsonValueToProperty(void* TargetContainer, FProperty* Property,
                     }
                 }
 
-                // Last resort: ExportText-style literal like "(Offsets=(Left=10,...))"
+                // Last resort: ExportText-style literal like "(Offsets=(Left=10,...))", or the
+                // widget-XML exporter's `{Key=Value,...}` hybrid rewritten to one.
+                const FString Trimmed = Txt.TrimStartAndEnd();
+                const FString ExportText = Trimmed.StartsWith(TEXT("{"))
+                    ? PropertyImportBraceHelpers::BraceHybridToExportText(Trimmed) : Txt;
                 FString ImportError;
-                if (ImportTextToProperty(TargetContainer, Property, Txt, ImportError))
+                if (ImportTextToProperty(TargetContainer, Property, ExportText, ImportError))
                 {
                     return true;
                 }

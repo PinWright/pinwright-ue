@@ -8,9 +8,9 @@
 // That form is neither valid JSON nor an ExportText paren literal, so the shared
 // import coercion used to reject it and an exported tree could not be re-imported.
 //
-// The fix rewrites the hybrid into the ExportText literal `(Key=Value,...)` inside
-// CoerceStringToJsonValueByProperty's FStructProperty branch, so ImportText_Direct
-// can apply it. This test drives the exact two-step production path
+// The fix rewrites the hybrid into the ExportText literal `(Key=Value,...)` in
+// ApplyJsonValueToProperty's struct string branch (PropertyImportBraceHelpers), so
+// ImportText_Direct can apply it. This test drives the exact two-step production path
 // widget.import_xml uses (ApplyAttributeToObject -> CoerceStringToJsonValueByProperty
 // then ApplyJsonValueToProperty) and asserts the struct value round-trips. It fails
 // if the fix is reverted (apply returns false on the raw brace string).

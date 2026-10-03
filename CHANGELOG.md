@@ -13,6 +13,15 @@
   tick. **Behaviour change:** it now runs at the next safe point instead of inline, its schema
   gains the optional `expectWorld` precondition (refused with `WORLD_MISMATCH` on mismatch), and a
   successful response carries `world` (the current world object path) besides `success`.
+- Fixed: the `{Key=Value,...}` text `widget.export_xml` emits is accepted back unedited.
+  `widget.set` (and every other `ApplyJsonValueToProperty` caller: `property.set`,
+  `blueprint.set_default`) now reads a brace-form struct string (`Brush`, `ColorAndOpacity`, `Font`)
+  as its ExportText literal, as `widget.import_xml` already did. An Instanced subobject property
+  (`UWidget::Navigation`) exported as `{Down={...},_kind=<class>}` is rebuilt as a fresh subobject
+  of that class; its empty weak references and unbound-delegate markers are skipped, and a
+  component (`UActorComponent`) property is refused. It was refused `CONSTRUCTION_FAILED`
+  (`ImportText left trailing input`). `widget.import_xml` and BPIR `node_props` errors now carry
+  both the apply error and the ImportText fallback error (the fallback used to overwrite it).
 - Added: `level.describe_offline` lists a map's actors (label, name, class, path, folder, tags,
   guid, world transform) by parsing the `.umap` on disk, in the `pinwright.actor-describe.v1`
   shape `asset.dump` writes. It never loads the map, never creates its package and never touches

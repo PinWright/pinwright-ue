@@ -219,14 +219,15 @@ bool ReplayGenericNodeProps(UK2Node* Node, const TMap<FString, FString>& NodePro
             bAnyApplied = true;
             return true;
         }
-        if (ImportTextToProperty(Node, Prop, Value, ApplyError))
+        FString ImportError;
+        if (ImportTextToProperty(Node, Prop, Value, ImportError))
         {
             bAnyApplied = true;
             return true;
         }
         OutErrors.Add(FCompileError(SourceLine,
-            FString::Printf(TEXT("node_props: failed to set '%s' on '%s': %s"),
-                *Key, *NodeClass->GetName(), *ApplyError)));
+            FString::Printf(TEXT("node_props: failed to set '%s' on '%s': %s; ImportText fallback: %s"),
+                *Key, *NodeClass->GetName(), *ApplyError, *ImportError)));
         return false;
     };
 

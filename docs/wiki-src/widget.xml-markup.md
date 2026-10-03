@@ -25,6 +25,7 @@ Reference for `widget.export_xml`/`widget.import_xml` XML syntax, `IsVariable` h
 - Tag = widget class without `U` prefix: `TextBlock`, `Button`, `WBP_MyCustomWidget`.
 - `name` = widget instance name.
 - Regular attributes = widget properties (same value syntax as `widget.set`).
+- Struct and Instanced-subobject values export as `{Key=Value,...}` (e.g. `Brush`, `Font`, `Navigation`); `widget.import_xml` and `widget.set` accept that text back unedited. Not round-trippable: an array leaf (exported as bare comma-joined elements), a text leaf containing `{`/`}`, a bound delegate (`bindingStatus=bound`), and a nested Instanced subobject or instanced struct inside the rebuilt subobject (the last two are refused with no partial write).
 - `Slot.` prefix = slot properties (e.g. `Slot.Padding`, `Slot.LayoutData`).
 - `Bind.` prefix = bindings to blueprint functions.
 - `IsVariable="true|false"` = controls whether the widget is exposed as a Blueprint variable.
