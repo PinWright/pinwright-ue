@@ -127,6 +127,13 @@ public:
     void RegisterResponsePolicyForTesting(const FString& RequestId, bool bMutating);
     void DecorateResponseForTesting(const FString& RequestId, bool bSuccess,
                                     TSharedPtr<FJsonObject>& Result);
+
+    // Test seam for the startup bind on an uninitialized (NewObject) subsystem: creates the
+    // transport if absent and runs the real TryStartTransport, so the bind outcome ->
+    // GetServerStatus() mapping is observable without the live editor's transport.
+    // Only for ports expected to FAIL: a successful bind would serve with no dispatcher and
+    // PublishBoundPort would overwrite the gateway-port file (override its root first).
+    bool StartTransportForTesting(int32 Port);
 #endif
 
 private:

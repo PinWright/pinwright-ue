@@ -710,6 +710,15 @@ void UPinWrightSubsystem::DecorateResponseForTesting(
 {
     DecorateAutomationResponse(RequestId, bSuccess, Result);
 }
+
+bool UPinWrightSubsystem::StartTransportForTesting(const int32 Port)
+{
+    if (!StreamingTransport.IsValid())
+    {
+        StreamingTransport = MakeShared<FSocketHttpServer>();
+    }
+    return TryStartTransport(Port, /*bIsRetry=*/false);
+}
 #endif
 
 void UPinWrightSubsystem::SendAutomationError(
