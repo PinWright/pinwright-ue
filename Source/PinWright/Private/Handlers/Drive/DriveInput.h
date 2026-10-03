@@ -82,9 +82,24 @@ public:
     static bool ClickAt(const FVector2D& ScreenPos, EDriveMouseButton Button = EDriveMouseButton::Left);
 
     // Dispatch a real mouse-move to ScreenPos so hover enter/leave fire (unlike a
-    // bare SetCursorPos). HoverAt is an alias for the same operation.
+    // bare SetCursorPos).
     static bool MoveTo(const FVector2D& ScreenPos);
-    static bool HoverAt(const FVector2D& ScreenPos) { return MoveTo(ScreenPos); }
+
+    // MoveTo, then keep the hover it entered. Slate re-hit-tests the cursor with a synthetic
+    // move every frame, and while the application is inactive and the platform says the cursor
+    // is not over a Slate window (another application's window on top at the point) that move
+    // routes an empty path and sends OnMouseLeave one frame after the enter. So the inactive-input
+    // flag stays set until the platform cursor leaves ScreenPos (a later move by the user or by
+    // another injection), Slate stops routing the point to the hovered window, PIE starts or
+    // ends, or ReleaseHoverHold runs; then it is restored to the value it had before the hold.
+    static bool HoverAt(const FVector2D& ScreenPos);
+
+    // End a HoverAt hold now and restore the inactive-input flag. No-op without a hold. Every
+    // FDriveOsInput entry point calls it, so OS-path input never runs with the flag forced.
+    static void ReleaseHoverHold();
+
+    // Whether a HoverAt hold is active (the inactive-input flag is held for it). For tests.
+    static bool IsHoverHeld();
 
     // Press at From, emit interpolated moves spread across DurationMs with the
     // button held, then release at To. DurationMs <= 0 uses a default duration.

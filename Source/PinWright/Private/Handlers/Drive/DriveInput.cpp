@@ -2,6 +2,8 @@
 
 #include "Handlers/Drive/DriveInput.h"
 
+#include "Containers/Ticker.h"
+#include "Editor.h"
 #include "Framework/Application/SlateApplication.h"
 #include "GenericPlatform/GenericApplication.h"
 #include "GenericPlatform/GenericWindow.h"
@@ -349,6 +351,109 @@ bool FDriveInput::MoveTo(const FVector2D& ScreenPos)
 
     DispatchMouseMove(SlateApp, ScreenPos);
     return true;
+}
+
+namespace DriveInputHoverHold
+{
+    struct FHold
+    {
+        FIntPoint Point;
+        TWeakPtr<SWindow> Window;
+        bool bDuringPie = false;
+        bool bPrevHandleInactive = false;
+        FTSTicker::FDelegateHandle Ticker;
+    };
+
+    TOptional<FHold>& Active()
+    {
+        static TOptional<FHold> Hold;
+        return Hold;
+    }
+
+    FIntPoint RoundPoint(const FVector2D& Pos)
+    {
+        return FIntPoint(FMath::RoundToInt(Pos.X), FMath::RoundToInt(Pos.Y));
+    }
+
+    bool IsPieRunning()
+    {
+        return GEditor && GEditor->PlayWorld != nullptr;
+    }
+
+    // Per frame: keep the hold while the platform cursor still sits on the hovered point, Slate
+    // still routes that point to the hovered window, and PIE has neither started nor ended.
+    bool Tick(float)
+    {
+        TOptional<FHold>& Hold = Active();
+        if (!Hold.IsSet())
+        {
+            return false;
+        }
+        if (FSlateApplication::IsInitialized())
+        {
+            const TSharedPtr<ICursor> Cursor = FSlateApplication::Get().GetPlatformCursor();
+            const TSharedPtr<SWindow> Window = Hold->Window.Pin();
+            if (Cursor.IsValid() && RoundPoint(Cursor->GetPosition()) == Hold->Point
+                && Window.IsValid() && FDriveInput::WindowUnderPoint(FVector2D(Hold->Point)) == Window
+                && IsPieRunning() == Hold->bDuringPie)
+            {
+                return true;
+            }
+        }
+        // Returning false unregisters this ticker; drop the handle so Release does not remove it.
+        Hold->Ticker.Reset();
+        FDriveInput::ReleaseHoverHold();
+        return false;
+    }
+}
+
+bool FDriveInput::HoverAt(const FVector2D& ScreenPos)
+{
+    if (!MoveTo(ScreenPos))
+    {
+        return false;
+    }
+
+    using namespace DriveInputHoverHold;
+    FSlateApplication& SlateApp = FSlateApplication::Get();
+    TOptional<FHold>& Hold = Active();
+    if (!Hold.IsSet())
+    {
+        // MoveTo restored the flag, so this is the caller's value, not an injection scope's.
+        Hold.Emplace();
+        Hold->bPrevHandleInactive = SlateApp.GetHandleDeviceInputWhenApplicationNotActive();
+        Hold->Ticker = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateStatic(&DriveInputHoverHold::Tick));
+    }
+    // Where the cursor actually landed, so a warp that missed by a pixel does not release at once.
+    const TSharedPtr<ICursor> Cursor = SlateApp.GetPlatformCursor();
+    Hold->Point = RoundPoint(Cursor.IsValid() ? Cursor->GetPosition() : ScreenPos);
+    Hold->Window = WindowUnderPoint(FVector2D(Hold->Point));
+    Hold->bDuringPie = IsPieRunning();
+    SlateApp.SetHandleDeviceInputWhenApplicationNotActive(true);
+    return true;
+}
+
+void FDriveInput::ReleaseHoverHold()
+{
+    TOptional<DriveInputHoverHold::FHold>& Hold = DriveInputHoverHold::Active();
+    if (!Hold.IsSet())
+    {
+        return;
+    }
+    if (Hold->Ticker.IsValid())
+    {
+        FTSTicker::GetCoreTicker().RemoveTicker(Hold->Ticker);
+    }
+    if (FSlateApplication::IsInitialized())
+    {
+        FSlateApplication::Get().SetHandleDeviceInputWhenApplicationNotActive(Hold->bPrevHandleInactive);
+    }
+    Hold.Reset();
+}
+
+bool FDriveInput::IsHoverHeld()
+{
+    return DriveInputHoverHold::Active().IsSet();
 }
 
 bool FDriveInput::DragFromTo(const FVector2D& From, const FVector2D& To, int32 DurationMs)

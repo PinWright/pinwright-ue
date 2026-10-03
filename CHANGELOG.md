@@ -23,6 +23,12 @@
   (a value in ticks, display frames or seconds, or `"unbounded"`) on the matched sections in one
   undoable transaction with per-section read-back; it reports `compileRequired` instead of
   compiling.
+- Fixed: `drive.hover` (Slate path) keeps the hover it enters. Slate's per-frame synthetic cursor
+  move re-hit-tested without the inactive-input flag the injection held, so while the editor was
+  not the active application and another application's window covered the point, it sent
+  `OnMouseLeave` one frame after the enter and a hover-driven UMG animation or dropdown never
+  showed. The flag is now held until the pointer leaves the hovered point, the point stops
+  routing to the hovered window, PIE starts or ends, or an `os_input` action runs, then restored.
 - Fixed: the `{Key=Value,...}` text `widget.export_xml` emits is accepted back unedited.
   `widget.set` (and every other `ApplyJsonValueToProperty` caller: `property.set`,
   `blueprint.set_default`) now reads a brace-form struct string (`Brush`, `ColorAndOpacity`, `Font`)

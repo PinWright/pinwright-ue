@@ -620,6 +620,8 @@ bool FDriveOsInput::IsPointerAt(const FIntPoint& Target, FIntPoint& OutPointer)
 
 bool FDriveOsInput::MoveTo(const FVector2D& ScreenPos, FDriveInjectFailure& OutFailure)
 {
+    // A Slate-path hover hold forces the inactive-input flag; real input must not run under it.
+    FDriveInput::ReleaseHoverHold();
 #if PLATFORM_LINUX
     const FString LockPath = DisplayLockPath();
     const FDisplayLock Lock(LockPath, LockTimeoutSeconds);
@@ -637,6 +639,8 @@ bool FDriveOsInput::MoveTo(const FVector2D& ScreenPos, FDriveInjectFailure& OutF
 
 bool FDriveOsInput::ClickAt(const FVector2D& ScreenPos, EDriveMouseButton Button, FDriveInjectFailure& OutFailure)
 {
+    // A Slate-path hover hold forces the inactive-input flag; real input must not run under it.
+    FDriveInput::ReleaseHoverHold();
 #if PLATFORM_LINUX
     // One lock across motion, checks, press and release: no peer injector may move the
     // shared pointer between our motion and our press, or during the hold.
@@ -705,6 +709,8 @@ bool FDriveOsInput::CheckPress(const FIntPoint& Target, FDriveInjectFailure& Out
 
 TSharedPtr<FDriveOsInput::FDisplayLock> FDriveOsInput::BeginGesture(FIntPoint& OutPointer, FDriveInjectFailure& OutFailure)
 {
+    // A Slate-path hover hold forces the inactive-input flag; real input must not run under it.
+    FDriveInput::ReleaseHoverHold();
 #if PLATFORM_LINUX
     const FString LockPath = DisplayLockPath();
     TSharedPtr<FDisplayLock> Lock = MakeShared<FDisplayLock>(LockPath, LockTimeoutSeconds);
