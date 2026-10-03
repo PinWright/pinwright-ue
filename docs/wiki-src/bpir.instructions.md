@@ -113,6 +113,8 @@ set PlayerName = "Hero"               # Set string
 %v = get MyVariable                   # Explicit get (usually just use $MyVariable inline)
 ```
 
+`get` also takes a `$` reference, including a property chain: `%fov = get $Camera.FieldOfView` binds `%fov` to that read (one `VariableGet`), so a value used twice is read once. It is the same read as writing `$Camera.FieldOfView` inline in value position, and the register works as a member-call `Target:` too. This form creates no node of its own, so it takes no `@(x, y)` placement and no trailing exec targets. `%fov = $Camera.FieldOfView` (no `get`) is rejected with a hint pointing here.
+
 **External property access** (set/get on another object):
 ```
 set %gi.RetryCount = 0               # Set property on a node output object
@@ -131,6 +133,8 @@ set $MyStructVar.Inner.Outer.Leaf = 42
 The parser splits `set` targets on the **last** dot: `TypeArg` gets the object path and `FunctionName` the leaf. For get-side `$name.a.b.c`, `PreEmitVariableRefs` splits on the first dot and `ResolveChainFromPin` walks the remainder as it does for `%ref.Pin.Prop.Q`; single-dot `set $widget.Property = value` is unchanged.
 
 The target can be `$paramName` (parameter, self/Blueprint variable, or `$` fallback to a prior `%` local) or `%refName` (node output), with optional intermediate pins. The compiler resolves each link's class from its pin type and emits the external VariableGet/VariableSet nodes.
+
+A property chain is also a valid member-call `Target:`: `call FocusNext(Target: %hud.MenuRef)` looks the function up on the class of `MenuRef` (the chain's last link), exactly like `Target: $TypedVar`, and that class wins over a same-named function on the calling Blueprint.
 
 ## 2.3 Control Flow
 

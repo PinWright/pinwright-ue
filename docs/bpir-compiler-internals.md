@@ -57,13 +57,15 @@ Phase 1 iterates all entry blocks and calls `SetupEntryPoint()` for each. The re
 
 ### Phase 1.5 — Skeleton Recompile
 
-If any custom events were created during Phase 1, the compiler triggers a `RegenerateSkeletonOnly` compile:
+If any custom events or function graphs were created during Phase 1 (or a user function graph has no `UFunction` on the skeleton yet), the compiler triggers a `RegenerateSkeletonOnly` compile:
 
 ```cpp
 FKismetEditorUtilities::CompileBlueprint(TargetBlueprint, EBlueprintCompileOptions::RegenerateSkeletonOnly);
 ```
 
 This makes newly created custom events visible as `UFunction` objects on `SkeletonGeneratedClass`. Without this step, `call CustomEventName(...)` from another entry block would fail function resolution because the custom event's `UFunction` doesn't exist yet on `GeneratedClass`.
+
+A created function graph always forces it, even though its `UFunction` already exists by name: `FBlueprintEditorUtils::AddFunctionGraph` calls `MarkBlueprintAsStructurallyModified`, which regenerates the skeleton *before* `SetupFunction` adds the parameter pins. That UFunction is a parameterless stub, and a same-compile call site allocated against it gets only `self` (`Could not find target pin 'X' ... Available pins: self`). Ratchet: `PinWright.bpir.compiler.forward_reference.SameCompileCalleeKeepsParamPins` (B-bpir-forward-call-loses-parameter-pins).
 
 The skeleton recompile patches existing nodes in-place rather than destroying/recreating them, so the cached `EntryNode` pointers in `FBlockSetupState` remain valid.
 

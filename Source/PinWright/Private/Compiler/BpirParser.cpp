@@ -1815,8 +1815,19 @@ const TMap<FString, FInstructionParserFn>& FBpirParser::GetAfterEqualsDispatch()
         { TEXT("get"), [](FBpirParser& P, const FString& Rest, const FString& ResultName) {
             auto& Inst = P.CurrentInst();
             Inst.ResultName = ResultName;
+            const FString Operand = StripTrailingComment(Rest).TrimStartAndEnd();
+            if (Operand.StartsWith(TEXT("$")))
+            {
+                // `%r = get $obj.Prop` (or `get $Var`) reads through the value resolver:
+                // bind the register as an alias of that value reference, the same path
+                // the value-position form takes. A self-member VariableGet named
+                // "$obj.Prop" would have no output pin and leave the register unbound.
+                Inst.Opcode = EBpirOpcode::Alias;
+                Inst.AliasRhs = Operand;
+                return;
+            }
             Inst.Opcode = EBpirOpcode::Get;
-            Inst.FunctionName = UnwrapNameTokenOrLegacy(StripTrailingComment(Rest));
+            Inst.FunctionName = UnwrapNameTokenOrLegacy(Operand);
         }},
     };
     return Table;
@@ -1984,6 +1995,18 @@ bool FBpirParser::ParseInstruction(const FString& Line, int32 LineNum, FBpirInst
                     CurrentInstPtr = nullptr;
                     CurrentErrorsPtr = nullptr;
                     return true;
+                }
+
+                // `%r = $obj.Prop` is not an alias form; point at the spelling that is.
+                if (Tokens[FirstRefIdx].Text.StartsWith(TEXT("$")))
+                {
+                    const FString AfterEq = WorkingLine.Mid(Tokens[EqTokenIdx].Position + 1).TrimStart();
+                    AddError(OutErrors, LineNum, FString::Printf(
+                        TEXT("Property access cannot be assigned directly: '%s'. Use '%%%s = get %s'"),
+                        *AfterEq, *ResultName, *AfterEq));
+                    CurrentInstPtr = nullptr;
+                    CurrentErrorsPtr = nullptr;
+                    return false;
                 }
             }
         }

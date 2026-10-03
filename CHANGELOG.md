@@ -90,6 +90,14 @@
   (not inside a macro body, where such a select stays wildcard). A
   refused data wire now names both pin types and the schema's reason.
 
+- Fixed: `blueprint.compile_bpir` — a call to a function declared in the same code keeps the
+  callee's parameter pins (it used to get only `self`); `%r = get $obj.Prop` binds `%r` (the next
+  line used to fail `Could not resolve value '%r'`); `Target: %ref.Prop` resolves the member
+  function on the property's class, which also wins over a same-named function on the caller;
+  an alias register (`%r = $Var`, `%r = get $obj.Prop`) works as `Target:` the same way; a value
+  parameter named `Target` fed a non-object value no longer logs a `ResolveTargetClass` error.
+  `%r = $obj.Prop` (no `get`) is still rejected, now with `Property access cannot be assigned
+  directly ... Use '%r = get $obj.Prop'` instead of `Unknown instruction keyword after '='`.
 - Added: graph layout keeps comment boxes. Every PinWright layout (BPIR / MGIR / AGIR compiles,
   `material.authoring.auto_layout`) records each comment's members from the rects before it runs;
   a comment around unmoved nodes is an obstacle the moved nodes stay out of, and a comment with

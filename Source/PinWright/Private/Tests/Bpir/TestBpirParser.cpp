@@ -2385,11 +2385,9 @@ bool FBpirParserAliasPercentTest::RunTest(const FString& Parameters)
 
 // ============================================================================
 // 63. AliasDotSuffixRejected — %x = $MyVar.Field must FAIL to parse
-// Inline member access is not supported; user must use break<T> instead.
-// This verifies the dot-suffix guard in the parser is preserved after the fix.
-// Pre-fix: also fails, but for the wrong reason ("Expected keyword after '='").
-// Post-fix: falls through to the keyword-dispatch path and also fails, but
-//           the observable contract is the same — parse returns false.
+// Inline member access is not an alias form; the spelling is `%x = get $MyVar.Field`.
+// This verifies the dot-suffix guard in the parser is preserved, and that the
+// rejection names that spelling.
 // ============================================================================
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBpirParserAliasDotSuffixRejectedTest,
@@ -2405,6 +2403,8 @@ bool FBpirParserAliasDotSuffixRejectedTest::RunTest(const FString& Parameters)
     // Inline member access via alias is not supported — parse must fail.
     TestFalse(TEXT("Parse should fail for dot-suffix alias"), bOk);
     TestTrue(TEXT("At least one error reported"), Errors.Num() > 0);
+    TestTrue(TEXT("Error points at the `get` spelling"),
+        Errors.ContainsByPredicate([](const FCompileError& E) { return E.Message.Contains(TEXT("%x = get $MyVar.Field")); }));
 
     return true;
 }

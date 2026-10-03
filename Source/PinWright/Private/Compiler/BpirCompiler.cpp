@@ -3599,9 +3599,12 @@ FCompileResult FBpirCompiler::Compile(const FString& Code, EBpirCompileMode Mode
     // Phase 1.5: skeleton recompile when any Phase-1 output lacks a UFunction on
     // SkeletonGeneratedClass — either a newly-created custom event, or a user function
     // graph that hasn't been skeleton-compiled yet. Keeps resolver lookups up-to-date.
+    // A function graph created in Phase 1 always forces it: AddFunctionGraph regenerates
+    // the skeleton BEFORE SetupFunction adds the parameter pins, so the UFunction found by
+    // name is a parameterless stub and call sites would allocate only `self`.
     auto NeedsSkeletonRecompile = [this]() -> bool
     {
-        if (CreatedCustomEvents.Num() > 0) return true;
+        if (CreatedCustomEvents.Num() > 0 || CreatedFunctionGraphs.Num() > 0) return true;
         UClass* const SGC = TargetBlueprint->SkeletonGeneratedClass;
         for (UEdGraph* FG : TargetBlueprint->FunctionGraphs)
         {
@@ -4729,7 +4732,9 @@ void FBpirCompiler::PreEmitVariableRefs(FBpirEntryBlock& Block)
             && Inst.AliasRhs.StartsWith(TEXT("$"))
             && ReferencedAliasNames.Contains(Inst.ResultName))
         {
-            ValueResolver->PreEmitDollarVar(NormalizeBpirNameToken(Inst.AliasRhs.Mid(1)));
+            // Same pre-emit as a value-position `$` arg, so `%r = get $obj.Prop`
+            // (an alias of a dotted chain) gets its external VariableGet.
+            PreEmitValueRef(Inst.AliasRhs, PreEmitValueRef, 0);
         }
     }
 }
@@ -6247,6 +6252,14 @@ bool FBpirCompiler::EmitInstruction(int32 InstructionIndex, FBpirInstruction& In
                     continue;
                 }
 
+                // Class of the value Target will be wired from. Silent on a non-object
+                // pin: a value parameter literally named `Target` (FInterpTo, %v.X,
+                // $SomeFloat) is not a caller object and must not log an error.
+                auto ResolveWiredValueClass = [&]() -> UClass*
+                {
+                    return GetAuthoritativePinClass(ValueResolver->ResolveValue(Arg.Value, Block));
+                };
+
                 if (Arg.Value.StartsWith(TEXT("%")))
                 {
                     FString RefName = Arg.Value.Mid(1);
@@ -6259,18 +6272,39 @@ bool FBpirCompiler::EmitInstruction(int32 InstructionIndex, FBpirInstruction& In
                     }
                     if (const int32* RefIdx = Block.ValueIndex.Find(RefName))
                     {
-                        if (const FEmittedNodeInfo* RefEmit = EmitMap.Find(*RefIdx))
+                        const FEmittedNodeInfo* RefEmit = EmitMap.Find(*RefIdx);
+                        // An alias register (`%r = $Var`, `%r = get $obj.Prop`) emits no node;
+                        // its class is the class of the value it aliases.
+                        if ((!RefEmit || !RefEmit->Node) && PinSuffix.IsEmpty()
+                            && Block.Instructions.IsValidIndex(*RefIdx)
+                            && Block.Instructions[*RefIdx].Opcode == EBpirOpcode::Alias)
+                        {
+                            UClass* AliasClass = ResolveWiredValueClass();
+                            return AliasClass ? ResolveFuncOnTargetClass(AliasClass) : nullptr;
+                        }
+                        if (RefEmit)
                         {
                             UEdGraphPin* ResolvedPin = RefEmit->PrimaryOutputPin;
                             if (!PinSuffix.IsEmpty() && RefEmit->Node)
                             {
+                                bool bSuffixIsOutputPin = false;
                                 for (UEdGraphPin* Pin : RefEmit->Node->Pins)
                                 {
                                     if (Pin->Direction == EGPD_Output && Pin->PinName.ToString().Equals(PinSuffix, ESearchCase::IgnoreCase))
                                     {
                                         ResolvedPin = Pin;
+                                        bSuffixIsOutputPin = true;
                                         break;
                                     }
+                                }
+                                // `%ref.Prop` (or `%ref.Pin.Prop`) that is not an output pin is a
+                                // property chain: scope the lookup to the chain's leaf class, the
+                                // same pin the wire pass will connect to Target. Falling back to
+                                // the producer's primary pin would pick the wrong class.
+                                if (!bSuffixIsOutputPin)
+                                {
+                                    UClass* ChainClass = ResolveWiredValueClass();
+                                    return ChainClass ? ResolveFuncOnTargetClass(ChainClass) : nullptr;
                                 }
                             }
                             UClass* TargetClass = nullptr;
@@ -6314,7 +6348,7 @@ bool FBpirCompiler::EmitInstruction(int32 InstructionIndex, FBpirInstruction& In
                 }
                 else if (Arg.Value.StartsWith(TEXT("$")))
                 {
-                    if (UClass* TargetClass = ResolveTargetClass(Arg.Value, Block))
+                    if (UClass* TargetClass = ResolveWiredValueClass())
                     {
                         return ResolveFuncOnTargetClass(TargetClass);
                     }
