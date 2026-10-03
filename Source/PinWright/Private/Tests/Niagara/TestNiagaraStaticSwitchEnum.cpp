@@ -146,6 +146,15 @@ bool FNiagaraStaticSwitchEnumBranchResolutionTest::RunTest(const FString& Parame
     TestTrue(TEXT("Rejection publishes the whole branch table"),
         Error.Contains(TEXT("Random Uniform / NewEnumerator1 (index 2)")));
 
+    // B-niagara-switch-coercion: a fractional number used to truncate to branch 1.
+    TestFalse(TEXT("A fractional branch index is refused, not truncated"),
+        EncodePinWrightSwitchEnum(Enum, MakeShared<FJsonValueNumber>(1.9), PinDefault, Error, Option));
+    TestTrue(TEXT("Fractional rejection names it as non-integral"), Error.Contains(TEXT("not an integral branch index")));
+
+    // "4294967298" used to wrap through a 64-bit parse into branch 2.
+    TestFalse(TEXT("An out-of-int32 index string is refused, not wrapped"),
+        EncodePinWrightSwitchEnum(Enum, MakeShared<FJsonValueString>(TEXT("4294967298")), PinDefault, Error, Option));
+
     // The trailing _MAX sentinel is a name, not a branch.
     TestFalse(TEXT("The _MAX sentinel index is refused"),
         EncodePinWrightSwitchEnum(Enum, MakeShared<FJsonValueNumber>(3.0), PinDefault, Error, Option));

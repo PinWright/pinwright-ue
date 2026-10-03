@@ -162,6 +162,10 @@ namespace FixtureOwnershipContractHelpers
         TEXT("PinWright/Private/Tests/Niagara/TestNiagaraResetModuleInput.cpp|1"),
         TEXT("PinWright/Private/Tests/Niagara/TestNiagaraSetModuleInput.cpp|7"),
         TEXT("PinWright/Private/Tests/Niagara/TestNiagaraSetModuleInputDynamicInput.cpp|1"),
+        // 1: BuildFixture binds BuildEmptySystemWithEmitter's rooted system into the caller's
+        // FAuthorableSystemRoots (system + first emitter) immediately after the null check; each
+        // of the three RunTests declares that guard before calling it, so every exit unroots.
+        TEXT("PinWright/Private/Tests/Niagara/TestNiagaraSetModuleInputEnum.cpp|1"),
         TEXT("PinWright/Private/Tests/Niagara/TestNiagaraSetModuleInputLinkedOverride.cpp|1"),
         TEXT("PinWright/Private/Tests/Niagara/TestNiagaraSetModuleInputMatrixQuat.cpp|1"),
         // 1: FNestedDiFixture::Build binds BuildEmptySystemWithEmitter's rooted system to a member

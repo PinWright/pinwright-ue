@@ -210,6 +210,40 @@ namespace
         FNiagaraVariable& OutExpectedValue)
     {
         OutExpectedValue = FNiagaraVariable();
+
+        // An enum input (e.g. ENiagaraCoordinateSpace) takes its entry name, display name or branch
+        // index — resolved and range-checked exactly as an enum static switch is — and stores the
+        // entry name Niagara's enum pin codec reads back. Neither spelling reached it before: a
+        // name hit UNSUPPORTED_INPUT_VALUE and a number was written unchecked as a float.
+        if (const UEnum* InputEnum = DeclaredType.GetEnum())
+        {
+            bOutHandled = true;
+            NiagaraStaticSwitch::FEnumSwitchOption Option;
+            FString ResolveError;
+            if (!NiagaraStaticSwitch::ResolveEnumOption(InputEnum, Value, Option, ResolveError))
+            {
+                FNiagaraEditError Error = FNiagaraEditError::Make(TEXT("INVALID_VALUE"), FString::Printf(
+                    TEXT("Module input '%s' has enum type '%s': %s"), *InputName, *DeclaredType.GetName(), *ResolveError));
+                Error.Data = MakeShared<FJsonObject>();
+                Error.Data->SetStringField(TEXT("enumPath"), InputEnum->GetPathName());
+                Error.Data->SetArrayField(TEXT("enumOptions"), NiagaraStaticSwitch::MakeEnumOptionsJson(InputEnum));
+                return Error;
+            }
+            OutExpectedValue = FNiagaraVariable(DeclaredType, FName(*InputName));
+            OutExpectedValue.AllocateData();
+            FNiagaraInt32 EnumValue;
+            EnumValue.Value = static_cast<int32>(InputEnum->GetValueByIndex(Option.Index));
+            OutExpectedValue.SetValue<FNiagaraInt32>(EnumValue);
+            if (!GetDefault<UEdGraphSchema_Niagara>()->TryGetPinDefaultValueFromNiagaraVariable(OutExpectedValue, OutDefaultValue))
+            {
+                return FNiagaraEditError::Make(TEXT("INVALID_INPUT_VALUE"), FString::Printf(
+                    TEXT("Module input '%s' declared as '%s' has no Niagara schema pin-default encoder in this engine version."),
+                    *InputName,
+                    *DeclaredType.GetName()));
+            }
+            return FNiagaraEditError();
+        }
+
         // A string is already a pin-default literal. Preserve the existing override-pin
         // path for it; typed handling below is for fresh numeric Matrix/Quat values, where
         // inferring Vec4 would otherwise create a mistyped override.
@@ -353,6 +387,11 @@ namespace
                 && FMath::IsNearlyEqual(Expected.Y, Actual.Y, QuatPinDefaultQuantizationTolerance)
                 && FMath::IsNearlyEqual(Expected.Z, Actual.Z, QuatPinDefaultQuantizationTolerance)
                 && FMath::IsNearlyEqual(Expected.W, Actual.W, QuatPinDefaultQuantizationTolerance);
+        }
+
+        if (ExpectedValue.GetType().GetEnum())
+        {
+            return ActualValue.GetValue<FNiagaraInt32>().Value == ExpectedValue.GetValue<FNiagaraInt32>().Value;
         }
 
         return false;
@@ -1355,6 +1394,11 @@ namespace
                 return EncodeError;
             }
 
+            // A typed literal landing on an override pin of another type (the float pin the old
+            // number inference created on an enum input) would fail read-back on every retry, so
+            // that pin is dropped and recreated with the declared type below.
+            const bool bReplaceMistypedPin = bTypedLiteralHandled && ExistingPin
+                && UEdGraphSchema_Niagara::PinToTypeDefinition(ExistingPin) != DeclaredInputType;
             if (bTypedLiteralHandled)
             {
                 InputType = DeclaredInputType;
@@ -1413,6 +1457,12 @@ namespace
                     InOutReplacedOverride->ValueMode = Binding->ValueMode;
                     InOutReplacedOverride->Source = LinkSource;
                 }
+            }
+
+            if (bReplaceMistypedPin)
+            {
+                // No-op when the link clear above already removed the pin.
+                NiagaraResetModuleInput::ClearModuleInputOverride(*Target.ModuleNode, AliasedInputHandle, *Target.Graph);
             }
 
             UEdGraphPin& OverridePin = FNiagaraStackGraphUtilities::GetOrCreateStackFunctionInputOverridePin(
@@ -2051,8 +2101,8 @@ namespace
                 continue;
             }
 
-            // Literal. Matrix / Quat go through the typed schema codec; everything else must spell the
-            // declared type (a number on an int / enum input is written as an integer).
+            // Literal. Matrix / Quat / enum go through the typed path above; everything else must spell
+            // the declared type (a number on an int input is written as an integer).
             bool bTyped = false;
             FString DefaultValue;
             FNiagaraVariable ExpectedValue;
@@ -3386,6 +3436,23 @@ REGISTER_RPC_HANDLER("niagara.set_module_input", "niagara", "Set one Niagara mod
         // override pin carries this literal — a pin with an inbound link is refused above unless
         // breakExistingLink cleared it — so the echo names a value the graph actually reads.
         Result->SetStringField(TEXT("value"), WrittenValue);
+
+        // An enum input's `value` is the entry name the pin holds; echo the branch index and label
+        // beside it, plus the whole table, the same fields niagara.set_static_switch returns.
+        FNiagaraTypeDefinition DeclaredType;
+        const UEnum* InputEnum = TryFindModuleStackInput(Target.ModuleNode, Payload.InputName, &DeclaredType, nullptr)
+            ? DeclaredType.GetEnum()
+            : nullptr;
+        NiagaraStaticSwitch::FEnumSwitchOption Written;
+        FString IgnoredError;
+        if (InputEnum
+            && NiagaraStaticSwitch::ResolveEnumOption(InputEnum, MakeShared<FJsonValueString>(WrittenValue), Written, IgnoredError))
+        {
+            Result->SetNumberField(TEXT("enumIndex"), Written.Index);
+            Result->SetStringField(TEXT("displayName"), Written.DisplayName);
+            Result->SetStringField(TEXT("enumPath"), InputEnum->GetPathName());
+            Result->SetArrayField(TEXT("enumOptions"), NiagaraStaticSwitch::MakeEnumOptionsJson(InputEnum));
+        }
     }
 
     // A literal write also reconciles the rapid-iteration constant for this input when one

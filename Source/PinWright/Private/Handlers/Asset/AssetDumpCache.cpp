@@ -745,7 +745,9 @@ int32 GetAspectVersion(const FString& RelativeFile)
         //    dump reports the type's zero for every such input.
         // 9: a `valueMode: "dynamicInput"` moduleInputs entry carries `inputs`, the dynamic-input
         //    node's own inputs in the same entry shape (recursively).
-        { TEXT("niagara_stack.json"),       9 },
+        // 10: an enum moduleInputs entry's enumOptions is an array of {index, name, displayName}
+        //    objects (was bare name strings), the table set_module_input resolves against.
+        { TEXT("niagara_stack.json"),       10 },
         // 2: every rapid-iteration entry whose module input also carries a graph override pin now
         //    carries `overridden` plus an `override` object naming that pin's mode and value, and
         //    the document carries a `rapidIterationNote` stating what this store can and cannot

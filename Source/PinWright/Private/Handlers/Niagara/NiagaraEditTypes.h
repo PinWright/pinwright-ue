@@ -71,6 +71,9 @@ struct FNiagaraEditError
 {
     FString Code;
     FString Message;
+    // Optional structured detail sent as the error's result object (e.g. an enum input's
+    // enumPath / enumOptions table), so a rejection can carry what the caller needs to retry.
+    TSharedPtr<FJsonObject> Data;
 
     bool HasError() const { return !Code.IsEmpty(); }
     static FNiagaraEditError Make(const TCHAR* InCode, const FString& InMessage);

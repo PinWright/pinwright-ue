@@ -2887,6 +2887,30 @@ namespace NiagaraStaticSwitch
             return true;
         }
 
+        // A JSON number names a branch only when it is finite, integral and fits int32. A
+        // static_cast truncated 1.9 to branch 1 and a NaN to whatever the cast produced.
+        bool TryReadIntegralSwitchNumber(double Number, int32& OutValue)
+        {
+            if (!FMath::IsFinite(Number) || FMath::RoundToDouble(Number) != Number
+                || Number < static_cast<double>(MIN_int32) || Number > static_cast<double>(MAX_int32))
+            {
+                return false;
+            }
+            OutValue = static_cast<int32>(Number);
+            return true;
+        }
+
+        // A fully consumed integer string within int32. LexTryParseString into an int32 parses
+        // through a 64-bit strtol and truncates, so "4294967298" used to become 2. Eleven
+        // characters is the longest int32 spelling ("-2147483648"), so the int64 parse cannot
+        // overflow.
+        bool TryParseIntegerLiteral(const FString& In, int32& OutValue)
+        {
+            int64 Wide = 0;
+            return IsIntegerLiteral(In) && In.Len() <= 11 && LexTryParseString(Wide, *In)
+                && TryReadIntegralSwitchNumber(static_cast<double>(Wide), OutValue);
+        }
+
         // The whole branch table, inlined into the rejection message. A caller who guessed wrong
         // gets the mapping from the failure itself rather than having to probe one integer at a
         // time; enum switches carry a handful of branches, so the message stays readable.
@@ -2960,7 +2984,7 @@ namespace NiagaraStaticSwitch
         OutOption = FEnumSwitchOption();
         if (!Enum)
         {
-            OutError = TEXT("Enum static switch has no Enum class set.");
+            OutError = TEXT("Enum value has no Enum class to resolve against.");
             return false;
         }
 
@@ -2968,7 +2992,7 @@ namespace NiagaraStaticSwitch
         BuildEnumOptions(Enum, Options);
         if (Options.Num() == 0)
         {
-            OutError = FString::Printf(TEXT("Enum '%s' offers no selectable static switch branches."), *Enum->GetName());
+            OutError = FString::Printf(TEXT("Enum '%s' offers no selectable entries."), *Enum->GetName());
             return false;
         }
 
@@ -2977,14 +3001,20 @@ namespace NiagaraStaticSwitch
         FString Literal;
         if (Json.IsValid() && Json->Type == EJson::Number)
         {
-            RequestedIndex = static_cast<int32>(Json->AsNumber());
+            if (!TryReadIntegralSwitchNumber(Json->AsNumber(), RequestedIndex))
+            {
+                OutError = FString::Printf(
+                    TEXT("Enum value %s is not an integral branch index; accepted values on '%s': %s."),
+                    *FString::SanitizeFloat(Json->AsNumber()), *Enum->GetName(), *DescribeOptions(Options));
+                return false;
+            }
             bHaveIndex = true;
         }
         else if (Json.IsValid() && Json->Type == EJson::String)
         {
             Literal = Json->AsString().TrimStartAndEnd();
             int32 Parsed = 0;
-            if (IsIntegerLiteral(Literal) && LexTryParseString(Parsed, *Literal))
+            if (TryParseIntegerLiteral(Literal, Parsed))
             {
                 RequestedIndex = Parsed;
                 bHaveIndex = true;
@@ -2994,7 +3024,7 @@ namespace NiagaraStaticSwitch
         {
             // Anything else used to fall through to index 0 and write a branch nobody asked for.
             OutError = FString::Printf(
-                TEXT("Enum static switch value must be a branch index or a name; accepted values on '%s': %s."),
+                TEXT("Enum value must be a branch index or a name; accepted values on '%s': %s."),
                 *Enum->GetName(), *DescribeOptions(Options));
             return false;
         }
@@ -3172,18 +3202,48 @@ namespace NiagaraStaticSwitch
         }
         case ENiagaraStaticSwitchType::Integer:
         {
+            // Only an integral number, an integer literal string, or the boolean 0/1 form names a
+            // branch. Truncation, permissive Atoi and a zero fallback for any other JSON type each
+            // turned malformed input into a valid-looking branch index.
             int32 IntValue = 0;
+            bool bParsed = false;
             if (Json.IsValid() && Json->Type == EJson::Boolean)
             {
                 IntValue = Json->AsBool() ? 1 : 0;
+                bParsed = true;
             }
             else if (Json.IsValid() && Json->Type == EJson::Number)
             {
-                IntValue = static_cast<int32>(Json->AsNumber());
+                bParsed = TryReadIntegralSwitchNumber(Json->AsNumber(), IntValue);
             }
             else if (Json.IsValid() && Json->Type == EJson::String)
             {
-                IntValue = FCString::Atoi(*Json->AsString());
+                const FString Literal = Json->AsString().TrimStartAndEnd();
+                bParsed = TryParseIntegerLiteral(Literal, IntValue);
+            }
+            if (!bParsed)
+            {
+                FString Spelled;
+                if (Json.IsValid() && Json->Type == EJson::Number)
+                {
+                    Spelled = FString::SanitizeFloat(Json->AsNumber());
+                }
+                else if (Json.IsValid() && Json->Type == EJson::String)
+                {
+                    Spelled = FString::Printf(TEXT("'%s'"), *Json->AsString());
+                }
+                else if (!Json.IsValid() || Json->Type == EJson::Null)
+                {
+                    Spelled = TEXT("null");
+                }
+                else
+                {
+                    Spelled = TEXT("a non-scalar value");
+                }
+                OutError = FString::Printf(
+                    TEXT("Integer static switch value %s is not an integer; send an integral number, an integer string, or a boolean."),
+                    *Spelled);
+                return false;
             }
             OutPinDefault = FString::FromInt(IntValue);
             return true;

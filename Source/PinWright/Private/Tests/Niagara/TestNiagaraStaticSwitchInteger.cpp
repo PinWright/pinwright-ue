@@ -113,3 +113,51 @@ bool FNiagaraStaticSwitchIntegerValueValidationTest::RunTest(const FString& Para
 
     return true;
 }
+
+// B-niagara-switch-coercion: a fractional number was truncated, an unparsable string went
+// through permissive Atoi, and null/array/object fell back to 0 — each a valid-looking branch.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FNiagaraStaticSwitchIntegerRejectsMalformedTest,
+    "PinWright.niagara.set_static_switch.IntegerValueRejectsMalformed",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FNiagaraStaticSwitchIntegerRejectsMalformedTest::RunTest(const FString& Parameters)
+{
+    const TPair<const TCHAR*, TSharedPtr<FJsonValue>> Rejected[] = {
+        { TEXT("fractional 1.9"), MakeShared<FJsonValueNumber>(1.9) },
+        { TEXT("fractional -0.5"), MakeShared<FJsonValueNumber>(-0.5) },
+        { TEXT("out-of-int32 number"), MakeShared<FJsonValueNumber>(1e12) },
+        { TEXT("unparsable string"), MakeShared<FJsonValueString>(TEXT("abc")) },
+        { TEXT("trailing-garbage string"), MakeShared<FJsonValueString>(TEXT("1x")) },
+        { TEXT("fractional string"), MakeShared<FJsonValueString>(TEXT("1.9")) },
+        { TEXT("out-of-int32 string"), MakeShared<FJsonValueString>(TEXT("4294967298")) },
+        { TEXT("empty string"), MakeShared<FJsonValueString>(TEXT("")) },
+        { TEXT("null"), MakeShared<FJsonValueNull>() },
+        { TEXT("array"), MakeShared<FJsonValueArray>(TArray<TSharedPtr<FJsonValue>>{ MakeShared<FJsonValueNumber>(1) }) },
+        { TEXT("object"), MakeShared<FJsonValueObject>(MakeShared<FJsonObject>()) },
+    };
+    for (const TPair<const TCHAR*, TSharedPtr<FJsonValue>>& Case : Rejected)
+    {
+        FString PinDefault;
+        FString Error;
+        TestFalse(FString::Printf(TEXT("%s is refused"), Case.Key),
+            NiagaraStaticSwitch::EncodePinDefault(Case.Value, ENiagaraStaticSwitchType::Integer, nullptr, PinDefault, Error));
+        TestTrue(FString::Printf(TEXT("%s: rejection explains the accepted forms"), Case.Key), Error.Contains(TEXT("is not an integer")));
+    }
+
+    const TPair<TSharedPtr<FJsonValue>, const TCHAR*> Accepted[] = {
+        { MakeShared<FJsonValueNumber>(2.0), TEXT("2") },
+        { MakeShared<FJsonValueNumber>(-3), TEXT("-3") },
+        { MakeShared<FJsonValueString>(TEXT(" 4 ")), TEXT("4") },
+        { MakeShared<FJsonValueBoolean>(true), TEXT("1") },
+    };
+    for (const TPair<TSharedPtr<FJsonValue>, const TCHAR*>& Case : Accepted)
+    {
+        FString PinDefault;
+        FString Error;
+        TestTrue(FString::Printf(TEXT("%s encodes"), Case.Value),
+            NiagaraStaticSwitch::EncodePinDefault(Case.Key, ENiagaraStaticSwitchType::Integer, nullptr, PinDefault, Error));
+        TestEqual(FString::Printf(TEXT("%s pin default"), Case.Value), PinDefault, FString(Case.Value));
+    }
+    return true;
+}

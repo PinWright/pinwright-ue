@@ -1734,22 +1734,12 @@ namespace NiagaraDumpBuilder
             Entry->SetStringField(TEXT("type"), InputType.GetName());
             Entry->SetObjectField(TEXT("typeInfo"), NiagaraJsonHelpers::BuildTypeModel(InputType));
 
-            // Enumerate the enum's selectable option names so callers know the valid
-            // choices for an enum input (BuildTypeModel reports only the enum path).
+            // The enum input's option table as {index, name, displayName} — the same table
+            // set_module_input resolves against and set_static_switch publishes — so the index a
+            // caller may send is read off the entry rather than inferred from array position.
             if (const UEnum* TypeEnum = InputType.GetEnum())
             {
-                TArray<TSharedPtr<FJsonValue>> Options;
-                const int32 NumEnums = TypeEnum->NumEnums();
-                for (int32 EnumIndex = 0; EnumIndex < NumEnums; ++EnumIndex)
-                {
-                    const FString OptionName = TypeEnum->GetNameStringByIndex(EnumIndex);
-                    if (OptionName.IsEmpty() || OptionName.EndsWith(TEXT("_MAX")))
-                    {
-                        continue;
-                    }
-                    Options.Add(NiagaraJsonHelpers::MakeStringValue(OptionName));
-                }
-                Entry->SetArrayField(TEXT("enumOptions"), Options);
+                Entry->SetArrayField(TEXT("enumOptions"), NiagaraStaticSwitch::MakeEnumOptionsJson(TypeEnum));
             }
 
             if (const NiagaraEdit::FModuleInputBindingInfo* Binding = Bindings.Find(InputName))

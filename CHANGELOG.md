@@ -57,6 +57,18 @@
   seeded `CLAUDE.md`/`AGENTS.md` name the `source.fileMd5` check; all are create-if-missing, so an
   existing dump root keeps its old files until they are deleted. Dump core version 4: every cached aspect regenerates once.
 
+- Fixed: `niagara.set_module_input` on an enum-typed input (e.g. `ENiagaraCoordinateSpace`)
+  accepts the entry name, display name or integral index and writes an enum-typed override pin
+  holding the entry name; it used to refuse names with `UNSUPPORTED_INPUT_VALUE` and write any
+  number, unchecked, onto a float pin as `"2.0"`. Off-table, fractional and non-scalar values are
+  refused with `INVALID_VALUE` carrying `enumPath` + `enumOptions[]`; success adds `enumIndex`,
+  `displayName`, `enumPath`, `enumOptions[]`. Changed (shape): `moduleInputs[].enumOptions` in
+  `niagara.inspect` / `niagara_stack.json` is now `{index, name, displayName}` objects instead of
+  bare name strings, and it drops `Hidden` / `Spacer` entries (as `staticSwitchInputs` already
+  did).
+- Fixed: `niagara.set_static_switch` refuses a fractional, non-integer-string, null, array or
+  object value for an Integer switch (and a fractional index for an enum switch) with
+  `INVALID_VALUE` instead of truncating it or reading it as branch 0.
 - Fixed: a BPIR literal on a by-reference parameter (`const T&` without `AutoCreateRefTerm`, e.g.
   `UBlackboardComponent` `KeyName`) was written as a pin default the Blueprint compiler then
   rejected ("by ref" params expect a valid input). Bool, int, int64, real, name, string, text and

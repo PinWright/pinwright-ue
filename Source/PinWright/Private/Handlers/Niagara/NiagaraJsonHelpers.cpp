@@ -78,7 +78,7 @@ bool SendNiagaraEditError(FHandlerContext& Ctx, const FNiagaraEditError& Error)
 {
     if (Error.HasError())
     {
-        Ctx.SendError(Error.Code, Error.Message);
+        Ctx.SendError(Error.Code, Error.Message, Error.Data);
         return true;
     }
     return false;
