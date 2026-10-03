@@ -57,6 +57,26 @@ Two engine APIs do reach the dirty flag and are fine when they fit — reach for
 
 From the MCP surface, use [`asset.mark_dirty`](asset.md) and [`asset.is_dirty`](asset.md) rather than routing a one-line dirty through `python.execute`.
 
+## Containers are live references, their struct elements are copies
+
+**`get_editor_property` returns a live reference, not a snapshot.** For an array, set, map or struct property the wrapper points into the object's own memory: `PyUtil::GetPropertyValue` converts with `EPyConversionMethod::Reference` (`PyUtil.cpp:906`). A struct read this way has live fields: `s = obj.get_editor_property('settings'); s.set_editor_property('x', 1)` writes into the object and fires `PreEditChange` / `PostEditChangeProperty` on it. **Struct elements of a container go the other way:** indexing or iterating a container returns detached copies of them, because `FPyWrapperArray::GetItem` takes the `Copy` default (`PyWrapperArray.cpp:426`) and `for v in arr` calls it. Object elements are not copied: each one is the same `UObject` (`PyConversion.cpp:1142-1146`), so writes through it land. The two halves cause opposite failures:
+
+- **A before/after check cannot fail.** `old = obj.get_editor_property('entries')`, then `obj.set_editor_property('entries', new)`, and `len(old)` now reports the new length: a 4 → 1 edit logs `1 -> 1`, the new state twice. Snapshot with `.copy()` before the write. The array, set, map and struct wrappers all have it, and it builds a real copy. Or read through [`property.get`](property.md): it returns JSON, so it is a snapshot by construction.
+- **Writing to a struct element writes nothing.** `for v in arr: v.set_editor_property('x', 1)` over an array of structs edits a temporary copy. It raises no error, sends no `PostEditChangeProperty` and does not dirty the package. A later forced `save_asset` still rewrites the file, so a moved `.uasset` mtime is not evidence either. Calling `.copy()` on a struct element changes nothing, because it already is a copy.
+
+The working write for struct elements is: copy the container, edit the copy, assign each element back, then assign the container through the owner:
+
+```python
+arr = obj.get_editor_property('entries').copy()   # detached from the object
+for i in range(len(arr)):
+    v = arr[i]                                    # a copy of the element
+    v.set_editor_property('weight', 1)
+    arr[i] = v                                    # write the element back
+obj.set_editor_property('entries', arr)           # owner write: PreEditChange / PostEditChangeProperty, package dirtied
+```
+
+Skip the first `.copy()` and the write half-works. `arr[i] = v` on the live reference changes the object's memory directly, with no notification. The final `set_editor_property` then compares the value with itself, finds them identical and sends no notification (`PyConversion.cpp:987`). The value changes, but the package is not dirtied and the editor is never told. Passing `unreal.PropertyAccessChangeNotifyMode.ALWAYS` as the third argument of `set_editor_property` forces the notification, but `PreEditChange` then runs after the memory has already changed, so undo records the edited state. Copy first instead.
+
 ## Calls that crash the editor
 
 Your script runs inside the editor process with no sandbox and no timeout. **Nothing on this page is enforced** — no call is refused, no loop is bounded. This section and the next are the only protection that exists, so read them before writing a script that touches materials or loops at all.

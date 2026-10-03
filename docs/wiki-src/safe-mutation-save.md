@@ -126,6 +126,7 @@ When the project has an active UE source-control provider, use `call("source_con
 - After Blueprint or material edits, use the domain inspect/decompile surface (`blueprint.inspect`, `blueprint.decompile`, `material.decompile_mgir`) that matches the edit.
 - After asset/package edits, use `asset.dump(diff=true)` when a baseline exists, or a normal dump when it does not.
 - After save jobs, trust the terminal `system.job_status` result, not the initial `ticket_id` response.
+- After `python.execute`, verify with `property.get`, not with a value the script read before the write. `get_editor_property` returns a live reference for containers and structs, so a "before" value read that way already shows the new state. Snapshot it with `.copy()`, and write struct elements back through the container (see [`python`](python.md), *Containers are live references, their struct elements are copies*).
 
 ## Related Pages
 
