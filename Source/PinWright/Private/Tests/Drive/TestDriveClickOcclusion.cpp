@@ -17,6 +17,9 @@
 //    button's OnClicked never fires.
 //  - UncoveredTargetIsClicked (counterfactual): the same fixture without the cover is clicked
 //    exactly once, so the routing gate does not refuse a reachable target.
+//  - StackedSameRectByIndexIsRefused (failure direction): the target is addressed by window_index
+//    and the cover sits at the target's exact rect, as floating tabs restored at one position are;
+//    the press must not land on the cover while the settle loop watches the addressed window.
 //  - OsInputOwnWindowIsRefused: os_input skips the routing wait, but another window of this
 //    editor stacked over the target would still take the real X click, so the same covered
 //    fixture is refused by Slate's window order, naming the cover, before any X event is sent.
@@ -95,7 +98,8 @@ namespace DriveClickOcclusionTest
 
     // Builds the fixture and resolves the button's drive handle. Returns null (already reported as
     // a skip) when this host cannot show and walk a Slate window.
-    TSharedPtr<FFixture> BuildFixture(FAutomationTestBase& Test, bool bCovered)
+    // bCoverSameRect stacks the cover at the target's exact rect instead of overhanging it.
+    TSharedPtr<FFixture> BuildFixture(FAutomationTestBase& Test, bool bCovered, bool bCoverSameRect = false)
     {
         if (!FSlateApplication::IsInitialized())
         {
@@ -129,9 +133,12 @@ namespace DriveClickOcclusionTest
             ]);
         if (bCovered)
         {
-            // Larger than the target on every side, so the button's center is covered however the
-            // platform frames the two windows.
-            Fixture->CoverWindow = MakeWindow(Fixture->CoverTitle, TargetPosition - FVector2D(40.0, 40.0), FVector2D(440.0f, 280.0f),
+            Fixture->CoverWindow = bCoverSameRect
+                ? MakeWindow(Fixture->CoverTitle, TargetPosition, FVector2D(360.0f, 200.0f),
+                    SNew(SBorder)[SNew(STextBlock).Text(FText::FromString(TEXT("PwOcclusionCover")))])
+                // Larger than the target on every side, so the button's center is covered however
+                // the platform frames the two windows.
+                : MakeWindow(Fixture->CoverTitle, TargetPosition - FVector2D(40.0, 40.0), FVector2D(440.0f, 280.0f),
                 SNew(SBorder)[SNew(STextBlock).Text(FText::FromString(TEXT("PwOcclusionCover")))]);
         }
 
@@ -172,7 +179,8 @@ namespace DriveClickOcclusionTest
     }
 
     // Starts drive.click on the fixture's button; the response arrives on a later frame.
-    void StartClick(FAutomationTestBase& Test, FFixture& Fixture, bool bOsInput = false)
+    // WindowIndex (when not INDEX_NONE) addresses the target by window_index instead of window_title.
+    void StartClick(FAutomationTestBase& Test, FFixture& Fixture, bool bOsInput = false, int32 WindowIndex = INDEX_NONE)
     {
         TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
         Payload->SetStringField(TEXT("handle"), Fixture.ButtonHandle);
@@ -181,7 +189,14 @@ namespace DriveClickOcclusionTest
             Payload->SetBoolField(TEXT("os_input"), true);
         }
         Payload->SetStringField(TEXT("surface"), TEXT("editor_chrome"));
-        Payload->SetStringField(TEXT("window_title"), Fixture.TargetTitle);
+        if (WindowIndex != INDEX_NONE)
+        {
+            Payload->SetNumberField(TEXT("window_index"), WindowIndex);
+        }
+        else
+        {
+            Payload->SetStringField(TEXT("window_title"), Fixture.TargetTitle);
+        }
         Test.TestTrue(TEXT("drive.click handler found"),
             InvokeHandlerWithSharedCapture(TEXT("drive.click"), Payload, Fixture.Capture));
         Fixture.Deadline = FPlatformTime::Seconds() + 10.0;
@@ -247,6 +262,70 @@ bool FDriveClickOccludedTargetIsRefusedTest::RunTest(const FString& Parameters)
         {
             TestNotEqual(TEXT("the occluding window is not the target's own"), Occluder, Fixture->TargetTitle);
         }
+        return true;
+    }));
+    return true;
+}
+
+// ============================================================================
+// Failure direction: a window stacked at the exact rect of a window addressed by window_index
+// does not take the press (B-drive-chrome-click-hits-stacked-window).
+// ============================================================================
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveClickStackedSameRectByIndexIsRefusedTest,
+    "PinWright.drive.click_occlusion.StackedSameRectByIndexIsRefused",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FDriveClickStackedSameRectByIndexIsRefusedTest::RunTest(const FString& Parameters)
+{
+    using namespace DriveClickOcclusionTest;
+
+    TSharedPtr<FFixture> Fixture = BuildFixture(*this, /*bCovered=*/true, /*bCoverSameRect=*/true);
+    if (!Fixture.IsValid())
+    {
+        return true;
+    }
+
+    // Preconditions: both windows share one rect, and the target has a drive.list_windows index.
+    if (!TestEqual(TEXT("the cover is stacked at the target's exact position"),
+            FVector2D(Fixture->CoverWindow->GetPositionInScreen()), FVector2D(Fixture->TargetWindow->GetPositionInScreen()))
+        || !TestEqual(TEXT("the cover has the target's exact size"),
+            FVector2D(Fixture->CoverWindow->GetSizeInScreen()), FVector2D(Fixture->TargetWindow->GetSizeInScreen())))
+    {
+        return true;
+    }
+    // Resolved by title in the same frame as the click, which resolves window_index synchronously,
+    // so a host toast opening later cannot shift the index under it.
+    int32 TargetIndex = INDEX_NONE;
+    for (const FDriveWindowInfo& Info : FDriveEditorChrome::ListWindows())
+    {
+        if (Info.Title == Fixture->TargetTitle)
+        {
+            TargetIndex = Info.Index;
+        }
+    }
+    if (!TestNotEqual(TEXT("drive.list_windows lists the target window"), TargetIndex, int32(INDEX_NONE)))
+    {
+        return true;
+    }
+
+    StartClick(*this, *Fixture, /*bOsInput=*/false, TargetIndex);
+    ADD_LATENT_AUTOMATION_COMMAND(FDriveClickOcclusionPoll([this, Fixture]() -> bool
+    {
+        if (!ResponseArrived(*this, *Fixture))
+        {
+            return false;
+        }
+        const FTestResponseCapture& Capture = *Fixture->Capture;
+        TestFalse(TEXT("a press the stacked window would take is not reported as a settle outcome"), Capture.bSuccess);
+        TestEqual(TEXT("the refusal is TARGET_OCCLUDED"), Capture.ErrorCode, FString(TEXT("TARGET_OCCLUDED")));
+        TestEqual(TEXT("the addressed window's button never received the click"), *Fixture->Clicks, 0);
+
+        // The refusal names the window that would have taken the press, never the addressed one.
+        FString Occluder;
+        TestTrue(TEXT("the refusal names the occluding window"),
+            Capture.Result.IsValid() && Capture.Result->TryGetStringField(TEXT("occluding_window"), Occluder));
+        TestNotEqual(TEXT("the occluding window is not the addressed one"), Occluder, Fixture->TargetTitle);
         return true;
     }));
     return true;
