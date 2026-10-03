@@ -354,7 +354,10 @@ namespace
     FString MakeScreenshotOutputPath(const FString& RequestedFilename, const FString& DefaultPrefix,
         const FString& Subdirectory, FString& OutFilename)
     {
-        FString ScreenshotDir = FPaths::ProjectSavedDir() / TEXT("Screenshots");
+        // Absolute: ProjectSavedDir() is relative to Engine/Binaries/<Platform> when the project
+        // shares a root with the engine, and every caller echoes this path back to the client.
+        FString ScreenshotDir =
+            FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir()) / TEXT("Screenshots");
         if (!Subdirectory.IsEmpty())
         {
             ScreenshotDir /= Subdirectory;
@@ -393,8 +396,10 @@ namespace
         OutFilename = MakeScreenshotFilename(RequestedFilename, TEXT(""));
 
         FString FullPath = FPaths::Combine(ScreenshotPath, OutFilename);
-        FPaths::MakeStandardFilename(FullPath);
-        return FullPath;
+        // Absolute, resolved the way the platform file layer resolves a relative write (against
+        // the base dir), so the echoed screenshotPath names the file actually written.
+        // MakeStandardFilename produced the ../../../-relative engine form.
+        return FPaths::ConvertRelativePathToFull(FullPath);
     }
 
     void ForceOpaqueAlpha(TArray<FColor>& Bitmap)

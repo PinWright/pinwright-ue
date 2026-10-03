@@ -138,3 +138,60 @@ bool FScreenshotGeneratedFilenameIsUniqueTest::RunTest(const FString& Parameters
     }
     return true;
 }
+
+// E-screenshot-path-relative-to-binaries: every capture verb echoes the path its helper composes
+// (editor.screenshot `path`, ui.screenshot `screenshotPath`, the render/mesh/annotated/z-fighting/
+// window/designer captures), so both helpers must return an ABSOLUTE path naming the file actually
+// written. On a same-root Linux checkout FPaths::ProjectSavedDir() is relative to
+// Engine/Binaries/<Platform> ("../../../../src/..."), which no client can open from its own cwd.
+//
+// Counterfactual: drop the ConvertRelativePathToFull in MakeUiScreenshotPath (back to
+// MakeStandardFilename) and the relative-`path` block fails on every layout; drop it in
+// MakeScreenshotOutputPath and the first block fails wherever ProjectSavedDir() is relative
+// (this host), which the AddInfo line records. The default ui.screenshot block is a sanity check
+// only: it cannot fail on revert on this host, because the project lies outside the engine root and
+// MakeStandardFilename already returned an absolute path there. It catches a revert only for a
+// project under the engine root.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FScreenshotOutputPathIsAbsoluteTest,
+    "PinWright.editor.screenshot.OutputPathIsAbsolute",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FScreenshotOutputPathIsAbsoluteTest::RunTest(const FString& Parameters)
+{
+    AddInfo(FString::Printf(TEXT("ProjectSavedDir() on this host: '%s' (relative: %s)"),
+        *FPaths::ProjectSavedDir(), FPaths::IsRelative(FPaths::ProjectSavedDir()) ? TEXT("yes") : TEXT("no")));
+
+    {
+        FString OutFilename;
+        const FString FullPath = PinWrightScreenshotUtils::MakeScreenshotOutputPath(
+            TEXT("pw_abs_probe.png"), TEXT("PwUniqueProbe"), TEXT("PwUniqueProbe"), OutFilename);
+        TestFalse(FString::Printf(TEXT("MakeScreenshotOutputPath is absolute: '%s'"), *FullPath),
+            FPaths::IsRelative(FullPath));
+        TestFalse(TEXT("MakeScreenshotOutputPath carries no '..' segment"), FullPath.Contains(TEXT("..")));
+        TestEqual(TEXT("MakeScreenshotOutputPath names the file the platform layer writes"), FullPath,
+            FPaths::ConvertRelativePathToFull(
+                FPaths::ProjectSavedDir() / TEXT("Screenshots/PwUniqueProbe/pw_abs_probe.png")));
+    }
+
+    {
+        FString OutFilename;
+        const FString FullPath = PinWrightScreenshotUtils::MakeUiScreenshotPath(
+            FString(), TEXT("pw_abs_probe.png"), OutFilename);
+        TestFalse(FString::Printf(TEXT("ui.screenshot default path is absolute: '%s'"), *FullPath),
+            FPaths::IsRelative(FullPath));
+        TestFalse(TEXT("ui.screenshot default path carries no '..' segment"), FullPath.Contains(TEXT("..")));
+    }
+
+    // A caller-supplied relative directory is written relative to the base dir (the Unix platform
+    // file resolves it with ConvertRelativePathToFull); the echo must name that same file.
+    {
+        FString OutFilename;
+        const FString FullPath = PinWrightScreenshotUtils::MakeUiScreenshotPath(
+            TEXT("MyShots/Sub"), TEXT("frame.png"), OutFilename);
+        TestFalse(FString::Printf(TEXT("ui.screenshot relative `path` echoes absolute: '%s'"), *FullPath),
+            FPaths::IsRelative(FullPath));
+        TestEqual(TEXT("ui.screenshot echo names the file actually written"), FullPath,
+            FPaths::ConvertRelativePathToFull(TEXT("MyShots/Sub/frame.png")));
+    }
+    return true;
+}

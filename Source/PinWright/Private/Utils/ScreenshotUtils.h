@@ -100,7 +100,8 @@ namespace PinWrightScreenshotUtils
     // Compose a path under Saved/Screenshots[/Subdirectory] and create the directory. A generated
     // basename is additionally checked against the directory and re-generated if it is already
     // taken, which covers a file left by an earlier session or by a second editor on the same
-    // checkout; a caller-supplied basename is used as given and overwrites.
+    // checkout; a caller-supplied basename is used as given and overwrites. The returned path
+    // is absolute (E-screenshot-path-relative-to-binaries): every capture verb echoes it.
     FString MakeScreenshotOutputPath(const FString& RequestedFilename, const FString& DefaultPrefix,
         const FString& Subdirectory, FString& OutFilename);
 
@@ -112,7 +113,7 @@ namespace PinWrightScreenshotUtils
     // "shot.png" instead of doubling to "shot.png.png") and path traversal in the name
     // is sanitized, matching every other screenshot handler. RequestedPath empty falls
     // back to Saved/Screenshots/WindowsEditor. OutFilename receives the resolved
-    // basename (with its single .png); the returned path is standardized.
+    // basename (with its single .png); the returned path is absolute.
     FString MakeUiScreenshotPath(const FString& RequestedPath, const FString& RequestedFilename,
         FString& OutFilename);
 

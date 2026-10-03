@@ -42,6 +42,10 @@
   later removed (by `blueprint.remove_function`, an editor edit, or another verb) still read back
   in `functions[]`. `functions[]` is now only the live enumeration of the function graphs, as
   `events[]` already was.
+- Fixed: every capture verb's output path is absolute. `editor.screenshot` `path`, `ui.screenshot`
+  `screenshotPath` and the render / annotated / z-fighting / window / designer / set-of-mark captures
+  returned `../../../../...` relative to `Engine/Binaries/<Platform>` when the project shares a root
+  with the engine, which a client could not open from its own working directory.
 - Changed: `actor.set_collision` refuses `NO_COMPONENT` (with `rootComponentClass` and
   `primitiveComponents`) when the actor has no root or a non-primitive root such as a
   `DefaultSceneRoot` holder, instead of answering success with nothing written. On success it names
