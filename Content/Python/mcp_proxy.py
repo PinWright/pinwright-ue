@@ -305,6 +305,15 @@ EDITOR_START_TOOL = {
                     "startTime, logPath, commandLine)."
                 ),
             },
+            "timeout": {
+                "type": "number",
+                "description": (
+                    "wait ready only: seconds (above 0, at most 3600) to wait for operational "
+                    "readiness before EDITOR_START_TIMEOUT; default the proxy's --start-timeout "
+                    "(180). Raise it for a boot known to be slow (cold DDC, shader recompile, a "
+                    "loaded machine). Refused with wait exit, which has no cutoff."
+                ),
+            },
         },
         "required": ["mode", "reason"],
     },
@@ -376,6 +385,14 @@ EDITOR_RESTART_TOOL = {
                 "type": "boolean",
                 "description": (
                     "Passed through to the start half; same rules as editor_start's allow_build."
+                ),
+            },
+            "timeout": {
+                "type": "number",
+                "description": (
+                    "Passed through to the start half: seconds (above 0, at most 3600) to wait "
+                    "for the new editor's readiness; default the proxy's --start-timeout (180). "
+                    "Validated before anything is stopped."
                 ),
             },
         },
@@ -2568,6 +2585,9 @@ TEST_START_TIMEOUT = 600.0
 _OWNER_FIELDS = ("pid", "launchedBy", "reason", "mode", "startTime", "logPath", "commandLine")
 # Ceiling on slot_wait: an hour covers the longest full suite measured (about 50 min on Linux).
 SLOT_WAIT_MAX = 3600
+# Ceiling on editor_start / editor_restart timeout (the wait=ready readiness wait): an hour, so
+# one call can outwait the slowest boot measured (637 s, F-editor-start-readiness-timeout-override).
+READY_TIMEOUT_MAX = 3600
 # Pre-launch memory check (_launch_capacity_guard). Expected peaks: a full suite 12-18 GB and an
 # editor 3.1-5.4 GB, both from F-memory-aware-editor-launch's watchdog log; a build is UBT plus
 # compilers, which UBT throttles to available memory itself. The 3 GiB default reserve is that
@@ -2978,6 +2998,25 @@ class Proxy:
              "availableCommitBytes": commit, "expectedPeakBytes": peak, "neededBytes": need,
              "reserveGiB": reserve_gib, "running": running()}, is_error=True)
 
+    def _ready_timeout(self, args):
+        """(seconds, error_result) for the wait=ready readiness ceiling: args' timeout when given
+        (above 0, at most READY_TIMEOUT_MAX), else this proxy's start_timeout."""
+        if "timeout" not in args:
+            return self.start_timeout, None
+        seconds = args["timeout"]
+        if isinstance(seconds, bool) or not isinstance(seconds, (int, float)) \
+                or not 0 < seconds <= READY_TIMEOUT_MAX:
+            return None, self._start_result(
+                "INVALID_ARGUMENTS: timeout must be a number of seconds above 0 and at most %d, "
+                "got %r." % (READY_TIMEOUT_MAX, seconds),
+                {"error": "INVALID_ARGUMENTS", "param": "timeout"}, is_error=True)
+        if args.get("wait", "ready") == "exit":
+            return None, self._start_result(
+                "INVALID_ARGUMENTS: timeout bounds the wait for readiness and has no meaning with "
+                "wait 'exit', which waits for the process without a cutoff.",
+                {"error": "INVALID_ARGUMENTS", "param": "timeout"}, is_error=True)
+        return seconds, None
+
     def _wait_for_free_slot(self, args):
         """Error result for a bad slot_wait, else None after waiting up to slot_wait seconds
         (default 0) for this checkout's MCP slot to stop answering. The guard that follows
@@ -3154,6 +3193,9 @@ class Proxy:
         intent_error, mode, reason = self._launch_intent(args, _START_MODE_HELP)
         if intent_error is not None:
             return intent_error
+        ready_timeout, timeout_error = self._ready_timeout(args)
+        if timeout_error is not None:
+            return timeout_error
         allow_build_error = self._allow_build_error(args, mode)
         if allow_build_error is not None:
             return allow_build_error
@@ -3292,7 +3334,8 @@ class Proxy:
             if wait == "exit":
                 result = self._wait_for_exit(proc, cmdline, extra_args, launch_lock)
             else:
-                result = self._wait_for_ready(proc, cmdline, extra_args, launch_lock)
+                result = self._wait_for_ready(proc, cmdline, extra_args, launch_lock,
+                                              timeout=ready_timeout)
             if supervised:
                 _stamp_detach(result, proc)
             else:
@@ -3346,6 +3389,9 @@ class Proxy:
         if map_error is not None:
             return self._start_result(
                 "INVALID_MAP: " + map_error, {"error": "INVALID_MAP"}, is_error=True)
+        timeout_error = self._ready_timeout(args)[1]
+        if timeout_error is not None:
+            return timeout_error
 
         stopped = False
         url = self._resolve_url()
@@ -3982,13 +4028,14 @@ class Proxy:
             text += "\n" + "\n".join(structured["errors"][:20])
         return self._start_result(text, structured, is_error=False)
 
-    def _wait_for_ready(self, proc, cmdline, extra_args, launch_lock=None):
-        """Block until the editor reports operational readiness or start_timeout elapses. Poll the child so a
-        boot crash fails fast; never kill a still-starting child. launch_lock is released as soon
-        as the editor's log shows it past CEF initialization."""
+    def _wait_for_ready(self, proc, cmdline, extra_args, launch_lock=None, timeout=None):
+        """Block until the editor reports operational readiness or timeout (default start_timeout)
+        elapses. Poll the child so a boot crash fails fast; never kill a still-starting child.
+        launch_lock is released as soon as the editor's log shows it past CEF initialization."""
         log_path = _abslog_path(extra_args)
+        timeout = self.start_timeout if timeout is None else timeout
         start = time.monotonic()
-        deadline = start + self.start_timeout
+        deadline = start + timeout
         try:
             while True:
                 if launch_lock is not None:
@@ -4044,17 +4091,39 @@ class Proxy:
                          "url": url, "port": _loopback_port(url), "elapsedSeconds": elapsed},
                         is_error=False)
                 if time.monotonic() >= deadline:
+                    # probeState makes "still booting" machine-readable: not_ready = the port
+                    # answers with editorReady false (a retry is refused EDITOR_ALREADY_RUNNING
+                    # while it boots), not_running = nothing has bound the port yet (a retry
+                    # is NOT refused: the guard only probes the port, so it would launch a
+                    # second editor that loses the bind).
+                    probe_state = wait_state or "not_running"
+                    slow_hint = (" For a boot known to be slow, pass timeout (seconds, up to %d) "
+                                 "on the next launch." % READY_TIMEOUT_MAX)
+                    state_text = {
+                        "not_ready": "Its MCP port answers but it is still initializing; "
+                                     "editor_start is refused EDITOR_ALREADY_RUNNING until it "
+                                     "is ready, so poll it with call() or editor_list instead."
+                                     + slow_hint,
+                        "unresponsive": "%s Do not start a second editor." % wait_detail,
+                    }.get(probe_state,
+                          "It has not bound its MCP port yet and is still booting. Do NOT call "
+                          "editor_start again: nothing refuses a launch before the port is "
+                          "bound, and a second editor would lose the bind. Watch editor_list "
+                          "for pid %d." % proc.pid + slow_hint)
                     structured = {
                         "error": "EDITOR_START_TIMEOUT",
                         "pid": proc.pid,
                         "commandLine": cmdline,
+                        "probeState": probe_state,
+                        "timeoutSeconds": timeout,
                     }
                     if log_path:
                         structured["logPath"] = log_path
                     return self._start_result(
                         "Editor (pid %d) spawned but did not report operational readiness within %.0fs - it may "
-                        "still be starting.%s Command: %s"
-                        % (proc.pid, self.start_timeout, _startup_modal_hint(cmdline), cmdline),
+                        "still be starting; it was left running (probeState %s). %s%s Command: %s"
+                        % (proc.pid, timeout, probe_state, state_text,
+                           _startup_modal_hint(cmdline), cmdline),
                         structured,
                         is_error=True)
                 if self._shutdown_requested.wait(1.0):

@@ -857,6 +857,96 @@ class ProxyEditorStartTest(unittest.TestCase):
         self.assertEqual(
             result["structuredContent"]["logPath"], "C:/logs/ready-timeout.log"
         )
+        # Nothing ever bound the port: the payload says so, not just the sentence.
+        self.assertEqual(result["structuredContent"]["probeState"], "not_running")
+
+    # ---- per-call readiness timeout (F-editor-start-readiness-timeout-override) ----
+
+    def test_timeout_is_advertised_on_start_and_restart(self):
+        for tool in (EDITOR_START_TOOL, EDITOR_RESTART_TOOL):
+            self.assertEqual(tool["inputSchema"]["properties"]["timeout"]["type"], "number")
+
+    def test_per_call_timeout_overrides_the_proxy_ceiling_and_reports_not_ready(self):
+        # The proxy ceiling is 5 s; the call asks for 0.01 s. If the override were ignored the
+        # wait would run to 5 s and report timeoutSeconds 5.0.
+        with tempfile.TemporaryDirectory() as temp:
+            proxy = self._proxy(uproject=self._project(temp), start_timeout=5.0)
+            with mock.patch.object(proxy, "_editor_process_guard", return_value=None), \
+                    mock.patch.object(proxy, "_probe_state",
+                                      return_value=("not_ready", "still starting")), \
+                    mock.patch("mcp_proxy.resolve_editor",
+                               return_value=("C:\\UE_5.8", "Editor.exe")), \
+                    mock.patch("mcp_proxy.subprocess.Popen", return_value=_BlockedProcess()):
+                began = time.monotonic()
+                result = proxy._editor_start(_start_args(timeout=0.01))
+                elapsed = time.monotonic() - began
+        structured = result["structuredContent"]
+        self.assertTrue(result["isError"])
+        self.assertEqual(structured["error"], "EDITOR_START_TIMEOUT")
+        self.assertEqual(structured["timeoutSeconds"], 0.01)
+        self.assertEqual(structured["probeState"], "not_ready")
+        self.assertLess(elapsed, 4.0)
+        text = result["content"][0]["text"]
+        self.assertIn("pass timeout", text)
+        self.assertIn("EDITOR_ALREADY_RUNNING", text)
+        self.assertIn("not_ready", text)
+
+    def _timeout_on_probe(self, probe):
+        """EDITOR_START_TIMEOUT (or a fail-fast refusal) of a launch whose readiness probe always
+        answers probe, against a zero ceiling."""
+        with tempfile.TemporaryDirectory() as temp:
+            proxy = self._proxy(uproject=self._project(temp), start_timeout=0.0)
+            with mock.patch.object(proxy, "_editor_process_guard", return_value=None), \
+                    mock.patch.object(proxy, "_probe_state", return_value=probe), \
+                    mock.patch("mcp_proxy.resolve_editor",
+                               return_value=("C:\\UE_5.8", "Editor.exe")), \
+                    mock.patch("mcp_proxy.subprocess.Popen", return_value=_BlockedProcess()):
+                return proxy._editor_start(_start_args())
+
+    def test_unbound_port_timeout_warns_against_a_second_launch(self):
+        # The guard only probes the port, so a retry before the port is bound would launch a
+        # second editor: the text must say so instead of implying a retry is refused.
+        result = self._timeout_on_probe(("not_running", "connection refused"))
+        text = result["content"][0]["text"]
+        self.assertEqual(result["structuredContent"]["probeState"], "not_running")
+        self.assertIn("Do NOT call editor_start again", text)
+        self.assertNotIn("EDITOR_ALREADY_RUNNING", text)
+
+    def test_unresponsive_timeout_quotes_the_probe_diagnostic(self):
+        result = self._timeout_on_probe(("unresponsive", "answered but could not complete X"))
+        self.assertEqual(result["structuredContent"]["probeState"], "unresponsive")
+        self.assertIn("answered but could not complete X", result["content"][0]["text"])
+
+    def test_default_timeout_is_the_proxy_ceiling(self):
+        with tempfile.TemporaryDirectory() as temp:
+            proxy = self._proxy(uproject=self._project(temp), start_timeout=0.0)
+            with mock.patch.object(proxy, "_probe_state", return_value=("not_running", "refused")), \
+                    mock.patch("mcp_proxy.resolve_editor",
+                               return_value=("C:\\UE_5.8", "Editor.exe")), \
+                    mock.patch("mcp_proxy.subprocess.Popen", return_value=_BlockedProcess()):
+                result = proxy._editor_start(_start_args())
+        self.assertEqual(result["structuredContent"]["timeoutSeconds"], 0.0)
+
+    def test_invalid_timeout_is_refused_before_anything_spawns(self):
+        for bad in (0, -1, 3601, "60", True, None):
+            for extra in ({}, {"wait": "exit"}):
+                proxy = self._proxy()
+                with mock.patch("mcp_proxy.subprocess.Popen",
+                                side_effect=AssertionError("must not spawn")), \
+                        mock.patch("mcp_proxy.pinwright_supervisor.spawn_supervised",
+                                   side_effect=AssertionError("must not spawn")):
+                    result = proxy._editor_start(_start_args(timeout=bad, **extra))
+                self.assertEqual(result["structuredContent"],
+                                 {"error": "INVALID_ARGUMENTS", "param": "timeout"}, bad)
+
+    def test_timeout_with_wait_exit_is_refused(self):
+        proxy = self._proxy()
+        with mock.patch("mcp_proxy.subprocess.Popen",
+                        side_effect=AssertionError("must not spawn")):
+            result = proxy._editor_start(_start_args(timeout=600, wait="exit"))
+        self.assertEqual(result["structuredContent"],
+                         {"error": "INVALID_ARGUMENTS", "param": "timeout"})
+        self.assertIn("wait 'exit'", result["content"][0]["text"])
 
     def test_interruption_leaves_the_detached_editor_running(self):
         class _Interrupting(_CompletedProcess):
@@ -1369,6 +1459,14 @@ class ProxyEditorRestartTest(unittest.TestCase):
         self.assertTrue(result["structuredContent"]["restarted"])
         self.assertTrue(result["structuredContent"]["stoppedPreviousEditor"])
 
+    def test_timeout_is_forwarded_to_the_start_half(self):
+        proxy = self._proxy()
+        started = {"content": [], "structuredContent": {"success": True}, "isError": False}
+        with mock.patch.object(proxy, "_probe_state", return_value=("not_running", "refused")), \
+                mock.patch.object(proxy, "_editor_start", return_value=started) as start:
+            proxy._editor_restart(_start_args(timeout=900))
+        self.assertEqual(start.call_args.args[0]["timeout"], 900)
+
     def test_allow_build_is_forwarded_to_the_start_half(self):
         proxy = self._proxy()
         started = {"content": [], "structuredContent": {"success": True}, "isError": False}
@@ -1385,6 +1483,15 @@ class ProxyEditorRestartTest(unittest.TestCase):
             result = proxy._editor_restart(_start_args(mode="offscreen", allow_build=True))
         self.assertEqual(result["structuredContent"],
                          {"error": "INVALID_ARGUMENTS", "param": "allow_build"})
+
+    def test_invalid_timeout_is_refused_before_the_quit(self):
+        proxy = self._proxy()
+        with mock.patch.object(proxy, "_probe_state", return_value=("alive", None)), \
+                mock.patch.object(proxy, "_request_editor_quit",
+                                  side_effect=AssertionError("must not quit")):
+            result = proxy._editor_restart(_start_args(timeout=0))
+        self.assertEqual(result["structuredContent"],
+                         {"error": "INVALID_ARGUMENTS", "param": "timeout"})
 
     def test_no_running_editor_skips_the_quit_half(self):
         proxy = self._proxy()

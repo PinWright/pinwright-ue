@@ -35,6 +35,11 @@
   `INVALID_ARGUMENTS` on offscreen / headless, which never compile at startup) restores the engine's
   choice, and the result's `startupCompile` reads `skipped` or `allowed`. **Behaviour change:** edit
   C++ then `editor_start` no longer builds it; run `editor_build` first.
+- Added: `editor_start` and `editor_restart` take `timeout` (seconds, above 0, at most 3600), the
+  `wait: "ready"` ceiling for that call; default stays the proxy's `--start-timeout` (180).
+  `EDITOR_START_TIMEOUT` now carries `timeoutSeconds` and `probeState` (`not_ready`, `unresponsive`
+  or `not_running`), and its text names the override. `timeout` with `wait: "exit"` is refused
+  `INVALID_ARGUMENTS`.
 - Changed: `audio.synth.describe_schema` packs its `generators` / `effects` pages with the spill
   gate's own measurement (new `HttpResponseSpill::MeasureInlineCharacters`, one condensed copy)
   instead of a pretty print, so **pages can hold more kinds and `pageCount` may drop**. Handlers
