@@ -19,7 +19,7 @@ class FHandlerContext;
 // makes "the declared params match the parsed keys" a single edit point instead of three.
 #define DRIVE_WINDOW_SELECTOR_PARAMS \
     RPC_PARAM_OPT("window_title", "string", "Editor-chrome window selector: substring-matched against a visible top-level window title (see drive.list_windows). Both selectors unset picks the active top-level window. Ignored on the game surface."), \
-    RPC_PARAM_OPT("title", "string", "Alias for window_title."), \
+    RPC_PARAM_OPT("title", "string", "Alias for window_title; window_title wins when both are non-empty."), \
     RPC_PARAM_OPT("window_index", "integer", "Editor-chrome window selector: the Nth visible top-level window (0-based, see drive.list_windows). Takes precedence over window_title. Ignored on the game surface."), \
     RPC_PARAM_OPT("index", "integer", "Alias for window_index.")
 
@@ -48,8 +48,9 @@ public:
     // Read the live-root selector from instance_name / root_index (and camelCase aliases).
     static FDriveRootSelector ParseRootSelector(const FHandlerContext& Ctx);
 
-    // Read the editor-chrome window selector from title / window_title (substring match)
-    // and window_index / index (positional, takes precedence). Both unset selects the
+    // Read the editor-chrome window selector from window_title / title (substring match)
+    // and window_index / index (positional, takes precedence). The canonical key wins over
+    // its alias when both are non-empty / present. Both unset selects the
     // active top-level window. Only consulted for the EditorChrome surface; the game
     // surface keeps its FDriveRootSelector vocabulary (instance_name / root_index).
     static FDriveWindowSelector ParseWindowSelector(const FHandlerContext& Ctx);

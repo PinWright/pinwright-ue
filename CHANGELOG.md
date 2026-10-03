@@ -306,6 +306,11 @@
   (not inside a macro body, where such a select stays wildcard). A
   refused data wire now names both pin types and the schema's reason.
 
+- Fixed: the shared editor window selector (`editor.screenshot_window`, the other `editor.*`
+  window verbs and the editor-chrome `drive.*` verbs) resolves `window_title` before its `title`
+  alias. **A call carrying both with different values now selects by `window_title`** (the alias
+  used to win silently); an empty `window_title` still falls through to `title`.
+
 - Fixed: `blueprint.compile_bpir` — a call to a function declared in the same code keeps the
   callee's parameter pins (it used to get only `self`); `%r = get $obj.Prop` binds `%r` (the next
   line used to fail `Could not resolve value '%r'`); `Target: %ref.Prop` resolves the member

@@ -134,7 +134,9 @@ FDriveWindowSelector FDriveHandlerCommon::ParseWindowSelector(const FHandlerCont
     FDriveWindowSelector Selector;
     // Distinct vocabulary from the game root selector: editor chrome is addressed by
     // window title (substring) and ordered window index, not by UMG instance_name.
-    Selector.Title = Ctx.GetStringFirstOf({ TEXT("title"), TEXT("window_title") });
+    // Canonical key first in both pairs: when a caller sends the canonical key and its alias
+    // with different values, the canonical value it declared is the one that selects.
+    Selector.Title = Ctx.GetStringFirstOf({ TEXT("window_title"), TEXT("title") });
     Selector.Index = Ctx.GetIntFirstOf({ TEXT("window_index"), TEXT("index") });
     return Selector;
 }

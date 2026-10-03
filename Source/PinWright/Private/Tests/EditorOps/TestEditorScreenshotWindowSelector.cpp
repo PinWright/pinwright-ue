@@ -28,6 +28,58 @@ namespace EditorScreenshotWindowSelectorTestLocal
 
 }
 
+// Canonical-vs-alias precedence of the shared window selector (B-screenshot-window-title-precedence).
+// Pure parse, no Slate: every editor.* / drive.* verb reading ParseWindowSelector gets this rule.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEditorScreenshotWindowCanonicalSelectorWinsTest,
+    "PinWright.editor.screenshot_window.CanonicalSelectorKeysWinOverAliases",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FEditorScreenshotWindowCanonicalSelectorWinsTest::RunTest(const FString& Parameters)
+{
+    using namespace EditorScreenshotWindowSelectorTestLocal;
+
+    TSharedPtr<FJsonObject> ConflictingTitles = MakeShared<FJsonObject>();
+    ConflictingTitles->SetStringField(TEXT("window_title"), TEXT("CanonicalWindow"));
+    ConflictingTitles->SetStringField(TEXT("title"), TEXT("AliasWindow"));
+    TestEqual(TEXT("conflicting window_title/title: canonical window_title selects"),
+        ParseSelector(ConflictingTitles).Title, FString(TEXT("CanonicalWindow")));
+
+    TSharedPtr<FJsonObject> EqualTitles = MakeShared<FJsonObject>();
+    EqualTitles->SetStringField(TEXT("window_title"), TEXT("SameWindow"));
+    EqualTitles->SetStringField(TEXT("title"), TEXT("SameWindow"));
+    TestEqual(TEXT("equal window_title/title pair resolves to that value"),
+        ParseSelector(EqualTitles).Title, FString(TEXT("SameWindow")));
+
+    TSharedPtr<FJsonObject> EmptyCanonicalTitle = MakeShared<FJsonObject>();
+    EmptyCanonicalTitle->SetStringField(TEXT("window_title"), TEXT(""));
+    EmptyCanonicalTitle->SetStringField(TEXT("title"), TEXT("AliasWindow"));
+    TestEqual(TEXT("empty window_title falls through to a non-empty title alias"),
+        ParseSelector(EmptyCanonicalTitle).Title, FString(TEXT("AliasWindow")));
+
+    TSharedPtr<FJsonObject> ConflictingIndices = MakeShared<FJsonObject>();
+    ConflictingIndices->SetNumberField(TEXT("window_index"), 2);
+    ConflictingIndices->SetNumberField(TEXT("index"), 5);
+    const FDriveWindowSelector IndexSelector = ParseSelector(ConflictingIndices);
+    TestTrue(TEXT("conflicting window_index/index: index is set"), IndexSelector.Index.IsSet());
+    if (IndexSelector.Index.IsSet())
+    {
+        TestEqual(TEXT("conflicting window_index/index: canonical window_index selects"),
+            IndexSelector.Index.GetValue(), 2);
+    }
+
+    TSharedPtr<FJsonObject> EqualIndices = MakeShared<FJsonObject>();
+    EqualIndices->SetNumberField(TEXT("window_index"), 1);
+    EqualIndices->SetNumberField(TEXT("index"), 1);
+    const FDriveWindowSelector EqualIndexSelector = ParseSelector(EqualIndices);
+    TestTrue(TEXT("equal window_index/index pair: index is set"), EqualIndexSelector.Index.IsSet());
+    if (EqualIndexSelector.Index.IsSet())
+    {
+        TestEqual(TEXT("equal window_index/index pair resolves to that value"),
+            EqualIndexSelector.Index.GetValue(), 1);
+    }
+    return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEditorScreenshotWindowDefaultTargetTest,
     "PinWright.editor.screenshot_window.DefaultsToMainFrameWithoutSelector",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)

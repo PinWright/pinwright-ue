@@ -1013,7 +1013,7 @@ REGISTER_RPC_HANDLER("editor.screenshot_window", "editor",
     RPC_PARAMS(
         RPC_PARAM_OPT("window_title", "string",
             "Visible top-level window-title substring. With no non-empty title or index, captures the main editor frame."),
-        RPC_PARAM_OPT("title", "string", "Alias for window_title."),
+        RPC_PARAM_OPT("title", "string", "Alias for window_title; window_title wins when both are non-empty."),
         RPC_PARAM_OPT("window_index", "integer",
             "Nth visible top-level window (0-based, see drive.list_windows). Takes precedence over window_title."),
         RPC_PARAM_OPT("index", "integer", "Alias for window_index."),
