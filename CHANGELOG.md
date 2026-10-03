@@ -26,6 +26,13 @@
   seeded `CLAUDE.md`/`AGENTS.md` name the `source.fileMd5` check; all are create-if-missing, so an
   existing dump root keeps its old files until they are deleted. Dump core version 4: every cached aspect regenerates once.
 
+- Changed: `EDITOR_NOT_RUNNING` tells a never-started editor from one that served this project and
+  died. `structuredContent.lastSession` carries `state` (`never_started` | `crashed` |
+  `killed_externally` | `exited` | `stopped`), the last port, the last `jobs.jsonl` job, the editor
+  log path and, for a crash, the reason and top frame from its last `=== Critical error: ===`
+  block. **Behaviour change:** the text now prescribes `editor_start` only when no gateway-port
+  breadcrumb exists; otherwise it starts `EDITOR_NOT_RUNNING (<state>): ...` and tells a caller
+  sharing the editor to report rather than start or restart it.
 - Fixed: a `mode: "visible"` `editor_start` / `editor_restart` no longer runs UnrealBuildTool at
   startup. A project that sets `bForceCompilationAtStartup` (EditorLoadingSavingSettings) made the
   engine rebuild the editor target on every visible start, before PinWright loaded and without the

@@ -2542,6 +2542,149 @@ def _external_kill_fields(verdict, log_path):
     return fields
 
 
+_LOG_PREFIX_RE = re.compile(r"^(?:\[[^\]]*\]\[[^\]]*\])?(?:Log\w*:\s*)?(?:Error:\s*)?")
+_FRAME_RE = re.compile(r"0x[0-9a-fA-F]+\s+\S+!([^\s(\[]+)")
+
+
+def _read_head(path, limit=4096):
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            return fh.read(limit)
+    except OSError:
+        return ""
+
+
+def _last_critical_error(tail):
+    """(reason, frame) from the LAST `=== Critical error: ===` block in a log tail (Windows: one
+    `LogWindows: Error:` line each; Unix: banner, then the bare description and frames), or None."""
+    at = tail.rfind("=== Critical error: ===")
+    if at < 0:
+        return None
+    reason = frame = None
+    for raw in tail[at:].splitlines()[1:40]:
+        line = _LOG_PREFIX_RE.sub("", raw).strip()
+        match = _FRAME_RE.search(line)
+        if match:
+            frame = frame or match.group(1)
+        elif line and line != "Fatal error!" and reason is None:
+            reason = line
+        if reason and frame:
+            break
+    return reason, frame
+
+
+def last_session_evidence(port_file, uproject, tail_bytes=4 << 20):
+    """What this project's last editor left behind, for EDITOR_NOT_RUNNING. Pure file reads:
+    the gateway-port breadcrumb (an editor leaves it on a normal exit or a crash; it is retracted
+    only by a later non-serving editor that finds nothing listening, so present = an editor of
+    this project served MCP; absent = none has since, or one is still booting), the last
+    jobs.jsonl entry, and the newest Saved/Logs/<Project>*.log that was open when the gateway
+    bound: its last `=== Critical error: ===` block, a `RequestExit(` / `Engine exit requested` /
+    `Log file closed` line, and the supervisor's <log>.result.txt verdict.
+    state: never_started | crashed | killed_externally | exited | stopped (none of those)."""
+    try:
+        with open(port_file, encoding="utf-8") as fh:
+            port = fh.read().strip()
+        bound_at = _utc_iso_from_ms(os.path.getmtime(port_file) * 1000)
+    except (OSError, TypeError, ValueError):
+        return {"state": "never_started", "breadcrumb": False, "portFile": port_file}
+    evidence = {"state": "stopped", "breadcrumb": True, "portFile": port_file,
+                "lastPort": int(port) if port.isdigit() else None, "gatewayBoundAt": bound_at,
+                "lastJob": None, "logPath": None, "logStoppedAt": None, "crashReason": None,
+                "crashFrame": None, "killedExternally": False}
+    try:
+        with open(os.path.join(os.path.dirname(port_file), "jobs.jsonl"), "rb") as fh:
+            fh.seek(max(0, os.fstat(fh.fileno()).st_size - 65536))
+            for raw in reversed(fh.read().decode("utf-8", "replace").splitlines()):
+                try:
+                    job = json.loads(raw)
+                except ValueError:
+                    continue
+                evidence["lastJob"] = {k: job.get(k) for k in ("ts", "ticket_id", "method", "event")}
+                break
+    except OSError:
+        pass
+    if not uproject:
+        return evidence
+    name = os.path.splitext(os.path.basename(uproject))[0]
+    # Only a log opened by the time the gateway bound and written since can be the serving
+    # editor's: an -Abslog run elsewhere leaves Saved/Logs stale, and a commandlet, cook or failed
+    # boot started after the bind opens a later one. <Project>-CRC*.log is the crash reporter's.
+    logs = [path for path in glob.glob(os.path.join(
+                os.path.dirname(uproject), "Saved", "Logs", glob.escape(name) + "*.log"))
+            if "-CRC" not in os.path.basename(path)]
+    try:
+        bound_mtime = os.path.getmtime(port_file)
+        logs = [path for path in logs if os.path.getmtime(path) >= bound_mtime
+                and (_log_opened_at(_read_head(path)) or bound_mtime + 1) <= bound_mtime]
+        log_path = max(logs, key=os.path.getmtime) if logs else None
+        if log_path is None:
+            return evidence
+        evidence["logPath"] = log_path
+        evidence["logStoppedAt"] = _utc_iso_from_ms(os.path.getmtime(log_path) * 1000)
+        with open(log_path, "rb") as fh:
+            fh.seek(max(0, os.fstat(fh.fileno()).st_size - tail_bytes))
+            tail = fh.read().decode("utf-8", "replace")
+    except (OSError, ValueError):
+        return evidence
+    crash = _last_critical_error(tail)
+    # A result.txt older than the log is a previous run's on the same -Abslog path.
+    try:
+        fresh = os.path.getmtime(log_path + ".result.txt") >= os.path.getmtime(log_path) - 60
+    except OSError:
+        fresh = False
+    killed = fresh and _external_kill_fields(
+        pinwright_supervisor.read_result(log_path + ".result.txt")[1], log_path)["killedExternally"]
+    if crash:
+        evidence.update(state="crashed", crashReason=crash[0], crashFrame=crash[1])
+    elif killed:
+        evidence.update(state="killed_externally", killedExternally=True)
+    elif any(marker in tail for marker in ("RequestExit(", "Engine exit requested",
+                                           "Log file closed")):
+        evidence["state"] = "exited"
+    return evidence
+
+
+def editor_not_running_text(evidence, detail=None):
+    """EDITOR_NOT_RUNNING text. Only the never-started (or unknown) case prescribes editor_start:
+    for an editor that served and died, a shared editor's owner decides, and a restart by any
+    other agent discards their in-memory work."""
+    if not evidence or not evidence.get("breadcrumb"):
+        text = "EDITOR_NOT_RUNNING%s: The Unreal editor is not running or PinWright MCP is " \
+               "unavailable%s. Start it with the editor_start MCP tool, then retry call()." % (
+                   " (never started)" if evidence else "",
+                   "; no gateway breadcrumb at %s, so no editor of this project has served MCP "
+                   "since it was last cleared (if one may still be booting, retry instead)"
+                   % evidence["portFile"] if evidence else "")
+    else:
+        label = {"crashed": "crashed", "killed_externally": "killed externally",
+                 "exited": "exited"}.get(evidence["state"], "stopped")
+        text = "EDITOR_NOT_RUNNING (%s): an editor served this project on port %s (gateway " \
+               "bound %s)" % (label, evidence["lastPort"], evidence["gatewayBoundAt"])
+        job = evidence.get("lastJob")
+        if job:
+            text += ", last job %s (%s) at %s" % (job["ticket_id"], job["method"], job["ts"])
+        text += " and did not answer this call."
+        if evidence["logPath"]:
+            text += " Its log %s was last written %s." % (evidence["logPath"],
+                                                         evidence["logStoppedAt"])
+        else:
+            text += (" No Saved/Logs log of this project was written since then (an -Abslog "
+                     "launch logs elsewhere).")
+        if evidence["state"] == "crashed":
+            text += " Crash reason: %s%s." % (evidence["crashReason"] or "unknown", (
+                " at " + evidence["crashFrame"]) if evidence["crashFrame"] else "")
+        elif evidence["state"] == "killed_externally":
+            text += (" The supervisor saw it killed from outside (no crash, no exit request); "
+                     "check for an OOM watchdog or a manual kill.")
+        text += (" If you share this editor with other agents, report this rather than start or "
+                 "restart it: its owner decides, and editor_restart discards other agents' "
+                 "unsaved work. If you own it, editor_start brings it back.")
+    if detail:
+        text += " (%s)" % detail
+    return text
+
+
 def _build_lease_path(checkout_root):
     return os.path.join(checkout_root, "Saved", "PinWright", "builds", "lease.json")
 
@@ -2827,15 +2970,15 @@ class Proxy:
             "isError": is_error,
         }
 
-    @staticmethod
-    def _editor_not_running_text(detail=None):
-        text = (
-            "EDITOR_NOT_RUNNING: The Unreal editor is not running or PinWright MCP is "
-            "unavailable. Start it with the editor_start MCP tool, then retry call()."
-        )
-        if detail:
-            text += " (%s)" % detail
-        return text
+    def _last_session(self):
+        """last_session_evidence for this proxy's own port file; None when it has none."""
+        if not self.port_file:
+            return None
+        return last_session_evidence(
+            self.port_file, resolve_uproject(self.uproject, self.port_file, __file__, os.path.exists))
+
+    def _editor_not_running_text(self, detail=None, session=None):
+        return editor_not_running_text(session or self._last_session(), detail)
 
     def _editor_unavailable_result(self, code, url=None, detail=None):
         if code == "EDITOR_UNRESPONSIVE":
@@ -2879,8 +3022,11 @@ class Proxy:
             if not text.startswith("EDITOR_BLOCKED_ON_MODAL:"):
                 text = "EDITOR_BLOCKED_ON_MODAL: " + text
         else:
-            text = self._editor_not_running_text(detail)
+            session = self._last_session()
+            text = self._editor_not_running_text(detail, session)
         structured = {"error": code, "retryable": code == "EDITOR_NOT_READY"}
+        if code == "EDITOR_NOT_RUNNING":
+            structured["lastSession"] = session
         if url:
             structured.update({"url": url, "port": _loopback_port(url)})
         return self._start_result(text, structured, is_error=True)
