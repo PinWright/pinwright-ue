@@ -256,11 +256,13 @@ overhead frame can make it.
 **Landscape grass lies in three independent ways, and any one will make a working setup look
 broken.**
 
-- **A capture that only passes a pose photographs grass built around the *persistent* viewport
-  camera.** Grass builds asynchronously around the camera the streaming manager saw on tick, so the
-  frame shows whatever was built for wherever the viewport was left. Measured at one pose: 0.6443
-  mean luminance and 844 KB with no grass, twice running; after moving the viewport to that same
-  pose first, 0.4796 and 1558 KB with a full carpet. Always `editor.set_camera` first.
+- **A pose-only capture used to photograph grass built around the *persistent* viewport camera.**
+  Grass builds around the camera the streaming manager saw on tick, so the frame showed whatever was
+  built for wherever the viewport was left. Measured at one pose: 0.6443 mean luminance and 844 KB
+  with no grass, twice running; after moving the viewport to that same pose first, 0.4796 and
+  1558 KB with a full carpet. Captures now build the grass for their own eye before drawing, so do
+  not `editor.set_camera` first. Read `grass.builtForPose` instead: `false` comes with a
+  `grassWarning` that names the remedy.
 - **Orthographic capture renders no landscape grass at all.** At matched world coverage,
   perspective 0.4797 against ortho 0.5161 — bare material plus specks. Not the lit-ortho near-plane
   pushback: an unlit repeat with zero pushback still shows none. Ortho tiling therefore **cannot
@@ -270,16 +272,18 @@ broken.**
   cover (volume wireframes, grid, world-axis gizmo), so take the chrome-free shot for the reviewer
   and an off-game-view shot for the density judgement, and never compare one against the other.
 
-**Grass also takes 60-150 s to rebuild after a camera move while every health signal reads clean.**
-`grass.MaxCreatePerFrame` is **1**, so repopulating a large cull radius costs hundreds of frames. A
-capture taken before it finishes returns `blank: false` and `warmup.settled: true` with
-`settleRounds: 1` and no grass in it — and a repeat at the same pose 12 s later is *identical*,
-which reads as settled and is not. Measured: 0.3074 with no grass, 0.2778 after 45 s, 0.2746 after
-105 s, against 0.2510 for the built carpet. A before/after pair split across that rebuild shows a
-change nobody made, larger than the edit under test. Capture repeatedly at the fixed pose until
-`meanLuminance` **and** `sizeBytes` agree across two consecutive frames — `sizeBytes` is the more
-sensitive — and compare a pair only when both members are built. Full form on [`render`](render.md)
-§ *A frame can be contaminated by state this capture does not own*.
+**Do not wait for grass after a camera move. Read whether it was built.** The editor's own
+tick-driven grass update is capped by `grass.MaxCreatePerFrame` (**1**), so after a camera teleport
+it takes 60-150 s to repopulate a large cull radius, and `warmup.settled` does not wait for it. An
+older version of this page therefore said to `editor.set_camera`, wait, and capture until two
+frames agree. Captures no longer depend on that update. Each one force-syncs the grass build for its
+own eye, which skips the per-frame cap: measured at 18-51 ms, and a 28,000 uu teleport with no
+`editor.set_camera` and no wait came back fully built on the first shot. Read `grass.builtForPose`,
+`grass.settled` and `grass.pendingComponents` off the response, and re-shoot only on a
+`grassWarning`. The wait costs minutes per pose, and `editor.set_camera` moves the shared viewport
+camera. Compare a before/after pair only when both members read built and settled and carry no
+`grassWarning` (or report `grass.landscapes: 0`). Full form on [`render`](render.md) § *A frame can
+be contaminated by state this capture does not own*.
 
 **Pin exposure before comparing any two frames, and hold the capture size fixed across the session.**
 Both are [`level-review`](level-review.md) rules and both bite hardest here, because a vegetation
