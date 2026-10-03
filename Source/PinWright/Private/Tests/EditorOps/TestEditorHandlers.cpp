@@ -1854,6 +1854,65 @@ bool FEditorCreateUtilityWidgetInvalidParentRefusedTest::RunTest(const FString& 
     return true;
 }
 
+// B-create-widget-bp-abstract-parent: the editor's UEditorUtilityWidgetBlueprintFactory accepts an
+// Abstract, Blueprintable UEditorUtilityWidget subclass (CanCreateBlueprintOfClass ignores
+// CLASS_Abstract); the handler used to refuse it with CLASS_NOT_INSTANTIABLE.
+// UEditorUtilityDialogWidget is the stock such class; it is resolved by path because older engines
+// do not ship it.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEditorCreateUtilityWidgetAbstractParentAcceptedTest,
+    "PinWright.editor.create_utility_widget.AbstractParentAccepted",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FEditorCreateUtilityWidgetAbstractParentAcceptedTest::RunTest(const FString& Parameters)
+{
+    const TCHAR* ParentPath = TEXT("/Script/Blutility.EditorUtilityDialogWidget");
+    UClass* AbstractParent = FindObject<UClass>(nullptr, ParentPath);
+    if (!AbstractParent)
+    {
+        PinWrightTestSkip::SkipAssertions(*this, TEXT("abstract-utility-widget-parent-absent"),
+            FString::Printf(TEXT("%s is not present on this engine"), ParentPath));
+        return true;
+    }
+    if (!TestTrue(TEXT("fixture: parent is an Abstract UEditorUtilityWidget subclass"),
+            AbstractParent->IsChildOf(UEditorUtilityWidget::StaticClass())
+            && AbstractParent->HasAnyClassFlags(CLASS_Abstract)))
+    {
+        return false;
+    }
+
+    const FString AssetName = FString::Printf(TEXT("U_McpTransientUtilWidgetAbstractParent_%s"),
+        *FGuid::NewGuid().ToString(EGuidFormats::Digits));
+    const FString Folder = TEXT("/Game/PinWrightTests/__McpTest__");
+    const FString PackagePath = Folder / AssetName;
+
+    TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+    Payload->SetStringField(TEXT("name"), AssetName);
+    Payload->SetStringField(TEXT("folder"), Folder);
+    Payload->SetStringField(TEXT("parentClass"), ParentPath);
+    Payload->SetBoolField(TEXT("save"), false);
+
+    FTestResponseCapture Capture;
+    TestTrue(TEXT("editor.create_utility_widget handler found"),
+        InvokeHandlerWithCapture(TEXT("editor.create_utility_widget"), Payload, Capture));
+    TestTrue(TEXT("create_utility_widget responded"), Capture.bWasCalled);
+    TestTrue(*FString::Printf(TEXT("abstract parent is accepted (error %s: %s)"),
+        *Capture.ErrorCode, *Capture.Message), Capture.bSuccess);
+    if (Capture.bSuccess)
+    {
+        const UEditorUtilityWidgetBlueprint* Created = FindObject<UEditorUtilityWidgetBlueprint>(
+            nullptr, *(PackagePath + TEXT(".") + AssetName));
+        TestTrue(TEXT("created blueprint's ParentClass is the abstract parent"),
+            Created && Created->ParentClass == AbstractParent);
+    }
+
+    if (UPackage* Package = FindPackage(nullptr, *PackagePath))
+    {
+        Package->SetDirtyFlag(false);
+    }
+    CleanupTestAsset(PackagePath);
+    return true;
+}
+
 // ============================================================================
 // EditorWindowHandlers — editor.set_window_state
 //   (E-resize-window-maximized-no-restore)

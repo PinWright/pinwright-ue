@@ -26,6 +26,11 @@
   component (`UActorComponent`) property is refused. It was refused `CONSTRUCTION_FAILED`
   (`ImportText left trailing input`). `widget.import_xml` and BPIR `node_props` errors now carry
   both the apply error and the ImportText fallback error (the fallback used to overwrite it).
+- Fixed: `widget.create_widget_blueprint` and `editor.create_utility_widget` accept an
+  `Abstract` C++ parent (the standard `UCLASS(Abstract, Blueprintable)` layout-only `BindWidget`
+  parent); they now apply the editor factories' rule, `FKismetEditorUtilities::CanCreateBlueprintOfClass`.
+  **Behaviour change:** a `NotBlueprintable` widget parent, previously accepted, is now refused
+  `CLASS_NOT_INSTANTIABLE`, as the editor refuses it.
 - Added: `level.describe_offline` lists a map's actors (label, name, class, path, folder, tags,
   guid, world transform) by parsing the `.umap` on disk, in the `pinwright.actor-describe.v1`
   shape `asset.dump` writes. It never loads the map, never creates its package and never touches

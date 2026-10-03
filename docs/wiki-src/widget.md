@@ -176,8 +176,10 @@ See also [`asset.dump`](asset.dump.md) for the `tree.xml` `inherited_from` marke
 
 **`parentClass` (optional) is resolved before any package is created.** An unresolved or empty
 explicit value returns `CLASS_NOT_FOUND`; a resolved class that is not a `UUserWidget` subclass, or
-is an abstract/deprecated/superseded subclass, returns `CLASS_NOT_INSTANTIABLE`. The canonical
-`UUserWidget` root is allowed even though the engine marks it abstract. The handler never falls
+that the editor's Widget Blueprint factory would refuse (`FKismetEditorUtilities::CanCreateBlueprintOfClass`:
+deprecated, superseded, `NotBlueprintable`, a Blueprint skeleton class), returns `CLASS_NOT_INSTANTIABLE`.
+`Abstract` is **not** a refusal: a `UCLASS(Abstract, Blueprintable)` C++ parent whose Blueprint subclass
+is layout-only (`BindWidget`) is accepted, as in the editor's "Create Widget Blueprint" flow. The handler never falls
 back to `UUserWidget` for an invalid explicit parent, and these refusals create no package or asset.
 The success response's `parentClass` is the actual resolved class path.
 

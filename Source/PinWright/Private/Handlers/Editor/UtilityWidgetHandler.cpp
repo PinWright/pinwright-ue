@@ -104,11 +104,10 @@ REGISTER_RPC_HANDLER("editor.create_utility_widget", "editor",
                 FString::Printf(TEXT("Parent class '%s' could not be resolved."), *ParentClassParam));
             return true;
         }
-        // UEditorUtilityWidget itself is an abstract Blueprint parent by design; only abstract
-        // subclasses (and deprecated/superseded classes) are rejected here.
+        // The editor's own rule (UEditorUtilityWidgetBlueprintFactory::FactoryCreateNew):
+        // FKismetEditorUtilities::CanCreateBlueprintOfClass. CLASS_Abstract is NOT a refusal.
         if (!Loaded->IsChildOf(UEditorUtilityWidget::StaticClass())
-            || (Loaded != UEditorUtilityWidget::StaticClass()
-                && Loaded->HasAnyClassFlags(CLASS_Abstract | CLASS_Deprecated | CLASS_NewerVersionExists)))
+            || !FKismetEditorUtilities::CanCreateBlueprintOfClass(Loaded))
         {
             Ctx.SendError(TEXT("CLASS_NOT_INSTANTIABLE"),
                 FString::Printf(TEXT("Parent class '%s' resolves to '%s', which cannot be used as an UEditorUtilityWidget parent."),

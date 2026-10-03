@@ -129,11 +129,11 @@ REGISTER_RPC_HANDLER("widget.create_widget_blueprint", "widget", "Author a new U
                 FString::Printf(TEXT("Parent class '%s' could not be resolved."), *ParentClass));
             return true;
         }
-        // UUserWidget itself is an abstract Blueprint parent by design; only abstract subclasses
-        // (and deprecated/superseded classes) are rejected here.
+        // The editor's own rule (UWidgetBlueprintFactory::FactoryCreateNew): a UUserWidget subclass
+        // that FKismetEditorUtilities::CanCreateBlueprintOfClass accepts. CLASS_Abstract is NOT a
+        // refusal - UCLASS(Abstract, Blueprintable) is the standard layout-only BindWidget parent.
         if (!FoundClass->IsChildOf(UUserWidget::StaticClass())
-            || (FoundClass != UUserWidget::StaticClass()
-                && FoundClass->HasAnyClassFlags(CLASS_Abstract | CLASS_Deprecated | CLASS_NewerVersionExists)))
+            || !FKismetEditorUtilities::CanCreateBlueprintOfClass(FoundClass))
         {
             Ctx.SendError(TEXT("CLASS_NOT_INSTANTIABLE"),
                 FString::Printf(TEXT("Parent class '%s' resolves to '%s', which cannot be used as a UUserWidget parent."),

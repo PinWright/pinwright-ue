@@ -686,6 +686,59 @@ bool FWidgetCreateWidgetBlueprintIncompatibleParentRefusedTest::RunTest(const FS
     return true;
 }
 
+// B-create-widget-bp-abstract-parent: an Abstract, Blueprintable UUserWidget subclass is the
+// standard layout-only BindWidget parent and the editor's UWidgetBlueprintFactory accepts it
+// (CanCreateBlueprintOfClass ignores CLASS_Abstract). The handler used to refuse it with
+// CLASS_NOT_INSTANTIABLE. UEditorUtilityWidget is a stock Abstract UUserWidget subclass.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWidgetCreateWidgetBlueprintAbstractParentAcceptedTest,
+    "PinWright.widget.create_widget_blueprint.AbstractParentAccepted",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FWidgetCreateWidgetBlueprintAbstractParentAcceptedTest::RunTest(const FString& Parameters)
+{
+    const TCHAR* ParentPath = TEXT("/Script/Blutility.EditorUtilityWidget");
+    UClass* AbstractParent = FindObject<UClass>(nullptr, ParentPath);
+    if (!TestNotNull(TEXT("fixture: EditorUtilityWidget class is loaded"), AbstractParent)
+        || !TestTrue(TEXT("fixture: parent is an Abstract UUserWidget subclass"),
+            AbstractParent->IsChildOf(UUserWidget::StaticClass())
+            && AbstractParent != UUserWidget::StaticClass()
+            && AbstractParent->HasAnyClassFlags(CLASS_Abstract)))
+    {
+        return false;
+    }
+
+    const FString AssetPath = MakeUniqueWidgetAssetPath(TEXT("WBP_AbstractParent"));
+    const FString AssetName = FPackageName::GetLongPackageAssetName(AssetPath);
+    const FString Folder = AssetPath.Left(AssetPath.Len() - AssetName.Len() - 1);
+
+    TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+    Payload->SetStringField(TEXT("name"), AssetName);
+    Payload->SetStringField(TEXT("folder"), Folder);
+    Payload->SetStringField(TEXT("parentClass"), ParentPath);
+    Payload->SetBoolField(TEXT("save"), false);
+
+    FTestResponseCapture Capture;
+    TestTrue(TEXT("widget.create_widget_blueprint handler found"),
+        InvokeHandlerWithCapture(TEXT("widget.create_widget_blueprint"), Payload, Capture));
+    TestTrue(TEXT("widget.create_widget_blueprint responded"), Capture.bWasCalled);
+    TestTrue(*FString::Printf(TEXT("abstract parent is accepted (error %s: %s)"),
+        *Capture.ErrorCode, *Capture.Message), Capture.bSuccess);
+    if (Capture.bSuccess && Capture.Result.IsValid())
+    {
+        TestEqual(TEXT("response parentClass is the abstract parent"),
+            Capture.Result->GetStringField(TEXT("parentClass")), FString(ParentPath));
+        const UWidgetBlueprint* Created = FindObject<UWidgetBlueprint>(nullptr, *(AssetPath + TEXT(".") + AssetName));
+        TestTrue(TEXT("created blueprint's ParentClass is the abstract parent"),
+            Created && Created->ParentClass == AbstractParent);
+    }
+
+    if (UPackage* Package = FindPackage(nullptr, *AssetPath))
+    {
+        Package->SetDirtyFlag(false);
+    }
+    CleanupWidgetAsset(AssetPath);
+    return true;
+}
+
 // ============================================================================
 // WidgetHierarchyHandler — widget.remove_widget
 // ============================================================================
