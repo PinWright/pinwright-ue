@@ -160,6 +160,16 @@
   region, so part of a skeletal mesh can be cut out between `create_from_skeletal_mesh` and
   `convert_to_skeletal_mesh` without a boolean. New error code `BONE_REGION_EMPTY`.
 
+- Fixed: a `niagara.*` edit with `compile: true, save: true` on a standalone Niagara Emitter asset
+  that no loaded system uses now saves (it was refused every time, since no compile can be
+  requested for such an emitter), and reports `compileSkipped: "noLoadedSystemUsesEmitter"` beside
+  `compiled: false`. `niagara.compile` / `niagara.compile_status` no longer log a spurious
+  `Failed to find object 'NiagaraSystem ...'` on an emitter path.
+- Added: the `niagara.inspect` stack readback (and `niagara_stack.json`) carries
+  `dynamicInputEntryId` on a `dynamicInput` input, the `entryId` that addresses a dynamic input's
+  own curve in `niagara.get_curve_keys` / `set_curve_keys`, and a `curve` summary (per-channel
+  `keyCount`, `timeRange`, `valueRange`) on a curve-valued `data` input.
+
 - Fixed: `blueprint.compile_bpir` — **`break<T>` on a struct with a native break function
   (`Rotator`, `Vector`, `HitResult`, `Transform`, ...) now emits that function** (`BreakRotator`,
   `BreakHitResult`, ...) instead of a generic Break Struct node the Blueprint compiler warned on

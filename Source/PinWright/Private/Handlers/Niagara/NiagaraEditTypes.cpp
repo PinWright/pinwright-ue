@@ -1948,6 +1948,14 @@ namespace NiagaraEdit
             {
                 bOutCompiled = true;
             }
+            // An emitter asset compiles only through the loaded systems that use it. With none,
+            // the request above could not ask for anything, and no later niagara.compile can
+            // either, so the save gate below must not wait on a compile that can never exist.
+            if (!bCompileIssued && Target.Emitter && !Target.System)
+            {
+                Target.bNoLoadedSystemUsesEmitter = PinWrightNiagara::ObserveEmitterCompiles(
+                    *Target.Emitter, ResolveEmitterVersionGuid(Target)).AffectedSystemCount == 0;
+            }
         }
 
         // The `{compile: true, save: true}` pair on one call is a data-corrupting race, and it
@@ -1975,7 +1983,20 @@ namespace NiagaraEdit
 
             // Where the wait ran, `compiled` reports the observation rather than the request.
             bOutCompiled = PinWrightNiagara::DidCompileLand(bCompileIssued, Wait);
-            bCompileIsPersistable = bOutCompiled && PinWrightNiagara::MayPersistAfterCompileWait(Wait);
+            // A standalone emitter no loaded system uses has nothing compiling and nothing compiled
+            // to invalidate: its scripts are compiled when a system next pulls the emitter in. The
+            // gate used to demand a landed compile here anyway, which made save:true unsatisfiable
+            // on such an emitter while asset.save wrote the same package
+            // (B-niagara-emitter-save-guard-deadlocks-unused-emitter).
+            bCompileIsPersistable = (bOutCompiled || Target.bNoLoadedSystemUsesEmitter)
+                && PinWrightNiagara::MayPersistAfterCompileWait(Wait);
+            if (Target.bNoLoadedSystemUsesEmitter)
+            {
+                UE_LOG(LogPinWrightSubsystem, Log,
+                    TEXT("niagara edit on '%s': no loaded Niagara System uses this emitter, so there is no compile ")
+                    TEXT("to request or wait for; save allowed without a compile (a system compiles it when it loads it)."),
+                    *Target.AssetPath);
+            }
             if (!bCompileIsPersistable)
             {
                 // Refusing the save is the point: persisting here is what corrupts the asset,
@@ -2131,6 +2152,12 @@ namespace NiagaraEdit
         Result->SetStringField(TEXT("assetKind"), Target.AssetKind);
         Result->SetBoolField(TEXT("compileRequested"), Options.bCompile);
         Result->SetBoolField(TEXT("compiled"), bCompiled);
+        if (Target.bNoLoadedSystemUsesEmitter)
+        {
+            // Says why `compiled` is false beside `compileRequested: true` when no retry can change
+            // it, so the caller is not sent round a niagara.compile loop that requests nothing.
+            Result->SetStringField(TEXT("compileSkipped"), TEXT("noLoadedSystemUsesEmitter"));
+        }
         AddNiagaraAssetSaveReport(Result, Options.bSave, bSaved, Target.SaveState);
         // Always present, including as 0. Mutating this namespace destroys the running system
         // instances of the edited asset — the preview viewport of anyone who has it open
@@ -2368,6 +2395,10 @@ namespace NiagaraEdit
                     Info.ValueMode = LinkedInput->Input.GetType().IsDataInterface()
                         ? TEXT("data")
                         : TEXT("objectAsset");
+                    if (LinkedInput->Input.GetType().IsDataInterface())
+                    {
+                        Info.DataInterfaceNode = LinkedInput;
+                    }
                 }
                 else if (Upstream && MapGetClass && Upstream->IsA(MapGetClass))
                 {

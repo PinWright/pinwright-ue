@@ -56,10 +56,13 @@ REGISTER_RPC_HANDLER("niagara.compile", "niagara",
         }
     }
 
-    // Resolve asset: try UNiagaraSystem first, then UNiagaraEmitter.
+    // Resolve asset with one untyped load, as NiagaraEdit::ResolveTarget does. A typed
+    // LoadObject<UNiagaraSystem> on an emitter path logged "Failed to find object 'NiagaraSystem
+    // ...'" before the emitter fallback succeeded, a false alarm in the log of a call that worked.
     UObject* Asset = nullptr;
-    UNiagaraSystem* System = LoadObject<UNiagaraSystem>(nullptr, *AssetPath);
-    UNiagaraEmitter* Emitter = nullptr;
+    UObject* Loaded = LoadObject<UObject>(nullptr, *AssetPath);
+    UNiagaraSystem* System = Cast<UNiagaraSystem>(Loaded);
+    UNiagaraEmitter* Emitter = Cast<UNiagaraEmitter>(Loaded);
     FString AssetKind;
 
     if (System)
@@ -67,14 +70,10 @@ REGISTER_RPC_HANDLER("niagara.compile", "niagara",
         Asset = System;
         AssetKind = TEXT("NiagaraSystem");
     }
-    else
+    else if (Emitter)
     {
-        Emitter = LoadObject<UNiagaraEmitter>(nullptr, *AssetPath);
-        if (Emitter)
-        {
-            Asset = Emitter;
-            AssetKind = TEXT("NiagaraEmitter");
-        }
+        Asset = Emitter;
+        AssetKind = TEXT("NiagaraEmitter");
     }
 
     if (!Asset)
@@ -210,7 +209,9 @@ REGISTER_RPC_HANDLER("niagara.compile_status", "niagara",
     FString AssetPath;
     if (!Ctx.RequireString(TEXT("assetPath"), AssetPath)) return true;
 
-    UNiagaraSystem* System = LoadObject<UNiagaraSystem>(nullptr, *AssetPath);
+    // One untyped load, for the reason niagara.compile gives above.
+    UObject* Loaded = LoadObject<UObject>(nullptr, *AssetPath);
+    UNiagaraSystem* System = Cast<UNiagaraSystem>(Loaded);
     UNiagaraEmitter* Emitter = nullptr;
     FString AssetKind;
     TSharedPtr<FJsonObject> Compile;
@@ -236,7 +237,7 @@ REGISTER_RPC_HANDLER("niagara.compile_status", "niagara",
     }
     else
     {
-        Emitter = LoadObject<UNiagaraEmitter>(nullptr, *AssetPath);
+        Emitter = Cast<UNiagaraEmitter>(Loaded);
         if (Emitter)
         {
             AssetKind = TEXT("NiagaraEmitter");

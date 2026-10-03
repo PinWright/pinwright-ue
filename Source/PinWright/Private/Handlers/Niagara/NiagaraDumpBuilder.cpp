@@ -6,6 +6,7 @@
 #include "Handlers/Niagara/NiagaraEditTypes.h"
 #include "Handlers/Niagara/NiagaraGraphResetUtils.h"
 #include "Handlers/Niagara/NiagaraJsonHelpers.h"
+#include "Handlers/Niagara/NiagaraModuleInputDataInterface.h"
 #include "Handlers/Niagara/NiagaraRapidIteration.h"
 #include "HAL/IConsoleManager.h"
 #include "Math/Float16.h"
@@ -1753,9 +1754,26 @@ namespace NiagaraDumpBuilder
                 {
                     Entry->SetStringField(TEXT("linkedParameter"), Binding->LinkedParameter);
                 }
+                else if (Binding->ValueMode == TEXT("data"))
+                {
+                    // A curve DI's shape in four numbers per channel; niagara.get_curve_keys on the
+                    // same entryId + inputName returns the keys (F-niagara-read-curve-keys).
+                    if (TSharedPtr<FJsonObject> Curve = NiagaraModuleInputDI::BuildCurveSummaryJson(
+                            NiagaraModuleInputDI::GetInputNodeDataInterface(Binding->DataInterfaceNode)))
+                    {
+                        Entry->SetObjectField(TEXT("curve"), Curve);
+                    }
+                }
                 else if (Binding->ValueMode == TEXT("dynamicInput"))
                 {
                     Entry->SetStringField(TEXT("dynamicInput"), Binding->DynamicInputScript);
+                    // The placed dynamic-input node's id: the `entryId` the module-input verbs
+                    // (niagara.get_curve_keys / set_curve_keys) take to address one of ITS inputs,
+                    // e.g. FloatFromCurve's curve. Without it a nested curve was unaddressable.
+                    if (Binding->DynamicInputNode)
+                    {
+                        Entry->SetStringField(TEXT("dynamicInputEntryId"), Binding->DynamicInputNode->NodeGuid.ToString());
+                    }
                     // The dynamic input's own inputs, read off its placed node the same way — what
                     // niagara.set_module_input's { dynamicInput, inputs } writes. Bounded like the
                     // dynamic-input model readback; a graph is acyclic, so the bound only caps size.

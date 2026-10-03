@@ -182,6 +182,14 @@ Otherwise the save is **refused** and the shared persistence fields distinguish 
 `saveState: "failed"`, with `saved: false`, `pendingFlush: false`, and an actionable `saveDetail`. A
 terminal refusal is not flushable; clear the cause named by `saveDetail` and re-issue the operation.
 
+**One exception: a standalone Niagara Emitter asset that no loaded system uses saves.** Niagara
+compiles an emitter only through the systems that use it, so with none there is nothing to request,
+nothing in flight and no compiled system state to invalidate — the emitter is compiled when a system
+next loads it. The edit saves, reports `compiled: false` with `compileSkipped:
+"noLoadedSystemUsesEmitter"`, and `niagara.compile` on the same asset would report `notRequested`.
+This used to be refused on every attempt while `asset.save` wrote the same package, so the
+`niagara.compile`-then-retry advice could never succeed.
+
 ## Every edit verb gates the save on a data-interface check, and says so
 
 Edit verbs returning the shared mutation envelope report `dataInterfaceCheck`, the same three-way
@@ -364,6 +372,8 @@ The `parameters` aspect reports the value **stored on the script**, which for a 
 Each `stack.modules[].moduleInputs[]` entry carries, beyond `name` / `type` / `typeInfo` / `enumOptions` (on an enum input, the `{index, name, displayName}` table `niagara.set_module_input` resolves against; the index is the integer it accepts):
 
 - `valueMode` — `local` / `linked` / `data` / `objectAsset` / `expression` / `dynamicInput` / `connected` / `default`, with `value`, `linkedParameter` or `dynamicInput` alongside.
+- `dynamicInputEntryId` on a `valueMode: "dynamicInput"` entry — the placed dynamic-input node's id, which is the `entryId` `niagara.get_curve_keys` / `niagara.set_curve_keys` take to address one of **its** curve inputs (`niagara.set_module_input` does not take it; it writes a dynamic input's inputs through `{ dynamicInput, inputs }`) (`niagara.get_curve_keys {entryId: <dynamicInputEntryId>, inputName: "FloatCurve"}` reads a FloatFromCurve's ramp). Its own inputs are in `inputs[]`.
+- `curve` on a curve-valued `valueMode: "data"` entry — `{ dataInterfaceClass, channels: [{ channel, keyCount, timeRange: [t0, t1], valueRange: [v0, v1] }], curveAsset }`, enough to say where a ramp starts and ends without reading every key; `niagara.get_curve_keys` on the same address returns the keys. `valueRange` spans the key values, not cubic overshoot between them; an empty channel carries `keyCount: 0` and no ranges.
 - `defaultMode` on a `valueMode: "default"` entry — the module script's `ENiagaraDefaultMode` (`Value`, `Binding`, `Custom`, `FailIfPreviouslyNotSet`), plus `defaultValue` (the same canonical pin-default string `value` uses, so a stated and a defaulted value diff without a type-aware branch) or `defaultBinding` (the bound attribute, e.g. `Particles.Age`). `Value` with no `defaultValue` means the declaration carries no allocated data; nothing is invented for it. **`default` is not "unset and therefore zero"** — most of a stock module's inputs are unwritten, and this is what they actually run with.
 - `reachable` — `false` when the input's only consumers in the module script graph are static-switch branch pins the switch does not currently select, i.e. the compiler drops the value as dead code. `gatedBy: { switch, value, requiredValue, branchTaken }` then names the switch (as `staticSwitchInputs[]` spells it), its current value, and the value that would route the input into the graph. Set that switch with `niagara.set_static_switch` before or after writing the input. The walk is deliberately conservative — a consumer that is not a switch branch or a pass-through (reroute / convert) node reads the input unconditionally and the entry stays `reachable: true`.
 
@@ -1130,7 +1140,9 @@ the fields of the form that was used.
 The read half of `niagara.set_curve_keys`, taking the same two addressing forms and the same
 `channel` selector — omit `channel` and every channel of the data interface comes back.
 
-**This is the only surface that emits curve samples at all.** `niagara.inspect {includeGraphs:true}`
+**This is the only surface that emits curve keys.** `niagara.inspect {includeStack:true}` (and
+`asset.dump`'s `niagara_stack.json`) carries only a per-channel `curve` summary — key count, time and
+value range — on a curve-valued `data` input. `niagara.inspect {includeGraphs:true}`
 reports a module's curve input pin as `defaultObject: ""` with `linkCount: 0`, `asset.dump`'s
 `nir.txt` and `niagara.decompile_nir` resolve and link the input node but never serialize its keys,
 and the `parameters` aspect lists the scalar *multiplier* beside the curve while omitting the curve
@@ -1141,6 +1153,12 @@ read path, an overwrite on a shared asset is a blind clobber of whatever was aut
 the module **script's** shared object, describing every placement of that module rather than this
 emitter's authored ramp; `writable: false` marks it, and `niagara.set_curve_keys` will create an
 override rather than write it.
+
+**A curve inside a dynamic input is addressed at the dynamic-input node.** The usual over-life ramp
+is not a module input but the curve of a dynamic input driving one (`ScaleColor`'s `Scale Alpha`
+driven by `FloatFromCurve`). Pass that node's id — the `dynamicInputEntryId` the `niagara.inspect`
+stack readback publishes on the driven input — as `entryId`, and the dynamic input's own curve input
+(`FloatCurve`) as `inputName`. `niagara.set_curve_keys` takes the same address.
 
 ### niagara.reset_module_input
 

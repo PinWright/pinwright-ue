@@ -150,6 +150,8 @@ namespace FixtureOwnershipContractHelpers
         // 1: UsageBitmaskGatesTargetStack binds BuildEmptySystemWithEmitter's rooted system, scoped
         // by FAuthorableSystemRoots (system + first emitter) immediately after the null check.
         TEXT("PinWright/Private/Tests/Niagara/TestNiagaraAddModuleUsage.cpp|1"),
+        // 1: DynamicInputCurveDiscoverableFromInspect, scoped by FAuthorableSystemRoots the same way.
+        TEXT("PinWright/Private/Tests/Niagara/TestNiagaraCurveDynamicInputReadback.cpp|1"),
         TEXT("PinWright/Private/Tests/Niagara/TestNiagaraCurveHandler.cpp|4"),
         TEXT("PinWright/Private/Tests/Niagara/TestNiagaraEditorOpenGuard.cpp|1"),
         TEXT("PinWright/Private/Tests/Niagara/TestNiagaraGetModuleInputs.cpp|1"),

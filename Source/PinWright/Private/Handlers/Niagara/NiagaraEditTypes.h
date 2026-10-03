@@ -16,6 +16,7 @@ class UNiagaraDataInterface;
 class UNiagaraEmitter;
 class UNiagaraGraph;
 class UNiagaraNodeFunctionCall;
+class UNiagaraNodeInput;
 class UNiagaraNodeStaticSwitch;
 class UNiagaraRendererProperties;
 class UNiagaraScriptVariable;
@@ -174,6 +175,12 @@ struct FNiagaraResolvedTarget
     // compiles need this because the engine's RequestCompileForEmitter helper returns void and
     // discards both the affected systems and the per-system request result.
     TArray<TWeakObjectPtr<UNiagaraSystem>> CompileRequestSystems;
+    // Set by FinalizeNiagaraEdit when a compile was asked for on a standalone emitter asset and no
+    // loaded system uses it. Niagara compiles emitters only through systems, so nothing could be
+    // requested, nothing is in flight, and there is no compiled system state for a save to
+    // invalidate. MakeMutationResult reports it as `compileSkipped: "noLoadedSystemUsesEmitter"`
+    // (B-niagara-emitter-save-guard-deadlocks-unused-emitter).
+    bool bNoLoadedSystemUsesEmitter = false;
     // Persistence outcome from FinalizeNiagaraEdit, carried to MakeMutationResult so the wire
     // response keeps the shared AssetSaveState shape instead of collapsing every refusal to
     // saved:false.
@@ -513,6 +520,7 @@ namespace NiagaraEdit
         FString LinkedParameter;    // set when ValueMode == "linked"
         FString DynamicInputScript; // object path, set when ValueMode == "dynamicInput"
         const UNiagaraNodeFunctionCall* DynamicInputNode = nullptr; // set when ValueMode == "dynamicInput"
+        const UNiagaraNodeInput* DataInterfaceNode = nullptr;      // set when ValueMode == "data"
     };
 
     // Classify each of ModuleNode's stack-input overrides by walking the module's

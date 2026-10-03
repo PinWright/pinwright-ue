@@ -884,3 +884,57 @@ REGISTER_RPC_HANDLER("niagara.get_curve_keys", "niagara",
     Ctx.SendSuccess(Result);
     return true;
 }
+
+// ---------------------------------------------------------------------------
+// Stack-readback summary (F-niagara-read-curve-keys). niagara.inspect {includeStack:true} used to
+// report a curve-valued input as `valueMode: "data"` and nothing else, so an inherited ramp could
+// be neither seen nor found; this gives the readback enough to reason about the shape and the
+// address get_curve_keys needs for the full keys.
+// ---------------------------------------------------------------------------
+TSharedPtr<FJsonObject> NiagaraModuleInputDI::BuildCurveSummaryJson(UNiagaraDataInterface* DataInterface)
+{
+    TArray<FCurveChannel> Channels;
+    if (!CollectCurveMembers(DataInterface, Channels))
+    {
+        return nullptr;
+    }
+
+    TArray<TSharedPtr<FJsonValue>> ChannelsJson;
+    for (const FCurveChannel& Entry : Channels)
+    {
+        TSharedPtr<FJsonObject> ChannelJson = MakeShared<FJsonObject>();
+        ChannelJson->SetStringField(TEXT("channel"), Entry.Name);
+        const int32 KeyCount = Entry.Curve ? Entry.Curve->Keys.Num() : 0;
+        ChannelJson->SetNumberField(TEXT("keyCount"), KeyCount);
+        if (KeyCount > 0)
+        {
+            // Ranges only where keys exist: an empty channel has no range, and a [0,0] would read
+            // as a measured flat curve.
+            float MinTime = 0.0f;
+            float MaxTime = 0.0f;
+            Entry.Curve->GetTimeRange(MinTime, MaxTime);
+            float MinValue = 0.0f;
+            float MaxValue = 0.0f;
+            Entry.Curve->GetValueRange(MinValue, MaxValue);
+            TArray<TSharedPtr<FJsonValue>> TimeRange;
+            TimeRange.Add(MakeShared<FJsonValueNumber>(MinTime));
+            TimeRange.Add(MakeShared<FJsonValueNumber>(MaxTime));
+            ChannelJson->SetArrayField(TEXT("timeRange"), TimeRange);
+            TArray<TSharedPtr<FJsonValue>> ValueRange;
+            ValueRange.Add(MakeShared<FJsonValueNumber>(MinValue));
+            ValueRange.Add(MakeShared<FJsonValueNumber>(MaxValue));
+            ChannelJson->SetArrayField(TEXT("valueRange"), ValueRange);
+        }
+        ChannelsJson.Add(MakeShared<FJsonValueObject>(ChannelJson));
+    }
+
+    TSharedPtr<FJsonObject> Summary = MakeShared<FJsonObject>();
+    Summary->SetStringField(TEXT("dataInterfaceClass"), DataInterface->GetClass()->GetPathName());
+    Summary->SetArrayField(TEXT("channels"), ChannelsJson);
+    if (UNiagaraDataInterfaceCurveBase* CurveDI = Cast<UNiagaraDataInterfaceCurveBase>(DataInterface))
+    {
+        Summary->SetStringField(TEXT("curveAsset"),
+            CurveDI->CurveAsset ? CurveDI->CurveAsset->GetPathName() : FString());
+    }
+    return Summary;
+}

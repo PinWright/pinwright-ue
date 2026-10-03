@@ -65,6 +65,14 @@ namespace NiagaraModuleInputDI
     // the backing UPROPERTY is private — UE reflection is the only route that works from here.
     PINWRIGHT_API UNiagaraDataInterface* GetInputNodeDataInterface(const UNiagaraNodeInput* InputNode);
 
+    // Compact readback of an inline curve DI for the stack readback (niagara.inspect includeStack,
+    // asset.dump niagara_stack.json): `{dataInterfaceClass, channels: [{channel, keyCount,
+    // timeRange?, valueRange?}], curveAsset}`, using the same channel names niagara.get_curve_keys
+    // emits. valueRange spans the key values, not cubic overshoot between keys. Null when DI is
+    // not one of the curve DIs get_curve_keys reads. Defined in NiagaraCurveHandler.cpp beside the
+    // channel table so the two cannot drift (F-niagara-read-curve-keys).
+    PINWRIGHT_API TSharedPtr<FJsonObject> BuildCurveSummaryJson(UNiagaraDataInterface* DataInterface);
+
     // Target must already carry a resolved ModuleNode + Graph. On success Out.DataInterface is
     // non-null. Errors: MODULE_NOT_FOUND (unresolved target), INVALID_ARGUMENT (empty inputName),
     // MODULE_INPUT_NOT_FOUND (no such stack input — the message lists the module's DI-typed
