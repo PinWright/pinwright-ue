@@ -47,6 +47,13 @@
 // (ActorComponent.cpp:1437-1446). Notifying without it therefore costs no flush, no
 // component re-registration and no construction-script rerun - so the target object
 // cannot be destroyed out from under the caller by its own notification.
+// THAT HOLDS FOR A COMPONENT TARGET ONLY. A placed actor's own PostEditChangeProperty
+// unregisters every component, calls RerunConstructionScripts and re-registers
+// (ActorEditor.cpp:170, :225/:240, gated by ReregisterComponentsWhenModified :341 - not a
+// template, not a PIE package, has a world - or while Simulating; ActorLabel writes
+// excluded), so notifying an actor destroys and rebuilds its construction-built components
+// (B-property-set-wiki-construction-rerun, pinned by
+// PinWright.property.set.ActorTargetRerunsConstructionScript).
 //
 // NOT A SUBSTITUTE FOR A TYPED SETTER. Where the engine exposes one, route to it
 // instead: it is the superset and cannot be mis-shaped (Utils/ComponentAssetPropertyWrite.h

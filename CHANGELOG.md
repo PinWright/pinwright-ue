@@ -23,6 +23,10 @@
   `frameSettled`, `settleChangedPixelFraction` and, when the frame never settled, `frameWarning`
   report the measurement. `asset.generate_thumbnail` on a mesh now waits on the same slot
   materials, and every thumbnail forces its textures' mips resident before waiting on them.
+- Fixed: the `property.set` wiki no longer claims the verb skips the construction-script rerun
+  for every target. Skipping `PreEditChange` avoids it only for a component target. An actor-target
+  write reruns that actor's construction script through `AActor::PostEditChangeProperty`, which
+  destroys and rebuilds its construction-built components. No behaviour change.
 - Fixed: `property.get` / `list` / `set` / `reset` (and the `container.*` verbs sharing their
   resolver) resolve a class path, a Blueprint's generated class (`/Game/.../BP_Foo.BP_Foo_C`) or a
   native class (`/Script/Engine.Actor`), to its class default object, the same object the bare

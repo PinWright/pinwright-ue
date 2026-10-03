@@ -91,10 +91,22 @@ primitive bounds, clamped ranges) actually run. When the resolved target is a
 `UActorComponent` the component's render state is marked dirty as well, because a
 named event alone does not refresh a renderer-backed component (its refresh normally
 comes from the editor's `PreEditChange`/`PostEditChange` reregister pair, which this
-verb deliberately skips — that path flushes rendering commands and reruns
-construction scripts). The response still reports only `applied` / `markedDirty`:
+verb deliberately skips for a component — that pair flushes rendering commands and
+reruns the owner's construction scripts). The response still reports only `applied` / `markedDirty`:
 neither field claims a downstream effect, and there is no measured "the renderer saw
 it" signal.
+
+**An actor-target write reruns that actor's construction script.** Skipping
+`PreEditChange` avoids the rerun only for a component target. When the notified object
+is a placed actor, the actor's own `PostEditChangeProperty` unregisters its components,
+reruns its construction scripts, and re-registers them. That includes the
+Blueprint component tree and the Construction Script graph. Every construction-built
+component is destroyed and rebuilt, so a reference to one taken before the write points
+at a destroyed object. Per-instance state the engine's component instance-data cache
+does not carry is reset. The response does not report the rerun. No rerun happens for an
+`ActorLabel` write, for an actor in a PIE world (Simulate still reruns), for a
+class-default or archetype target, or for a component target, including a dotted path
+that hops from the actor into a component (see below).
 
 **The notification follows the write across an object hop.** A dotted path whose segment
 is an object reference (`SettingsInterface.LowerBound`) stores into that *inner* object,
@@ -142,6 +154,8 @@ call("property.reset", {
 
 The reset notifies the object exactly once, with `EPropertyChangeType::ResetToDefault`
 on UE 5.6+ (`ValueSet` below), whether or not the explicit-override metadata path ran.
+On a placed actor this notification reruns the actor's construction script, rebuilding its
+construction-built components; see `property.set`.
 
 ### property.list
 

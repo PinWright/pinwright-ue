@@ -279,10 +279,12 @@ static FProperty* ResolveMemberPropertyForPath(UObject* NotifiedObject, const FS
 // generated Set* setters - and the editor's own refresh comes from the
 // PreEditChange/PostEditChange reregister pair, not from the event. These verbs
 // deliberately skip PreEditChange (it flushes rendering commands and reruns
-// construction scripts; see Utils/PropertyChangeNotify.h), so the render state is
-// pushed directly instead. Measured: a property.set of FogDensity that answered
-// applied/markedDirty/pendingSave true left the renderer drawing the previous value
-// indefinitely (B-property-set-container-empty-change-event).
+// construction scripts; see Utils/PropertyChangeNotify.h) for a component target - an
+// actor target's own PostEditChangeProperty still reruns construction
+// (ActorEditor.cpp:170) - so the render state is pushed directly instead. Measured: a
+// property.set of FogDensity that answered applied/markedDirty/pendingSave true left the
+// renderer drawing the previous value indefinitely
+// (B-property-set-container-empty-change-event).
 // NotifiedObject is the object the change event was dispatched to, which on a path that
 // hopped through an FObjectProperty is NOT the object the path started from: a path that
 // reaches into a component sub-object must push render state on THAT component, or the

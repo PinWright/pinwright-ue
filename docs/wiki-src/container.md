@@ -36,3 +36,5 @@ included), `ArrayRemove` for a removal, `ArrayClear` for a clear, and `ValueSet`
 The edited index is not attached to the event — `FPropertyChangedEvent` carries it only
 through the engine's multi-object `SetArrayIndexPerObject` map, which a single-object verb
 has nothing truthful to fill in — so an override that needs the index re-reads the container.
+On a placed actor this notification reruns the actor's construction script, rebuilding its
+construction-built components; see [`property.set`](property.md).
