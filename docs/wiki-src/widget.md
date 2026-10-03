@@ -537,6 +537,26 @@ FText values route through `FTextStringHelper::CreateFromBuffer`; see "Text and 
 
 > Do not use `Visibility` here for screenshot prep — that's the runtime UPROPERTY and persists on save. Use `widget.set_designer_visibility` for editor-only eye control. See `### widget.screenshot_designer` above for the full capture workflow.
 
+### widget.set_image_brush
+
+Writes a whole `FSlateBrush` (default property `Brush`) from `resourcePath` (legacy alias
+`texturePath`) — use it instead of hand-writing a brush ExportText literal through `widget.set`.
+The resource may be anything Slate can draw: any `UTexture`, any `UMaterialInterface` (a UI material
+or material instance — the usual way to build resolution-independent HUD elements), or an
+`ISlateTextureAtlasInterface` object such as a Paper2D sprite. Any other class (`USlateBrushAsset`,
+`USlateVectorArtData`, a mesh, ...) is refused with `INVALID_ASSET_TYPE` naming the class; a missing
+object is `ASSET_NOT_FOUND`.
+
+`ImageSize` without `imageSize`: a `UTexture2D` uses its imported size, other textures their surface
+size, an atlas object its source dimensions. **A material has no intrinsic size**, so pass
+`imageSize {X,Y}`; without it the brush keeps the `FSlateBrush` default (32x32) and the response
+carries a `warnings` entry. The response reports `resourceClass` and the final `imageSize`.
+
+```
+call("widget.set_image_brush", {widgetPath:"/Game/UI/WBP_HUD", widgetName:"RadarBack",
+     resourcePath:"/Game/UI/Materials/M_HUD_RadarBack.M_HUD_RadarBack", imageSize:{X:148,Y:148}})
+```
+
 ### widget.bind
 
 Writes one entry into the widget blueprint's `Bindings` array and creates the handler function graph

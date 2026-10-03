@@ -1,13 +1,15 @@
 // Copyright (c) 2026 Alexander Penkin. MIT License.
 
 // Ergonomic shortcut for setting an FSlateBrush UPROPERTY on a widget instance
-// from a texture path + optional ImageSize/Tint/DrawAs/Margin. Avoids the
+// from a brush resource path (texture, material, or texture-atlas object such as
+// a Paper2D sprite) + optional ImageSize/Tint/DrawAs/Margin. Avoids the
 // hand-spelled FSlateBrush ExportText literal that widget.set would otherwise
 // require (see F-image-brush-from-texture).
 
 #include "Handlers/HandlerRegistration.h"
 #include "Handlers/HandlerContext.h"
 #include "Handlers/ParamSpec.h"
+#include "Handlers/ParamAliasUtils.h"
 #include "Handlers/UI/WidgetAuthoringUtils.h"
 #include "Utils/PropertyUtils.h"
 #include "Utils/TransactionUtils.h"
@@ -17,6 +19,8 @@
 #include "Blueprint/WidgetTree.h"
 #include "Components/Widget.h"
 #include "Engine/Texture2D.h"
+#include "Materials/MaterialInterface.h"
+#include "Slate/SlateTextureAtlasInterface.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Layout/Margin.h"
 #include "Misc/Char.h"
@@ -72,22 +76,27 @@ namespace
 }
 
 REGISTER_RPC_HANDLER("widget.set_image_brush", "widget",
-    "Set an FSlateBrush UPROPERTY (default 'Brush') on a widget instance from a texture path + optional ImageSize/Tint/DrawAs/Margin.",
+    "Set an FSlateBrush UPROPERTY (default 'Brush') on a widget instance from a texture/material/atlas resource path + optional ImageSize/Tint/DrawAs/Margin.",
     RPC_PARAMS(
         RPC_PARAM_REQ("widgetPath",    "path", "Path to the widget blueprint"),
         RPC_PARAM_REQ("widgetName",    "string", "Name of the target widget instance"),
-        RPC_PARAM_REQ("texturePath",   "path", "Object path to the UTexture2D to assign"),
-        RPC_PARAM_OPT("imageSize",     "object", "{X,Y} — override ImageSize; defaults to texture's imported size"),
+        RPC_PARAM_REQ_ALIAS("resourcePath", "path", "Object path to the brush resource: any UTexture, UMaterialInterface (material or material instance), or ISlateTextureAtlasInterface object (e.g. a Paper2D sprite). Anything else is refused with INVALID_ASSET_TYPE. Alias: texturePath", "texturePath"),
+        RPC_PARAM_OPT("imageSize",     "object", "{X,Y} — override ImageSize; defaults to the texture's imported size (UTexture2D), surface size (other textures) or atlas source size. A material has no intrinsic size: pass imageSize, otherwise the FSlateBrush default (32x32) is kept and a warning is returned"),
         RPC_PARAM_OPT("tint",          "object", "{R,G,B,A} in 0..1 OR \"#RRGGBBAA\" hex string; default white"),
         RPC_PARAM_OPT("drawAs",        "string", "Image|Box|Border|RoundedBox|NoDrawType; default Image"),
         RPC_PARAM_OPT("margin",        "object", "{Left,Top,Right,Bottom}; meaningful for Box/Border; default zero"),
         RPC_PARAM_OPT("brushProperty", "string", "Target struct property name; default \"Brush\"")
     ))
 {
-    FString WidgetPath, WidgetName, TexturePath;
+    FString WidgetPath, WidgetName;
     if (!Ctx.RequireString(TEXT("widgetPath"),  WidgetPath))  return true;
     if (!Ctx.RequireString(TEXT("widgetName"),  WidgetName))  return true;
-    if (!Ctx.RequireString(TEXT("texturePath"), TexturePath)) return true;
+    const FString ResourcePath = Ctx.GetStringFirstOf({TEXT("resourcePath"), TEXT("texturePath")});
+    if (ResourcePath.IsEmpty())
+    {
+        Ctx.SendError(TEXT("INVALID_PARAMS"), TEXT("Missing required string field: resourcePath (alias texturePath)"));
+        return true;
+    }
 
     FString BrushPropertyName = Ctx.GetString(TEXT("brushProperty"), TEXT("Brush"));
     if (BrushPropertyName.IsEmpty())
@@ -109,11 +118,23 @@ REGISTER_RPC_HANDLER("widget.set_image_brush", "widget",
         return true;
     }
 
-    UTexture2D* Tex = LoadObject<UTexture2D>(nullptr, *TexturePath);
-    if (!Tex)
+    UObject* Resource = LoadObject<UObject>(nullptr, *ResourcePath);
+    if (!Resource)
     {
         Ctx.SendError(TEXT("ASSET_NOT_FOUND"),
-            FString::Printf(TEXT("UTexture2D not found at '%s'"), *TexturePath));
+            FString::Printf(TEXT("Brush resource not found at '%s'"), *ResourcePath));
+        return true;
+    }
+    // Mirror FSlateRHIRenderer::CanRenderResource: anything else trips the ensure in
+    // FSlateBrush::SetResourceObject and is silently dropped from the brush.
+    UTexture* ResourceTexture = Cast<UTexture>(Resource);
+    ISlateTextureAtlasInterface* ResourceAtlas = Cast<ISlateTextureAtlasInterface>(Resource);
+    if (!ResourceTexture && !ResourceAtlas && !Cast<UMaterialInterface>(Resource))
+    {
+        Ctx.SendError(TEXT("INVALID_ASSET_TYPE"),
+            FString::Printf(TEXT("'%s' is a %s, which Slate cannot draw as a brush resource "
+                "(expected a Texture, MaterialInterface or SlateTextureAtlasInterface object)"),
+                *ResourcePath, *Resource->GetClass()->GetName()));
         return true;
     }
 
@@ -136,14 +157,32 @@ REGISTER_RPC_HANDLER("widget.set_image_brush", "widget",
     // Compose the brush before opening the transaction; bail with structured
     // errors on bad payload shapes (drawAs, tint hex) before mutating state.
     FSlateBrush Brush;
-    Brush.SetResourceObject(Tex);
+    Brush.SetResourceObject(Resource);
 
-    // ImageSize: payload override wins; otherwise default to the texture's imported size.
-    const FIntPoint ImportedSize = Tex->GetImportedSize();
-    Brush.ImageSize = FVector2D(ImportedSize.X, ImportedSize.Y);
+    // ImageSize: payload override wins; otherwise default to the resource's own size.
+    // A material has none, so it keeps the FSlateBrush default.
+    bool bImageSizeFromResource = true;
+    if (UTexture2D* Tex2D = Cast<UTexture2D>(Resource))
+    {
+        const FIntPoint ImportedSize = Tex2D->GetImportedSize();
+        Brush.ImageSize = FVector2D(ImportedSize.X, ImportedSize.Y);
+    }
+    else if (ResourceTexture)
+    {
+        Brush.ImageSize = FVector2D(ResourceTexture->GetSurfaceWidth(), ResourceTexture->GetSurfaceHeight());
+    }
+    else if (ResourceAtlas)
+    {
+        Brush.ImageSize = ResourceAtlas->GetSlateAtlasData().GetSourceDimensions();
+    }
+    else
+    {
+        bImageSizeFromResource = false;
+    }
 
     TSharedPtr<FJsonObject> Payload = Ctx.GetRawPayload();
-    if (TSharedPtr<FJsonObject> ImageSizeObj = GetObjectField(Payload, TEXT("imageSize")))
+    TSharedPtr<FJsonObject> ImageSizeObj = GetObjectField(Payload, TEXT("imageSize"));
+    if (ImageSizeObj)
     {
         double X = Brush.ImageSize.X;
         double Y = Brush.ImageSize.Y;
@@ -228,6 +267,19 @@ REGISTER_RPC_HANDLER("widget.set_image_brush", "widget",
     TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
     Result->SetBoolField(TEXT("success"), true);
     Result->SetStringField(TEXT("propertyName"), StructProp->GetName());
+    Result->SetStringField(TEXT("resourceClass"), Resource->GetClass()->GetName());
+    TSharedPtr<FJsonObject> SizeJson = MakeShared<FJsonObject>();
+    SizeJson->SetNumberField(TEXT("X"), Brush.ImageSize.X);
+    SizeJson->SetNumberField(TEXT("Y"), Brush.ImageSize.Y);
+    Result->SetObjectField(TEXT("imageSize"), SizeJson);
+    if (!ImageSizeObj && !bImageSizeFromResource)
+    {
+        TArray<TSharedPtr<FJsonValue>> Warnings;
+        Warnings.Add(MakeShared<FJsonValueString>(FString::Printf(
+            TEXT("%s has no intrinsic size; ImageSize kept the FSlateBrush default %gx%g. Pass imageSize {X,Y}."),
+            *Resource->GetClass()->GetName(), Brush.ImageSize.X, Brush.ImageSize.Y)));
+        Result->SetArrayField(TEXT("warnings"), Warnings);
+    }
     Result->SetBoolField(TEXT("requiresCompile"), true);
     Ctx.SendSuccess(Result);
     return true;
