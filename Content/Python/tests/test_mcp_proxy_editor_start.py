@@ -2629,6 +2629,18 @@ class EditorBuildStatusTest(unittest.TestCase):
         self.assertEqual(structured["status"], "failed")
         self.assertTrue(any("LNK1104" in line for line in structured["errors"]))
 
+    def test_live_coding_refusal_with_exit_zero_is_failed(self):
+        # Build.bat has exited 0 on a run whose output ended `Result: Failed`; the Result line wins.
+        log = ("Unable to build while Live Coding is active. Exit the editor and game, or press "
+               "Ctrl+Alt+F11 if iterating on code in the editor or game\n"
+               "Result: Failed (OtherCompilationError)\n")
+        result = self._status(log, "PINWRIGHT_JOB_RESULT verdict=COMMAND_EXITED exit=0 "
+                                   "priority=BelowNormal")
+        structured = result["structuredContent"]
+        self.assertEqual(structured["exitCode"], 0)
+        self.assertEqual(structured["status"], "failed")
+        self.assertTrue(any("Live Coding is active" in line for line in structured["errors"]))
+
     def test_running_while_the_build_child_is_alive(self):
         result = self._status("Building HostEditor...\n", child_alive=True)
         structured = result["structuredContent"]
