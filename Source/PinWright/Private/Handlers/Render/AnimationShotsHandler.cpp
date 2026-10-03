@@ -185,6 +185,7 @@ REGISTER_RPC_HANDLER("camera.animation_shots", "camera",
         PinWrightAnimationShots::ShotsParamWithAliases(TEXT("restorePlayhead"), TEXT("boolean"),
             TEXT("Put the playhead back where the burst found it. Default true. Snake_case restore_playhead accepted."),
             TEXT("true"), TArray<FString>({TEXT("restore_playhead")})),
+        RPC_PARAM_OPT("maxShots", "integer", PINWRIGHT_MAX_SHOTS_PARAM_DESC),
         RPC_PARAM_OPT("inline", "boolean", "When true, also embed base64 PNG bytes per shot (default false).")
     ))
 {
@@ -199,6 +200,19 @@ REGISTER_RPC_HANDLER("camera.animation_shots", "camera",
     const TSharedPtr<FJsonObject>& Payload = Ctx.GetRawPayload();
     const bool bHasPayload = Payload.IsValid();
     const auto HasField = [&](const TCHAR* Key) { return bHasPayload && Payload->HasField(Key); };
+
+    // The shot budget, read before any plan is refused against it (shared with every multi-shot
+    // verb through ParseMaxShots, so `maxShots` means one thing everywhere).
+    int32 MaxShots = GMaxOrbitShots;
+    {
+        FString MaxShotsErrCode;
+        FString MaxShotsErrMsg;
+        if (!ParseMaxShots(Payload, MaxShots, MaxShotsErrCode, MaxShotsErrMsg))
+        {
+            Ctx.SendError(MaxShotsErrCode, MaxShotsErrMsg);
+            return true;
+        }
+    }
 
     // Everything that can be judged from the request alone is judged FIRST, before any asset is
     // loaded, any actor is resolved and any editor state is touched. A malformed burst request
@@ -455,13 +469,13 @@ REGISTER_RPC_HANDLER("camera.animation_shots", "camera",
             return true;
         }
         FramePlanSource = TEXT("frames");
-        if (FramePlan.Num() * ViewPlan.Num() > GMaxOrbitShots)
+        if (FramePlan.Num() * ViewPlan.Num() > MaxShots)
         {
             Ctx.SendError(ErrorCodes::ERR_TOO_MANY_SHOTS,
                 FString::Printf(
-                    TEXT("%d instants x %d angles = %d shots exceeds the maximum of %d. Reduce the frame list, ")
+                    TEXT("%d instants x %d angles = %d shots exceeds the maximum of %d (maxShots). Reduce the frame list, ")
                     TEXT("reduce the view plan, or split the burst across calls."),
-                    FramePlan.Num(), ViewPlan.Num(), FramePlan.Num() * ViewPlan.Num(), GMaxOrbitShots));
+                    FramePlan.Num(), ViewPlan.Num(), FramePlan.Num() * ViewPlan.Num(), MaxShots));
             return true;
         }
     }
@@ -602,13 +616,13 @@ REGISTER_RPC_HANDLER("camera.animation_shots", "camera",
     // ---- Shot budget. frames x angles is the real cost, and each shot re-poses and resizes a
     // live viewport, so the ceiling is on the product and not on either axis. ----
     const int32 TotalShots = FramePlan.Num() * ViewPlan.Num();
-    if (TotalShots > GMaxOrbitShots)
+    if (TotalShots > MaxShots)
     {
         Ctx.SendError(ErrorCodes::ERR_TOO_MANY_SHOTS,
             FString::Printf(
-                TEXT("%d instants x %d angles = %d shots exceeds the maximum of %d. Reduce frameCount, ")
+                TEXT("%d instants x %d angles = %d shots exceeds the maximum of %d (maxShots). Reduce frameCount, ")
                 TEXT("reduce the view plan, or split the burst across calls."),
-                FramePlan.Num(), ViewPlan.Num(), TotalShots, GMaxOrbitShots));
+                FramePlan.Num(), ViewPlan.Num(), TotalShots, MaxShots));
         return true;
     }
 
@@ -627,6 +641,15 @@ REGISTER_RPC_HANDLER("camera.animation_shots", "camera",
         Ctx.SendError(ErrorCodes::ERR_INVALID_ARGUMENT,
             FString::Printf(TEXT("width and height must be in (0, %d]"), GMaxCaptureDimension));
         return true;
+    }
+    {
+        // Time bound on the cost driver (size x count); this verb draws no coverage reference.
+        FString CostErrMsg;
+        if (!CheckShotSetCost(TotalShots, Width, Height, /*bMeasureCoverage=*/false, CostErrMsg))
+        {
+            Ctx.SendError(ErrorCodes::ERR_TOO_MANY_SHOTS, CostErrMsg);
+            return true;
+        }
     }
 
     // ---- Resolve the subject: the live viewport, the sequence, the time setter, and the bounds
@@ -821,7 +844,7 @@ REGISTER_RPC_HANDLER("camera.animation_shots", "camera",
     // default is 8. Keeping the verb's bound is what stops the conversion silently shortening
     // bursts callers have been taking for months; the value in force is published as
     // poseSet.maxPosesPerCall, so the bound is never implicit.
-    PoseRequest.MaxPoses = GMaxOrbitShots;
+    PoseRequest.MaxPoses = MaxShots;
     // The time axis, handed to the primitive instead of scrubbed here. It drives the subject to
     // each pose's instant exactly once — including once for pose 0 BEFORE the warm-up frame, so
     // the throwaway shot pages in the content the set actually shows at the moment it shows it.

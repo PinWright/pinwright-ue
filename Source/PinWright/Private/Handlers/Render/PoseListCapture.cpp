@@ -8,6 +8,7 @@
 #include "AssetViewerSettings.h"
 #include "Dom/JsonObject.h"
 #include "HAL/FileManager.h"
+#include "HAL/PlatformTime.h"
 #include "Misc/Guid.h"
 #include "Misc/ScopeExit.h"
 
@@ -77,6 +78,14 @@ bool RunPoseListCapture(
     OutResult.PoseRepeatabilityMeanAbsDelta = 0.0;
     OutResult.PoseRepeatabilityMaxDelta = 0;
     OutResult.PoseRepeatabilityChangedPixelFraction = 0.0;
+    // Wall time of the whole sequence, every extra frame included, so msPerShot is what one shot of
+    // THIS set really cost (board F-multi-shot-ceiling-not-settable: the shot bound is a cost
+    // argument, and a cost nobody publishes cannot be checked).
+    const double SequenceStartSeconds = FPlatformTime::Seconds();
+    ON_SCOPE_EXIT
+    {
+        OutResult.ElapsedSeconds = FPlatformTime::Seconds() - SequenceStartSeconds;
+    };
 
     OutResult.PosesRequested = Request.Poses.Num();
     OutResult.MaxPoses = FMath::Max(Request.MaxPoses, 1);
@@ -554,6 +563,13 @@ TSharedPtr<FJsonObject> MakePoseSetInfoObject(const FPoseListCaptureOutput& Resu
     Info->SetNumberField(TEXT("posesCaptured"), Result.Captures.Num());
     Info->SetNumberField(TEXT("posesTruncated"), Result.PosesTruncated);
     Info->SetNumberField(TEXT("maxPosesPerCall"), Result.MaxPoses);
+    Info->SetNumberField(TEXT("elapsedMs"), Result.ElapsedSeconds * 1000.0);
+    // Only over shots that were taken: a per-shot figure for a set that captured nothing would be
+    // a division the response made up.
+    if (Result.Captures.Num() > 0)
+    {
+        Info->SetNumberField(TEXT("msPerShot"), Result.ElapsedSeconds * 1000.0 / Result.Captures.Num());
+    }
     Info->SetBoolField(TEXT("warmupShotTaken"), Result.bWarmupShotTaken);
     Info->SetBoolField(TEXT("warmupShotDiscarded"), Result.bWarmupShotDiscarded);
     {

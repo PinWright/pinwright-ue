@@ -14,7 +14,7 @@ Every refusal in this area uses a code that already exists — `UNSUPPORTED_ASSE
 
 Two constraints on the shape of a series, both consequences of how the axis works rather than policy:
 
-- **Every instant is captured from every camera**, so `times` combined with `count` or `views` is an instants × cameras set, bounded by the same 24-shot ceiling. Over it is `TOO_MANY_SHOTS` naming the product and both factors, never a truncation — a shortened set reads as a complete set of the wrong thing.
+- **Every instant is captured from every camera**, so `times` combined with `count` or `views` is an instants × cameras set, bounded by the same `maxShots` budget (default 24, up to 360). Over it is `TOO_MANY_SHOTS` naming the product and both factors, never a truncation — a shortened set reads as a complete set of the wrong thing.
 - **The subject is driven once per instant, not once per shot.** Every camera of one instant photographs one simulation run: `subjectTime.subjectDrives` counts the runs, and the shots sharing an `instantIndex` are the ones that share a run. This is load-bearing for particles specifically — advancing resets first, and with system determinism off the instance seed is `FMath::Rand()` on every reset, so per-shot driving would make the six sides of one instant six different effects that merely share a number.
 
 `times` also works with explicit `location` / `rotation`: a fixed camera watching a system evolve is a valid series. Only `count` / `views` conflict with naming one camera.

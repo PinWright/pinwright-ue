@@ -82,15 +82,15 @@ What it costs and where it applies:
 - The 0.005 floor is 0.5% of frame—about a 70×70 square at 1024×1024, below which detail cannot be judged. It is **not** caller-settable; measured `subjectCoverage` and warning text expose the floor for caller-side policy.
 - The 8/255 per-channel threshold is fixed so figures remain comparable. It was calibrated against encoder/temporal noise between two draws, well below the 100-plus change from a faint additive particle.
 
-**`measureCoverage` is the switch, and exactly one verb offers it.**
+**`measureCoverage` is the switch, and two verbs offer it.**
 
-The differential is **on by default**. [`render.capture_asset_preview`](render.capture_asset_preview.md) accepts `measureCoverage: false` to avoid the extra draw; opt-*in* was rejected because the signal is most needed before a caller knows to request it.
+The differential is **on by default**. [`render.capture_asset_preview`](render.capture_asset_preview.md) and [`camera.orbit_shots`](camera.orbit_shots.md) (asset `subject` only; a level target has no preview component to hide, so its shots carry no figure) accept `measureCoverage: false` to avoid the extra draw; opt-*in* was rejected because the signal is most needed before a caller knows to request it.
 
 **The PROVIDER decides which kinds can be hidden.** A provider binds `FResolvedSubject::VisibilitySetter` when it can hide its subject without hiding the backdrop; the verb passes that setter to the pose-set request. Previously the closure lived inside `render.capture_asset_preview` behind a Niagara-shaped test, so unlisted kinds returned `subjectCoverage: null`, indistinguishable from disabled measurement. A **Static Mesh** capture exposed the gap: uniform color with no subject, `blank: false`, `crushed: null`, `litPixelFraction: 1.0`, and `boundsInFrame: true`.
 
 The old rationale—that a mesh “cannot be hidden without hiding the thing captured”—was wrong: a reference frame hides the subject while retaining floor, sky, and lights. The hidden component must be matched **by the named asset**, never “the first static mesh component”; `FAdvancedPreviewScene`'s floor and sky sphere are static meshes too.
 
-**No other pose-set verb declares `measureCoverage`, and that is an open gap rather than a decision.** `camera.frame_actor`, `camera.orbit_shots`, `camera.animation_shots`, and `render.capture_animation_preview` build the same request, but none reads the visibility setter or emits coverage; the flag would change no byte. A placed actor can be hidden/redrawn, but the seam does not reach those verbs. Extend the behavior before declaring another knob.
+**No other pose-set verb declares `measureCoverage`, and that is an open gap rather than a decision.** `camera.frame_actor`, `camera.animation_shots`, and `render.capture_animation_preview` build the same request, but none reads the visibility setter or emits coverage; the flag would change no byte. A placed actor can be hidden/redrawn, but the seam does not reach those verbs. Extend the behavior before declaring another knob.
 
 **The preview floor is hidden by default for a Niagara subject**, since origin-authored systems can be cut in half. Pass `previewScene.showFloor: true` to keep it; explicit choice wins. The flag affects only the per-capture rig pin and is restored after the shot, never the shared preview profile/config.
 

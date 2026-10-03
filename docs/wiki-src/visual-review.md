@@ -146,7 +146,7 @@ the new size rather than changing it mid-sequence. `editor.screenshot` is scoped
 `width`/`height` for native resolution, or pass both to render a temporary exact-size scene + UMG
 composite; the game/PIE path restores its original viewport size before the job completes.
 
-Gotchas: more than 24 shots is rejected (`TOO_MANY_SHOTS`); `camera.orbit_shots` fails whole on its
+Gotchas: more shots than `maxShots` (default 24, up to 360) is rejected (`TOO_MANY_SHOTS`); `camera.orbit_shots` fails whole on its
 first capture failure, unlike `camera.animation_shots`, which returns `partial: true` with captured
 shots. Each shot re-poses the real camera and restores it afterwards. `viewMode` applies to the set
 and restores the prior mode; unknown values error rather than echo.

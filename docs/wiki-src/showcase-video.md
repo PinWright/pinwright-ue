@@ -20,14 +20,16 @@ a before/after pair, a coverage sweep, evidence that an edit landed — are capt
 [`visual-review`](visual-review.md) discipline applies. Frames that will be *watched as motion* are
 a render, even when the camera move is trivial and the subject is one mesh.
 
-**Any set longer than 24 frames is already multiple calls.** `GMaxOrbitShots = 24` is shared by the
-four multi-shot capture verbs and refused hard, with no caller override
-(`F-multi-shot-ceiling-not-settable`); a 240-frame set is therefore 10 calls, 10 preview-scene rig
-cycles, and an out-of-band mux, and the outputs of those calls **interleave on disk** rather than
-concatenating. `camera.orbit_shots` also has no `filename` stem and rounds azimuth to a whole degree
-in the name it generates, so a set stepped finer than 1° cannot be mapped back to poses without
-parsing every response (`B-orbit-shots-no-filename-stem`). One verb for the whole spin is asked for
-in `F-preview-turntable-capture`.
+**A long set is one call up to its time budget.** `maxShots` (default 24, at most 360) raises the
+shot budget on all four multi-shot capture verbs, but a set predicted over 90 s (draws × (0.2 s +
+0.112 s/MP), with one draw per shot, a second per shot with `measureCoverage`, plus one warm-up) is
+still `TOO_MANY_SHOTS`. So a 240-frame spin at 256 px is one call with `measureCoverage:false`
+(~50 s) and two calls with coverage on (~100 s predicted).
+`render.capture_asset_preview {subject, count:N, distribution:"ring", maxShots:N, filename}` writes
+zero-padded, azimuth-ordered names under one preview-scene rig and one exposure.
+`camera.orbit_shots` still has no `filename` stem and rounds azimuth to a whole degree in the name
+it generates, so a set stepped finer than 1° cannot be mapped back to poses without parsing every
+response (`B-orbit-shots-no-filename-stem`).
 
 ## A Turntable Is A Render Of A Lightbox Level, Never A Capture Set
 

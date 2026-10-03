@@ -28,6 +28,20 @@
 // padding defaults in this tree are genuinely three different numbers (1.15 here, 1.25 on
 // render.capture_asset_preview, 1.4 on render.capture_animation_preview) and one shared
 // sentence naming a single default would be false on two of the verbs.
+// The `maxShots` parameter's wire description, shared by the four multi-shot verbs so the budget
+// means one thing everywhere (board F-multi-shot-ceiling-not-settable).
+#define PINWRIGHT_MAX_SHOTS_PARAM_DESC \
+    "Shot budget for this call: a plan larger than this is REFUSED with TOO_MANY_SHOTS before " \
+    "anything is captured, never truncated. Default 24 (the bound these verbs have always had); " \
+    "accepted up to 360. Binds on the total shot count, so on a verb with a time axis it is " \
+    "instants x cameras. Cost is bounded separately: a set whose PREDICTED time (draws x (0.2 s " \
+    "+ 0.112 s per megapixel), one draw per shot, two when subject coverage is measured, plus " \
+    "one warm-up) exceeds 90 s is also refused with TOO_MANY_SHOTS, naming the predicted seconds, " \
+    "because a call that outlives the 120 s response timeout keeps running with nobody " \
+    "receiving its result. So size, not only count, decides how long a set can be. Each set " \
+    "publishes its measured cost as poseSet.msPerShot. The value in force is echoed as " \
+    "poseSet.maxPosesPerCall."
+
 #define PINWRIGHT_FIT_PADDING_PARAM_DESC \
     "Bounds-fit margin multiplier; >1 pulls the camera back for more headroom. Applies only " \
     "when the camera distance is being SOLVED from the subject's bounds - an explicit distance " \
@@ -54,10 +68,122 @@ namespace PinWrightCameraFrame
 {
     using namespace PinWrightRenderCapture;
 
-    // Hard ceiling on shots per multi-shot call. Each shot moves a real editor camera, resizes
-    // the viewport and does a full offscreen readback, so an unbounded count would stall the
-    // editor; beyond this we reject with a typed TOO_MANY_SHOTS.
+    // DEFAULT shot budget per multi-shot call, and the value `maxShots` takes when omitted.
+    //
+    // THE BASIS, stated so the next person can argue it (board F-multi-shot-ceiling-not-settable).
+    // 24 has no derivation: it is what camera.orbit_shots shipped with, kept as the default so no
+    // existing call shape moves. What IS on record:
+    //   * the viewport-resize assert class (FViewport::GetHitProxy, ProxyMap.Num() ==
+    //     TestSizeX * TestSizeY) is driven by the capture SIZE VARYING, not by the shot count, and
+    //     FPoseListCaptureRequest makes the size set-level, so a longer set at one size adds no new
+    //     instance of it (48 back-to-back constant-size cycles ran clean, F-animated-capture-verbs);
+    //   * the measured per-shot cost: 24 shots of a cube at 256 px took 4.84 s of wall time,
+    //     ~0.2 s/shot including the warm-up and control frames
+    //     (PinWright.camera.orbit_shots.OrbitSetStillAllowsTwentyFour, Linux Vulkan offscreen,
+    //     2026-10-01). Every set now publishes its own cost as poseSet.msPerShot, so the number can
+    //     be re-measured on any scene instead of inherited.
     constexpr int32 GMaxOrbitShots = 24;
+
+    // HARD ceiling on a caller's `maxShots`: a one-degree turntable. This bounds the COUNT (files
+    // written, response size), NOT the time - shot count alone cannot, because size goes up to
+    // GMaxCaptureDimension and coverage doubles the draws. Time is bounded by CheckShotSetCost
+    // below, on the cost driver, as §9 of docs/rpc-design.md requires. Above this a set is
+    // refused with TOO_MANY_SHOTS.
+    constexpr int32 GMaxShotsCeiling = 360;
+
+    // Reads the optional `maxShots` budget: GMaxOrbitShots when absent, otherwise a whole number in
+    // [1, GMaxShotsCeiling]. False with the error pair on anything else, so a typo is refused
+    // rather than quietly falling back to the default.
+    inline bool ParseMaxShots(const TSharedPtr<FJsonObject>& Payload, int32& OutMaxShots,
+        FString& OutErrCode, FString& OutErrMsg)
+    {
+        OutMaxShots = GMaxOrbitShots;
+        if (!Payload.IsValid() || !Payload->HasField(TEXT("maxShots")))
+        {
+            return true;
+        }
+        double Value = 0.0;
+        if (!Payload->TryGetNumberField(TEXT("maxShots"), Value) || !FMath::IsFinite(Value) ||
+            Value != FMath::FloorToDouble(Value) || Value < 1.0)
+        {
+            OutErrCode = ErrorCodes::ERR_INVALID_ARGUMENT;
+            OutErrMsg = TEXT("maxShots must be a whole number of at least 1");
+            return false;
+        }
+        if (Value > GMaxShotsCeiling)
+        {
+            OutErrCode = ErrorCodes::ERR_TOO_MANY_SHOTS;
+            OutErrMsg = FString::Printf(
+                TEXT("maxShots %.0f exceeds the hard ceiling of %d shots per call. Split the set."),
+                Value, GMaxShotsCeiling);
+            return false;
+        }
+        OutMaxShots = static_cast<int32>(Value);
+        return true;
+    }
+
+    // The cost model the time bound is derived from (docs/rpc-design.md §9: bound a synchronous
+    // verb on its cost driver, derive the bound from the response timeout, and state the predicted
+    // cost in the refusal). Per DRAW = one camera move, frame, readback and PNG write:
+    //   * GMeasuredSecondsPerDraw: 24 shots of a cube at 256 px took 4.84 s end to end, warm-up
+    //     and control frames included, with no coverage draw (GMaxOrbitShots comment above);
+    //   * GMeasuredSecondsPerMegapixel: the readback + PNG-encode term, borrowed from the slowest
+    //     figure on record for that work (render.capture_ortho_tiles, OrthoTileCaptureUtils.h).
+    // A measured subject coverage is a second full CaptureFrame per shot (PoseListCapture.cpp), so
+    // it doubles the shot draws; the set's full-size warm-up frame (bWarmupShot, default on) is one
+    // more draw, which is what dominates a few shots at a huge size.
+    // ponytail: two-term linear model from two measurements on light scenes; a heavy subject can
+    // run slower. Re-fit from poseSet.msPerShot if real sets start outliving the timeout.
+    constexpr double GMeasuredSecondsPerDraw = 0.2;
+    constexpr double GMeasuredSecondsPerMegapixel = 0.112;
+    // 90 of the transport's 120 s response timeout: the rest is editor open, rig apply and
+    // response encoding, which a set's own elapsedMs does not include.
+    constexpr double GShotSetSecondsBudget = 90.0;
+
+    inline int32 ShotSetDraws(int32 Shots, bool bMeasureCoverage)
+    {
+        return Shots * (bMeasureCoverage ? 2 : 1) + 1;
+    }
+
+    inline double PredictShotSetSeconds(int32 Shots, int32 Width, int32 Height, bool bMeasureCoverage)
+    {
+        const double Megapixels = static_cast<double>(Width) * static_cast<double>(Height) / 1048576.0;
+        return static_cast<double>(ShotSetDraws(Shots, bMeasureCoverage)) *
+            (GMeasuredSecondsPerDraw + Megapixels * GMeasuredSecondsPerMegapixel);
+    }
+
+    // The time bound every multi-shot verb applies once its plan and size are known, before
+    // anything is opened or captured. False with the TOO_MANY_SHOTS message (predicted seconds
+    // included) when the set would outlive the budget. bMeasureCoverage is whether a reference
+    // draw will be PAID, not merely whether the flag is set.
+    inline bool CheckShotSetCost(int32 Shots, int32 Width, int32 Height, bool bMeasureCoverage,
+        FString& OutErrMsg)
+    {
+        const double Predicted = PredictShotSetSeconds(Shots, Width, Height, bMeasureCoverage);
+        if (Predicted <= GShotSetSecondsBudget)
+        {
+            return true;
+        }
+        OutErrMsg = FString::Printf(
+            TEXT("%d shots at %d x %d px%s are predicted to take ~%.0f s (%d draws incl. warm-up x (%.1f s + %.3f s/MP)), ")
+            TEXT("over the %.0f s budget that keeps this synchronous call inside the 120 s response timeout. ")
+            TEXT("Nothing was captured. Lower width/height%s, or split the set across calls."),
+            Shots, Width, Height, bMeasureCoverage ? TEXT(" with subject coverage") : TEXT(""),
+            Predicted, ShotSetDraws(Shots, bMeasureCoverage), GMeasuredSecondsPerDraw,
+            GMeasuredSecondsPerMegapixel, GShotSetSecondsBudget,
+            bMeasureCoverage ? TEXT(", pass measureCoverage:false") : TEXT(""));
+        return false;
+    }
+
+    // Zero-padded shot index for a filename, wide enough that every name in a set of Total shots
+    // sorts in shot order (never fewer than the two digits sets of up to 100 always had, so those
+    // names are byte-identical). A 240-shot turntable names shot000..shot239, not shot100 < shot11.
+    inline FString FormatShotIndex(int32 Index, int32 Total)
+    {
+        const int32 Width = FMath::Max(2, FString::FromInt(FMath::Max(Total - 1, 0)).Len());
+        const FString Digits = FString::FromInt(Index);
+        return FString::ChrN(FMath::Max(Width - Digits.Len(), 0), TEXT('0')) + Digits;
+    }
 
     // Matches the util's own bound (PreviewViewportCaptureUtils MaxCaptureDimension).
     constexpr int32 GMaxCaptureDimension = 16384;

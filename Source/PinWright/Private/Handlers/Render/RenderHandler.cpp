@@ -34,6 +34,7 @@
 #include "Utils/CaptureReadinessGate.h"
 #include "Utils/MeshRebuildRenderGuard.h"
 #include "Utils/OnScreenMessageSurvey.h"
+#include "Utils/LightingSurvey.h"
 #include "Utils/ScreenshotUtils.h" // FlushBeforeReadback, the shared readback preamble
 
 #include "AssetCompilingManager.h"
@@ -665,7 +666,8 @@ REGISTER_RPC_HANDLER("render.capture_asset_preview", "render", "Open an asset ed
         RPC_PARAM_DEF("distribution", "string", "How `count` spreads its shots. 'ring' (default) puts them at evenly-spaced azimuths on ONE horizontal circle at `elevation`, which never sees the top or the underside. 'sphere' uses a golden-angle (Fibonacci) spiral over the whole viewing sphere - deterministic, near-optimal even coverage for any N - and IGNORES `elevation`. Only affects `count`; `views` names its own poses.", "ring"),
         RPC_PARAM_OPT("seed", "number", "Jitter the shot distribution by a seeded azimuth offset. Omitted, output is deterministic (offset 0); supplied, output is STILL deterministic and the seed is echoed in shotDistribution so any set can be retaken exactly."),
         RPC_PARAM_OPT("time", "number", "Single instant in SECONDS to drive the subject to before capturing. Shorthand for times:[t]. Refused with the subject's own typed reason when subject.timeSupported is false - a Static Mesh has no time axis, and a Skeletal Mesh has none until subject.animation names one."),
-        RPC_PARAM_OPT("times", "array", "Instants in SECONDS, e.g. [0, 0.25, 0.5]. Each instant is captured from every camera the shot plan names, so the set is instants x cameras and the combined total is bounded by the same 24-shot ceiling as count/views. The subject is simulated or scrubbed ONCE PER INSTANT and held there while that instant's cameras fire, so the angles of one instant show the same moment - re-driving per shot would resimulate it, and a Niagara system reseeds on every reset. For a Niagara system the window the provider offers is published as subject.timeStartSeconds / subject.timeEndSeconds (0 to 2 s by default); an instant outside it is still simulated, it is just past what the provider calls the preview window. For a frame burst over an animation at the animation's own sampling rate, with per-instant pose-change proof, use render.capture_animation_preview instead."),
+        RPC_PARAM_OPT("times", "array", "Instants in SECONDS, e.g. [0, 0.25, 0.5]. Each instant is captured from every camera the shot plan names, so the set is instants x cameras and the combined total is bounded by the same `maxShots` budget (default 24) as count/views. The subject is simulated or scrubbed ONCE PER INSTANT and held there while that instant's cameras fire, so the angles of one instant show the same moment - re-driving per shot would resimulate it, and a Niagara system reseeds on every reset. For a Niagara system the window the provider offers is published as subject.timeStartSeconds / subject.timeEndSeconds (0 to 2 s by default); an instant outside it is still simulated, it is just past what the provider calls the preview window. For a frame burst over an animation at the animation's own sampling rate, with per-instant pose-change proof, use render.capture_animation_preview instead."),
+        RPC_PARAM_OPT("maxShots", "integer", PINWRIGHT_MAX_SHOTS_PARAM_DESC " A turntable is count:N with distribution:'ring' (an exact 360/N step), maxShots:N and a `filename` stem; shot indices are zero-padded to the set's length, so the PNGs sort in azimuth order."),
         PinWright::MaterialShaderState::AllowFallbackParamSpec()
     ))
 {
@@ -678,6 +680,16 @@ REGISTER_RPC_HANDLER("render.capture_asset_preview", "render", "Open an asset ed
 
     const TSharedPtr<FJsonObject>& Payload = Ctx.GetRawPayload();
     const bool bHasPayload = Payload.IsValid();
+    int32 MaxShots = GMaxOrbitShots;
+    {
+        FString MaxShotsErrCode;
+        FString MaxShotsErrMsg;
+        if (!ParseMaxShots(Payload, MaxShots, MaxShotsErrCode, MaxShotsErrMsg))
+        {
+            Ctx.SendError(MaxShotsErrCode, MaxShotsErrMsg);
+            return true;
+        }
+    }
     const bool bAllowFallback = Ctx.GetBool(
         PinWright::MaterialShaderState::AllowFallbackParamName(), false);
 
@@ -1126,17 +1138,27 @@ REGISTER_RPC_HANDLER("render.capture_asset_preview", "render", "Open an asset ed
     const int32 CameraCount = FMath::Max(Plan.Num(), 1);
     const int32 InstantCount = FMath::Max(Instants.Num(), 1);
     const int32 TotalShots = CameraCount * InstantCount;
-    if (TotalShots > GMaxOrbitShots)
+    if (TotalShots > MaxShots)
     {
         Ctx.SendError(ErrorCodes::ERR_TOO_MANY_SHOTS,
             bTimeAxis
                 ? FString::Printf(
-                    TEXT("Requested %d shots (%d instants x %d cameras) exceeds the maximum of %d. ")
-                    TEXT("Drop instants or cameras; every instant is captured from every camera."),
-                    TotalShots, InstantCount, CameraCount, GMaxOrbitShots)
-                : FString::Printf(TEXT("Requested %d shots exceeds the maximum of %d"),
-                    TotalShots, GMaxOrbitShots));
+                    TEXT("Requested %d shots (%d instants x %d cameras) exceeds the maximum of %d ")
+                    TEXT("(maxShots; default %d, up to %d). ")
+                    TEXT("Drop instants or cameras, or raise maxShots; every instant is captured from every camera."),
+                    TotalShots, InstantCount, CameraCount, MaxShots, GMaxOrbitShots, GMaxShotsCeiling)
+                : FString::Printf(TEXT("Requested %d shots exceeds the maximum of %d (maxShots; default %d, up to %d)"),
+                    TotalShots, MaxShots, GMaxOrbitShots, GMaxShotsCeiling));
         return true;
+    }
+    {
+        FString CostErrMsg;
+        if (!CheckShotSetCost(TotalShots, Request.Width, Request.Height,
+                Ctx.GetBool(TEXT("measureCoverage"), true), CostErrMsg))
+        {
+            Ctx.SendError(ErrorCodes::ERR_TOO_MANY_SHOTS, CostErrMsg);
+            return true;
+        }
     }
 
     // ---- resolve, capture, release, then report ----
@@ -1280,9 +1302,10 @@ REGISTER_RPC_HANDLER("render.capture_asset_preview", "render", "Open an asset ed
         PoseRequest.bHideEditorSprites = false;
         PoseRequest.bRejectBlankCapture = Request.bRejectBlankCapture;
         PoseRequest.bAllowBlank = Request.bAllowBlank;
-        // This verb allows the same 24 as camera.orbit_shots rather than the primitive's default
-        // of 8, so a `sides` set plus a sphere distribution both fit without silent shortening.
-        PoseRequest.MaxPoses = GMaxOrbitShots;
+        // This verb allows the same budget as camera.orbit_shots (default 24) rather than the
+        // primitive's default of 8, so a `sides` set plus a sphere distribution both fit without
+        // silent shortening. TotalShots was refused above MaxShots, so this never truncates.
+        PoseRequest.MaxPoses = MaxShots;
         // Bounds from a STATIC source -- the asset's own, never the posed or simulated subject --
         // which is what makes the per-shot `framing` verdict mean "the subject left the frame"
         // rather than "the bounds moved".
@@ -1368,7 +1391,8 @@ REGISTER_RPC_HANDLER("render.capture_asset_preview", "render", "Open an asset ed
                 PinWrightPoseCapture::FCameraPose Pose;
                 Pose.ProjectionMode = Shot.ProjectionMode;
                 Pose.Fov = Request.Fov;
-                Pose.Filename = FString::Printf(TEXT("%s_shot%02d_az%d_el%d.png"), *Stem, ShotIndex,
+                Pose.Filename = FString::Printf(TEXT("%s_shot%s_az%d_el%d.png"), *Stem,
+                    *FormatShotIndex(ShotIndex, Plan.Num()),
                     FMath::RoundToInt(ShotAzimuth), FMath::RoundToInt(ShotElevation));
                 PlaceOrbitCamera(Center, ShotAzimuth, ShotElevation, Distance, Pose.Location, Pose.Rotation);
                 if (Shot.ProjectionMode == TEXT("orthographic"))
@@ -2176,6 +2200,12 @@ bool PinWrightOpenLevelCapture::Handle(FHandlerContext& Ctx,
             TSharedPtr<FJsonObject> Details = MakeShared<FJsonObject>();
             AddCaptureFields(Capture, Request, Details);
             AddWorldFields(EditorWorld, ViewportWorld, Details);
+            // An unlit level is one cause of a black frame; say so on the refusal too.
+            PinWrightLightingSurvey::AddLightingFields(
+                PinWrightLightingSurvey::SurveyWorld(ViewportWorld),
+                ViewportWorld && ViewportWorld->GetOutermost()
+                    ? ViewportWorld->GetOutermost()->GetName() : FString(),
+                Details);
             Ctx.SendError(ErrorCode, ErrorMessage, Details);
         }
         else if (ErrorCode == ErrorCodes::ERR_CAPTURE_NOT_READY)
@@ -2244,6 +2274,12 @@ bool PinWrightOpenLevelCapture::Handle(FHandlerContext& Ctx,
         Result->SetStringField(TEXT("pieWorldWarning"), PieWorldWarning);
     }
     AddWorldFields(EditorWorld, ViewportWorld, Result);
+    // A fact about the level the pixels came from, beside imageStats: a dark frame from a level
+    // with no lights is otherwise indistinguishable from an exposure, view-mode or realtime fault
+    // (B-unlit-level-capture-no-warning). A warning, never a refusal: a dark scene can be intended.
+    PinWrightLightingSurvey::AddLightingFields(
+        PinWrightLightingSurvey::SurveyWorld(ViewportWorld),
+        Result->GetStringField(TEXT("levelPath")), Result);
     if (DecorateSuccess)
     {
         DecorateSuccess(Capture, Result);

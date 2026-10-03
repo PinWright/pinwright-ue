@@ -45,6 +45,12 @@ without a separate `level.get_info` probe. Omitting the field keeps the legacy u
 - `level.get_actors` returns every actor in the named level — for filtered queries use `call("actor.find_by_class", …)` or `call("actor.find_by_tag", …)` against the active world instead.
 - `level.get_info` `actorCount` counts live actors only; a deleted actor stops counting immediately,
   without waiting for garbage collection, so it matches `actor.list` for a before/after cleanup check.
+- `level.get_info` also returns `lighting` (`directionalLights`, `skyLights`, `localLights`,
+  `lightComponents`: this level's light components with `bAffectsWorld`, sky lights included;
+  `worldLightComponents`: the same count over every visible level of the world). `lightingWarning`
+  naming the level appears only when `worldLightComponents` is zero, so a persistent level lit from
+  a sublevel is not flagged. Check it before capturing: `render.capture_open_level` decides its
+  warning the same way, and a level with no lights captures dark without being `blank`.
 - `level.get_info` / `level.get_actors` / `level.get_bounds` inspect **only levels loaded into the
   active world** (persistent level plus loaded sublevels). An on-disk but unloaded `levelPath`
   errors `LEVEL_NOT_LOADED` ("exists on disk but is not loaded…"), distinct from `LEVEL_NOT_FOUND`

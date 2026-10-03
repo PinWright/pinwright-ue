@@ -140,6 +140,23 @@
   **Behaviour change:** such a stall used to be retryable and to queue `tools/call`; the plain-stall
   message no longer says the condition "clears by itself" and explains that a rising
   `stalledSeconds` means no tick completed in between.
+- Added: `maxShots` (integer, default 24, at most 360) on `camera.orbit_shots`,
+  `render.capture_asset_preview`, `camera.animation_shots` and `render.capture_animation_preview`:
+  the shot budget a plan is refused against with `TOO_MANY_SHOTS`. Every `poseSet` now publishes
+  `elapsedMs` and `msPerShot`. Shot indices in generated filenames are zero-padded to the set's
+  length, so a set over 100 shots sorts in shot order; sets of up to 100 keep their names. A
+  turntable is `count: N, distribution: "ring", maxShots: N` in one call. **Behaviour change:** all
+  four verbs also refuse with `TOO_MANY_SHOTS`, naming the predicted seconds, a set predicted to take
+  over 90 s (draws x (0.2 s + 0.112 s/MP); one draw per shot, two with subject coverage, plus one warm-up), so a
+  large size or coverage now shortens the longest accepted set (24 shots at 4096 px with coverage is ~96 s and refused).
+- Added: `camera.orbit_shots` takes `measureCoverage` (default true, as on
+  `render.capture_asset_preview`) and publishes `subjectCoverage` per shot for an asset `subject`.
+  **Behaviour change:** an asset-subject orbit now draws each shot twice by default, roughly doubling
+  its time; pass `measureCoverage: false` for the old cost. Level targets are unaffected.
+- Added: `render.capture_open_level` (success and `BLANK_CAPTURE` details) and `level.get_info`
+  report `lighting` (directional, sky, local and total light components with `bAffectsWorld`) and a
+  `lightingWarning` naming the level when no visible level of its world has a light;
+  `level.get_info` adds `lighting.worldLightComponents`.
 - Added: `editor_start` and `editor_restart` take `timeout` (seconds, above 0, at most 3600), the
   `wait: "ready"` ceiling for that call; default stays the proxy's `--start-timeout` (180).
   `EDITOR_START_TIMEOUT` now carries `timeoutSeconds` and `probeState` (`not_ready`, `unresponsive`

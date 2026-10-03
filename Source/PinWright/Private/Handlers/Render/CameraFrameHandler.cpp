@@ -710,6 +710,10 @@ REGISTER_RPC_HANDLER("camera.orbit_shots", "camera",
         RPC_PARAM_OPT("exposure", "object|number", PINWRIGHT_EXPOSURE_PARAM_DESC " Read once for the whole set, so every shot in one call is exposed identically."),
         RPC_PARAM_OPT("hideEditorSprites", "boolean", PINWRIGHT_HIDE_EDITOR_SPRITES_PARAM_DESC " Read once for the whole set, so every shot in one call shows the same viewport decoration."),
         RPC_PARAM_OPT("previewScene", "object", PINWRIGHT_PREVIEW_SCENE_PARAM_DESC " Read once for the whole set, so every shot in one call is lit identically, and restored once after the last one. ASSET SUBJECTS ONLY on this verb: orbiting `actorName`, a bare `point`, or a subject of kind world or actor shoots the Level Editor viewport, which has no preview scene to rig, and is refused with UNSUPPORTED_ASSET_EDITOR rather than accepted and quietly ignored."),
+        RPC_PARAM_OPT("maxShots", "integer", PINWRIGHT_MAX_SHOTS_PARAM_DESC " A turntable is count:N with distribution:'ring' (an exact 360/N step) and maxShots:N."),
+        // Same name, default and semantics as render.capture_asset_preview's, because both verbs
+        // serve the same `subject` through the same primitive (board B-orbit-shots-no-subject-coverage).
+        RPC_PARAM_DEF("measureCoverage", "boolean", "Draw every shot TWICE -- once with the subject hidden -- and report `subjectCoverage`, the fraction of the frame's pixels the subject actually changes. Defaults to TRUE, as on render.capture_asset_preview. It is the only published signal that catches a frame containing NOTHING: over pure backdrop `framing.boundsInFrame`, `blank` and `litPixelFraction` all read healthy. Measured only for an ASSET `subject` (staticMesh, skeletalMesh, animation, niagara), whose preview component can be hidden while the preview scene stays; `actorName`, a bare `point` and a subject of kind world or actor have no such component, so there `subjectCoverage` is ABSENT -- never 0 -- and no extra draw is paid. Costs one extra draw plus readback per shot, roughly double the capture time for a set; pass false when you want the pictures and not the measurement.", "true"),
         RPC_PARAM_OPT("inline", "boolean", "When true, also embed base64 PNG bytes per shot (default false).")
     ))
 {
@@ -722,6 +726,19 @@ REGISTER_RPC_HANDLER("camera.orbit_shots", "camera",
 
     const TSharedPtr<FJsonObject>& Payload = Ctx.GetRawPayload();
     const bool bHasField = Payload.IsValid();
+
+    // Read before the plan is built, because the plan is refused against it.
+    int32 MaxShots = GMaxOrbitShots;
+    {
+        FString MaxShotsErrCode;
+        FString MaxShotsErrMsg;
+        if (!ParseMaxShots(Payload, MaxShots, MaxShotsErrCode, MaxShotsErrMsg))
+        {
+            Ctx.SendError(MaxShotsErrCode, MaxShotsErrMsg);
+            return true;
+        }
+    }
+    const bool bMeasureCoverage = Ctx.GetBool(TEXT("measureCoverage"), true);
 
     const float DefaultElevation = static_cast<float>(Ctx.GetNumber(TEXT("elevation"), 30.0));
     const bool bElevationProvided = Payload.IsValid() && Payload->HasField(TEXT("elevation"));
@@ -935,10 +952,11 @@ REGISTER_RPC_HANDLER("camera.orbit_shots", "camera",
         Plan.Add(FPlannedShot{0.0f, 90.0f, TEXT("orthographic")});  // top (looking down -Z)
     }
 
-    if (Plan.Num() > GMaxOrbitShots)
+    if (Plan.Num() > MaxShots)
     {
         Ctx.SendError(ErrorCodes::ERR_TOO_MANY_SHOTS,
-            FString::Printf(TEXT("Requested %d shots exceeds the maximum of %d"), Plan.Num(), GMaxOrbitShots));
+            FString::Printf(TEXT("Requested %d shots exceeds the maximum of %d (maxShots; default %d, up to %d)"),
+                Plan.Num(), MaxShots, GMaxOrbitShots, GMaxShotsCeiling));
         return true;
     }
 
@@ -952,6 +970,17 @@ REGISTER_RPC_HANDLER("camera.orbit_shots", "camera",
     const FString ActorName = ActorNameParamUtils::ResolveActorName(Ctx);
     const bool bHasPoint = bHasField && Payload->HasField(TEXT("point"));
     const bool bSubjectProvided = PinWrightCameraFrameSubject::HasSubjectField(Payload);
+    {
+        // Time bound, before anything resolves. Coverage is only paid on a subject (an actor or
+        // point target has no preview component to hide); a world/actor-kind subject is counted
+        // too, which over-predicts, never under.
+        FString CostErrMsg;
+        if (!CheckShotSetCost(Plan.Num(), Width, Height, bMeasureCoverage && bSubjectProvided, CostErrMsg))
+        {
+            Ctx.SendError(ErrorCodes::ERR_TOO_MANY_SHOTS, CostErrMsg);
+            return true;
+        }
+    }
     const bool bRadiusProvided = bHasField && Payload->HasField(TEXT("radius"));
     const float RadiusParam = static_cast<float>(Ctx.GetNumber(TEXT("radius"), 0.0));
 
@@ -1149,7 +1178,16 @@ REGISTER_RPC_HANDLER("camera.orbit_shots", "camera",
     // This verb has allowed 24 shots since it shipped and the primitive's own default is 8.
     // Keeping the verb's own bound is what stops the conversion silently shortening sets callers
     // have been taking for months; the value in force is published as poseSet.maxPosesPerCall.
-    PoseRequest.MaxPoses = GMaxOrbitShots;
+    // The plan was already refused above MaxShots, so this never truncates.
+    PoseRequest.MaxPoses = MaxShots;
+    // The subject-coverage differential, forwarded exactly as render.capture_asset_preview does:
+    // the caller's asking, and the provider's setter as the being able. A level target binds no
+    // setter, so the primitive measures nothing and pays nothing there.
+    PoseRequest.bMeasureSubjectCoverage = bMeasureCoverage;
+    if (Subject.bResolved)
+    {
+        PoseRequest.SubjectVisibilitySetter = Subject.Resolved.VisibilitySetter;
+    }
     // The subject's bounds, for the per-shot `framing` verdict. Set-level rather than per-pose
     // because bounds that move between shots make "the subject left the frame" and "the bounds
     // grew" the same reading.
@@ -1188,8 +1226,8 @@ REGISTER_RPC_HANDLER("camera.orbit_shots", "camera",
         // readable/self-describing. az/el are rounded to ints so the name carries no
         // '.', '/', or '\' that MakeScreenshotFilename would reject (which would fall
         // back to the colliding auto-name).
-        Pose.Filename = FString::Printf(TEXT("CameraOrbit_%s_shot%02d_az%d_el%d.png"),
-            *OrbitStamp, ShotIndex,
+        Pose.Filename = FString::Printf(TEXT("CameraOrbit_%s_shot%s_az%d_el%d.png"),
+            *OrbitStamp, *FormatShotIndex(ShotIndex, Plan.Num()),
             FMath::RoundToInt(ShotAzimuth), FMath::RoundToInt(ShotElevation));
         PlaceOrbitCamera(Center, ShotAzimuth, ShotElevation, BaseDistance, Pose.Location, Pose.Rotation);
         if (Shot.ProjectionMode == TEXT("orthographic"))
@@ -1274,6 +1312,8 @@ REGISTER_RPC_HANDLER("camera.orbit_shots", "camera",
         // the primitive against the pose the renderer resolved to, and absent entirely when it
         // could not be measured.
         PinWrightPoseCapture::AddPoseFramingField(PoseResult, ShotIndex, ShotObj);
+        PinWrightPoseCapture::AddPoseCoverageField(PoseResult, ShotIndex,
+            PoseRequest.CoverageWarnFraction, ShotObj);
         MaybeAddBase64(Capture.Path, bInline, ShotObj);
         ShotsJson.Add(MakeShared<FJsonValueObject>(ShotObj));
     }

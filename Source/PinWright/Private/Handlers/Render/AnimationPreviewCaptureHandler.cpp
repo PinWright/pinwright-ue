@@ -222,6 +222,7 @@ REGISTER_RPC_HANDLER("render.capture_animation_preview", "render",
         RPC_PARAM_OPT("width", "number", "Output width in pixels. Default 768 for both a burst and a single image."),
         RPC_PARAM_OPT("height", "number", "Output height in pixels. Same default rule as width."),
         RPC_PARAM_OPT("closeAfterCapture", "boolean", "Close the asset editor afterwards. Defaults to TRUE, which closes only a window this call opened; pass true explicitly to close one that was already open, or false to leave it open. The response reports the measured assetEditorClosed / assetEditorWasAlreadyOpen. `subject.closeAfterCapture` is the same argument and keeps all three states; a top-level value wins when both are given."),
+        RPC_PARAM_OPT("maxShots", "integer", PINWRIGHT_MAX_SHOTS_PARAM_DESC),
         RPC_PARAM_OPT("inline", "boolean", "When true, also embed base64 PNG bytes per shot (default false).")
     ))
 {
@@ -236,6 +237,19 @@ REGISTER_RPC_HANDLER("render.capture_animation_preview", "render",
     const TSharedPtr<FJsonObject>& Payload = Ctx.GetRawPayload();
     const bool bHasPayload = Payload.IsValid();
     const auto HasField = [&](const TCHAR* Key) { return bHasPayload && Payload->HasField(Key); };
+
+    // The shot budget, read before any plan is refused against it (shared with every multi-shot
+    // verb through ParseMaxShots, so `maxShots` means one thing everywhere).
+    int32 MaxShots = GMaxOrbitShots;
+    {
+        FString MaxShotsErrCode;
+        FString MaxShotsErrMsg;
+        if (!ParseMaxShots(Payload, MaxShots, MaxShotsErrCode, MaxShotsErrMsg))
+        {
+            Ctx.SendError(MaxShotsErrCode, MaxShotsErrMsg);
+            return true;
+        }
+    }
 
     // Validated before any asset is loaded or any editor opened, alongside the view plan below:
     // one exposure for the whole burst is what lets two instants be compared. Read through the
@@ -685,13 +699,13 @@ REGISTER_RPC_HANDLER("render.capture_animation_preview", "render",
     }
 
     const int32 TotalShots = FramePlan.Num() * ViewPlan.Num();
-    if (TotalShots > GMaxOrbitShots)
+    if (TotalShots > MaxShots)
     {
         Ctx.SendError(ErrorCodes::ERR_TOO_MANY_SHOTS,
             FString::Printf(
-                TEXT("%d instants x %d angles = %d shots exceeds the maximum of %d. Reduce frameCount, ")
+                TEXT("%d instants x %d angles = %d shots exceeds the maximum of %d (maxShots). Reduce frameCount, ")
                 TEXT("reduce the view plan, or split the burst across calls."),
-                FramePlan.Num(), ViewPlan.Num(), TotalShots, GMaxOrbitShots));
+                FramePlan.Num(), ViewPlan.Num(), TotalShots, MaxShots));
         return true;
     }
 
@@ -708,6 +722,15 @@ REGISTER_RPC_HANDLER("render.capture_animation_preview", "render",
         Ctx.SendError(ErrorCodes::ERR_INVALID_ARGUMENT,
             FString::Printf(TEXT("width and height must be in (0, %d]"), GMaxCaptureDimension));
         return true;
+    }
+    {
+        // Time bound on the cost driver (size x count); this verb draws no coverage reference.
+        FString CostErrMsg;
+        if (!CheckShotSetCost(TotalShots, Width, Height, /*bMeasureCoverage=*/false, CostErrMsg))
+        {
+            Ctx.SendError(ErrorCodes::ERR_TOO_MANY_SHOTS, CostErrMsg);
+            return true;
+        }
     }
 
     // ---- Open the asset editor and find its preview viewport. ----
@@ -1017,7 +1040,7 @@ REGISTER_RPC_HANDLER("render.capture_animation_preview", "render",
     // bursts callers have been taking for months. TotalShots is already refused above the same
     // ceiling, so this never actually truncates; the value in force is published as
     // poseSet.maxPosesPerCall so the bound is never implicit.
-    PoseRequest.MaxPoses = GMaxOrbitShots;
+    PoseRequest.MaxPoses = MaxShots;
     // Bounds from the MESH ASSET, never the posed component — see the file header. Posed bounds
     // change every frame, so a framing verdict measured against them would move under the subject
     // and "the mesh left the frame" and "the bounds grew" would read the same.

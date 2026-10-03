@@ -42,6 +42,7 @@
 #include "Utils/AssetDeletePolicy.h"
 #include "Utils/AssetDumpSuggestion.h"
 #include "Utils/MapSwapDirtyWorldGuard.h"
+#include "Utils/LightingSurvey.h"
 #include "Utils/PieState.h"
 #include "Engine/LevelBounds.h"
 #include "LevelUtils.h"
@@ -1364,7 +1365,7 @@ REGISTER_RPC_HANDLER("level.duplicate", "level", "Duplicate an existing level pa
 }
 
 // ---- level.get_info ----
-REGISTER_RPC_HANDLER("level.get_info", "level", "Return descriptive metadata about a level: name, package path, owning world, and actor count. Reads from the loaded world when no path is provided.",
+REGISTER_RPC_HANDLER("level.get_info", "level", "Return descriptive metadata about a level: name, package path, owning world, actor count, and a `lighting` count of light components that affect the world (with `lightingWarning` when there are none). Reads from the loaded world when no path is provided.",
     RPC_PARAMS(
         RPC_PARAM_OPT_ALIAS("levelPath", "path", "Level package path to inspect. Must already be loaded into the active world (the persistent level or a loaded sublevel) — this getter reads only loaded levels; an on-disk-but-unloaded map errors LEVEL_NOT_LOADED (read it unopened with level.describe_offline or asset.dump, which leave the active world untouched, or level.load it first). Defaults to the active editor level.", "level_path")
     ))
@@ -1397,6 +1398,13 @@ REGISTER_RPC_HANDLER("level.get_info", "level", "Return descriptive metadata abo
     // Num() reads high after a delete; count only the live ones, like actor.list.
     Result->SetNumberField(TEXT("actorCount"), Algo::CountIf(TargetLevel->Actors,
         [](const AActor* Actor) { return IsValid(Actor); }));
+    // This level's own light count, so a caller can learn a level is unlit BEFORE capturing it
+    // rather than from a dark frame afterwards. The warning is decided from every visible level,
+    // as render.capture_open_level decides it: a persistent level lit from a sublevel is lit.
+    const PinWrightLightingSurvey::FLightingSurvey WorldLighting =
+        PinWrightLightingSurvey::SurveyWorld(World);
+    PinWrightLightingSurvey::AddLightingFields(PinWrightLightingSurvey::SurveyLevel(TargetLevel),
+        Result->GetStringField(TEXT("levelPath")), Result, &WorldLighting);
     Ctx.SendSuccess(Result);
     return true;
 }

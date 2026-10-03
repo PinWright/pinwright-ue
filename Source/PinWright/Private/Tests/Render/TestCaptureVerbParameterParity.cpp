@@ -610,7 +610,7 @@ namespace CaptureVerbParameterParityTest
         // The level viewport has no preview scene, so the shared parser's pin is deliberately
         // cleared and remains absent from this verb's public declaration.
         { TEXT("render.capture_open_level"), TEXT("previewScene"), GapKind::Declaration,
-          GRenderHandler, 1955,
+          GRenderHandler, 1999,
           TEXT("`render.capture_open_level` parses then clears `previewScene`"),
           TEXT("The registration delegates through PinWrightOpenLevelCapture::Handle, which parses the shared pin but clears it because a live level viewport has no FPreviewScene rig to apply.") },
 
@@ -702,12 +702,12 @@ namespace CaptureVerbParameterParityTest
         { TEXT("bRejectBlankCapture"),        TEXT("rejectBlank"),       false, TEXT("") },
         { TEXT("bAllowBlank"),                TEXT("allowBlank"),        false, TEXT("") },
         { TEXT("bRetainPixels"),              TEXT(""),                  false, TEXT("Handler policy, not caller input, and the same shape as bAutoViewDistanceScale: the primitive retains the decoded pixels of the previous frame so that a pose the evaluator says CHANGED, whose same-camera readback did not, can be failed closed instead of written out as a stale image. The caller asks for frames, not for the staleness check that makes those frames trustworthy.") },
-        { TEXT("MaxPoses"),                   TEXT(""),                  false, TEXT("Per-call ceiling; published in the response as maxPosesPerCall rather than accepted from the wire.") },
+        { TEXT("MaxPoses"),                   TEXT(""),                  false, TEXT("Per-call ceiling, set by each verb from its validated `maxShots` budget (ParseMaxShots: default 24, at most 360) after the plan has already been refused against it, so the field never truncates; published in the response as maxPosesPerCall.") },
         { TEXT("bWarmupShot"),                TEXT("warmupShot"),        true,  TEXT("P6. The header documents a caller affordance ('a caller that knows the viewport is warm can turn it off') that has no wire spelling on any verb.") },
         { TEXT("SubjectTimeSetter"),          TEXT(""),                  false, TEXT("A delegate; the caller names a time axis through frames/time, never through the setter.") },
         // ---- the subject-coverage seam, classified field by field ----
         { TEXT("SubjectVisibilitySetter"),    TEXT(""),                  false, TEXT("A delegate, and the same shape as SubjectTimeSetter: a TFunction has no wire spelling to give. The caller asks for the measurement through `measureCoverage`; which mechanism can hide THIS subject is the resolved subject's answer, not the caller's.") },
-        { TEXT("bMeasureSubjectCoverage"),    TEXT("measureCoverage"),   false, TEXT("Caller input, not handler policy: the differential costs an extra draw + readback per shot and two full-size buffers, which is a cost the WIRE caller pays. Defaults true on the one verb that publishes a coverage number, and honours an explicit false.") },
+        { TEXT("bMeasureSubjectCoverage"),    TEXT("measureCoverage"),   false, TEXT("Caller input, not handler policy: the differential costs an extra draw + readback per shot and two full-size buffers, which is a cost the WIRE caller pays. Defaults true on the two verbs that publish a coverage number (render.capture_asset_preview and camera.orbit_shots), and honours an explicit false.") },
         { TEXT("CoverageWarnFraction"),       TEXT(""),                  false, TEXT("Deliberately fixed, the same shape as MaxPoses: the datum is published, the constant is not accepted. `subjectCoverage` is emitted on every measured shot and the warning text states the floor it fell under, so a caller with a different floor applies it to a number they already hold - and a settable floor's only use would be to silence the warning that says the frame is empty.") },
         { TEXT("CoverageChannelThreshold"),   TEXT(""),                  false, TEXT("Deliberately fixed: it defines what a CHANGED pixel is, so it defines what the published coverage number means. Two calls made under different thresholds report figures that cannot be compared, and comparison is the number's only use. 8/255 is calibrated against measured inter-draw noise, well under the 100-plus a faint additive particle moves a pixel by.") },
         { TEXT("BoundsOrigin"),               TEXT(""),                  false, TEXT("Measured from the subject, never accepted from the caller - see the header's FROM A STATIC SOURCE note.") },
@@ -724,7 +724,7 @@ namespace CaptureVerbParameterParityTest
         { TEXT("bMeasurePoseRepeatability"),  TEXT(""),                  false, TEXT("Internal integrity policy: CaptureCameraPoses enables the control for every real viewport set; only the injected primitive leaves it off to keep the unit-test seam minimal.") },
     };
 
-    // Twenty-five rows. Every one is a set-level field the shared primitive applies to every frame
+    // Twenty-four rows. Every one is a set-level field the shared primitive applies to every frame
     // of a set, that some verb built on that primitive cannot reach from the wire.
     static const FParityException GPoseListExceptions[] =
     {
@@ -762,12 +762,12 @@ namespace CaptureVerbParameterParityTest
           TEXT("`bWarmupShot` documents a caller affordance"), TEXT("P6.") },
 
         // ---- rejectBlank: reasoned on the three camera verbs, unreasoned on the fourth
-        { TEXT("camera.frame_actor"), TEXT("bRejectBlankCapture"), GapKind::Declaration, GShotPlanUtils, 366,
+        { TEXT("camera.frame_actor"), TEXT("bRejectBlankCapture"), GapKind::Declaration, GShotPlanUtils, 502,
           TEXT("These verbs deliberately do NOT set bRejectBlankCapture"),
           TEXT("Reasoned: an actor legitimately reviewed against a dark backdrop must not hard-fail, so the caller gets the numbers and decides.") },
-        { TEXT("camera.orbit_shots"), TEXT("bRejectBlankCapture"), GapKind::Declaration, GShotPlanUtils, 366,
+        { TEXT("camera.orbit_shots"), TEXT("bRejectBlankCapture"), GapKind::Declaration, GShotPlanUtils, 502,
           TEXT("These verbs deliberately do NOT set bRejectBlankCapture"), TEXT("Same reasoned refusal.") },
-        { TEXT("camera.animation_shots"), TEXT("bRejectBlankCapture"), GapKind::Declaration, GShotPlanUtils, 366,
+        { TEXT("camera.animation_shots"), TEXT("bRejectBlankCapture"), GapKind::Declaration, GShotPlanUtils, 502,
           TEXT("These verbs deliberately do NOT set bRejectBlankCapture"), TEXT("Same reasoned refusal.") },
         { TEXT("render.capture_animation_preview"), TEXT("bRejectBlankCapture"), GapKind::Declaration, GPlan, 664,
           TEXT("`rejectBlank`'s absence is reasoned and documented"),
@@ -788,9 +788,9 @@ namespace CaptureVerbParameterParityTest
           TEXT("Should `previewScene` also be accepted on `camera.animation_shots`?"),
           TEXT("Open question 2 of the plan: the verb is level/actor-only, so 1a marks the whole rig row unreachable there.") },
 
-        // ---- measureCoverage: the coverage seam reaches one verb of five, and says so in writing
+        // ---- measureCoverage: the coverage seam reaches two verbs of five, and says so in writing
         //
-        // NOT a reasoned refusal like hideEditorSprites above - these four CAN be measured, the
+        // NOT a reasoned refusal like hideEditorSprites above - these three CAN be measured, the
         // seam just does not reach them. Each row is written to die: the day a verb binds a
         // visibility setter and publishes a coverage number, its row stops describing a gap and
         // the obsolete-row check names it.
@@ -798,10 +798,6 @@ namespace CaptureVerbParameterParityTest
           GCaptureSubjectsDoc, 81,
           TEXT("No other pose-set verb declares `measureCoverage`"),
           TEXT("The verb binds no subject-visibility setter and emits no coverage field at all, so the flag could not change one byte of its response - declaring it would publish a knob that does nothing. A placed actor CAN be hidden and redrawn, so this is an open gap, not a decision.") },
-        { TEXT("camera.orbit_shots"), TEXT("bMeasureSubjectCoverage"), GapKind::Declaration,
-          GCaptureSubjectsDoc, 81,
-          TEXT("No other pose-set verb declares `measureCoverage`"),
-          TEXT("Same open gap: no visibility setter is bound and no coverage number is published on this verb.") },
         { TEXT("camera.animation_shots"), TEXT("bMeasureSubjectCoverage"), GapKind::Declaration,
           GCaptureSubjectsDoc, 81,
           TEXT("No other pose-set verb declares `measureCoverage`"),

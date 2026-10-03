@@ -246,9 +246,43 @@ Args:
   **once for the whole set**. Unknown or unrenderable modes error rather than echo; measured
   `viewport.viewMode` / `viewport.lit` describe the pixels and `viewport.viewModeOverride` gives the
   applied/restored verdict.
+- `maxShots` (integer, default `24`, at most `360`) — the shot budget for this call. A plan above it
+  is refused with `TOO_MANY_SHOTS` before anything is captured, never truncated. The 360 ceiling
+  bounds the count only; **time is bounded by size**: a set whose predicted cost (draws ×
+  (0.2 s + 0.112 s per megapixel), one draw per shot, two when `measureCoverage` applies, plus one
+  warm-up) exceeds 90 s is
+  also `TOO_MANY_SHOTS`, with the predicted seconds in the message, because a call that outlives the
+  120 s response timeout keeps running with nobody receiving its result. At 256 px that is 360 shots
+  without coverage or 216 with it. Every set reports its measured cost as
+  `poseSet.elapsedMs` / `poseSet.msPerShot` (the capture sequence only: opening the asset editor and
+  applying the `previewScene` rig are not included). Shared with `render.capture_asset_preview`,
+  `camera.animation_shots` and `render.capture_animation_preview`.
+- `measureCoverage` (boolean, default `true`) — draw each shot a second time with the subject hidden
+  and publish `subjectCoverage`, the fraction of the frame the subject changes; the only signal that
+  catches a frame of pure backdrop. Same semantics as on `render.capture_asset_preview`. Measured
+  only for an **asset** `subject`: `actorName`, `point` and world/actor subjects have no preview
+  component to hide, so their shots carry no figure (absent, never `0`) and pay no extra draw. Pass
+  `false` to halve the capture time. See [`render.capture-subjects`](render.capture-subjects.md).
 - `inline` (boolean, default `false`) — also embed base64 per shot.
 
 Shot-plan precedence: `views` (exclusive) | `angles` > `count` > canonical set.
+
+```js
+// A 120-frame, 3-degree turntable of an asset in ONE call: one preview-scene rig cycle, one
+// exposure, shot indices zero-padded (shot000..shot119) so the PNGs sort in azimuth order.
+call({
+  path: "camera.orbit_shots",
+  args: { subject: { kind: "staticMesh", path: "/Engine/BasicShapes/Cube.Cube" },
+          count: 120, distribution: "ring", elevation: 20, maxShots: 120,
+          width: 256, height: 256, exposure: -1 }
+})
+```
+
+Size the set from a measurement, not from this example: take a short set at the size you want,
+multiply `poseSet.msPerShot` by the frame count, and keep the product under 90 s (the budget the
+verb refuses above; `msPerShot` already includes the coverage draw, so do not double it). For a caller-named stem instead of the `CameraOrbit_<stamp>`
+auto-name, use `render.capture_asset_preview` with the same `count` / `distribution` / `maxShots`
+and a `filename`.
 
 ```js
 // Six orthographic sides of one actor, in one call.
@@ -282,7 +316,7 @@ same-pose repeatability comparison; each shot has its own `framing` verdict. Man
 
 Gotchas: omitting `views`/`count`/`angles` gives **4 shots** (3/4 perspective plus front / side /
 top orthographic); use `views:"sides"` for six. The call **fails whole** on the first capture
-failure. More than 24 planned shots gives `TOO_MANY_SHOTS`. Bare `point` requires `radius`.
+failure. More planned shots than `maxShots` (default 24) gives `TOO_MANY_SHOTS`. Bare `point` requires `radius`.
 Each shot flickers the live viewport and the camera self-restores. The result is
 `{shots:[{angle, projectionMode, path, ...}], count}`; orthographic shots also carry `orthoView`
 and the displayed `cameraRotation` (the top shot reports `yaw:180`).
@@ -343,5 +377,7 @@ measured. Images show each instant but do not establish animation. Pass
 Gotchas: it captures the **level** viewport; pass `hideEditorSprites: true` to suppress editor icon
 sprites. No actor target and no `subject:{kind:"world"}` gives handler-body `INVALID_ARGUMENT`
 naming `actorName`, `objectPath`, `actorPath`, `actor_name`, and the world form (formerly the
-dispatcher named only `MISSING_REQUIRED_PARAM`). The playhead restores by default;
+dispatcher named only `MISSING_REQUIRED_PARAM`). `frameCount × viewCount` above `maxShots`
+(default 24, up to 360; same parameter as `camera.orbit_shots`) is `TOO_MANY_SHOTS` before anything
+is captured. The playhead restores by default;
 `restorePlayhead:false` leaves it at the end. `open:false` refuses with `SEQUENCE_NOT_OPEN`.

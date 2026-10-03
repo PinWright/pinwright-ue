@@ -272,6 +272,9 @@ namespace PinWrightPoseCapture
         int32 PosesTruncated = 0;
         // The bound that was in force, published so it is never implicit.
         int32 MaxPoses = MaxPosesPerCall;
+        // Wall time of RunPoseListCapture, warm-up, coverage-reference and control frames included.
+        // Published as poseSet.elapsedMs / msPerShot so the shot bound's cost premise is checkable.
+        double ElapsedSeconds = 0.0;
         bool bWarmupShotTaken = false;
         // The throwaway frame's file was removed. False with bWarmupShotTaken true and a non-empty
         // WarmupShotPath means one stale PNG is on disk; it is reported rather than hidden because
