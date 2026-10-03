@@ -3,6 +3,7 @@
 #include "Misc/AutomationTest.h"
 #include "Handlers/Niagara/NiagaraDumpBuilder.h"
 #include "Handlers/Niagara/NiagaraCompileWait.h"
+#include "Handlers/Niagara/NiagaraCompileVerdict.h"
 #include "Tests/Assets/NiagaraEditTestUtils.h"
 #include "NiagaraJsonAssertionHelpers.h"
 #include "Dom/JsonObject.h"
@@ -298,5 +299,142 @@ bool FNiagaraDumpDeferredIssueClearsAfterCompileTest::RunTest(const FString& Par
     TestFalse(TEXT("no COMPILE_DEFERRED_ON_LOAD issue for a system compiled in this session"),
         IssuesContainCode(CompileJson, TEXT("COMPILE_DEFERRED_ON_LOAD")));
 
+    return true;
+}
+
+namespace TestNiagaraDumpCompileDeferredHelpers
+{
+    // Null entries marked compiledIntoSystemScripts, and unmarked entries not at a terminal success.
+    void CountCompileEntries(const TArray<TSharedPtr<FJsonValue>>& Scripts, int32& OutNullFolded, int32& OutNonTerminalOwn)
+    {
+        OutNullFolded = 0;
+        OutNonTerminalOwn = 0;
+        for (const TSharedPtr<FJsonValue>& Value : Scripts)
+        {
+            const TSharedPtr<FJsonObject> Entry = Value.IsValid() ? Value->AsObject() : nullptr;
+            if (!Entry.IsValid() || !Entry->HasField(TEXT("compileStatus")))
+            {
+                continue;
+            }
+            const bool bNull = Entry->TryGetField(TEXT("compileStatus"))->Type == EJson::Null;
+            bool bFolded = false;
+            if (Entry->TryGetBoolField(TEXT("compiledIntoSystemScripts"), bFolded) && bFolded)
+            {
+                OutNullFolded += bNull ? 1 : 0;
+                continue;
+            }
+            FString Status;
+            Entry->TryGetStringField(TEXT("compileStatus"), Status);
+            if (bNull || (Status != TEXT("NCS_UpToDate") && Status != TEXT("NCS_UpToDateWithWarnings") && Status != TEXT("NCS_ComputeUpToDateWithWarnings")))
+            {
+                ++OutNonTerminalOwn;
+            }
+        }
+    }
+}
+
+// E-niagara-validate-compile-state-uninitialized-undocumented: emitter spawn/update scripts are not
+// compilable (the engine folds them into the system scripts and pins them at NCS_Unknown), so they
+// stayed null after a completed compile and kept COMPILE_STATE_UNINITIALIZED and
+// scriptCompileCheck:"unverified" on every system with an emitter, forever. Counterfactual: without
+// the compiledIntoSystemScripts marker the precondition fails, and without the folds skipping it the
+// issue, the null readyToRun and the unverified verdict all come back.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FNiagaraDumpUninitializedIssueClearsAfterCompileTest,
+    "PinWright.Niagara.DumpCompile.UninitializedIssueClearsAfterCompile",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FNiagaraDumpUninitializedIssueClearsAfterCompileTest::RunTest(const FString& Parameters)
+{
+    FString SystemPath;
+    ON_SCOPE_EXIT { CleanupTestAsset(SystemPath); };
+    TStrongObjectPtr<UNiagaraSystem> SystemOwner(
+        NiagaraEditTestUtils::DuplicateFixtureSystemWithEmitters(TEXT("NS_UninitCleared"), SystemPath));
+    UNiagaraSystem* System = SystemOwner.Get();
+    if (!System)
+    {
+        PinWrightTestSkip::SkipAssertions(*this, TEXT("fixture-missing"),
+            FString::Printf(TEXT("could not duplicate '%s'"), NiagaraEditTestUtils::FixtureSystemAssetPath));
+        return true;
+    }
+
+    System->RequestCompile(/*bForce=*/true);
+    const PinWrightNiagara::FCompileWaitOutcome Wait =
+        PinWrightNiagara::WaitForSystemCompile(*System, /*bMayFlushRequestCompile=*/true);
+    if (!TestFalse(TEXT("premise: forced compile landed within the wait budget"), Wait.bTimedOut || Wait.bOutstanding))
+    {
+        return false;
+    }
+
+    const TSharedPtr<FJsonObject> CompileJson = NiagaraDumpBuilder::BuildCompileDiagnosticsJson(System);
+    const TArray<TSharedPtr<FJsonValue>>* Scripts = nullptr;
+    if (!TestTrue(TEXT("compile block has scripts"), CompileJson.IsValid() && CompileJson->TryGetArrayField(TEXT("scripts"), Scripts) && Scripts))
+    {
+        return false;
+    }
+
+    // Premises: the fixture has emitter scripts the engine left at NCS_Unknown after the compile,
+    // and every script that compiles on its own reached a terminal status.
+    int32 NullFoldedScripts = 0;
+    int32 NonTerminalOwnScripts = 0;
+    TestNiagaraDumpCompileDeferredHelpers::CountCompileEntries(*Scripts, NullFoldedScripts, NonTerminalOwnScripts);
+    TestTrue(TEXT("premise: emitter spawn/update entries are marked and still null after the compile"), NullFoldedScripts > 0);
+    TestEqual(TEXT("premise: every script that compiles on its own is up to date"), NonTerminalOwnScripts, 0);
+
+    TestFalse(TEXT("no COMPILE_STATE_UNINITIALIZED after a completed compile"),
+        IssuesContainCode(CompileJson, TEXT("COMPILE_STATE_UNINITIALIZED")));
+    TestFalse(TEXT("readyToRun is measured, not null, after a completed compile"),
+        JsonFieldIsNull(CompileJson, TEXT("readyToRun")));
+    TestTrue(TEXT("verdict passes after a completed compile"),
+        PinWrightNiagara::ReadCompileVerdict(CompileJson).Check == PinWrightNiagara::EScriptCompileCheck::Passed);
+
+    // The same fold through niagara.compile_status, the verb the ticket saw stuck at unverified.
+    TSharedPtr<FJsonObject> Params = MakeShared<FJsonObject>();
+    Params->SetStringField(TEXT("assetPath"), SystemPath);
+    FTestResponseCapture Capture;
+    TestTrue(TEXT("niagara.compile_status handler found"),
+        InvokeHandlerWithCapture(TEXT("niagara.compile_status"), Params, Capture));
+    FString ScriptCheck;
+    TestTrue(TEXT("compile_status succeeds with scriptCompileCheck"),
+        Capture.bSuccess && Capture.Result.IsValid() && Capture.Result->TryGetStringField(TEXT("scriptCompileCheck"), ScriptCheck));
+    TestEqual(TEXT("compile_status scriptCompileCheck passes after a completed compile"), ScriptCheck, FString(TEXT("passed")));
+
+    // Emitter path (ScriptsHaveNonTerminalCompileStatus): the compiled system's own emitter has
+    // up-to-date particle scripts and null emitter spawn/update scripts. Neither the deferred-compile
+    // issue nor COMPILE_STATE_UNINITIALIZED may be raised for the null folded pair.
+    const TArray<FNiagaraEmitterHandle>& Handles = System->GetEmitterHandles();
+    UNiagaraEmitter* Emitter = Handles.Num() > 0 ? Handles[0].GetInstance().Emitter : nullptr;
+    if (!TestNotNull(TEXT("premise: compiled fixture has an emitter"), Emitter))
+    {
+        return false;
+    }
+    IConsoleVariable* OnDemandCV = IConsoleManager::Get().FindConsoleVariable(TEXT("fx.Niagara.OnDemandCompileEnabled"));
+    const FString Original = OnDemandCV ? OnDemandCV->GetString() : FString();
+    if (OnDemandCV)
+    {
+        OnDemandCV->Set(TEXT("1"), ECVF_SetByCode);
+    }
+    const TSharedPtr<FJsonObject> EmitterJson = NiagaraDumpBuilder::BuildEmitterCompileDiagnosticsJson(Emitter);
+    if (OnDemandCV)
+    {
+        OnDemandCV->Set(*Original, ECVF_SetByCode);
+    }
+    const TArray<TSharedPtr<FJsonValue>>* EmitterScripts = nullptr;
+    if (!TestTrue(TEXT("emitter compile block has scripts"),
+        EmitterJson.IsValid() && EmitterJson->TryGetArrayField(TEXT("scripts"), EmitterScripts) && EmitterScripts))
+    {
+        return false;
+    }
+    int32 EmitterNullFolded = 0;
+    int32 EmitterNonTerminalOwn = 0;
+    TestNiagaraDumpCompileDeferredHelpers::CountCompileEntries(*EmitterScripts, EmitterNullFolded, EmitterNonTerminalOwn);
+    TestTrue(TEXT("premise: the emitter's spawn/update entries are marked and null"), EmitterNullFolded > 0);
+    TestEqual(TEXT("premise: the emitter's particle scripts are up to date"), EmitterNonTerminalOwn, 0);
+    if (OnDemandCV)
+    {
+        TestFalse(TEXT("no COMPILE_DEFERRED_ON_LOAD for an emitter whose only null scripts are folded"),
+            IssuesContainCode(EmitterJson, TEXT("COMPILE_DEFERRED_ON_LOAD")));
+    }
+    TestFalse(TEXT("no COMPILE_STATE_UNINITIALIZED for an emitter whose only null scripts are folded"),
+        IssuesContainCode(EmitterJson, TEXT("COMPILE_STATE_UNINITIALIZED")));
     return true;
 }

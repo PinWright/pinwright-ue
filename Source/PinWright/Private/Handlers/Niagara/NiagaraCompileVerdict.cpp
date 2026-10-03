@@ -48,13 +48,25 @@ FCompileVerdict ReadCompileVerdict(const TSharedPtr<FJsonObject>& Compile)
     }
 
     int32 ScriptsWithTerminalStatus = 0;
+    int32 ScriptsCompiledOnTheirOwn = 0;
     for (const TSharedPtr<FJsonValue>& Value : *Scripts)
     {
         if (!Value.IsValid() || Value->Type != EJson::Object)
         {
+            ++ScriptsCompiledOnTheirOwn;
             continue;
         }
         const TSharedPtr<FJsonObject> Entry = Value->AsObject();
+
+        // Emitter spawn/update scripts compile into the system scripts and keep NCS_Unknown for
+        // good, so they carry no verdict of their own; counting them made Passed unreachable for
+        // every system with an emitter.
+        bool bCompiledIntoSystemScripts = false;
+        if (Entry->TryGetBoolField(TEXT("compiledIntoSystemScripts"), bCompiledIntoSystemScripts) && bCompiledIntoSystemScripts)
+        {
+            continue;
+        }
+        ++ScriptsCompiledOnTheirOwn;
 
         // A null compileStatus is the dumper's spelling of NCS_Unknown - "not compiled yet",
         // which BuildCompileDiagnosticsJson already reports as COMPILE_STATE_UNINITIALIZED. It is
@@ -101,7 +113,7 @@ FCompileVerdict ReadCompileVerdict(const TSharedPtr<FJsonObject>& Compile)
     {
         Verdict.Check = EScriptCompileCheck::Failed;
     }
-    else if (Scripts->Num() > 0 && ScriptsWithTerminalStatus == Scripts->Num())
+    else if (ScriptsCompiledOnTheirOwn > 0 && ScriptsWithTerminalStatus == ScriptsCompiledOnTheirOwn)
     {
         Verdict.Check = EScriptCompileCheck::Passed;
     }

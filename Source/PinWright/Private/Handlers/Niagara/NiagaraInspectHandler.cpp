@@ -205,8 +205,11 @@ namespace
 
         const PinWrightNiagara::FCompileVerdict Verdict = PinWrightNiagara::ReadCompileVerdict(Compile);
         // Published on every verdict, "passed" included, so a caller can tell a checked pass from
-        // an asset nothing has compiled this session - which is not a pass and must never read as
-        // one. `unverified` raises nothing here: the dumper already files it as
+        // a script with no compile result at all (new or never compiled), which is not a pass and
+        // must never read as one. A loaded asset carries the statuses of its last saved compile, so
+        // it can pass without a compile this session; one whose bytecode is out of sync with its
+        // graph is caught by pendingCompile (PostLoad parks it as RequestPendingOnDemand).
+        // `unverified` raises nothing here: the dumper already files it as
         // COMPILE_STATE_UNINITIALIZED, and a second issue for one fact is noise.
         Result->SetStringField(TEXT("scriptCompileCheck"),
             PinWrightNiagara::ScriptCompileCheckToString(Verdict.Check));

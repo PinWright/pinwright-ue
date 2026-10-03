@@ -1295,7 +1295,21 @@ namespace
         Obj->SetStringField(TEXT("ownerKind"), OwnerKind);
         Obj->SetStringField(TEXT("ownerName"), OwnerName);
         Obj->SetStringField(TEXT("scriptUsage"), Usage);
+        // Emitter spawn/update scripts are not compilable (UNiagaraScript::IsCompilable): the engine
+        // compiles their modules into the system spawn/update scripts and pins their own status at
+        // NCS_Unknown, so their null compileStatus is permanent and says nothing about the asset.
+        // Marked so every compile-state fold skips them; otherwise no compile could ever pass.
+        if (Script && !Script->IsCompilable())
+        {
+            Obj->SetBoolField(TEXT("compiledIntoSystemScripts"), true);
+        }
         Scripts.Add(MakeObjectValue(Obj));
+    }
+
+    bool IsCompiledIntoSystemScripts(const TSharedPtr<FJsonObject>& Obj)
+    {
+        bool bFolded = false;
+        return Obj.IsValid() && Obj->TryGetBoolField(TEXT("compiledIntoSystemScripts"), bFolded) && bFolded;
     }
 
     bool ScriptsHaveUninitializedCompileStatus(const TArray<TSharedPtr<FJsonValue>>& Scripts)
@@ -1303,7 +1317,7 @@ namespace
         for (const TSharedPtr<FJsonValue>& Value : Scripts)
         {
             const TSharedPtr<FJsonObject> Obj = Value.IsValid() ? Value->AsObject() : nullptr;
-            if (!Obj.IsValid())
+            if (!Obj.IsValid() || IsCompiledIntoSystemScripts(Obj))
             {
                 continue;
             }
@@ -1323,7 +1337,7 @@ namespace
         for (const TSharedPtr<FJsonValue>& Value : Scripts)
         {
             const TSharedPtr<FJsonObject> Obj = Value.IsValid() ? Value->AsObject() : nullptr;
-            const TSharedPtr<FJsonValue> StatusField = Obj.IsValid() ? Obj->TryGetField(TEXT("compileStatus")) : nullptr;
+            const TSharedPtr<FJsonValue> StatusField = Obj.IsValid() && !IsCompiledIntoSystemScripts(Obj) ? Obj->TryGetField(TEXT("compileStatus")) : nullptr;
             if (!StatusField.IsValid())
             {
                 continue;
@@ -2234,7 +2248,7 @@ namespace NiagaraDumpBuilder
             TSharedPtr<FJsonObject> Issue = MakeObject();
             Issue->SetStringField(TEXT("severity"), TEXT("info"));
             Issue->SetStringField(TEXT("code"), TEXT("COMPILE_STATE_UNINITIALIZED"));
-            Issue->SetStringField(TEXT("message"), TEXT("One or more scripts report no compile state; this dump reflects post-load state, not post-compile state. Open the asset in the editor or spawn it as an FX component to populate compile state, then re-dump."));
+            Issue->SetStringField(TEXT("message"), TEXT("One or more scripts report no compile state; this dump reflects post-load state, not post-compile state. Run niagara.compile (or open the asset in the editor or spawn it as an FX component) to populate compile state, then re-dump."));
             Issues.Add(MakeObjectValue(Issue));
         }
         else
@@ -2273,7 +2287,7 @@ namespace NiagaraDumpBuilder
             TSharedPtr<FJsonObject> Issue = MakeObject();
             Issue->SetStringField(TEXT("severity"), TEXT("info"));
             Issue->SetStringField(TEXT("code"), TEXT("COMPILE_STATE_UNINITIALIZED"));
-            Issue->SetStringField(TEXT("message"), TEXT("One or more scripts report no compile state; this dump reflects post-load state, not post-compile state. Open the asset in the editor or spawn it as an FX component to populate compile state, then re-dump."));
+            Issue->SetStringField(TEXT("message"), TEXT("One or more scripts report no compile state; this dump reflects post-load state, not post-compile state. Run niagara.compile (or open the asset in the editor or spawn it as an FX component) to populate compile state, then re-dump."));
             Issues.Add(MakeObjectValue(Issue));
         }
         else
@@ -2309,7 +2323,7 @@ namespace NiagaraDumpBuilder
             TSharedPtr<FJsonObject> Issue = MakeObject();
             Issue->SetStringField(TEXT("severity"), TEXT("info"));
             Issue->SetStringField(TEXT("code"), TEXT("COMPILE_STATE_UNINITIALIZED"));
-            Issue->SetStringField(TEXT("message"), TEXT("One or more scripts report no compile state; this dump reflects post-load state, not post-compile state. Open the asset in the editor or spawn it as an FX component to populate compile state, then re-dump."));
+            Issue->SetStringField(TEXT("message"), TEXT("One or more scripts report no compile state; this dump reflects post-load state, not post-compile state. Run niagara.compile (or open the asset in the editor or spawn it as an FX component) to populate compile state, then re-dump."));
             Issues.Add(MakeObjectValue(Issue));
         }
         else

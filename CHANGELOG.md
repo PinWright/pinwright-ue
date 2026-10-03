@@ -10,6 +10,14 @@
   The list is local state: newly seeded dump roots gitignore it. **Behaviour change:** remove a
   package's line from `dump-stalled.txt` to retry it; `force` does not override the list. One asset
   still cannot be preempted while it runs.
+- Fixed: `niagara.validate`, `niagara.inspect` and `niagara.compile_status` no longer stay at
+  `scriptCompileCheck: "unverified"` with `COMPILE_STATE_UNINITIALIZED` after a completed compile.
+  Emitter spawn/update scripts compile into the system scripts and never get a status of their own;
+  their `compile.scripts[]` entries now carry `compiledIntoSystemScripts: true` and are left out of
+  the verdict, the issue and the null `readyToRun`, so `passed` / `completed` is reachable for a
+  system with emitters. **Behaviour change:** a loaded asset whose saved bytecode is in sync now
+  reads `passed` without `niagara.compile`; an out-of-sync one still shows `pendingCompile: true`.
+  The `COMPILE_STATE_UNINITIALIZED` message now names `niagara.compile` as the remedy.
 - Changed: the PinWright Setup screen no longer opens at launch in an `-unattended` editor (the
   automation suite, offscreen/headless `editor_start`), even with `bShowSetupScreenOnLaunch` or a
   port-conflict alert; the conflict is still logged. On a real display its window covered the

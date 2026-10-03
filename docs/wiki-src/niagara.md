@@ -8,7 +8,7 @@ Use a read-first workflow for every persistent Niagara asset edit:
 
 1. Read current state with `asset.dump` or `niagara.inspect`.
 2. Apply one individual `niagara.*` edit RPC.
-3. Run `niagara.validate` before relying on the asset.
+3. Run `niagara.validate` before relying on the asset. On an asset with scripts that have no compile result yet (new, or never compiled), a `valid: true` result can carry `scriptCompileCheck: "unverified"` and the info `COMPILE_STATE_UNINITIALIZED`; that is compile state, not a fault in the edit ([niagara.compile-state](niagara.compile-state.md)). `niagara.compile` clears both. A loaded asset reports its last saved compile, and one out of sync with its graph shows `pendingCompile: true`.
 
 Do not send grouped operation arrays, multi-edit patches, or `niagara.apply_patch`; they are not supported. Each edit RPC performs exactly one operation so validation, transactions, dirtying, compile, and save behavior stay attributable to that operation.
 
@@ -444,7 +444,11 @@ verdict there would be invented rather than measured.
 of **every** script the asset owns — system spawn/update, each emitter's emitter and particle
 spawn/update, plus every event-handler, simulation-stage and (on a GPU emitter) GPU compute script.
 The per-script verdict is `compile.scripts[]`, whose entries carry `ownerKind` / `ownerName` /
-`scriptUsage` / `compileStatus`, and `compileErrors` when the compile failed.
+`scriptUsage` / `compileStatus`, and `compileErrors` when the compile failed. Each emitter's
+`EmitterSpawnScript` / `EmitterUpdateScript` entry also carries `compiledIntoSystemScripts: true`: the
+engine compiles those modules into the system spawn/update scripts, so the entry's own
+`compileStatus` stays `null` even after a successful compile. Marked entries are left out of
+`scriptCompileCheck` and of `COMPILE_STATE_UNINITIALIZED`; the system scripts carry their verdict.
 
 - `scriptCompileCheck: "passed"` — every script reported a terminal successful status.
 - `scriptCompileCheck: "failed"` — at least one script is at `NCS_Error`. One
@@ -455,12 +459,17 @@ The per-script verdict is `compile.scripts[]`, whose entries carry `ownerKind` /
   of the asset. This is the state that used to validate `valid: true` with an empty `errors` array
   while `compile.valid` was `false` and ten particle scripts were at `NCS_Error` — two shipped
   systems that then returned `active: false` from `effect.activate_niagara`.
-- `scriptCompileCheck: "unverified"` — at least one script did not report a terminal status, i.e. all
-  or part of the asset has not compiled in this session (the ordinary post-load state under
-  `fx.Niagara.OnDemandCompileEnabled`) or is `NCS_Dirty`. Known-good sibling scripts do not turn an unknown
-  or stale script into a pass.
-  **Not a pass.** No separate issue is raised: the nested block already reports it as
-  `COMPILE_STATE_UNINITIALIZED`. Run `niagara.compile` and validate again to get a verdict.
+- `scriptCompileCheck: "unverified"` — at least one script did not report a terminal status, i.e. it
+  has no compile result at all (a new or never-compiled asset) or is `NCS_Dirty`. Known-good sibling
+  scripts do not turn an unknown or stale script into a pass. A loaded asset is not in this state by
+  default: its scripts keep the statuses of their last saved compile, so an asset whose saved bytecode
+  is in sync with its graph reads `passed` without a compile this session. One that is out of sync is
+  still caught: PostLoad parks it for an on-demand compile, which shows as `pendingCompile: true` and
+  `NIAGARA_COMPILE_PENDING`.
+  **Not a pass.** No separate issue is raised: the nested block already reports it as the
+  info-severity `COMPILE_STATE_UNINITIALIZED` (see [niagara.compile-state](niagara.compile-state.md)),
+  which says nothing about the edit being validated. Run `niagara.compile` and validate again to get a
+  verdict; after a completed compile both the issue and `unverified` clear.
 
 Only `NCS_Error` fails the verdict. The two `…WithWarnings` statuses are terminal successes.
 `NCS_Dirty` (edited since the last compile) may still have runnable cached bytecode, but it is
@@ -983,7 +992,7 @@ no compile and returns these fields:
 | `compileQueueScope` | `system` or `loadedSystemsUsingEmitter` |
 | `compileQueueObserved` | whether a queue exists in that scope; false for an emitter used by no loaded system |
 | `affectedSystemCount` | one for a system target; for an emitter, loaded systems whose handles use it |
-| `scriptCompileCheck` | `passed` \| `failed` \| `unverified`; mixed known/unknown or dirty scripts are unverified |
+| `scriptCompileCheck` | `passed` \| `failed` \| `unverified`; mixed known/unknown or dirty scripts are unverified. Emitter spawn/update scripts (`compiledIntoSystemScripts`) are not counted: they never carry a status of their own ([niagara.compile-state](niagara.compile-state.md)) |
 | `failedScriptCount` | scripts whose last reported status is `NCS_Error` |
 
 Use `status: "compiling"` as the keep-polling case. `failed` is a completed compile with at least one

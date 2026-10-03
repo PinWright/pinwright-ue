@@ -217,6 +217,38 @@ bool FNiagaraCompileVerdictReaderTest::RunTest(const FString& Parameters)
         TestFalse(TEXT("an unobserved queue is not completed"), Unobserved.bCompleted);
     }
 
+    // Emitter spawn/update scripts compile into the system scripts and stay null for good; an entry
+    // marked compiledIntoSystemScripts must not withhold Passed, or no system with an emitter could
+    // ever pass (E-niagara-validate-compile-state-uninitialized-undocumented). The same null entry
+    // unmarked still withholds it.
+    {
+        TSharedPtr<FJsonObject> Compile = MakeShared<FJsonObject>();
+        TArray<TSharedPtr<FJsonValue>> Scripts;
+        Scripts.Add(MakeShared<FJsonValueObject>(MakeScriptEntry(
+            TEXT("system"), TEXT("NS"), TEXT("SystemSpawnScript"), TEXT("NCS_UpToDate"))));
+        Scripts.Add(MakeShared<FJsonValueObject>(MakeScriptEntry(
+            TEXT("emitter"), TEXT("E"), TEXT("ParticleUpdateScript"), TEXT("NCS_UpToDate"))));
+        TSharedPtr<FJsonObject> Folded = MakeScriptEntry(TEXT("emitter"), TEXT("E"), TEXT("EmitterSpawnScript"), nullptr);
+        Folded->SetBoolField(TEXT("compiledIntoSystemScripts"), true);
+        Scripts.Add(MakeShared<FJsonValueObject>(Folded));
+        Compile->SetArrayField(TEXT("scripts"), Scripts);
+        TestTrue(TEXT("a null script compiled into the system scripts does not withhold passed"),
+            ReadCompileVerdict(Compile).Check == EScriptCompileCheck::Passed);
+
+        Folded->RemoveField(TEXT("compiledIntoSystemScripts"));
+        TestTrue(TEXT("the same null script unmarked keeps the verdict unverified"),
+            ReadCompileVerdict(Compile).Check == EScriptCompileCheck::Unverified);
+
+        TSharedPtr<FJsonObject> OnlyFolded = MakeShared<FJsonObject>();
+        TArray<TSharedPtr<FJsonValue>> OnlyFoldedScripts;
+        TSharedPtr<FJsonObject> Lone = MakeScriptEntry(TEXT("emitter"), TEXT("E"), TEXT("EmitterUpdateScript"), nullptr);
+        Lone->SetBoolField(TEXT("compiledIntoSystemScripts"), true);
+        OnlyFoldedScripts.Add(MakeShared<FJsonValueObject>(Lone));
+        OnlyFolded->SetArrayField(TEXT("scripts"), OnlyFoldedScripts);
+        TestTrue(TEXT("a block of only folded scripts proves nothing and stays unverified"),
+            ReadCompileVerdict(OnlyFolded).Check == EScriptCompileCheck::Unverified);
+    }
+
     // Dirty means the authored graph has moved past the cached bytecode. It may still instance,
     // but it is not evidence that the requested revision completed.
     {

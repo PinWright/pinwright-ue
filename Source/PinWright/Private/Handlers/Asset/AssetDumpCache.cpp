@@ -761,7 +761,9 @@ int32 GetAspectVersion(const FString& RelativeFile)
         // 4: a Parameter Map Get default pin names the output pin it backs
         //    (defaultForOutputPin / defaultForPinId); previously it was anonymous and unjoinable.
         { TEXT("niagara_graphs.json"),      4 },
-        { TEXT("niagara_compile.json"),     3 },
+        // 4: emitter spawn/update script entries carry `compiledIntoSystemScripts: true` (the
+        //    engine compiles them into the system scripts; they never get a status of their own).
+        { TEXT("niagara_compile.json"),     4 },
         // 7: `source` {fileMd5, unsavedChanges} records the package file the dump was taken from.
         { TEXT("meta.json"),                7 },
         // 2: each external-reference entry carries `source`, its own actor package's stamp.
