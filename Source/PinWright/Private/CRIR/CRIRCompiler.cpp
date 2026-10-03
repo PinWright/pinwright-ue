@@ -826,9 +826,9 @@ FCRIRCompileResult CompileInstructionsIntoGraph(
         }
         case ECRIROpcode::Comment:
         {
-            // Defaults mirror AddCommentNode's own defaults. Malformed
-            // size/color silently fall back to defaults (matches the
-            // pre-helper inline behavior — no error code is defined for them).
+            // Defaults mirror AddCommentNode's own defaults and apply only to
+            // an OMITTED size/color: the parser refuses a present malformed
+            // one with CRIR_BAD_COMMENT_ATTR before anything is mutated.
             FVector2D Size(400.f, 300.f);
             FLinearColor Color = FLinearColor::Black;
             TArray<double> Components;

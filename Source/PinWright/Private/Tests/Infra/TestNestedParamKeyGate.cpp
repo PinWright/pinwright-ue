@@ -560,6 +560,9 @@ bool FNestedParamKeyGateAdoptionRatchetTest::RunTest(const FString& Parameters)
         TEXT("skeleton.edit_mesh_bones:ops"),
         // New verb, closed from its first release: Control Rig key entries.
         TEXT("sequencer.set_control_keys:keys"),
+        // New params, closed from their first release: TwoBoneIK locations are exactly {x,y,z}.
+        TEXT("animation.authoring.add_two_bone_ik:effectorLocation"),
+        TEXT("animation.authoring.add_two_bone_ik:jointTargetLocation"),
         // The gate fixture in this file.
         TEXT("_test.nested_param_gate:grid"),
         TEXT("_test.nested_param_gate:states"),

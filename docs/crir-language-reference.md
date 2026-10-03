@@ -194,6 +194,8 @@ comment "<text>" [size=(w, h)] [color=(r, g, b, a)] [@(x, y)]
 comment "TODO: collapse this section" size=(300, 200) color=(0.2, 0.2, 0.2, 0.6) @(-100, -100)
 ```
 
+The attribute set is closed: only `size=(w, h)` and `color=(r, g, b, a)`, each at most once, each an exact tuple of finite numbers (plain or exponent form such as `1e-05`). A bare flag, an unknown key (`colour=`), a duplicate, a wrong arity, an empty component, or a non-numeric/non-finite component is a parse error `CRIR_BAD_COMMENT_ATTR` on that line, and nothing is compiled. Defaults (`400x300`, black) apply only when the attribute is omitted.
+
 ### `if`
 
 Creates a `URigVMDispatchNode` running the `RigVMDispatch_If` factory — picks between two values based on a `Condition` bool.
@@ -510,6 +512,7 @@ This matches the project's general IR rule: round-trips guarantee logical equiva
 | `CRIR_HIERARCHY_BAD_PARENT` | A hierarchy element's `parent=` does not resolve to an existing or previously added element. |
 | `CRIR_HIERARCHY_BAD_TRANSFORM` | A hierarchy element has malformed `location=`, `rotation=`, or `scale=` tuple text. |
 | `CRIR_CONTROL_BAD_TYPE` / `CRIR_CONTROL_BAD_VALUE` | A `control` element has an invalid `type=` token or typed-prefix `value=` literal. |
+| `CRIR_BAD_COMMENT_ATTR` | A `comment` line carries an attribute outside `size=(w, h)` / `color=(r, g, b, a)`, a bare flag, a duplicate, or a tuple with the wrong arity or a non-finite/non-numeric component. Reported on that line before anything is compiled. |
 | `CRIR_CURVE_BAD_VALUE` | A `curve` element has malformed `value=` text; the value must parse as a float. |
 | `CRIR_UNRESOLVED_PIN` | A `wire_in_X=%name.pin` or `wire_out_X=%name.pin` references a `%name` not declared earlier in the block, or a pin that does not exist on the resolved node. |
 | `CRIR_ASSET_NOT_FOUND` | `context` does not resolve to a `UControlRigBlueprint`. |

@@ -208,19 +208,28 @@ call("animation.authoring.set_notify_state_property", {
 })
 ```
 
+### animation.authoring.add_blend_node
+
+`blendType` is a closed set: `TwoWayBlend` (alias `Blend`, the default when omitted or empty) or `LayeredBlend` (alias `LayeredBoneBlend`), matched case-insensitively. Any other value is refused with `UNKNOWN_NODE_TYPE` listing the accepted values before the blueprint is loaded; it no longer falls through to a TwoWayBlend. The response's `nodeType` names the node actually created.
+
 ### animation.authoring.add_two_bone_ik
 
 Use this typed helper for skeletal-control nodes whose nested runtime fields are awkward through `add_graph_node` property dictionaries.
 
-`add_two_bone_ik` creates `UAnimGraphNode_TwoBoneIK`, validates `ikBone`, `effectorBone`, and `jointTargetBone` against the target skeleton, writes `IKBone`, `EffectorTarget.BoneReference`, `JointTarget.BoneReference`, optional effector/joint `EBoneControlSpace`, and optional `alpha`, then reconstructs the node. Missing bones return `BONE_NOT_FOUND`.
+`add_two_bone_ik` creates `UAnimGraphNode_TwoBoneIK`, validates `ikBone` and any supplied `effectorBone` / `jointTargetBone` against the target skeleton, writes `IKBone`, `EffectorTarget.BoneReference`, `JointTarget.BoneReference`, optional effector/joint `EBoneControlSpace`, optional `effectorLocation` / `jointTargetLocation` (`{x,y,z}`) and optional `alpha`, then reconstructs the node. The response echoes the applied `effectorLocation` and `jointTargetLocation`. Missing bones return `BONE_NOT_FOUND`.
+
+**Target bones are optional; what they mean depends on the location space.** Omit `effectorBone` / `jointTargetBone` (or pass `""`) to leave that `FBoneSocketTarget` empty. In `BCS_ComponentSpace` and `BCS_WorldSpace` the engine does not read the target bone at all (`FAnimationRuntime::ConvertBoneSpaceTransformToCS`), so the location is used as-is in that space with or without a bone. In `BCS_BoneSpace` the target bone is the frame the location is relative to (in `BCS_ParentBoneSpace` it is the target bone's parent), and the engine skips the whole node when that target is empty (`FAnimNode_TwoBoneIK::IsValidToEvaluate`), so the verb refuses an omitted bone in those spaces with `MISSING_PARAMETERS` instead of authoring a node that silently does nothing.
+
+**Locations are a closed, complete `{x,y,z}`.** All three axes must be JSON numbers: a missing axis, a string value or a non-finite number is refused with `INVALID_TRANSFORM_PAYLOAD`, and any other key inside the object is refused by the dispatcher with `UNKNOWN_NESTED_PARAMS`. The verb writes each location and `alpha` to the node's exposed input pin as well as the node struct, because the anim compiler copies an unlinked exposed pin's default over the struct value; setting `effector_location` on the struct alone (e.g. from Python) is lost at compile. Omitting a location keeps the engine default `(0,0,0)`; note that a component-space joint target left at `(0,0,0)` points the knee at the component origin, so set `jointTargetLocation` whenever the effector is authored in component space.
 
 ```
 call("animation.authoring.add_two_bone_ik", {
   "blueprintPath": "/Game/Animations/ABP_Character.ABP_Character",
   "ikBone": "foot_l",
-  "effectorBone": "foot_l",
-  "jointTargetBone": "calf_l",
-  "effectorLocationSpace": "BCS_BoneSpace",
+  "effectorLocationSpace": "BCS_ComponentSpace",
+  "effectorLocation": { "x": 20, "y": 11, "z": 8 },
+  "jointTargetLocationSpace": "BCS_ComponentSpace",
+  "jointTargetLocation": { "x": 20, "y": 40, "z": 50 },
   "x": 300,
   "y": 120
 })

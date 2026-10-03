@@ -22,6 +22,7 @@
 
 #include "CRIR/CRIRCompiler.h"
 #include "CRIR/CRIRDecompiler.h"
+#include "CRIR/CRIRParser.h"
 #include "Utils/ControlRigBlueprintCompat.h"
 #include "Misc/Guid.h"
 #include "Misc/ScopeExit.h"
@@ -157,5 +158,76 @@ bool FCRIRComment_RoundTrip::RunTest(const FString& Parameters)
     const FString Normalized1 = NormalizeCRIRLineEndings(Result1.CRIRText);
     const FString Normalized2 = NormalizeCRIRLineEndings(Result2.CRIRText);
     TestEqual(TEXT("comment round-trip text equality"), Normalized2, Normalized1);
+    return true;
+}
+
+// B-crir-comment-attrs-silently-default: the comment attribute schema is
+// closed. A present-but-invalid `size=` / `color=`, a bare flag, an unknown key
+// (`colour=`) or a duplicate used to be dropped by the parser, after which the
+// compiler substituted its 400x300 / black defaults and reported success.
+// Counterfactual: revert ParseCommentInstruction's validation and every refusal
+// case below parses OK (bOk true, no CRIR_BAD_COMMENT_ATTR), failing the test.
+// The accepted cases pin that valid forms (incl. %g exponents the decompiler
+// emits, and omission) still parse and reach the instruction unchanged.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCRIRCommentAttrsRefuseInvalidTest,
+    "PinWright.CRIR.Parse.CommentAttrsRefuseInvalid",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FCRIRCommentAttrsRefuseInvalidTest::RunTest(const FString& Parameters)
+{
+    const auto ParseCommentLine = [](const FString& CommentLine, TArray<FCRIREntryBlock>& Blocks, TArray<FCRIRParseError>& Errors)
+    {
+        const FString Text = FString::Printf(TEXT("rig_graph \"RigVMModel\" {\n    %s\n}\n"), *CommentLine);
+        return FCRIRParser::Parse(Text, Blocks, Errors, /*bSkipReferenceValidation*/ false);
+    };
+
+    const TCHAR* Refused[] = {
+        TEXT("comment \"Note\" size=(wide,tall) color=(1,0,0,1)"),
+        TEXT("comment \"Note\" size=(300,200) color=(1,0,0)"),
+        TEXT("comment \"Note\" colour=(1,0,0,1)"),
+        TEXT("comment \"Note\" pinned"),
+        TEXT("comment \"Note\" size="),
+        TEXT("comment \"Note\" size= (1,2)"),
+        TEXT("comment \"Note\" size=400"),
+        TEXT("comment \"Note\" size=(300,200,)"),
+        TEXT("comment \"Note\" size=(300,,200)"),
+        TEXT("comment \"Note\" size=(300px,200)"),
+        TEXT("comment \"Note\" size=(inf,200)"),
+        TEXT("comment \"Note\" size=(1e999,200)"),
+        TEXT("comment \"Note\" size=(300,200) size=(10,10)"),
+    };
+    for (const TCHAR* Line : Refused)
+    {
+        TArray<FCRIREntryBlock> Blocks;
+        TArray<FCRIRParseError> Errors;
+        const bool bOk = ParseCommentLine(Line, Blocks, Errors);
+        TestFalse(FString::Printf(TEXT("'%s' is refused"), Line), bOk);
+        const bool bTyped = Errors.Num() > 0 && Errors[0].Code == TEXT("CRIR_BAD_COMMENT_ATTR") && Errors[0].Line == 2;
+        TestTrue(FString::Printf(TEXT("'%s' reports CRIR_BAD_COMMENT_ATTR on line 2 (errors='%s')"),
+            Line, *JoinCRIRParseErrors(Errors)), bTyped);
+    }
+
+    struct FAccepted { const TCHAR* Line; const TCHAR* Size; const TCHAR* Color; };
+    const FAccepted Accepted[] = {
+        { TEXT("comment \"Note\""), TEXT(""), TEXT("") },
+        { TEXT("comment \"Note\" size=(300, 200) color=(0.2, 0.2, 0.2, 0.6) @(-100, -100)"), TEXT("(300, 200)"), TEXT("(0.2, 0.2, 0.2, 0.6)") },
+        { TEXT("comment \"Note\" SIZE=(1e+06,-2.5) color=(1e-05,0,1,1)"), TEXT("(1e+06,-2.5)"), TEXT("(1e-05,0,1,1)") },
+    };
+    for (const FAccepted& Case : Accepted)
+    {
+        TArray<FCRIREntryBlock> Blocks;
+        TArray<FCRIRParseError> Errors;
+        const bool bOk = ParseCommentLine(Case.Line, Blocks, Errors);
+        TestTrue(FString::Printf(TEXT("'%s' parses (errors='%s')"), Case.Line, *JoinCRIRParseErrors(Errors)), bOk);
+        if (!bOk || Blocks.Num() != 1 || Blocks[0].Instructions.Num() != 1)
+        {
+            AddError(FString::Printf(TEXT("'%s' did not produce exactly one instruction"), Case.Line));
+            continue;
+        }
+        const FCRIRInstruction& Inst = Blocks[0].Instructions[0];
+        TestEqual(FString::Printf(TEXT("'%s' opcode"), Case.Line), (int32)Inst.Opcode, (int32)ECRIROpcode::Comment);
+        TestEqual(FString::Printf(TEXT("'%s' size slot"), Case.Line), Inst.VarType, FString(Case.Size));
+        TestEqual(FString::Printf(TEXT("'%s' color slot"), Case.Line), Inst.VarDefault, FString(Case.Color));
+    }
     return true;
 }

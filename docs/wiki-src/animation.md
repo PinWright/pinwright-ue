@@ -76,6 +76,10 @@ For adjacent visual content use `call("niagara")`; for cinematics that drive ani
 - [`anim`](anim.md) for the two text families: AGIR import/export of `UAnimBlueprint` graphs and `.pwanim` validation/compilation for `UAnimSequence` assets.
 - [`sequencer`](sequencer.md) for cinematic tracks that drive animation assets.
 
+### animation.create_animation_asset
+
+`assetType` is a closed set: `sequence` (the default when omitted or empty) or `montage`, matched case-insensitively. Any other value (`montages`, `blendspace`, ...) is refused with `INVALID_ASSET_TYPE` listing the accepted values before the skeleton is loaded or any folder or asset is created; it no longer falls through to an AnimSequence.
+
 ### animation.create_state_machine
 
 Each `states[]` element has the closed shape `{name, isEntry}`. The convenience verb creates and names state graph shells and chooses the entry state; it does not bind an animation asset or mark an exit state. `animation` and `isExit` are rejected with `UNKNOWN_NESTED_PARAMS` instead of being accepted and discarded. Populate each state graph afterward with the fine-grained `animation.authoring` graph verbs.

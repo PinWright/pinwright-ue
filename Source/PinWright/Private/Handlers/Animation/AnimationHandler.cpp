@@ -1025,13 +1025,26 @@ REGISTER_RPC_HANDLER("animation.create_animation_asset", "animation",
         RPC_PARAM_REQ("name", "string", "Asset filename (no extension) for the new animation asset."),
         RPC_PARAM_REQ("skeletonPath", "path", "Asset path to the Skeleton the new asset will be bound to."),
         RPC_PARAM_OPT("savePath", "path", "Content-browser folder; defaults to /Game/Animations."),
-        RPC_PARAM_OPT("assetType", "string", "'sequence' (default) creates an AnimSequence; 'montage' creates an AnimMontage."),
+        RPC_PARAM_OPT("assetType", "string", "'sequence' (default) creates an AnimSequence; 'montage' creates an AnimMontage (case-insensitive). Any other value is refused with INVALID_ASSET_TYPE before anything is loaded or created."),
         RPC_PARAM_DEF("overwrite", "boolean", "Delete and recreate an existing animation asset instead of returning it. Rejected with ASSET_IN_USE when any package still references it.", "false")
     ))
 {
   FString AssetName = Ctx.GetString("name");
   if (AssetName.IsEmpty()) {
     Ctx.SendError(ErrorCodes::ERR_INVALID_ARGUMENT, TEXT("name required for create_animation_asset"));
+    return true;
+  }
+
+  // Closed token set, validated before any load or mutation: an unknown value
+  // used to fall through to the sequence branch and report success.
+  FString AssetType = Ctx.GetString("assetType").ToLower();
+  if (AssetType.IsEmpty()) {
+    AssetType = TEXT("sequence");
+  }
+  if (AssetType != TEXT("sequence") && AssetType != TEXT("montage")) {
+    Ctx.SendError(ErrorCodes::ERR_INVALID_ASSET_TYPE,
+                  FString::Printf(TEXT("Unknown assetType '%s' for create_animation_asset. Accepted values: sequence, montage."),
+                                  *Ctx.GetString("assetType")));
     return true;
   }
 
@@ -1077,11 +1090,6 @@ REGISTER_RPC_HANDLER("animation.create_animation_asset", "animation",
 
   if (!DoesAssetDirectoryExist(SavePath)) {
     UEditorAssetLibrary::MakeDirectory(SavePath);
-  }
-
-  FString AssetType = Ctx.GetString("assetType").ToLower();
-  if (AssetType.IsEmpty()) {
-    AssetType = TEXT("sequence");
   }
 
   UFactory *Factory = nullptr;

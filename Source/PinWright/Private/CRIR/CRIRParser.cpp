@@ -33,19 +33,80 @@ TArray<FString> SmartSplit(const FString& Str, TCHAR Delimiter)
     return FIrTextUtils::SmartSplit(Str, Delimiter);
 }
 
-bool TryReadFirstToken(const FString& Line, FIrToken& OutToken)
+// Strict finite number for a CRIR comment tuple component: optional sign,
+// digits with at most one '.', optional exponent (the decompiler formats with
+// %g, which emits e.g. 1e-05). Rejects words, units, inf/nan and overflow.
+bool IsCRIRCommentFiniteNumber(const FString& Part)
 {
-    const TArray<FIrToken> Tokens = FIrTokenizer::Tokenize(Line, FCRIRGrammar::Get());
-    for (const FIrToken& Token : Tokens)
+    const int32 ExponentAt = Part.Find(TEXT("e"), ESearchCase::IgnoreCase);
+    const FString Mantissa = ExponentAt == INDEX_NONE ? Part : Part.Left(ExponentAt);
+    bool bMantissaHasDigit = false;
+    for (const TCHAR C : Mantissa)
     {
-        if (Token.Type == EIrTokenType::Comment)
+        bMantissaHasDigit |= FChar::IsDigit(C);
+    }
+    if (!bMantissaHasDigit || !Mantissa.IsNumeric())
+    {
+        return false;
+    }
+    if (ExponentAt != INDEX_NONE)
+    {
+        FString Exponent = Part.Mid(ExponentAt + 1);
+        if (Exponent.StartsWith(TEXT("+")) || Exponent.StartsWith(TEXT("-")))
+        {
+            Exponent.RightChopInline(1);
+        }
+        if (Exponent.IsEmpty() || !FChar::IsDigit(Exponent[0]) || Exponent.Contains(TEXT(".")) || !Exponent.IsNumeric())
         {
             return false;
         }
-        OutToken = Token;
-        return true;
     }
-    return false;
+    return FMath::IsFinite(FCString::Atod(*Part));
+}
+
+// Validate a comment `size=` / `color=` value: a parenthesized tuple of exactly
+// ExpectedCount finite numbers.
+bool ValidateCRIRCommentTuple(const FString& Value, int32 ExpectedCount, FString& OutError)
+{
+    if (!Value.StartsWith(TEXT("(")) || !Value.EndsWith(TEXT(")")))
+    {
+        OutError = FString::Printf(TEXT("expected a (...) tuple of %d numbers, got '%s'"), ExpectedCount, *Value);
+        return false;
+    }
+    const FString Inner = Value.Mid(1, Value.Len() - 2);
+    // Count by delimiters, not by SmartSplit parts: SmartSplit drops a trailing
+    // empty component, so `(1,2,)` would otherwise pass as two numbers.
+    const int32 Count = FindTopLevelDelimiterPositions(Inner, TEXT(',')).Num() + 1;
+    if (Count != ExpectedCount)
+    {
+        OutError = FString::Printf(TEXT("expected %d components, got %d in '%s'"), ExpectedCount, Count, *Value);
+        return false;
+    }
+    const TArray<FString> Parts = SmartSplit(Inner, TEXT(','));
+    for (int32 Index = 0; Index < ExpectedCount; ++Index)
+    {
+        const FString Part = Parts.IsValidIndex(Index) ? Parts[Index] : FString();
+        if (!IsCRIRCommentFiniteNumber(Part))
+        {
+            OutError = FString::Printf(TEXT("component '%s' in '%s' is not a finite number"), *Part, *Value);
+            return false;
+        }
+    }
+    return true;
+}
+
+bool TryReadFirstToken(const FString& Line, FIrToken& OutToken)
+{
+    // Only the first token matters. Written without a one-pass loop because
+    // adaptive non-unity compiles of this (modified) file reject it with
+    // -Wunreachable-code-loop-increment.
+    const TArray<FIrToken> Tokens = FIrTokenizer::Tokenize(Line, FCRIRGrammar::Get());
+    if (Tokens.Num() == 0 || Tokens[0].Type == EIrTokenType::Comment)
+    {
+        return false;
+    }
+    OutToken = Tokens[0];
+    return true;
 }
 
 bool ReadLeadingNameToken(FString& InOutText, FString& OutName, FString& OutError)
@@ -457,16 +518,27 @@ bool ParseCommentInstruction(const FString& Rest, int32 LineNum,
             ++Cursor;
         }
         const FString Key = Working.Mid(KeyStart, Cursor - KeyStart);
-        if (Cursor >= Working.Len() || Working[Cursor] != TEXT('='))
+        const FString KeyLower = Key.ToLower();
+        // Closed schema: only `size=` and `color=`. A bare flag, an unknown
+        // key (`colour=`), a duplicate or an empty value is refused instead of
+        // being dropped and replaced by the compiler's defaults.
+        if (KeyLower != TEXT("size") && KeyLower != TEXT("color"))
         {
-            // Bare flag — ignore for comments.
-            continue;
+            AddError(OutErrors, LineNum,
+                FString::Printf(TEXT("Unknown 'comment' attribute '%s'; accepted attributes: size=(w,h), color=(r,g,b,a)"), *Key),
+                TEXT("CRIR_BAD_COMMENT_ATTR"));
+            return false;
+        }
+        if (Cursor >= Working.Len() || Working[Cursor] != TEXT('=') || Cursor + 1 >= Working.Len()
+            || FChar::IsWhitespace(Working[Cursor + 1]))
+        {
+            AddError(OutErrors, LineNum,
+                FString::Printf(TEXT("'comment' attribute '%s' requires a value: %s"), *Key,
+                    KeyLower == TEXT("size") ? TEXT("size=(w,h)") : TEXT("color=(r,g,b,a)")),
+                TEXT("CRIR_BAD_COMMENT_ATTR"));
+            return false;
         }
         ++Cursor; // skip '='
-        if (Cursor >= Working.Len())
-        {
-            break;
-        }
 
         const TCHAR First = Working[Cursor];
         FString Value;
@@ -493,16 +565,23 @@ bool ParseCommentInstruction(const FString& Rest, int32 LineNum,
             Value = Working.Mid(ValueStart, Cursor - ValueStart);
         }
 
-        const FString KeyLower = Key.ToLower();
-        if (KeyLower == TEXT("size"))
+        FString& Slot = KeyLower == TEXT("size") ? OutInst.VarType : OutInst.VarDefault;
+        if (!Slot.IsEmpty())
         {
-            OutInst.VarType = Value;
+            AddError(OutErrors, LineNum,
+                FString::Printf(TEXT("Duplicate 'comment' attribute '%s'"), *Key),
+                TEXT("CRIR_BAD_COMMENT_ATTR"));
+            return false;
         }
-        else if (KeyLower == TEXT("color"))
+        FString TupleError;
+        if (!ValidateCRIRCommentTuple(Value, KeyLower == TEXT("size") ? 2 : 4, TupleError))
         {
-            OutInst.VarDefault = Value;
+            AddError(OutErrors, LineNum,
+                FString::Printf(TEXT("Invalid 'comment' attribute '%s': %s"), *Key, *TupleError),
+                TEXT("CRIR_BAD_COMMENT_ATTR"));
+            return false;
         }
-        // Unknown comment attrs are ignored; Phase A doesn't expose them.
+        Slot = Value;
     }
     return true;
 }
