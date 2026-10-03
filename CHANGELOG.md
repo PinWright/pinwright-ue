@@ -117,6 +117,20 @@
   `EDITOR_START_TIMEOUT` now carries `timeoutSeconds` and `probeState` (`not_ready`, `unresponsive`
   or `not_running`), and its text names the override. `timeout` with `wait: "exit"` is refused
   `INVALID_ARGUMENTS`.
+- Fixed: every `material.graph` write verb (`add_node`, `add_expression`, `add_texture_sample`,
+  `create_nodes`, `connect_nodes`, `break_connections`, `remove_node`) records one editor transaction
+  titled `PinWright: <method>`, so one `editor.undo` reverses the whole call, a `create_nodes` batch
+  and a deleted node with its configured properties and cleared wires included. They opened none.
+  The first graph edit sets `RF_Transactional` on an asset created without it (`create_material`,
+  MGIR), as the Material Editor does.
+- Fixed: `material.graph.list_expression_types` refuses an unknown non-empty `domainFilter` with
+  `INVALID_ARGUMENT` listing the valid domains and echoes `appliedDomainFilter` when it filters.
+  **Behaviour change:** a misspelled domain used to return the unfiltered catalog as a success; on
+  UE 5.3-5.5, where the filter cannot be measured, `domainFilter` is now refused with
+  `UNSUPPORTED_ENGINE_VERSION` instead of being silently ignored.
+- Added: `material.authoring.get_material_instance_info` and `asset.dump`'s `material_instance.json`
+  carry `orphanedOverrides` (per type, the overrides whose parameter the instance's declared set no
+  longer holds) and `orphanedOverrideCount`. `material_instance.json` aspect version 2 -> 3.
 - Changed: `audio.synth.describe_schema` packs its `generators` / `effects` pages with the spill
   gate's own measurement (new `HttpResponseSpill::MeasureInlineCharacters`, one condensed copy)
   instead of a pretty print, so **pages can hold more kinds and `pageCount` may drop**. Handlers

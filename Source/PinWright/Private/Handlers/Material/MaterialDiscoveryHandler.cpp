@@ -8,6 +8,7 @@
 #include "Handlers/ParamSpec.h"
 #include "Handlers/HandlerContext.h"
 #include "Handlers/ParamAliasUtils.h"
+#include "Handlers/ErrorCodes.h"
 
 #include "Compat/EngineVersionCompat.h"
 #include "Materials/MaterialExpression.h"
@@ -184,15 +185,35 @@ static TSharedPtr<FJsonObject> BuildExpressionRecord(
     return Record;
 }
 
-static bool ParseMaterialDomain(const FString& Name, EMaterialDomain& OutDomain)
+// The closed domainFilter vocabulary, in canonical spelling. Matching is case-insensitive; the
+// canonical name is what a filtered response echoes and what a refusal lists.
+namespace MaterialDiscoveryDomainFilter
 {
-    if (Name.Equals(TEXT("Surface"), ESearchCase::IgnoreCase))         { OutDomain = MD_Surface; return true; }
-    if (Name.Equals(TEXT("PostProcess"), ESearchCase::IgnoreCase))     { OutDomain = MD_PostProcess; return true; }
-    if (Name.Equals(TEXT("UI"), ESearchCase::IgnoreCase))              { OutDomain = MD_UI; return true; }
-    if (Name.Equals(TEXT("DeferredDecal"), ESearchCase::IgnoreCase))   { OutDomain = MD_DeferredDecal; return true; }
-    if (Name.Equals(TEXT("LightFunction"), ESearchCase::IgnoreCase))   { OutDomain = MD_LightFunction; return true; }
-    if (Name.Equals(TEXT("Volume"), ESearchCase::IgnoreCase))          { OutDomain = MD_Volume; return true; }
-    return false;
+    struct FDomainName { const TCHAR* Name; EMaterialDomain Domain; };
+    static const FDomainName Names[] = {
+        { TEXT("Surface"),       MD_Surface },
+        { TEXT("PostProcess"),   MD_PostProcess },
+        { TEXT("UI"),            MD_UI },
+        { TEXT("DeferredDecal"), MD_DeferredDecal },
+        { TEXT("LightFunction"), MD_LightFunction },
+        { TEXT("Volume"),        MD_Volume },
+    };
+
+    static const FDomainName* Parse(const FString& Name)
+    {
+        for (const FDomainName& Entry : Names)
+        {
+            if (Name.Equals(Entry.Name, ESearchCase::IgnoreCase)) return &Entry;
+        }
+        return nullptr;
+    }
+
+    static FString AllowedList()
+    {
+        TArray<FString> Out;
+        for (const FDomainName& Entry : Names) Out.Add(Entry.Name);
+        return FString::Join(Out, TEXT(", "));
+    }
 }
 
 
@@ -201,7 +222,7 @@ REGISTER_RPC_HANDLER("material.graph.list_expression_types", "material.graph",
     "List all UMaterialExpression subclasses with class name, category, pin layout.",
     RPC_PARAMS(
         RPC_PARAM_OPT("category", "string", "Restrict to expressions whose first MenuCategory contains this string (case-insensitive)"),
-        RPC_PARAM_OPT("domainFilter", "string", "Restrict to expressions valid for this MaterialDomain (Surface/PostProcess/UI/DeferredDecal/LightFunction/Volume)"),
+        RPC_PARAM_OPT("domainFilter", "string", "Restrict to expressions valid for this MaterialDomain (Surface/PostProcess/UI/DeferredDecal/LightFunction/Volume, case-insensitive). Any other non-empty value is refused with INVALID_ARGUMENT, never treated as no filter; a filtered response echoes the canonical name as appliedDomainFilter. Needs UE 5.6+ (UMaterialExpression::IsAllowedIn); older engines refuse it with UNSUPPORTED_ENGINE_VERSION."),
         RPC_PARAM_OPT("includeAbstract", "boolean", "Include abstract base classes (default false)"),
         RPC_PARAM_OPT("parameterOnly", "boolean", "Only return parameter-type expressions (default false)"),
         RPC_PARAM_DEF("limit", "number", "Max expressions to return after filtering. 0 (default) = all. totalMatches always reports the full untruncated count so elision is detectable.", "0"),
@@ -229,15 +250,36 @@ REGISTER_RPC_HANDLER("material.graph.list_expression_types", "material.graph",
     // always reports the full filtered count regardless of the cap.
     const int32 Limit = Ctx.GetInt(TEXT("limit"), 0);
 
+    // Omitted means no filter; a non-empty value that does not parse is a refusal. Falling back to
+    // the unfiltered catalog would make a typo read as proof every row is valid for that domain.
+    const MaterialDiscoveryDomainFilter::FDomainName* AppliedDomain = nullptr;
+    if (!DomainName.IsEmpty())
+    {
+        AppliedDomain = MaterialDiscoveryDomainFilter::Parse(DomainName);
+        if (!AppliedDomain)
+        {
+            Ctx.SendError(ErrorCodes::ERR_INVALID_ARGUMENT,
+                FString::Printf(TEXT("Unknown domainFilter '%s'. Valid: %s."),
+                    *DomainName, *MaterialDiscoveryDomainFilter::AllowedList()));
+            return true;
+        }
+#if UE_VERSION_OLDER_THAN(5, 6, 0)
+        // UMaterialExpression::IsAllowedIn does not exist before 5.6, so the filter cannot be
+        // measured; refusing beats returning the whole catalog under the requested domain's name.
+        Ctx.SendUnsupportedEngineVersion(TEXT("5.6"),
+            TEXT("material.graph.list_expression_types domainFilter (UMaterialExpression::IsAllowedIn)"));
+        return true;
+#endif
+    }
+
     UMaterial* DomainProbe = nullptr;
-    EMaterialDomain ParsedDomain = MD_Surface;
-    const bool bUseDomainFilter = !DomainName.IsEmpty() && ParseMaterialDomain(DomainName, ParsedDomain);
+    const bool bUseDomainFilter = AppliedDomain != nullptr;
     if (bUseDomainFilter)
     {
         DomainProbe = NewObject<UMaterial>(GetTransientPackage());
         if (DomainProbe)
         {
-            DomainProbe->MaterialDomain = ParsedDomain;
+            DomainProbe->MaterialDomain = AppliedDomain->Domain;
             DomainProbe->AddToRoot();
         }
     }
@@ -257,24 +299,16 @@ REGISTER_RPC_HANDLER("material.graph.list_expression_types", "material.graph",
             Class->IsChildOf(UMaterialExpressionTextureSampleParameter::StaticClass());
         if (bParameterOnly && !bIsParameter) continue;
 
+#if UE_VERSION_NEWER_THAN_OR_EQUAL(5, 6, 0)
         if (bUseDomainFilter && DomainProbe)
         {
             UMaterialExpression* Cdo = Cast<UMaterialExpression>(Class->GetDefaultObject());
-#if UE_VERSION_OLDER_THAN(5, 6, 0)
-            // 5.4/5.5: UMaterialExpression::IsAllowedIn does not exist. Without it we
-            // cannot test domain validity, so we only reject a null CDO and keep every
-            // expression -- the domain filter degrades to a no-op on these versions.
-            if (!Cdo)
-            {
-                continue;
-            }
-#else
             if (!Cdo || !Cdo->IsAllowedIn(DomainProbe))
             {
                 continue;
             }
-#endif
         }
+#endif
 
         FExpressionScoreFields Fields;
         if (!BuildScoreFields(Class, Fields)) continue;
@@ -309,6 +343,10 @@ REGISTER_RPC_HANDLER("material.graph.list_expression_types", "material.graph",
     Result->SetNumberField(TEXT("count"), Expressions.Num());
     Result->SetNumberField(TEXT("totalMatches"), TotalMatched);
     Result->SetBoolField(TEXT("truncated"), Expressions.Num() < TotalMatched);
+    if (AppliedDomain)
+    {
+        Result->SetStringField(TEXT("appliedDomainFilter"), AppliedDomain->Name);
+    }
     Ctx.SendSuccess(Result);
     return true;
 }

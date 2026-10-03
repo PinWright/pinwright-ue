@@ -24,6 +24,8 @@ The node model matches `call("blueprint.graph")` and `call("niagara.graph")`: id
 
 `list_expression_types` and `search_expression_types` walk loaded `UMaterialExpression` subclasses and return `{className, shortName, category, description, caption, keywords, inputPins[], outputPins[], isParameter}`. `shortName` omits `MaterialExpression`; the other text comes from the engine. Pin arrays are positional: `outputPins[i]` is `sourceOutputIndex: i`, and its name is accepted as `sourcePin`. `list_expression_types` filters by `category`, `domainFilter`, `includeAbstract`, `parameterOnly`; search adds ranked keywords and `limit`. Use the returned `className` with `add_node`.
 
+`domainFilter` is a closed vocabulary (`Surface`, `PostProcess`, `UI`, `DeferredDecal`, `LightFunction`, `Volume`, case-insensitive). Omitted means no filter; any other non-empty value is refused with `INVALID_ARGUMENT` listing the valid names, never treated as no filter, and a filtered response echoes the canonical name as `appliedDomainFilter`. Read that field before trusting a filtered list: without it the list is unfiltered. The filter needs `UMaterialExpression::IsAllowedIn` (UE 5.6+); older engines refuse it with `UNSUPPORTED_ENGINE_VERSION` instead of returning the whole catalog.
+
 Unlike `blueprint.graph`, the material graph is flat: `UMaterialExpressionMultiply` is the multiply, with no wrapper or `target=Class::Member` tier. `MaterialFunctionCall` and `TextureSample` take their `UMaterialFunction*` / `UTexture*` references as properties. See `call("blueprint.graph")` for the two-tier contrast.
 
 ## Pin names are derived, not stored
@@ -53,6 +55,10 @@ With `nodeId`, the response includes connectivity, parameter name, `group` / `so
 Against the main node, `break_connections` clears resolved input(s); against another expression it clears all inputs or the named `FindExpressionInputByName` input. It returns `pinsBroken: [string]`. Previously this path could report success without changing state.
 
 Read wiring from `connectedNodeId` (empty when unwired), never from a pin name. `"None"` meant “unnamed”, not “unconnected”; it is no longer emitted, so testing `"None"` or `''` for connectivity silently matches nothing.
+
+## Undo
+
+Every write verb here (`add_node`, `add_expression`, `add_texture_sample`, `create_nodes`, `connect_nodes`, `break_connections`, `remove_node`) records exactly one editor transaction titled `PinWright: <method>`, so one `editor.undo` reverses the whole call: a `create_nodes` batch, a wire, or a deleted node together with its configured properties and the wires the delete cleared. The first edit sets `RF_Transactional` on an asset created without it (as the Material Editor does), so assets made by `material.authoring.create_material` or MGIR undo the same way. When the caller already has a transaction open, the verb's records join that transaction instead of adding a separate entry. A refusal records no undo entry, with one exception: a `remove_node` whose engine delete ran but did not complete keeps its entry so the partial edit can be undone. Recording for undo does not dirty the package, so a refusal leaves the dirty flag as it was, except after that partial `remove_node` delete.
 
 ## Creation and deletion
 

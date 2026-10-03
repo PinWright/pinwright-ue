@@ -67,6 +67,7 @@ REGISTER_RPC_HANDLER("material.graph.add_node", "material.graph", "Add a UMateri
         return true;
     }
 
+    PinWright::Material::FScopedMaterialGraphEdit Edit(Ctx.GetMethod(), Target.AssetObject());
     FCreateResult CreateResult = Target.CreateExpression(ExpressionClass, nullptr, FVector2D(X, Y));
     if (CreateResult.IsSuccess())
     {
@@ -89,6 +90,7 @@ REGISTER_RPC_HANDLER("material.graph.add_node", "material.graph", "Add a UMateri
     }
     else
     {
+        Edit.Cancel();
         Ctx.SendError(CreateResult.ErrorCode, CreateResult.ErrorMessage);
     }
     return true;
@@ -120,7 +122,9 @@ REGISTER_RPC_HANDLER("material.graph.remove_node", "material.graph", "Delete a m
     if (!TargetExpr) return true;
 
     FString RemovedNodeId = TargetExpr->MaterialExpressionGuid.ToString();
-    if (Target.RemoveExpression(TargetExpr))
+    PinWright::Material::FScopedMaterialGraphEdit Edit(Ctx.GetMethod(), Target.AssetObject());
+    bool bNativeDeleteRan = false;
+    if (Target.RemoveExpression(TargetExpr, bNativeDeleteRan))
     {
         Target.NotifyEdited();
 
@@ -132,6 +136,9 @@ REGISTER_RPC_HANDLER("material.graph.remove_node", "material.graph", "Delete a m
     }
     else
     {
+        // A native delete that ran but did not complete may still have changed the graph; keep
+        // its undo step so editor.undo can reverse the partial edit.
+        if (!bNativeDeleteRan) Edit.Cancel();
         Ctx.SendError(TEXT("REMOVE_FAILED"),
             FString::Printf(TEXT("Expression '%s' was not removed from the graph."), *RemovedNodeId));
     }
@@ -183,6 +190,7 @@ REGISTER_RPC_HANDLER("material.graph.connect_nodes", "material.graph", "Wire one
         bool bFound = false;
         if (FExpressionInput* In = PinWright::Material::ResolveMainInput(Target.Material->GetEditorOnlyData(), InputName))
         {
+            PinWright::Material::FScopedMaterialGraphEdit Edit(Ctx.GetMethod(), Target.AssetObject());
             PinWright::Material::ApplyConnection(*In, SourceExpr, SourcePin, SourceOutputIndex);
             bFound = true;
         }
@@ -212,6 +220,8 @@ REGISTER_RPC_HANDLER("material.graph.connect_nodes", "material.graph", "Wire one
 
         if (FExpressionInput* InputPtr = FMaterialExpressionFactory::FindExpressionInputByName(TargetExpr, InputName))
         {
+            PinWright::Material::FScopedMaterialGraphEdit Edit(Ctx.GetMethod(), Target.AssetObject());
+            PinWright::Material::RecordForUndo(TargetExpr);
             PinWright::Material::ApplyConnection(*InputPtr, SourceExpr, SourcePin, SourceOutputIndex);
             Target.NotifyEdited();
             TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
@@ -251,6 +261,7 @@ REGISTER_RPC_HANDLER("material.graph.break_connections", "material.graph", "Disc
             bool bFound = false;
             if (FExpressionInput* In = PinWright::Material::ResolveMainInput(Material->GetEditorOnlyData(), PinName))
             {
+                PinWright::Material::FScopedMaterialGraphEdit Edit(Ctx.GetMethod(), Material);
                 In->Expression = nullptr;
                 bFound = true;
             }
@@ -278,16 +289,23 @@ REGISTER_RPC_HANDLER("material.graph.break_connections", "material.graph", "Disc
     UMaterialExpression* TargetExpr = Resolved.Expression;
     if (TargetExpr)
     {
-        TArray<FString> PinsBroken;
+        FExpressionInput* In = nullptr;
         if (!PinName.IsEmpty())
         {
-            FExpressionInput* In = FMaterialExpressionFactory::FindExpressionInputByName(TargetExpr, PinName);
+            In = FMaterialExpressionFactory::FindExpressionInputByName(TargetExpr, PinName);
             if (!In)
             {
                 Ctx.SendError(TEXT("PIN_NOT_FOUND"),
                     FString::Printf(TEXT("Input pin '%s' not found on node."), *PinName));
                 return true;
             }
+        }
+
+        PinWright::Material::FScopedMaterialGraphEdit Edit(Ctx.GetMethod(), Material);
+        PinWright::Material::RecordForUndo(TargetExpr);
+        TArray<FString> PinsBroken;
+        if (In)
+        {
             if (In->Expression != nullptr)
             {
                 PinsBroken.Add(PinName);
@@ -463,12 +481,13 @@ REGISTER_RPC_HANDLER("material.graph.add_texture_sample", "material.graph", "Add
     if (!Ctx.RequireNumber(TEXT("y"), YD)) return true;
     float X = static_cast<float>(XD), Y = static_cast<float>(YD);
 
-    Material->Modify();
+    PinWright::Material::FScopedMaterialGraphEdit Edit(Ctx.GetMethod(), Material);
     UMaterialExpressionTextureSample* TexSample = NewObject<UMaterialExpressionTextureSample>(
         Material, UMaterialExpressionTextureSample::StaticClass(), NAME_None, RF_Transactional);
 
     if (!TexSample)
     {
+        Edit.Cancel();
         Ctx.SendError(TEXT("CREATE_FAILED"), TEXT("Failed to create TextureSample expression."));
         return true;
     }
@@ -526,11 +545,12 @@ REGISTER_RPC_HANDLER("material.graph.add_expression", "material.graph", "Add a m
     float X = static_cast<float>(XD), Y = static_cast<float>(YD);
 
     UObject* Asset = Target.AssetObject();
-    Asset->Modify();
+    PinWright::Material::FScopedMaterialGraphEdit Edit(Ctx.GetMethod(), Asset);
     const TSharedPtr<FJsonObject> Properties = Ctx.GetObject(TEXT("properties"));
     FCreateResult CreateResult = Target.CreateExpression(ExpressionClassName, Properties, FVector2D(X, Y));
     if (!CreateResult.IsSuccess())
     {
+        Edit.Cancel();
         Ctx.SendError(CreateResult.ErrorCode, CreateResult.ErrorMessage);
         return true;
     }
@@ -569,11 +589,14 @@ REGISTER_RPC_HANDLER("material.graph.create_nodes", "material.graph", "Add many 
         return true;
     }
 
-    Material->Modify();
     TArray<TSharedPtr<FJsonValue>> CreatedNodes;
     int32 SuccessCount = 0;
     int32 FailCount = 0;
 
+    // One transaction for the whole batch: a single editor.undo removes every node it created.
+    // Reset before verification so a waitForShaderCompile block runs outside it.
+    TOptional<PinWright::Material::FScopedMaterialGraphEdit> Edit;
+    Edit.Emplace(Ctx.GetMethod(), Material);
     for (const auto& NodeVal : *NodesArray)
     {
         TSharedPtr<FJsonObject> NodeObj = NodeVal->AsObject();
@@ -629,10 +652,12 @@ REGISTER_RPC_HANDLER("material.graph.create_nodes", "material.graph", "Add many 
         CreatedNodes.Add(MakeShared<FJsonValueObject>(NodeInfo));
         SuccessCount++;
     }
+    if (SuccessCount == 0) Edit->Cancel();
 
     Material->PreEditChange(nullptr);
     Material->PostEditChange();
     McpSafeAssetSave(Material);
+    Edit.Reset();
 
     TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
     // The wire name comes from WaitParamName(), the same source WaitParamSpec() declares it from,

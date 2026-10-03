@@ -175,6 +175,60 @@ TSharedPtr<FJsonObject> MaterialInstanceDumpBuilder::BuildMaterialInstanceJson(c
 #endif
 
         Root->SetObjectField(TEXT("overrides"), Overrides);
+
+        // ---- orphanedOverrides + orphanedOverrideCount ----
+        // An override outlives its parent deleting the parameter: nothing prunes it, nothing renders
+        // with it, and it reads exactly like a live entry in `overrides` above. Name, per type, every
+        // override whose ParameterInfo is not in the instance's declared set - the lookup
+        // UMaterialInstance::GetAllParametersOfType performs, which silently drops such entries
+        // (E-material-instance-info-orphaned-overrides). Lists are empty when every override is live.
+        TSharedPtr<FJsonObject> Orphaned = MakeShared<FJsonObject>();
+        int32 OrphanedCount = 0;
+        auto AddOrphans = [&](EMaterialParameterType Type, const TCHAR* Key, const TArray<FMaterialParameterInfo>& Overridden)
+        {
+            TMap<FMaterialParameterInfo, FMaterialParameterMetadata> Declared;
+            Instance->GetAllParametersOfType(Type, Declared);
+            TArray<TSharedPtr<FJsonValue>> Names;
+            for (const FMaterialParameterInfo& Info : Overridden)
+            {
+                if (!Declared.Contains(Info))
+                {
+                    Names.Add(MakeShared<FJsonValueString>(Info.Name.ToString()));
+                }
+            }
+            OrphanedCount += Names.Num();
+            Orphaned->SetArrayField(Key, Names);
+        };
+        // Same entry sets `overrides` reports: every value entry, and static entries only with bOverride.
+        auto InfosOf = [](const auto& Params)
+        {
+            TArray<FMaterialParameterInfo> Out;
+            for (const auto& P : Params) Out.Add(P.ParameterInfo);
+            return Out;
+        };
+        auto OverriddenInfosOf = [](const auto& Params)
+        {
+            TArray<FMaterialParameterInfo> Out;
+            for (const auto& P : Params)
+            {
+                if (P.bOverride) Out.Add(P.ParameterInfo);
+            }
+            return Out;
+        };
+        AddOrphans(EMaterialParameterType::Scalar, TEXT("scalar"), InfosOf(Instance->ScalarParameterValues));
+        AddOrphans(EMaterialParameterType::Vector, TEXT("vector"), InfosOf(Instance->VectorParameterValues));
+        AddOrphans(EMaterialParameterType::Texture, TEXT("texture"), InfosOf(Instance->TextureParameterValues));
+#if WITH_EDITORONLY_DATA
+        AddOrphans(EMaterialParameterType::StaticSwitch, TEXT("staticSwitch"),
+            OverriddenInfosOf(StaticParams.StaticSwitchParameters));
+        AddOrphans(EMaterialParameterType::StaticComponentMask, TEXT("staticComponentMask"),
+            OverriddenInfosOf(StaticParams.EditorOnly.StaticComponentMaskParameters));
+#else
+        Orphaned->SetArrayField(TEXT("staticSwitch"), {});
+        Orphaned->SetArrayField(TEXT("staticComponentMask"), {});
+#endif
+        Root->SetObjectField(TEXT("orphanedOverrides"), Orphaned);
+        Root->SetNumberField(TEXT("orphanedOverrideCount"), OrphanedCount);
     }
 
     // ---- basePropertyOverrides ----

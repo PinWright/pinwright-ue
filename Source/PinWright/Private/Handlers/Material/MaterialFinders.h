@@ -22,6 +22,8 @@
 #include "Material/MaterialExpressionFactory.h"
 #include "Material/MaterialPinNames.h"
 #include "MaterialEditingLibrary.h"
+#include "Material/MaterialInputIterCompat.h"
+#include "ScopedTransaction.h"
 #include "Subsystems/AssetEditorSubsystem.h"
 
 // Match a single expression against a GUID / object-name / path / parameter-name needle.
@@ -302,6 +304,80 @@ inline bool IsNativeExpressionDeleteComplete(
         && !IsValid(Expression);
 }
 
+// Record Object in the open transaction. RF_Transactional first, as the Material Editor does before
+// every graph edit: an asset created without it (a factory call passing only RF_Public |
+// RF_Standalone, which the plugin's own material creators and MGIR do, and which the editor-only
+// data inherits) would otherwise record nothing while the new RF_Transactional expressions do, and
+// undo would leave a dead entry in the collection. bAlwaysMarkDirty=false so a refusal after the
+// scope opened leaves the package clean; every success path dirties the package itself.
+inline void RecordForUndo(UObject* Object)
+{
+    if (!Object) return;
+    Object->SetFlags(RF_Transactional);
+    Object->Modify(/*bAlwaysMarkDirty=*/false);
+}
+
+// Record, for undo, everything the native delete is about to touch besides the owner's collection:
+// the victim (MarkAsGarbage) and every sibling whose input it clears (BreakLinksToExpression).
+// The Material Editor's own delete does the same through GraphNode->Modify() before BreakAllNodeLinks.
+inline void ModifyExpressionAndReferencers(
+    UMaterialExpression* Expression,
+    TConstArrayView<TObjectPtr<UMaterialExpression>> Expressions)
+{
+    RecordForUndo(Expression);
+    for (UMaterialExpression* Other : Expressions)
+    {
+        if (!Other || Other == Expression) continue;
+        bool bReferences = false;
+        ForEachExpressionInput(Other, [&](FExpressionInput* Input, int32) -> bool
+        {
+            bReferences = Input && Input->Expression == Expression;
+            return bReferences;
+        });
+        if (bReferences) RecordForUndo(Other);
+    }
+}
+
+// ONE undo step per material-graph mutating RPC (B-material-graph-no-transaction): every
+// material.graph.* write verb opens exactly one of these, so editor.undo reverses the whole call -
+// a batch create_nodes included. Construct it after validation and before the first write: it
+// opens the transaction and records the graph owner and its editor-only data (the expression
+// collection and the main-node inputs live there) through RecordForUndo. A caller still records
+// (RecordForUndo) each existing expression whose own inputs it rewrites; a
+// newly created expression needs nothing, because undo restores the collection that lists it.
+// Cancel() on a refusal after construction so a failed call leaves no empty undo entry. It only
+// cancels a transaction this scope opened outermost: UTransBuffer::Cancel cannot cancel a nested
+// part and drops the caller's whole outer transaction instead.
+class FScopedMaterialGraphEdit
+{
+public:
+    FScopedMaterialGraphEdit(const FString& Method, UObject* GraphOwner)
+        : bOutermost(GUndo == nullptr)
+        , Transaction(FText::FromString(FString::Printf(TEXT("PinWright: %s"), *Method)))
+    {
+        // The editor-only data is recorded explicitly for both owners: UMaterial::Modify forwards
+        // to it but SetFlags does not, and UMaterialFunction::Modify forwards to nothing.
+        RecordForUndo(GraphOwner);
+        if (UMaterial* Material = Cast<UMaterial>(GraphOwner))
+        {
+            RecordForUndo(Material->GetEditorOnlyData());
+        }
+        else if (UMaterialFunction* Function = Cast<UMaterialFunction>(GraphOwner))
+        {
+            RecordForUndo(Function->GetEditorOnlyData());
+        }
+    }
+
+    void Cancel()
+    {
+        if (bOutermost) Transaction.Cancel();
+    }
+
+private:
+    const bool bOutermost;
+    FScopedTransaction Transaction;
+};
+
 // A node-mutation target that resolves to EITHER a UMaterial or a UMaterialFunction at the same
 // asset path, so the node-add / connect / remove / auto_layout RPC family can author a function's
 // internal graph the same way it authors a material's. This struct + the loader below are the single
@@ -323,14 +399,19 @@ struct FMaterialMutationTarget
     // Remove an expression from the resolved container using the engine's native cleanup path.
     // Ownership and collection membership are checked before calling it; success is reported only
     // when the native helper removed the expression and marked it garbage.
-    bool RemoveExpression(UMaterialExpression* Expr) const
+    // bOutNativeDeleteRan says whether the engine delete was reached (and may have changed the graph)
+    // even when the completeness check then fails, so a caller knows whether a refusal is clean.
+    bool RemoveExpression(UMaterialExpression* Expr, bool& bOutNativeDeleteRan) const
     {
+        bOutNativeDeleteRan = false;
         if (!Expr) return false;
         if (Material && Material->GetEditorOnlyData())
         {
             TArray<TObjectPtr<UMaterialExpression>>& Expressions =
                 Material->GetEditorOnlyData()->ExpressionCollection.Expressions;
             if (!IsOwnedExpressionInCollection(Material, Expr, Expressions)) return false;
+            ModifyExpressionAndReferencers(Expr, Expressions);
+            bOutNativeDeleteRan = true;
             UMaterialEditingLibrary::DeleteMaterialExpression(Material, Expr);
             return IsNativeExpressionDeleteComplete(Expr, Expressions);
         }
@@ -339,6 +420,8 @@ struct FMaterialMutationTarget
             TArray<TObjectPtr<UMaterialExpression>>& Expressions =
                 Function->GetEditorOnlyData()->ExpressionCollection.Expressions;
             if (!IsOwnedExpressionInCollection(Function, Expr, Expressions)) return false;
+            ModifyExpressionAndReferencers(Expr, Expressions);
+            bOutNativeDeleteRan = true;
             UMaterialEditingLibrary::DeleteMaterialExpressionInFunction(Function, Expr);
             return IsNativeExpressionDeleteComplete(Expr, Expressions);
         }

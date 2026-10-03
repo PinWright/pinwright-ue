@@ -844,7 +844,9 @@ int32 GetAspectVersion(const FString& RelativeFile)
         { TEXT("msir.txt"),                 5 },
         { TEXT("skeleton.json"),            2 },
         { TEXT("physics_asset.json"),       2 },
-        { TEXT("material_instance.json"),   2 },
+        // 3: adds orphanedOverrides {scalar, vector, texture, staticSwitch, staticComponentMask} and
+        //    orphanedOverrideCount: overrides the instance's declared parameter set no longer holds.
+        { TEXT("material_instance.json"),   3 },
         { TEXT("cascade.json"),             2 },
         // 2: the widget Designer preview is now stamped opaque before encoding
         //    (WidgetDesignerCaptureUtil::StampOpaqueAndEncodePng), so every pixel's alpha is
