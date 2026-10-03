@@ -9,6 +9,17 @@
   reports `bindingRemoved` as read back from the invocation list. `pauseOnFire` pauses PIE inside
   the broadcast that completes the count, so a capture can show a short-lived effect. New error
   code `DISPATCHER_NOT_FOUND`, whose `available[]` lists the dispatchers the object has.
+- Added: `editor.standalone_status` observes a process started by `editor.launch_standalone`:
+  OS-measured `running`, the real `exitCode` once it exits, the tail of its log, and with
+  `capture: true` a PNG of its largest window (Linux/X11 only, via `XGetImage`; reports
+  `compositorActive`). `editor.launch_standalone` now gives each process its own
+  `-abslog=Saved/PinWright/standalone/<timestamp>-<slot>.log` (a log argument in `extraArgs`,
+  `-log=`/`-LogFileName=`/`-abslog=`, is honoured), returns it as `logPath`, and keeps the process
+  handle instead of closing it. **Behaviour change:** the spawned game no longer writes or rotates
+  `Saved/Logs/<Project>.log`, and a log argument in `extraArgs` is refused `INVALID_ARGUMENT` with
+  `numClients > 1` or when it resolves to the editor's own log (the engine locks its log, so the
+  process would write `<name>_2.log` and `logPath` would name another process's log). Input into a
+  `-game` process and DOM/widget inspection remain unavailable.
 - Added (contributors): `REGISTER_RPC_HANDLER_TICK_UNSAFE` (`Handlers/HandlerRegistration.h`)
   declares a verb tick-unsafe on its own registration, so the dispatcher defers it out of
   `UWorld::Tick` without an entry in `Dispatch/SafePoint.cpp`'s name table (now the legacy site,

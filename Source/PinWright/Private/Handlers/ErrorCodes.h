@@ -1514,6 +1514,9 @@ namespace ErrorCodes
     inline constexpr TCHAR ERR_SPLINE_NOT_FOUND[]                           = TEXT("SPLINE_NOT_FOUND");
     inline constexpr TCHAR ERR_SPLIT_SCREEN_ERROR[]                         = TEXT("SPLIT_SCREEN_ERROR");
     inline constexpr TCHAR ERR_STACK_EMPTY[]                                = TEXT("STACK_EMPTY");
+    // editor.standalone_status: the pid was not spawned by editor.launch_standalone in this
+    // editor session, so there is no held process handle (no exit code on Linux) and no known log.
+    inline constexpr TCHAR ERR_STANDALONE_NOT_TRACKED[]                     = TEXT("STANDALONE_NOT_TRACKED");
     inline constexpr TCHAR ERR_STATE_CREATE_FAILED[]                        = TEXT("STATE_CREATE_FAILED");
     inline constexpr TCHAR ERR_STATE_FAILED[]                               = TEXT("STATE_FAILED");
     inline constexpr TCHAR ERR_STATE_INPUT_PIN_MISSING[]                    = TEXT("STATE_INPUT_PIN_MISSING");

@@ -531,6 +531,7 @@ Not listed: internal plumbing namespaces, not intended for direct use - `pipelin
 | `editor.get_selected_graph_nodes` | Return information about every node currently selected in the most recently activated Blueprint graph editor. |
 | `editor.jump_to_bookmark` | Move the viewport camera to a previously stored bookmark slot (0..9). |
 | `editor.launch_standalone` | Launch one or more separate -game processes against the current project. |
+| `editor.standalone_status` | Observe a process spawned by `editor.launch_standalone`: running/exit code, log tail, and a window PNG (Linux/X11 only). |
 | `editor.list_dirty_packages` | Read-only diagnostic: list every dirty (unsaved) content and world package currently in memory (count + package names). |
 | `editor.open_asset` | Open the named asset in its default editor (Blueprint editor, material editor, etc.). |
 | `editor.open_level` | Load and open a level (.umap) in the editor as the active world. |

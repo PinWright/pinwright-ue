@@ -20,6 +20,10 @@ Note on legacy: the `editor.execute.*` family was dropped (Wave 1, Chunk 1C). Ea
 
 `editor.screenshot`, `editor.screenshot_window` need a GPU renderer. In an editor launched with `-NullRHI` (mode `headless`, or a commandlet) they refuse with `RENDERING_UNAVAILABLE` before reading any parameter; the error data carries `method` and `renderingModes: ["offscreen", "visible"]`. Relaunch in mode `offscreen` or `visible`.
 
+## Standalone -game processes
+
+The RPC gateway runs only inside the editor process: PinWright's modules are Editor-type and do not load under `-game`, so a process started by `editor.launch_standalone` is out of reach of every `drive.*`, `ui.*`, DOM-export and `render.*` verb. What the editor can see from outside is `editor.standalone_status`: OS-measured running state and exit code, the tail of the process's own log, and on Linux/X11 a PNG of its window. There is no input path into the game (no clicks, no keys) and no widget or web-page introspection. For anything beyond that, the sanctioned fallbacks are command-line driven: `-ExecCmds="HighResShot 1920x1080"` (or any console command) at launch, game-side logging asserted through the log tail, and an end-of-run exit code the game sets itself.
+
 ## See also
 
 - [`safe-mutation-save`](safe-mutation-save.md) — the read → mutate → verify → save loop for any editor change that must persist.
@@ -407,3 +411,15 @@ Undo up to `steps` transactions (default 1, must be >= 1), one engine undo per s
 ### editor.redo
 
 The mirror of `editor.undo`: `steps` (default 1), `redone[]` in redo order, zero steps redone is `NOTHING_TO_REDO`. Any new transaction recorded after an undo discards the redo side, so read `editor.undo_history` first when the redo matters.
+
+### editor.launch_standalone
+
+Each spawned process gets its own log via `-abslog=<Project>/Saved/PinWright/standalone/<timestamp>-<slot>.log`, returned per slot as `logPath`. A log argument already in `extraArgs` is honoured and its resolved path reported instead, with the engine's precedence: `-log=` / `-LogFileName=` (relative to the project's `Saved/Logs`) win over `-abslog=`, and a name without a `.log`/`.txt` extension falls back to `<Project>.log`. The engine opens its log exclusively and a process that finds it held writes `<name>_2.log`, `_3.log`… instead, so a log argument is refused `INVALID_ARGUMENT` with `numClients > 1` (`extraArgs` is shared by every slot) or when it resolves to the editor's own log (e.g. `-log=<Project>.log`, or any name without an extension, when the editor uses the default log) — omit it to get one log per slot. A log argument shared with another running process (a previous launch, another editor) is not detected; omit it. Besides making the log observable, this stops the game from rotating the editor's own `Saved/Logs/<Project>.log`. The process handle is kept for `editor.standalone_status` (and the child is reaped when it exits) only for this editor session.
+
+### editor.standalone_status
+
+`pid` must come from `editor.launch_standalone` in **this** editor session; any other pid is refused `STANDALONE_NOT_TRACKED` (Linux cannot report the exit status of a process the editor did not spawn, and an untracked pid has no known log).
+
+- `running` — from the OS, not inferred from the log. Once false, `exitCode` is the child's real status; on Linux a process killed by a signal has none, and `exitCodeUnavailable` says so instead.
+- `logTail` — the last `tailLines` (default 50, max 1000) complete lines of `logPath`, read from at most its last 1 MiB; `logExists` / `logBytes` tell a missing log from an empty one. A game that has not flushed yet shows fewer lines than it has written.
+- `capture: true` — **Linux/X11 only.** Reads the largest window whose `_NET_WM_PID` is the pid with `XGetImage` and writes a PNG under `Saved/Screenshots/standalone/`. The result is a `capture` block that never fails the call: `captured`, `path`, `width`, `height`, `windowId`, `title`, `candidateWindows`, `compositorActive` and `imageStats` (mean/min/max luminance), or `captured: false` with `errorCode` / `error` — `WINDOW_NOT_FOUND` (no window yet, already closed, or the process has exited: a pid is never used for a window lookup after exit, because the OS may have reused it), `CAPTURE_FAILED` (windows exist but none is readable: minimized, or not wholly on screen), `NOT_SUPPORTED` (Windows, or no X display). **Read `compositorActive`:** without a compositing manager, any part of the game window covered by another window reads back as whatever covers it. On a Wayland desktop only XWayland clients are visible to this path. Look at the PNG before trusting it.

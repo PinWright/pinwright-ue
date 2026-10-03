@@ -895,6 +895,7 @@ these also carry a row in the frequency table. Kept for the semantics a count ca
 | `SPLINE_COMPONENT_NOT_FOUND` | 1 | 1 |
 | `SPLINE_NOT_FOUND` | 1 | 1 |
 | `STACK_EMPTY` | 1 | 1 |
+| `STANDALONE_NOT_TRACKED` | 1 | 1 |
 | `STATE_NOT_FOUND` | 1 | 1 |
 | `STRUCT_FIELD_REMOVE_FAILED` | 1 | 1 |
 | `SUBMIX_NOT_FOUND` | 1 | 1 |
