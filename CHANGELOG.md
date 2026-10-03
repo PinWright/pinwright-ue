@@ -2,6 +2,10 @@
 
 ## 1.0.0
 
+- Changed: the PinWright Setup screen no longer opens at launch in an `-unattended` editor (the
+  automation suite, offscreen/headless `editor_start`), even with `bShowSetupScreenOnLaunch` or a
+  port-conflict alert; the conflict is still logged. On a real display its window covered the
+  level-viewport PIE that drive input is aimed at.
 - Added: `texture.create_text_texture` renders text with a real font (any runtime `UFont` or
   `UFontFace`, Roboto by default) via FreeType at a pixel `size`, with `typeface`, `align`,
   `color` and a `backgroundColor` that defaults to fully transparent (coverage as alpha), and

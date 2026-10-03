@@ -147,7 +147,7 @@ A **bound** editor whose port could not be *written* to that file is the mirror-
 Recognising it:
 
 - `Saved/Logs/*.log` — `LogSocketHttp: Error: Port N could not be bound` once, then `LogPinWrightSubsystem: Warning: Port N still held after K attempts`, then the repeating terminal error.
-- In-editor — the setup screen's red **"MCP server is NOT running - port conflict"** banner, which now states the attempt count and whether the retries are spent.
+- In-editor — the setup screen's red **"MCP server is NOT running - port conflict"** banner, which now states the attempt count and whether the retries are spent. An `-unattended` editor never opens the setup screen at launch, so there the log is the evidence.
 - No RPC can report this. An editor that never bound answers nothing, so `ping` is refused exactly as it would be for a stopped editor. **The log and the setup screen are the only evidence.**
 - `LogPortAdvertisement` — `Retracting a false MCP advertisement` (the file named a dead port and was removed) or the Warning that names the port something else is serving.
 

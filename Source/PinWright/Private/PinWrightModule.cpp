@@ -276,8 +276,9 @@ private:
         // setup screen for a one-click Update. Detection compares the whole entry Install
         // would write; a stdio entry carries no port, so a mere port change never trips
         // this. NotConfigured agents are the user's choice and don't trip it either.
+        // Not opened in an -unattended editor (below), so skip the config-file reads there too.
         bool bAnyInstalledConfigOutdated = false;
-        if (Settings->bShowSetupScreenOnProblem)
+        if (Settings->bShowSetupScreenOnProblem && !FApp::IsUnattended())
         {
             const FString EndpointUrl = AgentMcpConfigurator::GetEndpointUrl();
             const EAgentTool DetectableAgents[] = { EAgentTool::ClaudeCode, EAgentTool::CodexCli,
@@ -296,7 +297,12 @@ private:
             ((Status == EMcpServerStatus::PortInUse) || bAnyInstalledConfigOutdated)
             && Settings->bShowSetupScreenOnProblem;
 
-        if (bProblemAlert || Settings->bShowSetupScreenOnLaunch)
+        // Not in an -unattended editor (the automation suite, editor_start offscreen/headless):
+        // nobody is there to use it, and on a real display its window covered the level-viewport
+        // PIE that drive tests click into (board E-setup-window-opens-on-every-agent-start).
+        // A port conflict is still logged. At main-frame creation GIsAutomationTesting is still
+        // false, so IsUnattended() here is exactly the -unattended switch.
+        if (!FApp::IsUnattended() && (bProblemAlert || Settings->bShowSetupScreenOnLaunch))
         {
             FGlobalTabmanager::Get()->TryInvokeTab(SGatewaySetupScreen::GetTabId());
         }
