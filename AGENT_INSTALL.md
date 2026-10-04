@@ -27,7 +27,7 @@ Clone that tag:
 git clone --depth 1 --branch <tag> https://github.com/PinWright/pinwright-ue.git <project>/Plugins/PinWright
 ```
 
-The zip is `PinWright-<version>-UE<major.minor>-Win64.zip` from the latest release, for example `PinWright-1.0.0-UE5.8-Win64.zip`. Extract its `PinWright/` folder into `<project>/Plugins/`.
+The zip is `PinWright-<version>-UE<major.minor>-Win64.zip` from the latest release, for example `PinWright-1.1.0-UE5.8-Win64.zip`. Extract its `PinWright/` folder into `<project>/Plugins/`.
 
 ## 2. Connect
 

@@ -1,7 +1,7 @@
 {
   "FileVersion": 3,
-  "Version": 8,
-  "VersionName": "1.0.0",
+  "Version": 9,
+  "VersionName": "1.1.0",
   "FriendlyName": "PinWright",
   "Description": "PinWright: drive the Unreal Editor from your AI coding assistant over MCP.",
   "Category": "Automation",
