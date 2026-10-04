@@ -1,15 +1,7 @@
 # Changelog
 
-## 1.1.0
+## 1.0.0
 
-- Changed: no namespace is experimental any more; every public namespace is `core` (`pipeline`
-  stays `internal`). The wiki's tier legend and Stability lines drop the experimental wording, and
-  a stale `experimental` entry in `maturity.json` renders as unclassified.
-- Added: `AGENT_INSTALL.md`, one page an AI assistant follows to install PinWright (release tag
-  clone or release zip) and connect itself through the bundled stdio proxy; the README's quick
-  start leads with a one-line prompt pointing at it.
-- Changed: `scripts/gen_product_facts.py` (stdlib Python, runs on Linux and Windows) replaces
-  `scripts/gen-product-facts.ps1`, with the same inputs, outputs and flags.
 - Added: `actor.add_instances` and `actor.remove_instances` fill and empty an existing ISM/HISM
   component's instances, which before only `python.execute` could do. `add_instances` appends a
   `transforms[]` batch (the shape `spatial.scatter_layout` returns), reads every new instance back,
@@ -795,23 +787,6 @@
   `unchangedCount`, `moved[{nodeId, from, to}]`, read back after the write) instead of
   `expressionsLaidOut`, the total expression count; the moves are one undoable transaction, and
   none is recorded when nothing moved.
-- Fixed: `blueprint.graph.get_node_details` / `get_node_details_batch` (and `get_graph_details`
-  with `includeNodeDetails`) carry `linkedTo` on connected pins, so a wired input no longer
-  reads as its unused default.
-- Fixed: `blueprint.graph.replace_node` moves a wired `self` pin (an external-owner accessor's
-  target) to the replacement, and lists it in `connectionsDropped` when it cannot move.
-- Fixed: `geometry.sweep` and `geometry.extrude_along_spline` convert the spline frames into the
-  target's local space, so the tube follows the spline when the target actor is not at the
-  identity transform instead of landing offset by the target's own transform.
-- Fixed: BPIR `call_dispatcher` / `bind_dispatcher` / `unbind_dispatcher` / `clear_dispatcher`
-  accept a `K2Node_ConvertAsset` (Resolve Soft Reference) output as `Target:`, the shape the
-  decompiler prints, instead of failing with "Failed to create delegate node for dispatcher".
-- Fixed: `blueprint.decompile` no longer prints a self-bound dispatcher delegate twice (as
-  `event: @Fn` and as an extra `%n = call Create_Event(...)` line the compiler rejects), so a
-  decompiled `bind_dispatcher` / `unbind_dispatcher` body recompiles.
-
-## 1.0.0
-
 - Changed: graph auto-layout is PinWright's own layered formatter (`PwGraphLayout`) for BPIR
   compile/insert, `material.compile_mgir` / `material.authoring.auto_layout`, AGIR and CRIR
   compiles. It sizes every node (estimated from its title and pins), so laid-out nodes never
@@ -895,6 +870,20 @@
 - Removed: proxy tool `editor_prepare_tests` (use `editor_run_tests`), and
   `scripts/Run-Capped.ps1`, `scripts/Run-SuiteCapped.ps1`, `scripts/CappedJob.ps1` (use
   `editor_build`, `editor_run_tests` and `editor_start`).
+- Fixed: `blueprint.graph.get_node_details` / `get_node_details_batch` (and `get_graph_details`
+  with `includeNodeDetails`) carry `linkedTo` on connected pins, so a wired input no longer
+  reads as its unused default.
+- Fixed: `blueprint.graph.replace_node` moves a wired `self` pin (an external-owner accessor's
+  target) to the replacement, and lists it in `connectionsDropped` when it cannot move.
+- Fixed: `geometry.sweep` and `geometry.extrude_along_spline` convert the spline frames into the
+  target's local space, so the tube follows the spline when the target actor is not at the
+  identity transform instead of landing offset by the target's own transform.
+- Fixed: BPIR `call_dispatcher` / `bind_dispatcher` / `unbind_dispatcher` / `clear_dispatcher`
+  accept a `K2Node_ConvertAsset` (Resolve Soft Reference) output as `Target:`, the shape the
+  decompiler prints, instead of failing with "Failed to create delegate node for dispatcher".
+- Fixed: `blueprint.decompile` no longer prints a self-bound dispatcher delegate twice (as
+  `event: @Fn` and as an extra `%n = call Create_Event(...)` line the compiler rejects), so a
+  decompiled `bind_dispatcher` / `unbind_dispatcher` body recompiles.
 - Fixed: `skeleton.remove_bone` and `skeleton.set_bone_parent` keep each bone's translation
   retargeting mode on that bone (they used to leave the modes on the old indices) and refresh the
   engine's dependent caches; both report `boundMeshes` with whether each bound mesh still matches.
