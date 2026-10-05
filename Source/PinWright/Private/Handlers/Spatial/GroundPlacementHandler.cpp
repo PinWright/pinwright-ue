@@ -510,20 +510,42 @@ namespace
         Obj->SetObjectField(TEXT("footprintHalfExtentCm"), FootprintObj);
         Obj->SetStringField(TEXT("footprintSource"),
             Report.bFootprintFromContact ? TEXT("contact_radius") : TEXT("bounds"));
+        // ...and where that box is: the world-AABB centre, which is not the pivot.
+        TSharedPtr<FJsonObject> CentreObj = MakeShared<FJsonObject>();
+        CentreObj->SetNumberField(TEXT("x"), Report.FootprintCentreCm.X);
+        CentreObj->SetNumberField(TEXT("y"), Report.FootprintCentreCm.Y);
+        Obj->SetObjectField(TEXT("footprintCentreCm"), CentreObj);
 
         // The gap numbers only mean something when at least one column found ground.
         if (Report.SupportedColumns > 0)
         {
             Obj->SetNumberField(TEXT("maxGapCm"), Report.MaxGapCm);
             Obj->SetNumberField(TEXT("minGapCm"), Report.MinGapCm);
+            // The two absolute heights maxGapCm is the difference of. Under bounds_plane
+            // undersideZCm IS the plane every column was given, so a caller can see how far below
+            // a tilted mesh the rotated AABB's floor sits instead of inferring it from the move.
+            Obj->SetNumberField(TEXT("undersideZCm"), Report.UndersideZCm);
+            Obj->SetNumberField(TEXT("groundZCm"), Report.GroundZCm);
             // Both terms of the clearance, beside the one that gates: a caller judging a
             // borderline result needs to see how much of the number is the actor's own shape.
             // A large maxColumnClearanceCm with a small maxGapCm is a shaped actor sitting
             // correctly, not a floating one.
             Obj->SetNumberField(TEXT("maxColumnClearanceCm"), Report.MaxColumnClearanceCm);
-            Obj->SetNumberField(TEXT("undersideReliefCm"), Report.UndersideReliefCm);
+            // OMITTED, not zeroed, where nothing measured them: a flat plane has no relief by
+            // construction and one column has no spread, and a 0 reads as "measured and flat" -
+            // asserted about tumbled rocks on every row of a bounds-plane batch.
+            const bool bReliefMeasured = Report.SupportedColumns > 1
+                && Report.UndersideModel == GroundPlacement::EUndersideModel::MeshProfile
+                && !Report.bUsedBoundsPlaneFallback;
+            if (bReliefMeasured)
+            {
+                Obj->SetNumberField(TEXT("undersideReliefCm"), Report.UndersideReliefCm);
+            }
             Obj->SetNumberField(TEXT("penetrationCm"), Report.PenetrationCm);
-            Obj->SetNumberField(TEXT("groundSpreadCm"), Report.GroundSpreadCm);
+            if (Report.SupportedColumns > 1)
+            {
+                Obj->SetNumberField(TEXT("groundSpreadCm"), Report.GroundSpreadCm);
+            }
             Obj->SetObjectField(TEXT("averageNormal"), GroundRpcVectorObject(Report.AverageNormal));
             // Beside the numbers, never instead of them: this says which of the two surfaces
             // every number above describes.
@@ -614,6 +636,36 @@ namespace
         Ctx.SendError(ErrorCodes::ERR_INVALID_ARGUMENT,
             FString::Printf(TEXT("Unknown detail '%s'. Valid: summary, failures, all."), *Detail));
         return false;
+    }
+
+    // samples:1 is a legal cheap mode, but it makes the acceptance fields measure the PARAMETER
+    // rather than the seat: one column means coverage is 1 on every row that reaches the check,
+    // contactPoints is at most 1, the three gap terms collapse to one value, and spread and relief
+    // have nothing to span. 208 instances seated this way passed every check and were the worst
+    // planted component in the level. Appended to any warnings[] already on Data, never replacing it.
+    void GroundRpcAddSingleColumnWarning(const TSharedPtr<FJsonObject>& Data, int32 GridSize)
+    {
+        if (GridSize != 1)
+        {
+            return;
+        }
+        TArray<TSharedPtr<FJsonValue>> Warnings;
+        const TArray<TSharedPtr<FJsonValue>>* Existing = nullptr;
+        if (Data->TryGetArrayField(TEXT("warnings"), Existing) && Existing)
+        {
+            Warnings = *Existing;
+        }
+        Warnings.Add(MakeShared<FJsonValueString>(TEXT(
+            "samples:1 probes ONE column per object, at the centre of its WORLD bounding box "
+            "(contact.footprintCentreCm) - not its pivot, and for a rotated or off-centre mesh "
+            "possibly not under it at all; footprintInset has no effect. The acceptance fields are "
+            "then fixed by the parameter, not measured: coverage is 1 on every row that found "
+            "ground, contactPoints is at most 1, maxGapCm == minGapCm == maxColumnClearanceCm, and "
+            "groundSpreadCm / undersideReliefCm are omitted. minCoverage cannot reject anything and "
+            "a minContactPoints above 1 rejects everything (as does a minSupportedColumns above 1). "
+            "Use samples >= 3 when the verdict "
+            "matters.")));
+        Data->SetArrayField(TEXT("warnings"), Warnings);
     }
 
     // Shared sampling params, used identically by both verbs so a verify cannot measure a
@@ -796,8 +848,11 @@ REGISTER_RPC_HANDLER("spatial.ground_actors", "spatial",
             false, TEXT(""), TArray<FString>({TEXT("expected_matches")})},
         GroundRpcParam(TEXT("samples"), TEXT("number"),
             TEXT("Footprint sampling grid per axis: 3 means a 3x3 = 9 column grid over the actor's "
-                 "bounds. 1 degrades to a single centre column (the old pivot-probe behaviour, and "
-                 "the reason a boulder ends up balanced on one point). Clamped to 1-9."),
+                 "bounds. 1 degrades to a single column at the centre of the actor's WORLD bounding "
+                 "box (not its pivot; contact.footprintCentreCm names it), the reason a boulder "
+                 "ends up balanced on one point - and at 1 coverage, contactPoints and the gap terms "
+                 "are fixed by the parameter rather than measured, so the response carries a "
+                 "warnings[] entry. Clamped to 1-9."),
             TEXT("3"), TArray<FString>({TEXT("gridSize"), TEXT("grid_size")})),
         GroundRpcParam(TEXT("footprintInset"), TEXT("number"),
             TEXT("Fraction of the footprint half-extent that samples are pulled inward from the "
@@ -1034,6 +1089,7 @@ REGISTER_RPC_HANDLER("spatial.ground_actors", "spatial",
         Data->SetNumberField(TEXT("resultsDropped"), DetailRowsDropped);
     }
     GroundRpcWriteStringArray(Data, TEXT("unresolvedActors"), UnresolvedActors);
+    GroundRpcAddSingleColumnWarning(Data, Config.GridSize);
     GroundRpcAddAxisEcho(Data);
 
     UE_LOG(LogPinWrightSubsystem, Display,
@@ -1079,7 +1135,10 @@ REGISTER_RPC_HANDLER("spatial.verify_grounding", "spatial",
         NameMatch::CaseSensitiveParam(TEXT("filter")),
         RPC_PARAM_OPT("selection", "boolean", "Verify the current editor selection."),
         GroundRpcParam(TEXT("samples"), TEXT("number"),
-            TEXT("Footprint sampling grid per axis (1-9); 3 means a 3x3 = 9 column grid."),
+            TEXT("Footprint sampling grid per axis (1-9); 3 means a 3x3 = 9 column grid. 1 is a "
+                 "single column at the world-bounds centre (not the pivot): coverage and "
+                 "contactPoints then cannot fail anything, and the response says so in "
+                 "warnings[]."),
             TEXT("3"), TArray<FString>({TEXT("gridSize"), TEXT("grid_size")})),
         GroundRpcParam(TEXT("footprintInset"), TEXT("number"),
             TEXT("Fraction of the footprint half-extent that samples are pulled inward (0-0.45)."),
@@ -1244,6 +1303,7 @@ REGISTER_RPC_HANDLER("spatial.verify_grounding", "spatial",
         Data->SetNumberField(TEXT("resultsDropped"), DetailRowsDropped);
     }
     GroundRpcWriteStringArray(Data, TEXT("unresolvedActors"), UnresolvedActors);
+    GroundRpcAddSingleColumnWarning(Data, GridSize);
     GroundRpcAddAxisEcho(Data);
 
     Ctx.SendSuccess(Data);
@@ -1347,7 +1407,11 @@ REGISTER_RPC_HANDLER("spatial.ground_instances", "spatial",
             "expectedCount, not by this flag.", "true"),
         GroundRpcParam(TEXT("samples"), TEXT("number"),
             TEXT("Footprint sampling grid per axis over each INSTANCE's own bounds: 3 means a "
-                 "3x3 = 9 column grid. 1 degrades to a single centre column. Clamped to 1-9. Cost "
+                 "3x3 = 9 column grid. 1 degrades to a single column at the centre of the "
+                 "instance's WORLD bounding box - not its pivot, and for a tilted or off-centre "
+                 "mesh possibly not under it - with coverage, contactPoints and the gap terms fixed "
+                 "by the parameter rather than measured; the response says so in warnings[]. "
+                 "Clamped to 1-9. Cost "
                  "is samples^2 columns per instance per measurement, and each seated instance is "
                  "measured twice."),
             TEXT("3"), TArray<FString>({TEXT("gridSize"), TEXT("grid_size")})),
@@ -1377,7 +1441,15 @@ REGISTER_RPC_HANDLER("spatial.ground_instances", "spatial",
         GroundRpcParam(TEXT("seatPercentile"), TEXT("number"),
             TEXT("Which sampled column the instance comes to rest against, as a percentile over the "
                  "columns' clearances. 0 (default) rests on the FIRST contact; 1 sinks until no "
-                 "column floats; 0.5 is the median. Clamped to 0-1."),
+                 "column floats; 0.5 is the median. Clamped to 0-1. Every clearance is measured "
+                 "from the instance's bounds plane - the floor of its WORLD bounding box, which "
+                 "pitch or roll moves relative to the same box held upright - each row's "
+                 "boundsRotationInflationCm is that drop, positive when the tilt lowered it, and a "
+                 "lowered plane sits below the real lowest point of any mesh that does not fill its "
+                 "box's corners - so the same percentile can lift an upright instance and sink a "
+                 "tilted neighbour. contact.undersideZCm / groundZCm publish the two heights the "
+                 "solve used on a dry run or refused row; after an apply they are the re-measured "
+                 "seat."),
             TEXT("0"), TArray<FString>({TEXT("seat_percentile")})),
         GroundRpcParam(TEXT("embedFraction"), TEXT("number"),
             TEXT("Sink this fraction of the instance's bounds HEIGHT into the ground after the seat "
@@ -1728,6 +1800,13 @@ REGISTER_RPC_HANDLER("spatial.ground_instances", "spatial",
             Row->SetObjectField(TEXT("proposedTransform"),
                 GroundRpcTransformObject(Result.ProposedTransform.GetValue()));
         }
+        // How far this instance's tilt moved its bounds plane down from where the same box sits
+        // upright (negative = raised): why one seatPercentile lifts one instance and sinks another.
+        if (Result.BoundsRotationInflationCm.IsSet())
+        {
+            Row->SetNumberField(TEXT("boundsRotationInflationCm"),
+                Result.BoundsRotationInflationCm.GetValue());
+        }
         Row->SetObjectField(TEXT("contact"), GroundRpcContactObject(Result.Seat.Contact));
         Rows.Add(MakeShared<FJsonValueObject>(Row));
     }
@@ -1803,6 +1882,7 @@ REGISTER_RPC_HANDLER("spatial.ground_instances", "spatial",
         Data->SetBoolField(TEXT("resultsTruncated"), true);
         Data->SetNumberField(TEXT("resultsDropped"), DetailRowsDropped);
     }
+    GroundRpcAddSingleColumnWarning(Data, Config.GridSize);
     GroundRpcAddAxisEcho(Data);
 
     UE_LOG(LogPinWrightSubsystem, Display,

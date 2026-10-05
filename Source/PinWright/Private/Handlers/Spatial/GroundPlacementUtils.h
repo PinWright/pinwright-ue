@@ -516,6 +516,21 @@ namespace GroundPlacement
         // it. The inset cannot express the second - it is a FRACTION of the bounds, so it moves
         // with yaw and per-instance scale and is clamped at 0.45 besides.
         bool bFootprintFromContact = false;
+        // World XY the sample grid is centred on: the centre of the sampled WORLD AABB, which is
+        // neither the pivot nor the mesh's centre once the box has been re-fitted around a rotated
+        // mesh. At samples:1 it is the one column's location, measured 152.7 cm p50 off the pivot
+        // on a tree scatter whose contact radius was 100 uu.
+        FVector2D FootprintCentreCm = FVector2D::ZeroVector;
+
+        // ABSOLUTE world Z of the two terms every gap number is a difference of: the lowest
+        // underside sample and the lowest accepted ground over the supported columns. Meaningful
+        // only when SupportedColumns > 0. Under a bounds-plane underside UndersideZCm IS the
+        // plane, and for a pitched or rolled object that plane is the floor of the rotation-
+        // inflated AABB, below the real lowest point of any mesh that does not fill its box's
+        // corners (a rock, a sphere) - publishing it is what lets a caller
+        // see how far, instead of reading maxGapCm = UndersideZ - GroundZ with neither term known.
+        double UndersideZCm = 0.0;
+        double GroundZCm = 0.0;
 
         // Display labels of actors the surface filter peeled off the ground probe, capped.
         // This is the field that names the fog card when a probe "found no ground".
@@ -820,6 +835,16 @@ namespace GroundPlacement
         // was written, where Seat.AppliedTransform and Seat.AppliedDeltaZCm carry what happened.
         TOptional<FTransform> ProposedTransform;
         double ProposedDeltaZCm = 0.0;
+
+        // How far the instance's pitch and roll moved its bounds plane DOWN: the floor of the
+        // mesh box at the instance's location and scale with NO rotation, minus the floor of the
+        // world AABB the seat actually solves against. Zero for an upright or yaw-only instance;
+        // positive when the tilt lowered the plane, negative when it raised it (a tall mesh
+        // pivoted at its centre, whose box floor rises as it tilts: 10x10x100 at 20 deg reads -2.6). Measured as a difference of the two floors rather
+        // than of half-heights, so an off-pivot bounds origin is included. The term that makes
+        // one seatPercentile lift one instance and sink its tilted neighbour. Set on every path
+        // that read the instance's transform and mesh.
+        TOptional<double> BoundsRotationInflationCm;
     };
 
     // Seat ONE instance of an instanced-mesh component: measure the ground under the instance's

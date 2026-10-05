@@ -497,8 +497,10 @@ REGISTER_RPC_HANDLER("level.audit", "level",
             "because a lint whose numbers are invisible cannot be argued with."),
         AuditRpcParam(TEXT("samples"), TEXT("number"),
             TEXT("Ground sampling grid per axis for the surface checks: 3 means a 3x3 = 9 column "
-                 "grid over each actor's footprint. 1 degrades to a single centre probe, which "
-                 "is what cannot tell a seated actor from a balanced one. Clamped 1-9."),
+                 "grid over each actor's footprint. 1 degrades to a single column at the centre of "
+                 "the actor's WORLD bounding box (not its pivot), where coverage and contact counts "
+                 "are fixed by the parameter and cannot tell a seated actor from a balanced one. "
+                 "Clamped 1-9."),
             TEXT("3"), TArray<FString>({TEXT("gridSize"), TEXT("grid_size")})),
         AuditRpcParam(TEXT("footprintInset"), TEXT("number"),
             TEXT("Fraction of the footprint half-extent samples are pulled inward from the "

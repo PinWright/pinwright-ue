@@ -614,6 +614,8 @@ namespace GroundPlacement
             // relative to the lowest ground it has to fall onto. See FGroundContactReport for
             // why the silhouette max cannot answer this question.
             Report.MaxGapCm = MinUnderside - MinGround;
+            Report.UndersideZCm = MinUnderside;
+            Report.GroundZCm = MinGround;
             Report.UndersideReliefCm = MaxUnderside - MinUnderside;
             Report.PenetrationCm = FMath::Max(0.0, -Report.MinGapCm);
             Report.GroundSpreadCm = MaxGround - MinGround;
@@ -1150,6 +1152,7 @@ namespace GroundPlacement
         // by the same code that chose it rather than reconstructed by a reader from the inset.
         Report.FootprintHalfExtentCm = FVector2D(HalfX, HalfY);
         Report.bFootprintFromContact = bContactFootprint;
+        Report.FootprintCentreCm = FVector2D(Origin.X, Origin.Y);
 
         // The ground probe starts ABOVE the actor, not at its underside. An actor buried in
         // geometry has its ground above its own bottom face, and a probe that starts at the
@@ -1669,6 +1672,11 @@ namespace GroundPlacement
         // which carries the instance's rotation and scale. This is the box the holder's
         // GetActorBounds could never produce - that one is the union of every instance.
         const FBox InstanceBounds = Mesh->GetBounds().GetBox().TransformBy(InstanceWorld);
+        // That box's floor is the underside plane, and pitch or roll moves it: published as the
+        // drop from the same box held upright, so the caller need not re-derive the transform.
+        const FBox UprightBounds = Mesh->GetBounds().GetBox().TransformBy(
+            FTransform(FQuat::Identity, InstanceWorld.GetLocation(), InstanceWorld.GetScale3D()));
+        Result.BoundsRotationInflationCm = UprightBounds.Min.Z - InstanceBounds.Min.Z;
 
         // ...and the box the sample grid spans, which is NOT the same question. For a mesh whose
         // contact patch is its silhouette - a rock, a slab, a log - the two coincide and the

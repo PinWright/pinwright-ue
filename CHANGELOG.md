@@ -14,6 +14,20 @@
   `GROUND_ABOVE_PROBE_START` instead of `GROUND_NOT_FOUND`; the seat status stays
   `no_ground_found`. Behaviour change for callers that branch on `GROUND_NOT_FOUND`. The message
   gives the landscape height, the probe start and the lift needed.
+- Added: the grounding verbs (`spatial.ground_actors`, `spatial.verify_grounding`,
+  `spatial.ground_instances`) now name the box they measured. Each row's `contact` carries
+  `undersideZCm` and `groundZCm`, the absolute world Z of the two terms `maxGapCm` is the
+  difference of, and `footprintCentreCm`, the world-bounds centre the sample grid is centred on
+  (not the pivot). `spatial.ground_instances` rows also carry `boundsRotationInflationCm`: how far
+  the instance's pitch and roll moved its bounds plane down from where the same box sits upright
+  (negative when the tilt raised it), which is why one `seatPercentile` can
+  lift an upright instance and sink a tilted one. `samples: 1` now adds a `warnings[]` entry,
+  because at one column coverage, contactPoints and the gap terms are fixed by the parameter.
+  Behaviour change: `undersideReliefCm` is omitted under the `bounds_plane` model or its
+  `boundsPlaneFallback` (always, on
+  `spatial.ground_instances`) and when fewer than two columns found ground, and `groundSpreadCm`
+  is omitted below two such columns. Both used to read `0`, which looked like a measured flat
+  underside or flat ground.
 - Added: `channel` on `spatial.raycast` and `spatial.raycast_screen`, and `surface.channel` on
   `spatial.ground_actors`, `spatial.verify_grounding`, `spatial.ground_instances`,
   `foliage.paint` and `level.audit`, now accept every stock collision channel (`pawn`,

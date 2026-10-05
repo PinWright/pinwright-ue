@@ -3877,8 +3877,10 @@ bool FGroundInstancesContactRadiusSamplesTheContactPatchTest::RunTest(const FStr
     // The three fields a caller gates on, all green about a box the caller never asked about.
     TestEqual(TEXT("...while reporting coverage 1.00"),
         GroundTestRowContactNumber(BoundsRow, TEXT("coverage"), -1.0), 1.0, 0.001);
-    TestEqual(TEXT("...and undersideReliefCm 0"),
-        GroundTestRowContactNumber(BoundsRow, TEXT("undersideReliefCm"), -1.0), 0.0, 0.001);
+    // undersideReliefCm used to read 0 here; a bounds plane has no relief to measure, so it is
+    // now omitted rather than asserted flat (#298 / #42).
+    TestEqual(TEXT("...and undersideReliefCm omitted (bounds_plane measures no relief)"),
+        GroundTestRowContactNumber(BoundsRow, TEXT("undersideReliefCm"), -1.0), -1.0, 0.001);
     const TSharedPtr<FJsonObject>* BoundsContact = nullptr;
     bool bBoundsPass = false;
     if (BoundsRow->TryGetObjectField(TEXT("contact"), BoundsContact) && BoundsContact)
