@@ -136,7 +136,10 @@ namespace
         {
             return GroundPlacement::EGroundSeatStatus::GroundHitsAllRejected;
         }
-        if (FailReasonCode == ErrorCodes::ERR_PARTIAL_GROUND_COVERAGE)
+        // INSUFFICIENT_GROUND_CONTACT reaches a pre-move probe only through MinSupportedColumns
+        // (the pre-move thresholds zero MinContactPoints): too little of the footprint has ground.
+        if (FailReasonCode == ErrorCodes::ERR_PARTIAL_GROUND_COVERAGE
+            || FailReasonCode == ErrorCodes::ERR_INSUFFICIENT_GROUND_CONTACT)
         {
             return GroundPlacement::EGroundSeatStatus::PartialGroundCoverage;
         }
@@ -758,6 +761,22 @@ namespace GroundPlacement
                                          "reports no height at its footprint either - it is off the "
                                          "terrain entirely.");
             }
+            else if (Report.LandscapeZCm.IsSet() && Report.LandscapeZCm.GetValue() >= Report.ProbeStartZCm)
+            {
+                // The landscape has a height here and it is above where the probe started, so a
+                // downward trace could never reach it: the actor is buried below the terrain by
+                // more than probeLift. Named, with the lift that would reach it.
+                Report.FailReasonCode = ErrorCodes::ERR_GROUND_ABOVE_PROBE_START;
+                Report.FailReason = FString::Printf(
+                    TEXT("No ground found below this actor, but the landscape reports a height of "
+                         "Z %.1f at its footprint, above the probe start at Z %.1f (the actor's "
+                         "top plus surface.probeLift), so the probe could not reach it. If the "
+                         "actor is buried below the terrain, raise surface.probeLift by at least "
+                         "%.0f cm so the probe starts above it. If it is meant to sit under the "
+                         "terrain (a cave or tunnel), do not: a higher lift seats it on top."),
+                    Report.LandscapeZCm.GetValue(), Report.ProbeStartZCm,
+                    FMath::CeilToDouble(Report.LandscapeZCm.GetValue() - Report.ProbeStartZCm) + 1.0);
+            }
             else
             {
                 Report.FailReasonCode = ErrorCodes::ERR_GROUND_NOT_FOUND;
@@ -775,6 +794,22 @@ namespace GroundPlacement
                      "%.0f%% required. It overhangs a hole or the terrain edge."),
                 Report.Coverage * 100.0, Report.SupportedColumns, Report.ActorColumns,
                 Thresholds.MinCoverage * 100.0);
+            return;
+        }
+
+        if (Report.SupportedColumns < Thresholds.MinSupportedColumns)
+        {
+            // Coverage cannot catch this: over a footprint that collapsed to one actor column it
+            // is 1.0 by construction. Counted absolutely so a single-point rest is not a pass.
+            Report.FailReasonCode = ErrorCodes::ERR_INSUFFICIENT_GROUND_CONTACT;
+            Report.FailReason = FString::Printf(
+                TEXT("Only %d column(s) of this actor's footprint found ground (minSupportedColumns "
+                     "%d; %d of %d sampled columns hit the actor's own geometry). A rest measured "
+                     "at one point cannot tell a seated actor from one balanced on that point. "
+                     "If this object really rests on one point (a post, a trunk), pass "
+                     "minSupportedColumns: 1; otherwise reseat it."),
+                Report.SupportedColumns, Thresholds.MinSupportedColumns, Report.ActorColumns,
+                Report.SampledColumns);
             return;
         }
 
@@ -1263,6 +1298,8 @@ namespace GroundPlacement
             // runs before EvaluateContact because EvaluateContact reads its answer.
             const TOptional<double> LandscapeZ = ProbeLandscapeHeight(World, Origin.X, Origin.Y);
             Report.bOverLandscape = LandscapeZ.IsSet();
+            Report.LandscapeZCm = LandscapeZ;
+            Report.ProbeStartZCm = ProbeStartZ;
         }
 
         if (OutColumns)

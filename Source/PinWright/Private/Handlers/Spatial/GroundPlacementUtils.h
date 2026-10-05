@@ -288,6 +288,11 @@ namespace GroundPlacement
         double MaxPenetrationCm = DefaultContactToleranceCm;
         double MinCoverage = DefaultMinCoverage;
         int32 MinContactPoints = 1;
+        // Absolute floor on SupportedColumns. MinCoverage is a ratio over ActorColumns, so on a
+        // footprint that collapsed to one actor column it is 1.0 by construction and cannot
+        // catch a single-point rest. 1 here (no extra check) for internal callers; the RPC
+        // verbs default it to min(2, samples^2) - see GroundRpcReadMinSupportedColumns.
+        int32 MinSupportedColumns = 1;
         double ContactToleranceCm = DefaultContactToleranceCm;
 
         // Whether MaxGapCm / MaxPenetrationCm are pass criteria at all.
@@ -523,6 +528,12 @@ namespace GroundPlacement
         // structural difference between "something is in the way" and "this actor is not
         // over the terrain at all" - the second being the rock-beyond-the-map-edge case.
         TOptional<bool> bOverLandscape;
+        // Set beside bOverLandscape == true: the landscape's height at the footprint centre and
+        // the Z the downward probe started from (actor top + probeLift). Landscape above the
+        // probe start is the one reason a probe over terrain finds nothing, and these two
+        // numbers are how GROUND_ABOVE_PROBE_START names it.
+        TOptional<double> LandscapeZCm;
+        double ProbeStartZCm = 0.0;
 
         // Worst per-column disagreement, in cm, between the clearance the solve predicted
         // after its move and the clearance actually measured afterwards. Set only on the

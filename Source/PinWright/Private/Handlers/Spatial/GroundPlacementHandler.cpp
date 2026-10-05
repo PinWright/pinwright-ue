@@ -638,6 +638,15 @@ namespace
             : GroundPlacement::EUndersideModel::MeshProfile;
     }
 
+    // minSupportedColumns, shared by all three verbs. Defaults to 2, capped at the grid's column
+    // count so samples:1 (one column by request) keeps passing a one-column rest.
+    int32 GroundRpcReadMinSupportedColumns(const FHandlerContext& Ctx, int32 GridSize)
+    {
+        const int32 Default = FMath::Min(2, GridSize * GridSize);
+        return FMath::Max(Ctx.GetInt(TEXT("minSupportedColumns"),
+            Ctx.GetInt(TEXT("min_supported_columns"), Default)), 0);
+    }
+
     // ---- The expectedMatches pre-flight (mutating verb only) ------------------------------
 
     // Ceiling on how many matched labels the refusal lists. The counts are exact either way;
@@ -830,6 +839,13 @@ REGISTER_RPC_HANDLER("spatial.ground_actors", "spatial",
         GroundRpcParam(TEXT("minContactPoints"), TEXT("number"),
             TEXT("Minimum footprint columns that must touch the surface after seating."),
             TEXT("1"), TArray<FString>({TEXT("min_contact_points")})),
+        GroundRpcParam(TEXT("minSupportedColumns"), TEXT("number"),
+            TEXT("Minimum number of footprint columns that must find ground, counted absolutely. "
+                 "minCoverage is a ratio over the columns the object's own geometry answered, so "
+                 "when that collapses to one column it reads 1.0 and cannot reject a single-point "
+                 "rest; this can. Failing it reports INSUFFICIENT_GROUND_CONTACT. Default 2, or 1 "
+                 "at samples:1 (one column by request). Set 1 to accept a one-column rest."),
+            TEXT("2"), TArray<FString>({TEXT("min_supported_columns")})),
         GroundRpcParam(TEXT("contactTolerance"), TEXT("number"),
             TEXT("A column counts as touching when its clearance is at or below this many cm. "
                  "Buried counts as touching; floating does not."),
@@ -924,6 +940,7 @@ REGISTER_RPC_HANDLER("spatial.ground_actors", "spatial",
             Ctx.GetNumber(TEXT("min_coverage"), GroundPlacement::DefaultMinCoverage)), 0.0, 1.0);
     Config.Thresholds.MinContactPoints = FMath::Max(
         Ctx.GetInt(TEXT("minContactPoints"), Ctx.GetInt(TEXT("min_contact_points"), 1)), 0);
+    Config.Thresholds.MinSupportedColumns = GroundRpcReadMinSupportedColumns(Ctx, Config.GridSize);
     Config.Thresholds.ContactToleranceCm = FMath::Max(
         Ctx.GetNumber(TEXT("contactTolerance"),
             Ctx.GetNumber(TEXT("contact_tolerance"), GroundPlacement::DefaultContactToleranceCm)), 0.0);
@@ -1090,6 +1107,13 @@ REGISTER_RPC_HANDLER("spatial.verify_grounding", "spatial",
             TEXT("Minimum columns that must touch. Raise it above 1 for wide actors: one contact "
                  "point is a physically valid rest and a visually balanced result."),
             TEXT("1"), TArray<FString>({TEXT("min_contact_points")})),
+        GroundRpcParam(TEXT("minSupportedColumns"), TEXT("number"),
+            TEXT("Minimum number of footprint columns that must find ground, counted absolutely. "
+                 "minCoverage is a ratio over the columns the object's own geometry answered, so "
+                 "when that collapses to one column it reads 1.0 and cannot reject a single-point "
+                 "rest; this can. Failing it reports INSUFFICIENT_GROUND_CONTACT. Default 2, or 1 "
+                 "at samples:1 (one column by request). Set 1 to accept a one-column rest."),
+            TEXT("2"), TArray<FString>({TEXT("min_supported_columns")})),
         GroundRpcParam(TEXT("contactTolerance"), TEXT("number"),
             TEXT("A column counts as touching at or below this clearance in cm."),
             TEXT("2"), TArray<FString>({TEXT("contact_tolerance")})),
@@ -1146,6 +1170,7 @@ REGISTER_RPC_HANDLER("spatial.verify_grounding", "spatial",
             Ctx.GetNumber(TEXT("min_coverage"), GroundPlacement::DefaultMinCoverage)), 0.0, 1.0);
     Thresholds.MinContactPoints = FMath::Max(
         Ctx.GetInt(TEXT("minContactPoints"), Ctx.GetInt(TEXT("min_contact_points"), 1)), 0);
+    Thresholds.MinSupportedColumns = GroundRpcReadMinSupportedColumns(Ctx, GridSize);
     Thresholds.ContactToleranceCm = FMath::Max(
         Ctx.GetNumber(TEXT("contactTolerance"),
             Ctx.GetNumber(TEXT("contact_tolerance"), GroundPlacement::DefaultContactToleranceCm)), 0.0);
@@ -1203,6 +1228,7 @@ REGISTER_RPC_HANDLER("spatial.verify_grounding", "spatial",
     Criteria->SetNumberField(TEXT("maxPenetrationCm"), Thresholds.MaxPenetrationCm);
     Criteria->SetNumberField(TEXT("minCoverage"), Thresholds.MinCoverage);
     Criteria->SetNumberField(TEXT("minContactPoints"), Thresholds.MinContactPoints);
+    Criteria->SetNumberField(TEXT("minSupportedColumns"), Thresholds.MinSupportedColumns);
     Criteria->SetNumberField(TEXT("contactToleranceCm"), Thresholds.ContactToleranceCm);
     Criteria->SetStringField(TEXT("undersideModel"),
         Model == GroundPlacement::EUndersideModel::BoundsPlane ? TEXT("bounds_plane") : TEXT("mesh"));
@@ -1368,6 +1394,13 @@ REGISTER_RPC_HANDLER("spatial.ground_instances", "spatial",
         GroundRpcParam(TEXT("minContactPoints"), TEXT("number"),
             TEXT("Minimum footprint columns that must touch the surface after seating."),
             TEXT("1"), TArray<FString>({TEXT("min_contact_points")})),
+        GroundRpcParam(TEXT("minSupportedColumns"), TEXT("number"),
+            TEXT("Minimum number of footprint columns that must find ground, counted absolutely. "
+                 "minCoverage is a ratio over the columns the object's own geometry answered, so "
+                 "when that collapses to one column it reads 1.0 and cannot reject a single-point "
+                 "rest; this can. Failing it reports INSUFFICIENT_GROUND_CONTACT. Default 2, or 1 "
+                 "at samples:1 (one column by request). Set 1 to accept a one-column rest."),
+            TEXT("2"), TArray<FString>({TEXT("min_supported_columns")})),
         GroundRpcParam(TEXT("contactTolerance"), TEXT("number"),
             TEXT("A column counts as touching when its clearance is at or below this many cm. "
                  "Buried counts as touching; floating does not."),
@@ -1553,6 +1586,7 @@ REGISTER_RPC_HANDLER("spatial.ground_instances", "spatial",
             Ctx.GetNumber(TEXT("min_coverage"), GroundPlacement::DefaultMinCoverage)), 0.0, 1.0);
     Config.Thresholds.MinContactPoints = FMath::Max(
         Ctx.GetInt(TEXT("minContactPoints"), Ctx.GetInt(TEXT("min_contact_points"), 1)), 0);
+    Config.Thresholds.MinSupportedColumns = GroundRpcReadMinSupportedColumns(Ctx, Config.GridSize);
     Config.Thresholds.ContactToleranceCm = FMath::Max(
         Ctx.GetNumber(TEXT("contactTolerance"),
             Ctx.GetNumber(TEXT("contact_tolerance"),

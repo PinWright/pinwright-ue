@@ -579,13 +579,17 @@ namespace ErrorCodes
     inline constexpr TCHAR ERR_GRAPH_ERROR[]                                = TEXT("GRAPH_ERROR");
     inline constexpr TCHAR ERR_GRAPH_NOT_FOUND[]                            = TEXT("GRAPH_NOT_FOUND");
     inline constexpr TCHAR ERR_GRAPH_UNAVAILABLE[]                          = TEXT("GRAPH_UNAVAILABLE");
-    // spatial.ground_actors / spatial.verify_grounding ground-probe outcomes. The three
+    // spatial.ground_actors / spatial.verify_grounding ground-probe outcomes. The
     // "no ground" cases are deliberately separate because they demand different fixes:
     // something is in the way, nothing is there, or nothing was ever measured.
     //
     // GROUND_HITS_ALL_REJECTED means geometry WAS hit under every sampled column and the
     // surface filter refused all of it - the response names what it refused, which is how a
     // probe that landed on a collisionless fog card becomes visible instead of silent.
+    //
+    // GROUND_ABOVE_PROBE_START: nothing was hit, and the landscape reports a height above the
+    // probe start (actor top + surface.probeLift) - the actor is buried below the terrain.
+    inline constexpr TCHAR ERR_GROUND_ABOVE_PROBE_START[]                   = TEXT("GROUND_ABOVE_PROBE_START");
     inline constexpr TCHAR ERR_GROUND_HITS_ALL_REJECTED[]                   = TEXT("GROUND_HITS_ALL_REJECTED");
     inline constexpr TCHAR ERR_GROUND_NOT_FOUND[]                           = TEXT("GROUND_NOT_FOUND");
     // No measurement was taken at all (no world, no actor, no bounds). Never reported as a

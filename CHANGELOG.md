@@ -2,6 +2,18 @@
 
 ## 1.0.0
 
+- Added: `minSupportedColumns` on `spatial.ground_actors`, `spatial.verify_grounding` and
+  `spatial.ground_instances`, an absolute count of footprint columns that must find ground.
+  `minCoverage` is a ratio over the columns the object's geometry answered, so a footprint that
+  collapsed to one column read `coverage: 1` and passed a single-point rest. Behaviour change: the
+  default is `2` (`1` at `samples: 1`), so such a rest now fails `INSUFFICIENT_GROUND_CONTACT`,
+  and the seat verbs refuse it before moving (`status: "partial_ground_coverage"`). Pass `1` for
+  the old verdict. `spatial.verify_grounding` echoes it in `criteria`.
+- Changed: on the grounding verbs, an actor whose footprint has a landscape height above the probe
+  start (buried below the terrain by more than `surface.probeLift`, default 500 cm) now fails
+  `GROUND_ABOVE_PROBE_START` instead of `GROUND_NOT_FOUND`; the seat status stays
+  `no_ground_found`. Behaviour change for callers that branch on `GROUND_NOT_FOUND`. The message
+  gives the landscape height, the probe start and the lift needed.
 - Added: `channel` on `spatial.raycast` and `spatial.raycast_screen`, and `surface.channel` on
   `spatial.ground_actors`, `spatial.verify_grounding`, `spatial.ground_instances`,
   `foliage.paint` and `level.audit`, now accept every stock collision channel (`pawn`,

@@ -18,7 +18,7 @@ The obvious algorithm — one downward ray at the actor's pivot, set the actor's
 
 For each actor: sample an N×N grid of columns over the footprint (inset from the AABB edge, because an AABB corner over a rounded rock is empty air); at each column find the actor's own lowest geometry by tracing its components directly; at each column find the ground under the stated surface; then solve one Z offset from the whole set of per-column clearances, apply it, **re-measure**, and only report `placed: true` when the second measurement agrees with the solve.
 
-Columns where the actor has no geometry impose no constraint and are excluded from coverage. Columns with geometry but no ground beneath drive `coverage` down — which is how an actor overhanging the terrain edge is caught.
+Columns where the actor has no geometry impose no constraint and are excluded from coverage. Columns with geometry but no ground beneath drive `coverage` down — which is how an actor overhanging the terrain edge is caught. `coverage` is a ratio over the geometry columns, so if those collapse to one it reads `1` whatever the seat; `minSupportedColumns` (default `2`, `1` at `samples: 1`) counts the columns that found ground absolutely and fails a single-point rest with `INSUFFICIENT_GROUND_CONTACT`.
 
 ## The footprint is the silhouette, and for a tree the silhouette is the canopy
 
@@ -56,7 +56,7 @@ This matters most on `spatial.ground_instances`, which seats instances against w
 
 **`contact.groundProvenance.surfaceComponents` names what the ground actually was.** One row per distinct primitive that answered a supported column — `{actor, component, componentClass, columns}` — ordered by how much of the footprint each answered, with `surfaceComponentCount` carrying the true distinct total when the list is capped. The column counts beside it say which *representation* replied; only this says the representation belonged to a kelp scatter rather than to a cliff, which is the check `excludeComponentClasses` exists to act on: see a `componentClass` of `HierarchicalInstancedStaticMeshComponent` where you expected `LandscapeHeightfieldCollisionComponent`, and the surface spec, not the seat, is what needs fixing. A footprint may straddle several surfaces, so this is a distribution and never one label, and the trust flags travel per row (`instancedScatter`, `renderGeometry`, `complexAsSimple`, each present only when true) rather than collapsing into one verdict for the batch. Columns whose component could not be resolved contribute no row and are counted in `unclassifiedColumns`.
 
-When a probe finds nothing, the response says which of the three reasons applies: `GROUND_HITS_ALL_REJECTED` (geometry was hit and the filter refused it — `rejectedSurfaceActors` names it), `GROUND_NOT_FOUND` with `overLandscape: false` (not over the terrain at all), or `GROUND_NOT_FOUND` plain.
+When a probe finds nothing, the response says which of the four reasons applies: `GROUND_HITS_ALL_REJECTED` (geometry was hit and the filter refused it — `rejectedSurfaceActors` names it), `GROUND_NOT_FOUND` with `overLandscape: false` (not over the terrain at all), `GROUND_ABOVE_PROBE_START` (the landscape reports a height above where the probe started - usually an actor buried below the terrain by more than `surface.probeLift`, default 500 cm; the message names the lift needed. Content meant to sit under the terrain, such as a cave or tunnel, gets the same code; do not raise the lift for it, or it is seated on top), or `GROUND_NOT_FOUND` plain.
 
 ## Choosing seatPercentile and embed
 
