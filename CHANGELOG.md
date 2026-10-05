@@ -40,6 +40,27 @@
   `spatial.ground_instances`) and when fewer than two columns found ground, and `groundSpreadCm`
   is omitted below two such columns. Both used to read `0`, which looked like a measured flat
   underside or flat ground.
+- Added: `texture.set_srgb` sets a texture's sRGB flag (required `srgb`, any `UTexture`) through the
+  engine's edit path and returns the stored `srgb`. Turning sRGB off for masks and noise used to need
+  a raw `property.set SRGB`. `srgb: true` on a texture whose compression (`TC_Masks`, `TC_Normalmap`,
+  `TC_Alpha`, HDR) or `ColorLookupTable` group keeps sRGB off is refused with `DERIVED_PROPERTY`
+  before anything is written, naming every setting that forces it.
+- Fixed: `texture.set_compression_settings` and `texture.set_texture_group` now refuse an unknown
+  name with `INVALID_ARGUMENT` listing the valid ones. They used to store `TC_Default` /
+  `TEXTUREGROUP_World` for any name outside a short table and report the requested name as set, and
+  `set_texture_group` matched by substring (`TEXTUREGROUP_CharacterNormalMap` became `Character`).
+  Every entry the texture editor offers is now accepted by exact name, in any case, prefix optional, including
+  `TC_HalfFloat`, `TC_SingleFloat`, `TC_HDR_F32` and the `ColorLookupTable`, `8BitData`,
+  `16BitData` and normal-map groups. `set_texture_group` now writes through the engine's edit path,
+  so a group's own settings apply (8BitData / 16BitData set compression and turn sRGB off), and it
+  returns the stored `textureGroup`, `compressionSettings` and `srgb`. Behaviour change: a
+  misspelled or partial name that used to succeed is refused.
+- Fixed: `texture.set_compression_settings` to `TC_Masks`, `TC_Normalmap`, `TC_Alpha` or an HDR mode
+  now turns sRGB off, as the texture editor does, and returns the stored `srgb`. It used to store the
+  compression raw and leave `srgb: true`, so a material sampling the texture as `SAMPLERTYPE_Masks`
+  then failed to compile. Behaviour change: the verb now also notifies the materials that sample the
+  texture and waits for any texture build still running, and it runs at a safe point outside the
+  world tick.
 - Added: `channel` on `spatial.raycast` and `spatial.raycast_screen`, and `surface.channel` on
   `spatial.ground_actors`, `spatial.verify_grounding`, `spatial.ground_instances`,
   `foliage.paint` and `level.audit`, now accept every stock collision channel (`pawn`,

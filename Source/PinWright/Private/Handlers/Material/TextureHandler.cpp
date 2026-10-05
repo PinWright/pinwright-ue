@@ -13,6 +13,7 @@
 #include "Handlers/Asset/TexturePixelStats.h"
 #include "Handlers/Asset/TextureSourceMipLock.h"
 #include "Handlers/Material/TextureAssetHelpers.h"
+#include "Utils/DerivedStateReport.h"
 #include "Utils/JsonBuilders.h"
 #include "PinWrightSubsystem.h"
 #include "PinWrightHelpers.h"
@@ -376,6 +377,243 @@ static float FBMNoise(ENoiseTextureAlgorithm Algorithm, float X, float Y, int32 
     }
 
     return Total / MaxValue;
+}
+
+namespace TextureHandlerSrgb
+{
+    // Writes one UTexture property the way the texture editor does. PreEditChange blocks any
+    // in-flight async build first (the engine's rule, Texture.h:36 and Texture.cpp:2807):
+    // flipping gamma under a running build asserts on the worker (see create_normal_from_height).
+    // PostEditChangeProperty then validates the settings, rebuilds the resource and notifies the
+    // materials sampling the texture (Texture.cpp:801-990). That notification builds an
+    // FMaterialUpdateContext, which recreates render state and calls FlushRenderingCommands
+    // (Texture.cpp:4592, MaterialShared.cpp:5026/5078): safe-point family I, so every verb that
+    // calls this is registered REGISTER_RPC_HANDLER_TICK_UNSAFE.
+    void SetTexturePropertyThroughEditPath(UTexture* Texture, FName PropertyName, TFunctionRef<void()> Write)
+    {
+        FProperty* Property = FindFProperty<FProperty>(UTexture::StaticClass(), PropertyName);
+        Texture->PreEditChange(Property);
+        Write();
+        FPropertyChangedEvent Event(Property, EPropertyChangeType::ValueSet);
+        Texture->PostEditChangeProperty(Event);
+    }
+
+    // Resolves an engine enum entry by its exact name, ignoring case (UEnum's own match), with
+    // or without the entry prefix (TC_ / TEXTUREGROUP_). The trailing _MAX entry is not a value,
+    // and neither is a UMETA(Hidden) entry the texture editor does not offer (UE 5.8:
+    // TC_EncodedReflectionCapture, which is engine-internal, and TC_LQ). On a miss,
+    // OutValidNames lists every accepted name.
+    bool ResolveTextureEnumName(const UEnum* Enum, const FString& Prefix, const FString& Name,
+        int64& OutValue, FString& OutValidNames)
+    {
+        const int32 ValueCount = Enum->NumEnums() - 1;
+        int32 Index = Enum->GetIndexByNameString(Name);
+        if (Index == INDEX_NONE && !Name.StartsWith(Prefix, ESearchCase::IgnoreCase))
+        {
+            Index = Enum->GetIndexByNameString(Prefix + Name);
+        }
+        if (Index != INDEX_NONE && Index < ValueCount && !Enum->HasMetaData(TEXT("Hidden"), Index))
+        {
+            OutValue = Enum->GetValueByIndex(Index);
+            return true;
+        }
+        TArray<FString> Names;
+        for (int32 EnumIndex = 0; EnumIndex < ValueCount; ++EnumIndex)
+        {
+            if (!Enum->HasMetaData(TEXT("Hidden"), EnumIndex))
+            {
+                Names.Add(Enum->GetNameStringByIndex(EnumIndex));
+            }
+        }
+        OutValidNames = FString::Join(Names, TEXT(", "));
+        return false;
+    }
+
+    // Called straight from its own handler (not through ExecuteTextureAction), so the
+    // handler reads only the keys this verb declares.
+    TSharedPtr<FJsonObject> ExecuteSetCompressionSettings(const TSharedPtr<FJsonObject>& Params)
+    {
+        TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+        if (!Params.IsValid())
+        {
+            TEXTURE_ERROR_RESPONSE(TEXT("assetPath is required"));
+        }
+
+        // Validate that no unknown/invalid parameters are present
+        TSet<FString> ValidParams = {
+            TEXT("assetPath"), TEXT("compressionSettings"), TEXT("save")
+        };
+        for (const auto& Field : Params->Values)
+        {
+            if (!ValidParams.Contains(EARGCompat::JsonKeyToString(Field.Key)))
+            {
+                TEXTURE_ERROR_RESPONSE(FString::Printf(TEXT("Invalid parameter: %s"), *Field.Key));
+            }
+        }
+
+        FString AssetPath = GetStringFieldTextAuth(Params, TEXT("assetPath"), TEXT(""));
+
+        // SECURITY: Validate assetPath
+        FString SanitizedAssetPath = SanitizeProjectRelativePath(AssetPath);
+        if (SanitizedAssetPath.IsEmpty())
+        {
+            TEXTURE_ERROR_RESPONSE(TEXT("Invalid assetPath: contains traversal or invalid characters"));
+        }
+        AssetPath = SanitizedAssetPath;
+
+        FString CompressionSettingsStr = GetStringFieldTextAuth(Params, TEXT("compressionSettings"), TEXT("TC_Default"));
+        bool bSave = GetBoolFieldTextAuth(Params, TEXT("save"), true);
+
+        if (AssetPath.IsEmpty())
+        {
+            TEXTURE_ERROR_RESPONSE(TEXT("assetPath is required"));
+        }
+
+        UTexture2D* Texture = Cast<UTexture2D>(StaticLoadObject(UTexture2D::StaticClass(), nullptr, *AssetPath));
+        if (!Texture)
+        {
+            TEXTURE_ERROR_RESPONSE(FString::Printf(TEXT("Failed to load texture: %s"), *AssetPath));
+        }
+
+        // Exact engine entry name (any case, TC_ prefix optional); anything else is refused. The
+        // old string table fell back to TC_Default for every unmatched name, including valid
+        // engine entries it lacked, and reported the requested name as set.
+        int64 SettingValue = 0;
+        FString ValidCompressionNames;
+        if (!TextureHandlerSrgb::ResolveTextureEnumName(StaticEnum<TextureCompressionSettings>(), TEXT("TC_"),
+                CompressionSettingsStr, SettingValue, ValidCompressionNames))
+        {
+            Response->SetStringField(TEXT("errorCode"), TEXT("INVALID_ARGUMENT"));
+            TEXTURE_ERROR_RESPONSE(FString::Printf(TEXT("Unknown compressionSettings '%s'. Valid: %s"),
+                *CompressionSettingsStr, *ValidCompressionNames));
+        }
+        const TextureCompressionSettings NewSetting = static_cast<TextureCompressionSettings>(SettingValue);
+
+        // Through the engine's edit path, not a raw store: PostEditChangeProperty runs
+        // ValidateSettingsAfterImportOrEdit, which turns sRGB off for TC_Masks / TC_Normalmap /
+        // TC_Alpha / HDR compression (Texture.cpp:771-777), rebuilds the resource and notifies
+        // the materials sampling it. The raw store left srgb:true on a mask, and a
+        // SAMPLERTYPE_Masks sampler then refused to compile.
+        TextureHandlerSrgb::SetTexturePropertyThroughEditPath(Texture,
+            GET_MEMBER_NAME_CHECKED(UTexture, CompressionSettings),
+            [Texture, NewSetting]() { Texture->CompressionSettings = NewSetting; });
+        Texture->MarkPackageDirty();
+
+        McpSaveTextureToDisk(Response, Texture, bSave);
+
+        Response->SetBoolField(TEXT("success"), true);
+        Response->SetStringField(TEXT("message"), FString::Printf(TEXT("Compression set to %s"),
+            *StaticEnum<TextureCompressionSettings>()->GetNameStringByValue(Texture->CompressionSettings)));
+        Response->SetBoolField(TEXT("srgb"), Texture->SRGB != 0);
+        AddAssetVerification(Response, Texture);
+        return Response;
+    }
+
+    // Called straight from its own handler (not through ExecuteTextureAction), so the
+    // handler reads only the keys this verb declares.
+    TSharedPtr<FJsonObject> ExecuteSetTextureGroup(const TSharedPtr<FJsonObject>& Params)
+    {
+        TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+        if (!Params.IsValid())
+        {
+            TEXTURE_ERROR_RESPONSE(TEXT("assetPath is required"));
+        }
+
+        // Validate that no unknown/invalid parameters are present
+        TSet<FString> ValidParams = {
+            TEXT("assetPath"), TEXT("textureGroup"), TEXT("save")
+        };
+        for (const auto& Field : Params->Values)
+        {
+            if (!ValidParams.Contains(EARGCompat::JsonKeyToString(Field.Key)))
+            {
+                TEXTURE_ERROR_RESPONSE(FString::Printf(TEXT("Invalid parameter: %s"), *Field.Key));
+            }
+        }
+
+        FString AssetPath = GetStringFieldTextAuth(Params, TEXT("assetPath"), TEXT(""));
+
+        // SECURITY: Validate assetPath
+        FString SanitizedAssetPath = SanitizeProjectRelativePath(AssetPath);
+        if (SanitizedAssetPath.IsEmpty())
+        {
+            TEXTURE_ERROR_RESPONSE(TEXT("Invalid assetPath: contains traversal or invalid characters"));
+        }
+        AssetPath = SanitizedAssetPath;
+
+        FString TextureGroup = GetStringFieldTextAuth(Params, TEXT("textureGroup"), TEXT("TEXTUREGROUP_World"));
+        bool bSave = GetBoolFieldTextAuth(Params, TEXT("save"), true);
+
+        if (AssetPath.IsEmpty())
+        {
+            TEXTURE_ERROR_RESPONSE(TEXT("assetPath is required"));
+        }
+
+        UTexture2D* Texture = Cast<UTexture2D>(StaticLoadObject(UTexture2D::StaticClass(), nullptr, *AssetPath));
+        if (!Texture)
+        {
+            TEXTURE_ERROR_RESPONSE(FString::Printf(TEXT("Failed to load texture: %s"), *AssetPath));
+        }
+
+        // Exact engine entry name (any case, TEXTUREGROUP_ prefix optional); anything else is
+        // refused. The old substring table wrote TEXTUREGROUP_World for every unmatched name,
+        // picked the first substring hit (CharacterNormalMap -> Character) and could not reach
+        // most groups, while reporting the requested name as set.
+        int64 GroupValue = 0;
+        FString ValidGroupNames;
+        if (!TextureHandlerSrgb::ResolveTextureEnumName(StaticEnum<::TextureGroup>(), TEXT("TEXTUREGROUP_"),
+                TextureGroup, GroupValue, ValidGroupNames))
+        {
+            Response->SetStringField(TEXT("errorCode"), TEXT("INVALID_ARGUMENT"));
+            TEXTURE_ERROR_RESPONSE(FString::Printf(TEXT("Unknown textureGroup '%s'. Valid: %s"),
+                *TextureGroup, *ValidGroupNames));
+        }
+        const ::TextureGroup NewGroup = static_cast<::TextureGroup>(GroupValue);
+
+        // Through the engine's edit path: PostEditChangeProperty applies the group's own settings
+        // (8BitData / 16BitData set compression and sRGB, Texture.cpp:871-883; ColorLookupTable
+        // forces no mips and sRGB off, :758-767), which the old raw LODGroup store skipped.
+        TextureHandlerSrgb::SetTexturePropertyThroughEditPath(Texture,
+            GET_MEMBER_NAME_CHECKED(UTexture, LODGroup),
+            [Texture, NewGroup]() { Texture->LODGroup = NewGroup; });
+        Texture->MarkPackageDirty();
+
+        McpSaveTextureToDisk(Response, Texture, bSave);
+
+        Response->SetBoolField(TEXT("success"), true);
+        const FString StoredGroup = StaticEnum<::TextureGroup>()->GetNameStringByValue(Texture->LODGroup);
+        Response->SetStringField(TEXT("message"), FString::Printf(TEXT("Texture group set to %s"), *StoredGroup));
+        Response->SetStringField(TEXT("textureGroup"), StoredGroup);
+        Response->SetStringField(TEXT("compressionSettings"),
+            StaticEnum<TextureCompressionSettings>()->GetNameStringByValue(Texture->CompressionSettings));
+        Response->SetBoolField(TEXT("srgb"), Texture->SRGB != 0);
+        AddAssetVerification(Response, Texture);
+        return Response;
+    }
+
+    // The settings that keep SRGB off, mirroring UTexture::ValidateSettingsAfterImportOrEdit
+    // (UE 5.8 Texture.cpp:758-777). Compression is matched by entry name so the list compiles on
+    // every supported engine; set_srgb still reads SRGB back after the write as the authority.
+    void DescribeForcedLinear(const UTexture* Texture, TArray<FString>& OutDerivedFrom, TArray<FString>& OutVerbs)
+    {
+        if (Texture->LODGroup == TEXTUREGROUP_ColorLookupTable && Texture->Source.IsValid())
+        {
+            OutDerivedFrom.Add(TEXT("LODGroup TEXTUREGROUP_ColorLookupTable"));
+            OutVerbs.Add(TEXT("texture.set_texture_group"));
+        }
+        static const TCHAR* const LinearCompressions[] = {
+            TEXT("TC_Alpha"), TEXT("TC_Normalmap"), TEXT("TC_Masks"), TEXT("TC_HDR"), TEXT("TC_HDR_F32"),
+            TEXT("TC_HDR_Compressed"), TEXT("TC_HalfFloat"), TEXT("TC_SingleFloat") };
+        const FString Compression = StaticEnum<TextureCompressionSettings>()->GetNameStringByValue(Texture->CompressionSettings);
+        for (const TCHAR* Linear : LinearCompressions)
+        {
+            if (Compression == Linear)
+            {
+                OutDerivedFrom.Add(FString::Printf(TEXT("compressionSettings %s"), *Compression));
+                OutVerbs.Add(TEXT("texture.set_compression_settings"));
+            }
+        }
+    }
 }
 
 static TSharedPtr<FJsonObject> ExecuteTextureAction(const TSharedPtr<FJsonObject>& Params)
@@ -1188,134 +1426,6 @@ Response->SetBoolField(TEXT("success"), true);
     }
     
     // ===== TEXTURE SETTINGS =====
-    
-    if (SubAction == TEXT("set_compression_settings"))
-    {
-        // Validate that no unknown/invalid parameters are present
-        TSet<FString> ValidParams = {
-            TEXT("subAction"), TEXT("assetPath"), TEXT("compressionSettings"), TEXT("save")
-        };
-        for (const auto& Field : Params->Values)
-        {
-            if (!ValidParams.Contains(EARGCompat::JsonKeyToString(Field.Key)))
-            {
-                TEXTURE_ERROR_RESPONSE(FString::Printf(TEXT("Invalid parameter: %s"), *Field.Key));
-            }
-        }
-
-        FString AssetPath = GetStringFieldTextAuth(Params, TEXT("assetPath"), TEXT(""));
-        
-        // SECURITY: Validate assetPath
-        FString SanitizedAssetPath = SanitizeProjectRelativePath(AssetPath);
-        if (SanitizedAssetPath.IsEmpty())
-        {
-            TEXTURE_ERROR_RESPONSE(TEXT("Invalid assetPath: contains traversal or invalid characters"));
-        }
-        AssetPath = SanitizedAssetPath;
-        
-        FString CompressionSettingsStr = GetStringFieldTextAuth(Params, TEXT("compressionSettings"), TEXT("TC_Default"));
-        bool bSave = GetBoolFieldTextAuth(Params, TEXT("save"), true);
-        
-        if (AssetPath.IsEmpty())
-        {
-            TEXTURE_ERROR_RESPONSE(TEXT("assetPath is required"));
-        }
-        
-        UTexture2D* Texture = Cast<UTexture2D>(StaticLoadObject(UTexture2D::StaticClass(), nullptr, *AssetPath));
-        if (!Texture)
-        {
-            TEXTURE_ERROR_RESPONSE(FString::Printf(TEXT("Failed to load texture: %s"), *AssetPath));
-        }
-        
-        // Map string to enum
-        TextureCompressionSettings NewSetting = TC_Default;
-        if (CompressionSettingsStr == TEXT("TC_Normalmap")) NewSetting = TC_Normalmap;
-        else if (CompressionSettingsStr == TEXT("TC_Masks")) NewSetting = TC_Masks;
-        else if (CompressionSettingsStr == TEXT("TC_Grayscale")) NewSetting = TC_Grayscale;
-        else if (CompressionSettingsStr == TEXT("TC_Displacementmap")) NewSetting = TC_Displacementmap;
-        else if (CompressionSettingsStr == TEXT("TC_VectorDisplacementmap")) NewSetting = TC_VectorDisplacementmap;
-        else if (CompressionSettingsStr == TEXT("TC_HDR")) NewSetting = TC_HDR;
-        else if (CompressionSettingsStr == TEXT("TC_EditorIcon")) NewSetting = TC_EditorIcon;
-        else if (CompressionSettingsStr == TEXT("TC_Alpha")) NewSetting = TC_Alpha;
-        else if (CompressionSettingsStr == TEXT("TC_DistanceFieldFont")) NewSetting = TC_DistanceFieldFont;
-        else if (CompressionSettingsStr == TEXT("TC_HDR_Compressed")) NewSetting = TC_HDR_Compressed;
-        else if (CompressionSettingsStr == TEXT("TC_BC7")) NewSetting = TC_BC7;
-        
-        Texture->CompressionSettings = NewSetting;
-        Texture->UpdateResource();
-        Texture->MarkPackageDirty();
-        
-        McpSaveTextureToDisk(Response, Texture, bSave);
-        
-Response->SetBoolField(TEXT("success"), true);
-        Response->SetStringField(TEXT("message"), FString::Printf(TEXT("Compression set to %s"), *CompressionSettingsStr));
-        AddAssetVerification(Response, Texture);
-        return Response;
-    }
-    
-    if (SubAction == TEXT("set_texture_group"))
-    {
-        // Validate that no unknown/invalid parameters are present
-        TSet<FString> ValidParams = {
-            TEXT("subAction"), TEXT("assetPath"), TEXT("textureGroup"), TEXT("save")
-        };
-        for (const auto& Field : Params->Values)
-        {
-            if (!ValidParams.Contains(EARGCompat::JsonKeyToString(Field.Key)))
-            {
-                TEXTURE_ERROR_RESPONSE(FString::Printf(TEXT("Invalid parameter: %s"), *Field.Key));
-            }
-        }
-
-        FString AssetPath = GetStringFieldTextAuth(Params, TEXT("assetPath"), TEXT(""));
-        
-        // SECURITY: Validate assetPath
-        FString SanitizedAssetPath = SanitizeProjectRelativePath(AssetPath);
-        if (SanitizedAssetPath.IsEmpty())
-        {
-            TEXTURE_ERROR_RESPONSE(TEXT("Invalid assetPath: contains traversal or invalid characters"));
-        }
-        AssetPath = SanitizedAssetPath;
-        
-        FString TextureGroup = GetStringFieldTextAuth(Params, TEXT("textureGroup"), TEXT("TEXTUREGROUP_World"));
-        bool bSave = GetBoolFieldTextAuth(Params, TEXT("save"), true);
-        
-        if (AssetPath.IsEmpty())
-        {
-            TEXTURE_ERROR_RESPONSE(TEXT("assetPath is required"));
-        }
-        
-        UTexture2D* Texture = Cast<UTexture2D>(StaticLoadObject(UTexture2D::StaticClass(), nullptr, *AssetPath));
-        if (!Texture)
-        {
-            TEXTURE_ERROR_RESPONSE(FString::Printf(TEXT("Failed to load texture: %s"), *AssetPath));
-        }
-        
-        // Map common texture groups
-        ::TextureGroup NewGroup = TEXTUREGROUP_World;
-        if (TextureGroup.Contains(TEXT("Character"))) NewGroup = TEXTUREGROUP_Character;
-        else if (TextureGroup.Contains(TEXT("Weapon"))) NewGroup = TEXTUREGROUP_Weapon;
-        else if (TextureGroup.Contains(TEXT("Vehicle"))) NewGroup = TEXTUREGROUP_Vehicle;
-        else if (TextureGroup.Contains(TEXT("Cinematic"))) NewGroup = TEXTUREGROUP_Cinematic;
-        else if (TextureGroup.Contains(TEXT("Effects"))) NewGroup = TEXTUREGROUP_Effects;
-        else if (TextureGroup.Contains(TEXT("Skybox"))) NewGroup = TEXTUREGROUP_Skybox;
-        else if (TextureGroup.Contains(TEXT("UI"))) NewGroup = TEXTUREGROUP_UI;
-        else if (TextureGroup.Contains(TEXT("Lightmap"))) NewGroup = TEXTUREGROUP_Lightmap;
-        else if (TextureGroup.Contains(TEXT("RenderTarget"))) NewGroup = TEXTUREGROUP_RenderTarget;
-        else if (TextureGroup.Contains(TEXT("Bokeh"))) NewGroup = TEXTUREGROUP_Bokeh;
-        else if (TextureGroup.Contains(TEXT("Pixels2D"))) NewGroup = TEXTUREGROUP_Pixels2D;
-        
-        Texture->LODGroup = NewGroup;
-        Texture->UpdateResource();
-        Texture->MarkPackageDirty();
-        
-        McpSaveTextureToDisk(Response, Texture, bSave);
-        
-Response->SetBoolField(TEXT("success"), true);
-        Response->SetStringField(TEXT("message"), FString::Printf(TEXT("Texture group set to %s"), *TextureGroup));
-        AddAssetVerification(Response, Texture);
-        return Response;
-    }
     
     if (SubAction == TEXT("set_lod_bias"))
     {
@@ -3001,6 +3111,8 @@ Response->SetBoolField(TEXT("success"), true);
     return Response;
 }
 
+static bool SendTextureActionResult(FHandlerContext& Ctx, const TSharedPtr<FJsonObject>& Result);
+
 static bool RunTextureAction(FHandlerContext& Ctx, const FString& SubAction)
 {
     TSharedPtr<FJsonObject> Params = Ctx.GetRawPayload().IsValid()
@@ -3009,7 +3121,13 @@ static bool RunTextureAction(FHandlerContext& Ctx, const FString& SubAction)
 
     Params->SetStringField(TEXT("subAction"), SubAction);
 
-    TSharedPtr<FJsonObject> Result = ExecuteTextureAction(Params);
+    return SendTextureActionResult(Ctx, ExecuteTextureAction(Params));
+}
+
+// Sends an ExecuteTextureAction-shaped result: success:true -> the object minus that flag,
+// otherwise its error / errorCode.
+static bool SendTextureActionResult(FHandlerContext& Ctx, const TSharedPtr<FJsonObject>& Result)
+{
     if (!Result.IsValid())
     {
         Ctx.SendError(TEXT("TEXTURE_ERROR"), TEXT("Texture action returned no result."));
@@ -3092,16 +3210,26 @@ REGISTER_TEXTURE_ACTION_HANDLER("texture.create_normal_from_height", "create_nor
         RPC_PARAM_DEF("flipY", "boolean", "Flip the Y component (DirectX vs OpenGL)", "false"),
         RPC_PARAM_DEF("save", "boolean", "Save the asset to disk", "true"),
         RPC_PARAM_DEF("channelMode", "string", "Height channel source (luminance, red, green, blue, alpha, average)", "luminance")))
-REGISTER_TEXTURE_ACTION_HANDLER("texture.set_compression_settings", "set_compression_settings", "Set texture compression settings",
+// Tick-unsafe: both write through SetTexturePropertyThroughEditPath, whose material notification
+// recreates render state and flushes rendering commands (safe-point family I).
+REGISTER_RPC_HANDLER_TICK_UNSAFE("texture.set_compression_settings", "Texture", "Set texture compression settings",
     RPC_PARAMS(
         RPC_PARAM_REQ("assetPath", "path", "Texture asset path"),
-        RPC_PARAM_DEF("compressionSettings", "string", "Compression mode (e.g. TC_Default, TC_Normalmap, TC_Masks)", "TC_Default"),
+        RPC_PARAM_DEF("compressionSettings", "string", "Compression mode: a TextureCompressionSettings entry name (e.g. TC_Default, TC_Normalmap, TC_Masks, TC_HalfFloat), any case, TC_ prefix optional. An unknown name is refused with INVALID_ARGUMENT listing the valid ones. Linear modes (TC_Masks, TC_Normalmap, TC_Alpha, HDR) also turn sRGB off; the stored srgb is returned", "TC_Default"),
         RPC_PARAM_DEF("save", "boolean", "Save the asset to disk", "true")))
-REGISTER_TEXTURE_ACTION_HANDLER("texture.set_texture_group", "set_texture_group", "Set texture group",
+{
+    const TSharedPtr<FJsonObject> Params = Ctx.GetRawPayload();
+    return SendTextureActionResult(Ctx, TextureHandlerSrgb::ExecuteSetCompressionSettings(Params));
+}
+REGISTER_RPC_HANDLER_TICK_UNSAFE("texture.set_texture_group", "Texture", "Set texture group",
     RPC_PARAMS(
         RPC_PARAM_REQ("assetPath", "path", "Texture asset path"),
-        RPC_PARAM_DEF("textureGroup", "string", "LOD/texture group (e.g. TEXTUREGROUP_World, Character, UI)", "TEXTUREGROUP_World"),
+        RPC_PARAM_DEF("textureGroup", "string", "LOD/texture group: a TextureGroup entry name (e.g. TEXTUREGROUP_World, TEXTUREGROUP_CharacterNormalMap, TEXTUREGROUP_ColorLookupTable), any case, TEXTUREGROUP_ prefix optional. An unknown name is refused with INVALID_ARGUMENT listing the valid ones. The engine applies the group's own settings (8BitData/16BitData/ColorLookupTable change compression and sRGB); the stored textureGroup, compressionSettings and srgb are returned", "TEXTUREGROUP_World"),
         RPC_PARAM_DEF("save", "boolean", "Save the asset to disk", "true")))
+{
+    const TSharedPtr<FJsonObject> Params = Ctx.GetRawPayload();
+    return SendTextureActionResult(Ctx, TextureHandlerSrgb::ExecuteSetTextureGroup(Params));
+}
 REGISTER_TEXTURE_ACTION_HANDLER("texture.set_lod_bias", "set_lod_bias", "Set texture LOD bias",
     RPC_PARAMS(
         RPC_PARAM_REQ("assetPath", "path", "Texture asset path"),
@@ -3120,6 +3248,81 @@ REGISTER_TEXTURE_ACTION_HANDLER("texture.set_streaming_priority", "set_streaming
 REGISTER_TEXTURE_ACTION_HANDLER("texture.get_texture_info", "get_texture_info", "Get texture info",
     RPC_PARAMS(
         RPC_PARAM_REQ("assetPath", "path", "Texture asset path")))
+REGISTER_RPC_HANDLER_TICK_UNSAFE("texture.set_srgb", "Texture",
+    "Set a texture's sRGB flag: off for linear data (masks, noise, packed channels), on for colour. Refused with DERIVED_PROPERTY when the compression settings or LOD group force sRGB off",
+    RPC_PARAMS(
+        RPC_PARAM_REQ("assetPath", "path", "Texture asset path (any UTexture subclass)"),
+        RPC_PARAM_REQ("srgb", "boolean", "true for colour data, false for linear data. Required: no default is right for both"),
+        RPC_PARAM_DEF("save", "boolean", "Save the asset to disk", "true")))
+{
+    FString AssetPath;
+    if (!Ctx.RequireAssetPath(TEXT("assetPath"), AssetPath))
+    {
+        return true;
+    }
+    bool bRequestedSrgb = false;
+    if (!Ctx.RequireBool(TEXT("srgb"), bRequestedSrgb))
+    {
+        return true;
+    }
+
+    UTexture* Texture = LoadObject<UTexture>(nullptr, *AssetPath);
+    if (!Texture)
+    {
+        Ctx.SendError(TEXT("ASSET_NOT_FOUND"),
+            FString::Printf(TEXT("Could not load texture: %s"), *AssetPath));
+        return true;
+    }
+
+    // Refused with DERIVED_PROPERTY, naming every setting that keeps sRGB off and the verb that
+    // changes each, since the engine re-applies them on every later edit or import.
+    auto SendForcedLinear = [&Ctx, &AssetPath](const TArray<FString>& DerivedFromList, const TArray<FString>& Verbs)
+    {
+        const FString DerivedFrom = FString::Join(DerivedFromList, TEXT(" and "));
+        const FString Explanation = FString::Printf(
+            TEXT("Texture '%s' keeps srgb=false: its %s forces sRGB off. Change that with %s first, then set srgb."),
+            *AssetPath, *DerivedFrom, *FString::Join(Verbs, TEXT(" and ")));
+        TSharedPtr<FJsonObject> ErrorData = MakeShared<FJsonObject>();
+        ErrorData->SetBoolField(TEXT("srgb"), false);
+        PinWright::DerivedState::AddDerivedWriteReport(ErrorData, TEXT("SRGB"), DerivedFrom, Verbs[0], Explanation);
+        Ctx.SendError(TEXT("DERIVED_PROPERTY"), Explanation, ErrorData);
+    };
+
+    // Checked before the write, so a refusal leaves the package clean and the materials untouched.
+    if (bRequestedSrgb)
+    {
+        TArray<FString> DerivedFromList;
+        TArray<FString> Verbs;
+        TextureHandlerSrgb::DescribeForcedLinear(Texture, DerivedFromList, Verbs);
+        if (Verbs.Num() > 0)
+        {
+            SendForcedLinear(DerivedFromList, Verbs);
+            return true;
+        }
+    }
+
+    const bool bWasDirty = Texture->GetPackage()->IsDirty();
+    TextureHandlerSrgb::SetTexturePropertyThroughEditPath(Texture, GET_MEMBER_NAME_CHECKED(UTexture, SRGB),
+        [Texture, bRequestedSrgb]() { Texture->SRGB = bRequestedSrgb; });
+
+    // The engine's read-back is the authority; this catches a forcing rule the list above lacks.
+    const bool bStoredSrgb = Texture->SRGB != 0;
+    if (bStoredSrgb != bRequestedSrgb)
+    {
+        Texture->GetPackage()->SetDirtyFlag(bWasDirty);
+        SendForcedLinear({ TEXT("engine texture settings validation") }, { TEXT("texture.set_compression_settings") });
+        return true;
+    }
+
+    Texture->MarkPackageDirty();
+    TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+    Result->SetBoolField(TEXT("srgb"), bStoredSrgb);
+    Result->SetStringField(TEXT("message"), FString::Printf(TEXT("sRGB set to %s"), bStoredSrgb ? TEXT("true") : TEXT("false")));
+    McpSaveTextureToDisk(Result, Texture, Ctx.GetBool(TEXT("save"), true));
+    AddAssetVerification(Result, Texture);
+    Ctx.SendSuccess(Result);
+    return true;
+}
 REGISTER_RPC_HANDLER("texture.describe", "Texture", "Describe any UTexture subclass using the texture dump JSON shape",
     RPC_PARAMS(RPC_PARAM_REQ("assetPath", "path", "Texture asset path")))
 {

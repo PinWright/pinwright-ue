@@ -278,7 +278,7 @@ Not listed: internal plumbing namespaces, not intended for direct use - `pipelin
 </details>
 
 <details>
-<summary><code>texture</code>: Inspect, transform, and configure texture assets, plus create render targets, procedural patterns (27 operations, Core)</summary>
+<summary><code>texture</code>: Inspect, transform, and configure texture assets, plus create render targets, procedural patterns (28 operations, Core)</summary>
 
 | Operation | What it does |
 | --- | --- |
@@ -304,6 +304,7 @@ Not listed: internal plumbing namespaces, not intended for direct use - `pipelin
 | `texture.resize_texture` | Resize texture |
 | `texture.set_compression_settings` | Set texture compression settings |
 | `texture.set_lod_bias` | Set texture LOD bias |
+| `texture.set_srgb` | Set a texture's sRGB flag: off for linear data (masks, noise, packed channels), on for colour. |
 | `texture.set_streaming_priority` | Set streaming priority |
 | `texture.set_texture_filter` | Set filter |
 | `texture.set_texture_group` | Set texture group |

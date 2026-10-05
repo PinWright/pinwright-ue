@@ -65,6 +65,30 @@ first. Each of these verbs checks its inputs before it creates the output, so a 
 refused on an input leaves no output asset behind to block a retry under the same
 name.
 
+## Linear textures: sRGB off
+
+Masks, noise, packed channels and other data textures must have sRGB off; a material that samples one
+with `SAMPLERTYPE_Masks` refuses to compile while it is on. The noise, gradient, pattern, pixel and
+text creators make sRGB textures (noise and gradient are linear only with `hdr: true`), so turn it off with `texture.set_srgb`
+(`srgb: false`), or set a linear compression: `set_compression_settings` to `TC_Masks`, `TC_Normalmap`,
+`TC_Alpha` or an HDR mode turns sRGB off as well, as the texture editor does. Both verbs return the
+stored `srgb`. Those compression modes and the `ColorLookupTable` texture group keep sRGB off, so
+`srgb: true` on such a texture is refused with `DERIVED_PROPERTY` before anything is written, naming
+every setting that forces it and the verb that changes each.
+
+## Compression and group names
+
+`set_compression_settings` and `set_texture_group` take an exact engine entry name
+(`TextureCompressionSettings` / `TextureGroup`, e.g. `TC_HalfFloat`, `TEXTUREGROUP_CharacterNormalMap`),
+in any case and with the `TC_` / `TEXTUREGROUP_` prefix optional. Entries the texture editor hides
+(`TC_EncodedReflectionCapture`, `TC_LQ`) and any other name are refused with `INVALID_ARGUMENT`
+listing the valid ones. A project texture group takes its enum name (`TEXTUREGROUP_Project01`), not
+the display name set in the ini. Both write through the engine's edit path, so the engine's own
+follow-on settings apply: `TEXTUREGROUP_8BitData` / `16BitData` change compression and turn sRGB
+off, and `ColorLookupTable` turns mips, sRGB and virtual texture streaming off. `set_texture_group` returns the stored
+`textureGroup`, `compressionSettings` and `srgb`. These two verbs and `set_srgb` notify the materials
+that sample the texture, and wait for any texture build still running.
+
 ## See also
 
 - [`asset`](asset.md) for the shared dump sidecar schema and dump-parity live read policy.
