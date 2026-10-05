@@ -48,17 +48,6 @@ namespace
         double ChildTimeoutSeconds = PinWrightRunTests::DefaultIsolatedChildTimeoutSeconds;
     };
 
-    TArray<TSharedPtr<FJsonValue>> MakeStringJsonArray(const TArray<FString>& Values)
-    {
-        TArray<TSharedPtr<FJsonValue>> Out;
-        Out.Reserve(Values.Num());
-        for (const FString& Value : Values)
-        {
-            Out.Add(MakeShared<FJsonValueString>(Value));
-        }
-        return Out;
-    }
-
     bool AddUniqueTrimmedTestName(const FString& Raw, TArray<FString>& Tests)
     {
         FString Name = Raw;
@@ -177,19 +166,6 @@ namespace
         return true;
     }
 
-    TSharedPtr<FJsonObject> MakeRunTestsResult(const TArray<FString>& RequestedTests,
-                                               const TArray<FString>& ResolvedTests,
-                                               const TArray<FString>& MissingTests,
-                                               bool bHasErrors)
-    {
-        TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
-        Result->SetBoolField(TEXT("has_errors"), bHasErrors);
-        Result->SetArrayField(TEXT("requestedTests"), MakeStringJsonArray(RequestedTests));
-        Result->SetArrayField(TEXT("resolvedTests"), MakeStringJsonArray(ResolvedTests));
-        Result->SetArrayField(TEXT("missingTests"), MakeStringJsonArray(MissingTests));
-        return Result;
-    }
-
     enum class ERunTestsByNameState : uint8
     {
         Initializing,
@@ -248,7 +224,7 @@ namespace
                 PinWrightRunTests::RegisterHeldControllerJobCompletionForTests(
                     [Self]()
                     {
-                        TSharedPtr<FJsonObject> Result = MakeRunTestsResult(
+                        TSharedPtr<FJsonObject> Result = PinWrightRunTests::MakeRunTestsResult(
                             Self->RequestedTests,
                             Self->RequestedTests,
                             TArray<FString>(),
@@ -292,7 +268,7 @@ namespace
                 }
                 else if (ElapsedSeconds >= RunTestsReadyTimeoutSeconds)
                 {
-                    TSharedPtr<FJsonObject> Result = MakeRunTestsResult(
+                    TSharedPtr<FJsonObject> Result = PinWrightRunTests::MakeRunTestsResult(
                         RequestedTests, ResolvedTests, MissingTests, /*bHasErrors=*/true);
                     Finish(false, Result, TEXT("AUTOMATION_NOT_READY"));
                     return false;
@@ -301,7 +277,7 @@ namespace
             else if (State == ERunTestsByNameState::WaitingForTests &&
                      ElapsedSeconds >= RunTestsDiscoveryTimeoutSeconds)
             {
-                TSharedPtr<FJsonObject> Result = MakeRunTestsResult(
+                TSharedPtr<FJsonObject> Result = PinWrightRunTests::MakeRunTestsResult(
                     RequestedTests, ResolvedTests, MissingTests, /*bHasErrors=*/true);
                 Finish(false, Result, TEXT("TEST_DISCOVERY_TIMEOUT"));
                 return false;
@@ -351,7 +327,7 @@ namespace
             if (ResolvedTests.IsEmpty())
             {
                 Controller->SetEnabledTests(ResolvedTests);
-                TSharedPtr<FJsonObject> Result = MakeRunTestsResult(
+                TSharedPtr<FJsonObject> Result = PinWrightRunTests::MakeRunTestsResult(
                     RequestedTests, ResolvedTests, MissingTests, /*bHasErrors=*/true);
                 Finish(false, Result, TEXT("NO_TESTS_MATCHED"));
                 return;
@@ -391,7 +367,7 @@ namespace
             }
 
             const bool bHasErrors = Controller->ReportsHaveErrors();
-            TSharedPtr<FJsonObject> Result = MakeRunTestsResult(
+            TSharedPtr<FJsonObject> Result = PinWrightRunTests::MakeRunTestsResult(
                 RequestedTests, ResolvedTests, MissingTests, bHasErrors);
             Finish(!bHasErrors, Result, bHasErrors ? TEXT("TESTS_FAILED") : FString());
         }
@@ -486,9 +462,7 @@ namespace
                 PinWrightRunTests::RegisterHeldControllerJobCompletionForTests(
                     [Self]()
                     {
-                        auto Result = MakeShared<FJsonObject>();
-                        Result->SetBoolField(TEXT("has_errors"), false);
-                        Self->Finish(true, Result, FString());
+                        Self->Finish(true, PinWrightRunTests::MakeFilterRunResult(false), FString());
                     });
                 return;
             }
@@ -531,12 +505,8 @@ namespace
             }
             if (Poll == PinWrightRunTests::EFilterRunPollResult::NeverStarted)
             {
-                auto Result = MakeShared<FJsonObject>();
-                Result->SetBoolField(TEXT("has_errors"), true);
-                Result->SetStringField(TEXT("reason"),
-                    TEXT("The automation controller never started running: the filter matched no tests, ")
-                    TEXT("or worker discovery failed. See LogAutomationCommandLine in the editor log."));
-                Finish(false, Result, TEXT("NO_TESTS_MATCHED"));
+                Finish(false, PinWrightRunTests::MakeFilterRunResult(true, /*bNeverStarted=*/true),
+                    TEXT("NO_TESTS_MATCHED"));
                 return false;
             }
             return true;
@@ -555,9 +525,8 @@ namespace
             }
 
             const bool bHasErrors = Controller->ReportsHaveErrors();
-            auto Result = MakeShared<FJsonObject>();
-            Result->SetBoolField(TEXT("has_errors"), bHasErrors);
-            Finish(!bHasErrors, Result, bHasErrors ? TEXT("TESTS_FAILED") : FString());
+            Finish(!bHasErrors, PinWrightRunTests::MakeFilterRunResult(bHasErrors),
+                bHasErrors ? TEXT("TESTS_FAILED") : FString());
         }
 
         void Finish(bool bSuccess, TSharedPtr<FJsonObject> Result, const FString& Error)
@@ -889,7 +858,7 @@ namespace
 }
 
 // ---- system.run_tests ----
-REGISTER_RPC_HANDLER("system.run_tests", "system", "Run UE automation tests and report pass/fail counts. Long-running; runs as a job. Pass exact test name(s) via test/tests or a broad filter pattern. Set isolateGroups for a fail-closed process boundary per '+'-separated filter group.",
+REGISTER_RPC_HANDLER("system.run_tests", "system", "Run UE automation tests. Long-running; runs as a job. Pass exact test name(s) via test/tests or a broad filter pattern. Every result carries has_errors; exact names add requestedTests, resolvedTests and missingTests, and a filter run that never started adds reason. Neither path reports pass/fail counts (read them from the editor log). Set isolateGroups for a fail-closed process boundary per '+'-separated filter group; only that mode returns counts, per completed group in groups[] (found, started, succeeded, failed, skipped, performed); a timed-out group carries timedOut instead of counts.",
     RPC_PARAMS(
         RPC_PARAM_OPT("filter", "string", "Substring filter applied to test names. Use 'PinWright' / 'EditorTests' to scope to project tests."),
         RPC_PARAM_OPT("test", "string", "Exact name of a single automation test to run. Mutually exclusive with filter."),
@@ -952,7 +921,7 @@ REGISTER_RPC_HANDLER("system.run_tests", "system", "Run UE automation tests and 
         Args.StartedPayload->SetNumberField(
             TEXT("childTimeoutSeconds"), Request.ChildTimeoutSeconds);
         Args.StartedPayload->SetStringField(TEXT("runDirectory"), RunDirectory);
-        Args.StartedPayload->SetArrayField(TEXT("groups"), MakeStringJsonArray(IsolatedGroups));
+        Args.StartedPayload->SetArrayField(TEXT("groups"), PinWrightRunTests::MakeStringJsonArray(IsolatedGroups));
         IsolatedJob = MakeShared<FRunAutomationGroupsIsolatedJob>(
             MoveTemp(IsolatedGroups),
             RunDirectory,
@@ -967,7 +936,7 @@ REGISTER_RPC_HANDLER("system.run_tests", "system", "Run UE automation tests and 
     else if (Request.bUsesExactTests)
     {
         Args.StartedPayload->SetStringField(TEXT("selectionMode"), TEXT("tests"));
-        Args.StartedPayload->SetArrayField(TEXT("requestedTests"), MakeStringJsonArray(Request.Tests));
+        Args.StartedPayload->SetArrayField(TEXT("requestedTests"), PinWrightRunTests::MakeStringJsonArray(Request.Tests));
         TArray<FString> Tests = Request.Tests;
         Args.BindNativeDelegate =
             [Tests = MoveTemp(Tests), TicketIdRef, LeaseGeneration](FJobOnComplete OnComplete) mutable

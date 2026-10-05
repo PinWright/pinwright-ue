@@ -2,6 +2,7 @@
 
 // Unit tests for System domain handlers (SessionsHandler.cpp, SystemControlHandler.cpp)
 #include "Misc/AutomationTest.h"
+#include "Compat/JsonKeyCompat.h"
 #include "Handlers/HandlerContext.h"
 #include "Handlers/HandlerRegistration.h"
 #include "Handlers/ParamSpec.h"
@@ -604,6 +605,53 @@ bool FSystemRunTestsEmptyTestsRejectedTest::RunTest(const FString& Parameters)
     TestTrue(TEXT("Response captured"), Capture.bWasCalled);
     TestFalse(TEXT("Request rejected"), Capture.bSuccess);
     TestEqual(TEXT("Error code"), Capture.ErrorCode, FString(TEXT("INVALID_PARAMS")));
+    return true;
+}
+
+// The registration summary is the generated wiki line an agent reads to learn the payload.
+// It promised "pass/fail counts" that only isolateGroups returns. Pins the exact key set of
+// the exact-name and filter results, and requires the summary to name every one of them, so
+// a key gained or lost on either path fails here until the summary is updated with it.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSystemRunTestsSummaryNamesResultKeysTest,
+    "PinWright.system.run_tests.SummaryNamesResultKeys",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FSystemRunTestsSummaryNamesResultKeysTest::RunTest(const FString& Parameters)
+{
+    const FString Summary = GetRegisteredSummary(TEXT("system.run_tests"));
+    if (!TestFalse(TEXT("system.run_tests summary registered"), Summary.IsEmpty()))
+    {
+        return false;
+    }
+
+    auto CheckKeys = [this, &Summary](const TCHAR* Path, const TSharedPtr<FJsonObject>& Result,
+                                      TArray<FString> Expected)
+    {
+        TArray<FString> Actual;
+        for (const auto& Pair : Result->Values)
+        {
+            Actual.Add(EARGCompat::JsonKeyToString(Pair.Key));
+        }
+        Actual.Sort();
+        Expected.Sort();
+        TestEqual(FString::Printf(TEXT("%s result keys"), Path),
+            FString::Join(Actual, TEXT(",")), FString::Join(Expected, TEXT(",")));
+        for (const FString& Key : Actual)
+        {
+            TestTrue(FString::Printf(TEXT("summary names %s key '%s'"), Path, *Key),
+                Summary.Contains(Key, ESearchCase::CaseSensitive));
+        }
+    };
+
+    CheckKeys(TEXT("exact-name"),
+        PinWrightRunTests::MakeRunTestsResult({TEXT("A")}, {TEXT("A")}, {}, false),
+        {TEXT("has_errors"), TEXT("requestedTests"), TEXT("resolvedTests"), TEXT("missingTests")});
+    CheckKeys(TEXT("filter"), PinWrightRunTests::MakeFilterRunResult(false), {TEXT("has_errors")});
+    CheckKeys(TEXT("never-started filter"), PinWrightRunTests::MakeFilterRunResult(true, true),
+        {TEXT("has_errors"), TEXT("reason")});
+
+    TestFalse(TEXT("summary no longer promises counts on every path"),
+        Summary.Contains(TEXT("report pass/fail counts")));
     return true;
 }
 

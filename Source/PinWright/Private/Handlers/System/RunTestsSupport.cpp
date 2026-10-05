@@ -2,6 +2,7 @@
 
 #include "Handlers/System/RunTestsSupport.h"
 
+#include "Dom/JsonValue.h"
 #include "HAL/PlatformProcess.h"
 #include "Misc/Paths.h"
 #include "Misc/ScopeLock.h"
@@ -400,5 +401,42 @@ namespace PinWrightRunTests
             *GroupFilter,
             *PrivateMonitorPath,
             *GroupLogPath);
+    }
+
+    TArray<TSharedPtr<FJsonValue>> MakeStringJsonArray(const TArray<FString>& Values)
+    {
+        TArray<TSharedPtr<FJsonValue>> Out;
+        Out.Reserve(Values.Num());
+        for (const FString& Value : Values)
+        {
+            Out.Add(MakeShared<FJsonValueString>(Value));
+        }
+        return Out;
+    }
+
+    TSharedPtr<FJsonObject> MakeRunTestsResult(const TArray<FString>& RequestedTests,
+                                               const TArray<FString>& ResolvedTests,
+                                               const TArray<FString>& MissingTests,
+                                               bool bHasErrors)
+    {
+        TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+        Result->SetBoolField(TEXT("has_errors"), bHasErrors);
+        Result->SetArrayField(TEXT("requestedTests"), PinWrightRunTests::MakeStringJsonArray(RequestedTests));
+        Result->SetArrayField(TEXT("resolvedTests"), PinWrightRunTests::MakeStringJsonArray(ResolvedTests));
+        Result->SetArrayField(TEXT("missingTests"), PinWrightRunTests::MakeStringJsonArray(MissingTests));
+        return Result;
+    }
+
+    TSharedPtr<FJsonObject> MakeFilterRunResult(bool bHasErrors, bool bNeverStarted)
+    {
+        TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+        Result->SetBoolField(TEXT("has_errors"), bHasErrors);
+        if (bNeverStarted)
+        {
+            Result->SetStringField(TEXT("reason"),
+                TEXT("The automation controller never started running: the filter matched no tests, ")
+                TEXT("or worker discovery failed. See LogAutomationCommandLine in the editor log."));
+        }
+        return Result;
     }
 }

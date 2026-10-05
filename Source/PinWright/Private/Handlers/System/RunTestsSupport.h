@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "HAL/CriticalSection.h"
+#include "Dom/JsonObject.h"
 
 namespace PinWrightRunTests
 {
@@ -120,4 +121,15 @@ namespace PinWrightRunTests
         const FString& ProjectPath,
         const FString& GroupFilter,
         const FString& LogPath);
+
+    // Terminal results of the exact-name and filter paths. Their keys are named in the
+    // system.run_tests registration summary; PinWright.system.run_tests.SummaryNamesResultKeys
+    // pins the two together.
+    TArray<TSharedPtr<FJsonValue>> MakeStringJsonArray(const TArray<FString>& Values);
+    TSharedPtr<FJsonObject> MakeRunTestsResult(const TArray<FString>& RequestedTests,
+                                               const TArray<FString>& ResolvedTests,
+                                               const TArray<FString>& MissingTests,
+                                               bool bHasErrors);
+    // bNeverStarted adds `reason` (the filter matched nothing or worker discovery failed).
+    TSharedPtr<FJsonObject> MakeFilterRunResult(bool bHasErrors, bool bNeverStarted = false);
 }
