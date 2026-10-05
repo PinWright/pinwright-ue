@@ -344,5 +344,15 @@ bool FAGIRPinBindingsPropertyBindingRoundTripTest::RunTest(const FString& Parame
             *ExpectedBinding, *DecompileResult.AGIRText),
         DecompileResult.AGIRText.Contains(ExpectedBinding, ESearchCase::CaseSensitive));
 
+    // #364: the bound Alpha compiles from the binding, so a static field write is refused rather than
+    // reported as applied. Counterfactual: drop the IsPinExposedAndBound check in
+    // AnimGraphConstructionUtilsLocal::CheckScalarFieldPinUnlinked and this write returns ''.
+    TestTrue(TEXT("precondition: Alpha pin is exposed and bound"),
+        TargetApply->IsPinExposedAndBound(TEXT("Alpha"), EGPD_Input));
+    const FString BoundWriteError = AnimGraphConstructionUtils::WriteAnimNodeFieldByName(
+        TargetApply, FName(TEXT("Alpha")), TEXT("0.5"));
+    TestTrue(FString::Printf(TEXT("static write to the bound Alpha is refused ('%s')"), *BoundWriteError),
+        BoundWriteError.Contains(TEXT("bound")));
+
     return true;
 }

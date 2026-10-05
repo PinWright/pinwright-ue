@@ -70,6 +70,20 @@
   a `pawn` trace now shows what a walking character would collide with, which a `visibility`
   probe cannot. The unknown-channel refusal keeps its error code, and its message now lists this
   project's channels instead of the fixed four.
+- Fixed: `animation.authoring.set_anim_graph_node_value` and `add_graph_node` `properties` now write a
+  runtime `FAnimNode_*` field's visible input pin as well as the node struct (array fields: each
+  `<Field>_<Index>` pin). The anim compiler takes an unlinked exposed pin's default over the struct, so
+  a write to a pin-shown field such as TwoBoneIK `Alpha` / `EffectorLocation` or LayeredBoneBlend
+  `BlendWeights` used to read back on the node and then compile to the old pin value. AGIR
+  (`anim.compile_agir`) reflected field writes go through the same path and are fixed too.
+- Changed: those same writers (plus AGIR reflected field writes and `bind_player_asset` `options`) now
+  refuse a scalar field whose input pin is linked or property-access bound, because the compiled node
+  reads the link and ignores a static value. For an array field, the linked or bound element pins
+  (`<Field>_<Index>`) are skipped and the unlinked elements are still written. The writers also refuse
+  a value the field's pin rejects, and then leave the struct and its pins unchanged. Both cases used to
+  report success. `set_anim_graph_node_value` returns `PROPERTY_SET_FAILED` naming the pin,
+  `add_graph_node` lists the key in `propertiesFailed`, `bind_player_asset` adds a `warnings[]` entry,
+  and AGIR reports an `AGIR_FIELD_WRITE` warning.
 - Added: `spatial.ground_instances` takes `maxLift` and `maxSink` (cm, `>= 0`, optional). An
   instance whose solved move lifts it further than `maxLift` or sinks it further than `maxSink` is
   refused, not clamped: it stays where it was, counts in `failed`, and its row reports

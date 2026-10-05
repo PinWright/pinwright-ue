@@ -138,21 +138,37 @@ namespace AnimGraphConstructionUtils
     // connection was made. Either side may be any UEdGraphNode (anim graph nodes or schema-internal nodes).
     PINWRIGHT_API bool WirePoseLink(UEdGraphNode* UpstreamNode, FName UpstreamPinName, UEdGraphNode* DownstreamNode, FName DownstreamPinName);
 
-    // Writes a single field on a UAnimGraphNode_Base's runtime FAnimNode_* struct via reflection.
-    // Returns an empty string on success; otherwise an error message describing the failure.
+    // Writes a single field on a UAnimGraphNode_Base's runtime FAnimNode_* struct via reflection,
+    // then syncs the field's exposed input pin (SyncAnimNodeFieldPinDefault). Refuses, before any
+    // write, a scalar field whose input pin is linked or property-access bound (the compiled node
+    // reads the link); an array field's linked/bound element pins are skipped instead. A value a pin
+    // refuses leaves the struct and pins unchanged. Returns an empty string on success; otherwise an
+    // error message describing the failure.
     FString WriteAnimNodeFieldByName(UAnimGraphNode_Base* Node, FName FieldName, const FString& ValueAsText);
 
     // Validates a reflected field using the same resolver, token unwrapping, and ImportText path
     // as WriteAnimNodeFieldByName, but against a scratch copy of the current value. The node is
-    // not mutated. Returns an empty string on success; otherwise the same import/resolve error.
+    // not mutated. Returns an empty string on success; otherwise the same import/resolve/linked-pin error.
     FString ValidateAnimNodeFieldByName(UAnimGraphNode_Base* Node, FName FieldName, const FString& ValueAsText);
 
-    // Applies a JSON value to a single field on a UAnimGraphNode_Base's runtime FAnimNode_* struct.
+    // Applies a JSON value to a single field on a UAnimGraphNode_Base's runtime FAnimNode_* struct,
+    // then syncs the field's exposed input pin (SyncAnimNodeFieldPinDefault). Same linked/bound-pin
+    // refusal as WriteAnimNodeFieldByName.
     PINWRIGHT_API bool ApplyJsonValueToAnimNodeFieldByName(
         UAnimGraphNode_Base* Node,
         FName FieldName,
         const TSharedPtr<FJsonValue>& Value,
         FString& OutError);
+
+    // A field with a visible input pin (PinShownByDefault or exposed) is owned by that pin: the anim
+    // compiler pushes an unlinked exposed pin's default over the struct value, and ReconstructNode
+    // keeps the old pin default. Pushes the struct value of FieldName into its pin (array fields:
+    // each existing `<Field>_<Index>` pin), then reads the pin back into the struct so the struct
+    // matches what the compiled node gets. No-op for a field without a pin or an unknown field.
+    // Linked or bound pins are skipped (the compiler reads their link). Returns an error naming the
+    // pin when a pin refused the value, after restoring every pin it wrote (the struct then holds
+    // the refused pin's kept value; the writers restore the whole field); empty otherwise.
+    FString SyncAnimNodeFieldPinDefault(UAnimGraphNode_Base* Node, FName FieldName);
 
     // Toggles "Expose as Pin" on an optional property of an AnimGraph node by walking
     // ShowPinForProperties for the matching PropertyName and delegating to the engine's

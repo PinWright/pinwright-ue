@@ -159,13 +159,13 @@ Discoverability caveat: a fresh state machine's rule subgraph is not surfaced by
 
 ### animation.authoring.set_anim_graph_node_value
 
-Sets a static default on an anim-graph node identified by the graph path returned from `add_blend_node`, `add_slot_node`, `add_layered_blend_per_bone`, and similar calls. Runtime values come from anim-BP variables (`call("blueprint.set_default", ...)`). For bulk edits, prefer `call("anim.compile_agir")` with AGIR text.
+Sets a static default on an anim-graph node identified by the graph path returned from `add_blend_node`, `add_slot_node`, `add_layered_blend_per_bone`, and similar calls. Runtime values come from anim-BP variables (`call("blueprint.set_default", ...)`). For bulk edits, prefer `call("anim.compile_agir")` with AGIR text. A runtime `FAnimNode_*` field that has a visible input pin (`Alpha`, `EffectorLocation`, an exposed `PlayRate`; array fields per `<Field>_<Index>` pin) is written to that pin's default too, because the anim compiler takes an unlinked exposed pin's default over the struct value. A scalar field whose pin is linked or property-access bound is refused with `PROPERTY_SET_FAILED` naming the pin (the compiled node reads the link, not a static value; break the link first), as is a value the pin itself rejects. For an array field, the linked or bound element pins are skipped and the other elements are written.
 
 ### animation.authoring.add_graph_node
 
 Naming note: `add_graph_node` has no title/name param; a player title comes from its bound asset (see **Naming and resolving AnimGraph nodes**). Pass `bindAsset` to give each player a distinct, resolvable title up front.
 
-**Property writes.** Generic property dictionaries must cover both layers: editable `UAnimGraphNode_*` UObject properties and runtime `FAnimNode_*` fields reached through `UAnimGraphNode_Base::GetFNodeProperty()` / `GetFNode()`. Asset-player fields often live only in the runtime struct; `SequencePlayer` `PlayRate` is an `FAnimNode_SequencePlayer` field, so a UObject-only reflection write can report success without changing generated behavior.
+**Property writes.** Generic property dictionaries must cover both layers: editable `UAnimGraphNode_*` UObject properties and runtime `FAnimNode_*` fields reached through `UAnimGraphNode_Base::GetFNodeProperty()` / `GetFNode()`. Asset-player fields often live only in the runtime struct; `SequencePlayer` `PlayRate` is an `FAnimNode_SequencePlayer` field, so a UObject-only reflection write can report success without changing generated behavior. Runtime-field writes also update the field's visible input pin, and a linked or bound scalar pin or a rejected value lands the key in `propertiesFailed`, as `set_anim_graph_node_value` refuses it.
 
 ### animation.authoring.set_anim_graph_pin_exposed
 

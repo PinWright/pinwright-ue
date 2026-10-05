@@ -40,6 +40,49 @@
 #include "UObject/UnrealType.h"
 #include "Utils/PropertyUtils.h"
 
+// File-local helpers (named namespace: Unity merges this TU with others).
+namespace AnimGraphConstructionUtilsLocal
+{
+    // A scalar field whose input pin is linked or property-access bound compiles from that link or
+    // binding, never from a static value (AnimBlueprintCompiler.cpp:476-491), so a write to it would
+    // report success and change nothing: refuse it up front. Array fields are not refused: the
+    // compiler skips only the linked/bound element pins (:427-441), so their unlinked elements stay
+    // writable and SyncAnimNodeFieldPinDefault leaves the driven element pins alone.
+    FString CheckScalarFieldPinUnlinked(const FProperty* FieldProperty, const UAnimGraphNode_Base* Node, FName FieldName)
+    {
+        if (CastField<FArrayProperty>(FieldProperty))
+        {
+            return FString();
+        }
+        const FString PinName = FieldName.ToString();
+        const bool bLinked = Node->IsPinExposedAndLinked(PinName, EGPD_Input);
+        if (bLinked || Node->IsPinExposedAndBound(PinName, EGPD_Input))
+        {
+            return FString::Printf(
+                TEXT("Field '%s' is driven by its %s input pin, so the compiled node ignores a static value; %s the pin first"),
+                *PinName, bLinked ? TEXT("linked") : TEXT("property-access bound"),
+                bLinked ? TEXT("break the link to") : TEXT("remove the binding from"));
+        }
+        return FString();
+    }
+
+    // Pre-write copy of one field, so a write the field's pin refuses leaves the struct unchanged.
+    struct FScopedFieldSnapshot
+    {
+        FProperty* Property;
+        void* Data;
+        void* Copy;
+
+        FScopedFieldSnapshot(FProperty* InProperty, void* InData)
+            : Property(InProperty), Data(InData), Copy(InProperty->AllocateAndInitializeValue())
+        {
+            Property->CopyCompleteValue(Copy, Data);
+        }
+        ~FScopedFieldSnapshot() { Property->DestroyAndFreeValue(Copy); }
+        void Restore() const { Property->CopyCompleteValue(Data, Copy); }
+    };
+}
+
 namespace AnimGraphConstructionUtils
 {
 
@@ -516,7 +559,93 @@ FString WriteAnimNodeFieldByName(UAnimGraphNode_Base* Node, FName FieldName, con
         return ResolveError;
     }
 
-    return ImportAnimNodeFieldText(Resolved, Node, Resolved.FieldData, FieldName, ValueAsText);
+    const FString LinkError = AnimGraphConstructionUtilsLocal::CheckScalarFieldPinUnlinked(Resolved.FieldProperty, Node, FieldName);
+    if (!LinkError.IsEmpty())
+    {
+        return LinkError;
+    }
+
+    AnimGraphConstructionUtilsLocal::FScopedFieldSnapshot Snapshot(Resolved.FieldProperty, Resolved.FieldData);
+    const FString ImportError = ImportAnimNodeFieldText(Resolved, Node, Resolved.FieldData, FieldName, ValueAsText);
+    if (!ImportError.IsEmpty())
+    {
+        return ImportError;
+    }
+    const FString SyncError = SyncAnimNodeFieldPinDefault(Node, FieldName);
+    if (!SyncError.IsEmpty())
+    {
+        Snapshot.Restore();
+    }
+    return SyncError;
+}
+
+FString SyncAnimNodeFieldPinDefault(UAnimGraphNode_Base* Node, FName FieldName)
+{
+    FResolvedAnimNodeField Resolved;
+    if (!ResolveAnimNodeFieldByName(Node, FieldName, Resolved).IsEmpty())
+    {
+        return FString();
+    }
+
+    // Mirrors AnimBlueprintCompiler.cpp's exposed-pin push: an array field's pins are named
+    // `<Field>_<Index>`, any other field's pin is named after the field. A linked or bound pin is
+    // left alone: the compiler reads its link, not its default (callers refuse that case for scalar
+    // fields; an array keeps its unlinked elements writable). bMarkAsModified=false: every caller
+    // marks the blueprint structurally modified itself.
+    struct FPinDefault { UEdGraphPin* Pin; FString Value; TObjectPtr<UObject> Object; FText Text; };
+    TArray<FPinDefault> Previous;
+    FString Error;
+    auto SyncPin = [Node, &Error, &Previous](FProperty* Property, uint8* Data, FName PinName)
+    {
+        UEdGraphPin* Pin = Node->FindPin(PinName, EGPD_Input);
+        if (!Pin || !Pin->GetSchema() || Node->IsPinExposedAndLinked(PinName.ToString(), EGPD_Input)
+            || Node->IsPinExposedAndBound(PinName.ToString(), EGPD_Input))
+        {
+            return;
+        }
+        Previous.Add({Pin, Pin->DefaultValue, Pin->DefaultObject, Pin->DefaultTextValue});
+        FString Value;
+        FBlueprintEditorUtils::PropertyValueToString_Direct(Property, Data, Value);
+        Pin->GetSchema()->TrySetDefaultValue(*Pin, Value, /*bMarkAsModified=*/false);
+        FBlueprintEditorUtils::PropertyValueFromString_Direct(Property, Pin->GetDefaultAsString(), Data);
+
+        // TrySetDefaultValue silently keeps the old default when the pin refuses the value; the
+        // readback above then restored that old value, which is what the compiled node gets.
+        FString Kept;
+        FBlueprintEditorUtils::PropertyValueToString_Direct(Property, Data, Kept);
+        if (Kept != Value && Error.IsEmpty())
+        {
+            Error = FString::Printf(TEXT("Input pin '%s' refused default '%s' (it keeps '%s'); nothing was written"),
+                *PinName.ToString(), *Value, *Kept);
+        }
+    };
+
+    if (FArrayProperty* ArrayProperty = CastField<FArrayProperty>(Resolved.FieldProperty))
+    {
+        FScriptArrayHelper ArrayHelper(ArrayProperty, Resolved.FieldData);
+        for (int32 Index = 0; Index < ArrayHelper.Num(); ++Index)
+        {
+            SyncPin(ArrayProperty->Inner, ArrayHelper.GetRawPtr(Index),
+                FName(*FString::Printf(TEXT("%s_%d"), *FieldName.ToString(), Index)));
+        }
+    }
+    else
+    {
+        SyncPin(Resolved.FieldProperty, static_cast<uint8*>(Resolved.FieldData), FieldName);
+    }
+
+    // All or nothing: a refused element rolls back the pins already written (the writers restore
+    // the struct field from their pre-write copy).
+    if (!Error.IsEmpty())
+    {
+        for (const FPinDefault& Saved : Previous)
+        {
+            Saved.Pin->DefaultValue = Saved.Value;
+            Saved.Pin->DefaultObject = Saved.Object;
+            Saved.Pin->DefaultTextValue = Saved.Text;
+        }
+    }
+    return Error;
 }
 
 FString ValidateAnimNodeFieldByName(UAnimGraphNode_Base* Node, FName FieldName, const FString& ValueAsText)
@@ -526,6 +655,12 @@ FString ValidateAnimNodeFieldByName(UAnimGraphNode_Base* Node, FName FieldName, 
     if (!ResolveError.IsEmpty())
     {
         return ResolveError;
+    }
+
+    const FString LinkError = AnimGraphConstructionUtilsLocal::CheckScalarFieldPinUnlinked(Resolved.FieldProperty, Node, FieldName);
+    if (!LinkError.IsEmpty())
+    {
+        return LinkError;
     }
 
     void* Scratch = Resolved.FieldProperty->AllocateAndInitializeValue();
@@ -555,11 +690,24 @@ bool ApplyJsonValueToAnimNodeFieldByName(
         return false;
     }
 
+    OutError = AnimGraphConstructionUtilsLocal::CheckScalarFieldPinUnlinked(Resolved.FieldProperty, Node, FieldName);
+    if (!OutError.IsEmpty())
+    {
+        return false;
+    }
+
+    AnimGraphConstructionUtilsLocal::FScopedFieldSnapshot Snapshot(Resolved.FieldProperty, Resolved.FieldData);
     if (!ApplyJsonValueToProperty(Resolved.NodeData, Resolved.FieldProperty, Value, OutError))
     {
         return false;
     }
 
+    OutError = SyncAnimNodeFieldPinDefault(Node, FieldName);
+    if (!OutError.IsEmpty())
+    {
+        Snapshot.Restore();
+        return false;
+    }
     return true;
 }
 
