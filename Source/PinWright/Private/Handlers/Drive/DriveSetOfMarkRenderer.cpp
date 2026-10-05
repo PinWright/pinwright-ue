@@ -8,13 +8,9 @@
 #include "Engine/Engine.h"
 #include "Engine/GameViewportClient.h"
 #include "Framework/Application/SlateApplication.h"
-#include "IImageWrapper.h"
-#include "IImageWrapperModule.h"
-#include "ImageUtils.h"
 #include "Math/UnrealMathUtility.h"
 #include "Misc/Base64.h"
 #include "Misc/FileHelper.h"
-#include "Modules/ModuleManager.h"
 #include "UnrealClient.h"
 #include "Widgets/SViewport.h"
 
@@ -185,11 +181,9 @@ bool FDriveSetOfMarkRenderer::CaptureAnnotated(const TArray<FDriveElement>& Elem
     }
 
     // Force alpha opaque before the marks are painted; contract in ScreenshotUtils.h. The
-    // FViewport::ReadPixels branch above carries alpha 0 over every scene pixel, and while the
-    // primary ThumbnailCompressImageArray encode below happens to drop alpha (it emits JPEG for
-    // any image >= 8x8), the IImageWrapper PNG fallback right after it encodes BGRA verbatim and
-    // would emit a near-fully-transparent frame (B-horizontal-orthographic-views-render-no-geometry).
-    // Stamping here keeps both encoders honest rather than relying on the first one's format.
+    // FViewport::ReadPixels branch above carries alpha 0 over every scene pixel, and the PNG
+    // encode below keeps BGRA verbatim, so without this stamp it would emit a near-fully-
+    // transparent frame (B-horizontal-orthographic-views-render-no-geometry).
     PinWrightScreenshotUtils::ForceOpaqueAlpha(Bitmap);
 
     // 2) Filter to interactables, then lay out and paint the marks.
@@ -209,25 +203,11 @@ bool FDriveSetOfMarkRenderer::CaptureAnnotated(const TArray<FDriveElement>& Elem
 
     DrawMarks(Bitmap, Width, Height, Layout);
 
-    // 3) PNG-encode the annotated bitmap to a byte buffer (no disk write). Mirrors
-    // ScreenshotUtils: try the thumbnail compressor first, then the ImageWrapper
-    // BGRA path (FColor is laid out B,G,R,A so the raw buffer feeds in directly).
+    // 3) PNG-encode the annotated bitmap to a byte buffer (no disk write) through the shared
+    // encoder, so the bytes match the image/png mime stamped below. FImageUtils::
+    // ThumbnailCompressImageArray must not be used here: it emits JPEG for any image >= 8x8.
     TArray<uint8> PngData;
-    FImageUtils::ThumbnailCompressImageArray(Width, Height, Bitmap, PngData);
-    if (PngData.Num() == 0)
-    {
-        IImageWrapperModule& ImageWrapperModule =
-            FModuleManager::LoadModuleChecked<IImageWrapperModule>(FName("ImageWrapper"));
-        TSharedPtr<IImageWrapper> ImageWrapper =
-            ImageWrapperModule.CreateImageWrapper(EImageFormat::PNG);
-        if (ImageWrapper.IsValid() &&
-            ImageWrapper->SetRaw(Bitmap.GetData(), Bitmap.Num() * sizeof(FColor),
-                Width, Height, ERGBFormat::BGRA, 8))
-        {
-            PngData = ImageWrapper->GetCompressed(100);
-        }
-    }
-    if (PngData.Num() == 0)
+    if (!PinWrightScreenshotUtils::EncodeBitmapToPng(Width, Height, Bitmap, PngData))
     {
         OutErrorCode = TEXT("ENCODE_FAILED");
         return false;

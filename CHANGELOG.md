@@ -12,6 +12,11 @@
   `INVALID_TARGET_KIND`, and echo each removed instance's transform in `removedInstances[]`. That
   array can be passed straight back to `add_instances`, and `editor.undo` reverts either call when
   the response reports `undoable: true`. Both report the level as marked dirty, not saved.
+- Fixed: the Set-of-Mark `screenshot` from `drive.observe`, and from the drive action and wait
+  verbs called with `observe: "list+screenshot"`, on the game, web and editor-chrome surfaces
+  (inline base64 or the `Saved/Screenshots/Drive` file) is now a real lossless PNG. It used to be JPEG bytes reported as
+  `image/png`, because it was encoded through the engine thumbnail compressor, which emits JPEG for
+  any image of 8x8 or larger. Callers that sniffed the bytes now get PNG, and the payload is larger.
 - Fixed: texture verbs that write a new asset (`create_noise_texture`, `create_gradient_texture`,
   `create_pattern_texture`, `create_normal_from_height`, `resize_texture`, `channel_pack`,
   `combine_textures`, and `invert` / `desaturate` / `adjust_curves` with `inPlace: false`) now

@@ -80,6 +80,11 @@ namespace DriveObserveCompositeTestHelpers
         IImageWrapperModule& ImageWrapperModule =
             FModuleManager::LoadModuleChecked<IImageWrapperModule>("ImageWrapper");
         const EImageFormat Format = ImageWrapperModule.DetectImageFormat(Encoded.GetData(), Encoded.Num());
+        // B-drive-setofmark-writes-jpeg: the bytes must be the PNG the mime declares. The old
+        // ThumbnailCompressImageArray encode emitted JPEG for any frame >= 8x8.
+        Test.TestEqual(TEXT("mime is image/png"), Shot.Mime, FString(TEXT("image/png")));
+        Test.TestTrue(FString::Printf(TEXT("encoded bytes are PNG (detected format=%d)"), static_cast<int32>(Format)),
+            Format == EImageFormat::PNG);
         TSharedPtr<IImageWrapper> ImageWrapper = ImageWrapperModule.CreateImageWrapper(Format);
         TArray<uint8> Raw;
         const bool bDecoded = ImageWrapper.IsValid()
@@ -98,15 +103,14 @@ namespace DriveObserveCompositeTestHelpers
             return;
         }
 
-        // Channel thresholds, not exact values: the encoder may be lossy.
+        // Channel thresholds, not exact values, to absorb rounding.
         auto Pixel = [&Raw, W](int32 X, int32 Y) -> FColor
         {
             const int32 Idx = (Y * W + X) * 4;
             return FColor(Raw[Idx + 2], Raw[Idx + 1], Raw[Idx + 0], 255);
         };
         auto IsGreen = [&Pixel](int32 X, int32 Y) { const FColor C = Pixel(X, Y); return C.G > 180 && C.R < 80 && C.B < 80; };
-        // Over the green overlay only mark ink can be red-dominant; the Set-of-Mark encode is lossy
-        // with chroma subsampling, so a 2 px red line on green is not saturated red any more.
+        // Over the green overlay only mark ink can be red-dominant.
         auto IsRed = [&Pixel](int32 X, int32 Y) { const FColor C = Pixel(X, Y); return C.R > 100 && C.R > C.G; };
 
         // (a) UMG in the frame: sample well away from the mark.
@@ -122,7 +126,7 @@ namespace DriveObserveCompositeTestHelpers
             GreenSamples, Samples.Num(), *Pixel(W / 2, H / 2).ToString()), GreenSamples >= 4);
 
         // (b) The outline's left edge crosses the middle of the box at local x=100..101, below the
-        // badge, so only the outline is red there. +-3 px for rounding and encoder bleed.
+        // badge, so only the outline is red there. +-3 px for rounding.
         const int32 EdgeY = LocalY + BoxH / 2;
         bool bRedAtLocalEdge = false;
         for (int32 X = LocalX - 3; X <= LocalX + 4; ++X)
