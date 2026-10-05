@@ -702,13 +702,12 @@ REGISTER_RPC_HANDLER("editor.set_game_view", "editor", "Toggle 'Game View' in th
     // when neither the current nor the saved flags already claim to be the game set
     // (EditorViewportClient.cpp:7229-7240); otherwise it reuses a saved set that can carry
     // Splines on. A caller reading `gameViewEnabled: true` alone would have no way to know.
-    Resp->SetStringField(TEXT("overlayWarning"),
+    Resp->SetStringField(TEXT("overlayWarning"), FString::Printf(
         TEXT("Game view is on but EngineShowFlags.Splines is still set, so spline components "
              "(water bodies, landscape splines, any USplineComponent with bDrawDebug) still draw "
              "into this viewport. A line running along a river in a capture is that overlay, not "
-             "foam. Toggle game view off and on again to force a fresh game flag set, or clear "
-             "the Splines show flag on the viewport, before treating the frame as shipped "
-             "geometry."));
+             "foam. %s"),
+        PinWrightGameViewOverlayRemedy()));
   }
 
   Ctx.SendSuccess(Resp);

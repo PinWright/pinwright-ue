@@ -1768,6 +1768,19 @@ TArray<FForcedShowFlagOverride> SurveyForcedShowFlagOverrides()
     return MoveTemp(Sink.Found);
 }
 
+void ApplyForcedShowFlagOverrides(FEngineShowFlags& Flags,
+    const TArray<FForcedShowFlagOverride>& Overrides)
+{
+    for (const FForcedShowFlagOverride& Override : Overrides)
+    {
+        const int32 Index = FEngineShowFlags::FindIndexByName(*Override.Name);
+        if (Index != INDEX_NONE && (Override.Value == 0 || Override.Value == 1))
+        {
+            Flags.SetSingleFlag(static_cast<uint32>(Index), Override.Value == 1);
+        }
+    }
+}
+
 FScopedCaptureProjectionAspect::FScopedCaptureProjectionAspect(
     FEditorViewportClient& InClient, int32 Width, int32 Height)
     : Client(InClient)
@@ -2536,7 +2549,10 @@ bool CaptureEditorViewportToPng(
     // overlays, because SetGameView can reuse a saved flag set that still carries Splines. This is
     // the read that puts the spline line into the RESPONSE instead of leaving it only in the
     // pixels, where it has twice nearly been reported as authored map content.
-    OutCapture.OverlayShowFlags = PinWrightReadGameViewOverlayFlags(ViewportClient.EngineShowFlags);
+    // Through the forced cvars surveyed above, so the report matches what is drawn.
+    FEngineShowFlags DrawnShowFlags = ViewportClient.EngineShowFlags;
+    ApplyForcedShowFlagOverrides(DrawnShowFlags, OutCapture.ForcedShowFlags);
+    OutCapture.OverlayShowFlags = PinWrightReadGameViewOverlayFlags(DrawnShowFlags);
     OutCapture.bOverlayShowFlagsMeasured = true;
 
     // ---- landscape grass, settled against the pose these pixels will show ----
@@ -3744,10 +3760,9 @@ TSharedPtr<FJsonObject> MakeViewportInfoObject(const FViewportCaptureOutput& Cap
                      "were still set: %s. Editor overlays are therefore IN this frame. The one "
                      "that reads as content: `splines` draws a line along every water body and "
                      "landscape spline -- a white dashed line down each bank of a river is that "
-                     "overlay, not foam and not authored geometry. Toggle editor.set_game_view "
-                     "off and on again to force a fresh game flag set, or clear the flag on the "
-                     "viewport, and re-shoot before reading these pixels as shipped content."),
-                *VisibleOverlays));
+                     "overlay, not foam and not authored geometry. Re-shoot before reading these "
+                     "pixels as shipped content. %s"),
+                *VisibleOverlays, PinWrightGameViewOverlayRemedy()));
         }
         Viewport->SetObjectField(TEXT("overlayShowFlags"), Overlays);
     }

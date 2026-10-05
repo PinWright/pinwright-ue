@@ -206,8 +206,9 @@ the axis gizmo, grid, selection outlines, spline handles, and component visualiz
 reports the **measured** show-flag state.
 
 It is **per-viewport state the verb does not restore**; use returned `previous.gameViewEnabled` to
-put it back. In the measured build it did **not** clear `overlayShowFlags.billboardSprites`, so
-light-bulb and arrow icons remained after `gameViewEnabled: true`. Read that field, not the toggle.
+put it back. Icons and other editor-only sprites are hidden by the `Editor` show flag, reported as
+`overlayShowFlags.editor`; read that field, not the toggle. The `BillboardSprites` flag stays on in
+the game set too, so it says nothing about game view and is not reported.
 
 A per-capture `hideEditorSprites` boolean is the scoped alternative: it clears
 `EngineShowFlags.BillboardSprites` and restores it. Level-viewport verbs accepting it are

@@ -132,11 +132,16 @@ bool FSetGameViewReportsMeasuredOverlayFlagsTest::RunTest(const FString& Paramet
     TestTrue(TEXT("overlayShowFlags.splines equals the measured show flag"),
         bReportedSplines == (Client->EngineShowFlags.Splines != 0));
 
-    const bool bReportedSprites = GameViewTestNestedBool(
-        Capture.Result, TEXT("overlayShowFlags"), TEXT("billboardSprites"), bFound);
-    TestTrue(TEXT("overlayShowFlags.billboardSprites is present"), bFound);
-    TestTrue(TEXT("overlayShowFlags.billboardSprites equals the measured show flag"),
-        bReportedSprites == (Client->EngineShowFlags.BillboardSprites != 0));
+    // `editor` is the flag that hides editor-only sprites and icons in game view, so it is the one
+    // that makes the summary's "hides billboards" claim checkable. billboardSprites is not
+    // reported: it reads true in every game flag set and only ever looked like a failed toggle.
+    const bool bReportedEditor = GameViewTestNestedBool(
+        Capture.Result, TEXT("overlayShowFlags"), TEXT("editor"), bFound);
+    TestTrue(TEXT("overlayShowFlags.editor is present"), bFound);
+    TestTrue(TEXT("overlayShowFlags.editor equals the measured show flag"),
+        bReportedEditor == (Client->EngineShowFlags.Editor != 0));
+    GameViewTestNestedBool(Capture.Result, TEXT("overlayShowFlags"), TEXT("billboardSprites"), bFound);
+    TestFalse(TEXT("overlayShowFlags carries no billboardSprites field"), bFound);
 
     // The coverage the verb does NOT have has to be stated, or the response reads as a blanket
     // "the viewport is clean now" claim.
@@ -158,6 +163,11 @@ bool FSetGameViewReportsMeasuredOverlayFlagsTest::RunTest(const FString& Paramet
     {
         TestTrue(TEXT("overlayWarning is present exactly when splines survived game view"),
             bHasWarning == bSplinesStillOn);
+        if (bHasWarning)
+        {
+            TestFalse(TEXT("set_game_view overlayWarning does not prescribe a game-view toggle"),
+                Warning.Contains(TEXT("off and on again")));
+        }
     }
 
     return true;
@@ -275,5 +285,191 @@ bool FCaptureReportsMeasuredOverlayShowFlagsTest::RunTest(const FString& Paramet
         }
     }
 
+    return true;
+}
+
+// ============================================================================
+// Flags that read the same after EVERY game-view enable are not evidence, and must not be
+// published as if they were. BillboardSprites is never cleared for any init mode (UE 5.8
+// Runtime/Engine/Public/ShowFlags.h:389-397), SetGameView forces ModeWidgets on and
+// SelectionOutline and Selection off (Editor/UnrealEd/Private/EditorViewportClient.cpp:7268-7273).
+// Navigation is NOT invariant (the P key toggles it inside game view and SetGameView reuses that
+// stored set), so it stays published and warned about. With BillboardSprites and ModeWidgets in
+// the table, a correctly installed game set described two overlays as "still drawing", so the
+// capture's overlayWarning fired on every game-view frame and billboardSprites:true read as a
+// failed toggle. The flag that does hide editor sprites in game view is Editor.
+//
+// Fails before the fix: the old table published billboardSprites/modeWidgets/selectionOutline,
+// had no `editor`, and described the fresh game set below as "billboardSprites,
+// modeWidgets", so the clean-frame assertions fail.
+// ============================================================================
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGameViewOverlayFlagsOmitInvariantFlagsTest,
+    "PinWright.render.capture.GameViewOverlayFlagsOmitInvariantFlags",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FGameViewOverlayFlagsOmitInvariantFlagsTest::RunTest(const FString& Parameters)
+{
+    using namespace PinWrightRenderCapture;
+
+    // The game set exactly as SetGameView(true) installs it from scratch.
+    FEngineShowFlags GameFlags(ESFIM_Game);
+    GameFlags.SetModeWidgets(true);
+    GameFlags.SetSelection(false);
+    GameFlags.SetSelectionOutline(false);
+    // Preconditions: the engine still holds the invariants this fix is about.
+    TestTrue(TEXT("precondition: BillboardSprites stays on in the game set"),
+        GameFlags.BillboardSprites != 0);
+    TestTrue(TEXT("precondition: the game set has Editor off"), GameFlags.Editor == 0);
+
+    const FGameViewOverlayShowFlags State = PinWrightReadGameViewOverlayFlags(GameFlags);
+    const FString Visible = PinWrightDescribeVisibleGameViewOverlays(State);
+    TestTrue(FString::Printf(TEXT("a freshly installed game set leaves no overlay drawing (got '%s')"),
+        *Visible), Visible.IsEmpty());
+
+    TSharedPtr<FJsonObject> Block = MakeShared<FJsonObject>();
+    PinWrightAddGameViewOverlayFlags(Block, State);
+    for (const TCHAR* Invariant : { TEXT("billboardSprites"), TEXT("selectionOutline"),
+                                    TEXT("modeWidgets") })
+    {
+        TestFalse(FString::Printf(TEXT("overlayShowFlags omits invariant field %s"), Invariant),
+            Block->HasField(Invariant));
+    }
+    TestTrue(TEXT("overlayShowFlags publishes the governing `editor` flag"),
+        Block->HasField(TEXT("editor")));
+
+    // The capture over that frame stays quiet.
+    FViewportCaptureOutput Capture;
+    Capture.bGameView = true;
+    Capture.bOverlayShowFlagsMeasured = true;
+    Capture.OverlayShowFlags = State;
+    const TSharedPtr<FJsonObject> Viewport = MakeViewportInfoObject(Capture);
+    const TSharedPtr<FJsonObject>* Overlays = nullptr;
+    if (Viewport->TryGetObjectField(TEXT("overlayShowFlags"), Overlays) && Overlays)
+    {
+        TestFalse(TEXT("no overlayWarning on a correctly installed game set"),
+            (*Overlays)->HasField(TEXT("overlayWarning")));
+    }
+    else
+    {
+        AddError(TEXT("the capture viewport block carries no overlayShowFlags"));
+    }
+
+    // And Editor left on in game view IS an overlay in the frame: editor-only sprites draw.
+    GameFlags.SetEditor(true);
+    const FString WithEditor =
+        PinWrightDescribeVisibleGameViewOverlays(PinWrightReadGameViewOverlayFlags(GameFlags));
+    TestTrue(TEXT("Editor left on in game view is named as still drawing"),
+        WithEditor.Contains(TEXT("editor")));
+    GameFlags.SetEditor(false);
+
+    // Navigation toggled on inside game view (P key) draws the navmesh, so the capture must warn.
+    GameFlags.SetNavigation(true);
+    FViewportCaptureOutput NavCapture;
+    NavCapture.bGameView = true;
+    NavCapture.bOverlayShowFlagsMeasured = true;
+    NavCapture.OverlayShowFlags = PinWrightReadGameViewOverlayFlags(GameFlags);
+    const TSharedPtr<FJsonObject> NavViewport = MakeViewportInfoObject(NavCapture);
+    const TSharedPtr<FJsonObject>* NavOverlays = nullptr;
+    FString NavWarning;
+    TestTrue(TEXT("Navigation on in the game set raises overlayWarning naming navigation"),
+        NavViewport->TryGetObjectField(TEXT("overlayShowFlags"), NavOverlays) && NavOverlays &&
+        (*NavOverlays)->TryGetStringField(TEXT("overlayWarning"), NavWarning) &&
+        NavWarning.Contains(TEXT("navigation")));
+
+    // The remedy. A game-view toggle restores the stored game set, flag included
+    // (EditorViewportClient.cpp:7236-7245), so the warning must not prescribe one, and must name
+    // a way to clear the flag that works. Fails against the old "Toggle editor.set_game_view off
+    // and on again to force a fresh game flag set" text.
+    TestFalse(TEXT("capture overlayWarning does not prescribe toggling game view off and on"),
+        NavWarning.Contains(TEXT("off and on again")) || NavWarning.Contains(TEXT("fresh game flag set")));
+    TestTrue(TEXT("capture overlayWarning names the ShowFlag cvar remedy"),
+        NavWarning.Contains(TEXT("\"ShowFlag.<Name> 0\"")));
+    // A forced ShowFlag.* cvar is folded into the capture's overlay report, the way the engine
+    // folds it into the drawn view family. Splines on in the client but forced off, Navigation off
+    // in the client but forced on: the frame has the navmesh and no spline lines.
+    {
+        FEngineShowFlags Drawn(ESFIM_Game);
+        Drawn.SetSplines(true);
+        Drawn.SetNavigation(false);
+        TArray<FForcedShowFlagOverride> Overrides;
+        FForcedShowFlagOverride& SplinesOff = Overrides.AddDefaulted_GetRef();
+        SplinesOff.Name = TEXT("Splines");
+        SplinesOff.Value = 0;
+        FForcedShowFlagOverride& NavigationOn = Overrides.AddDefaulted_GetRef();
+        NavigationOn.Name = TEXT("Navigation");
+        NavigationOn.Value = 1;
+        ApplyForcedShowFlagOverrides(Drawn, Overrides);
+
+        FViewportCaptureOutput Forced;
+        Forced.bGameView = true;
+        Forced.bOverlayShowFlagsMeasured = true;
+        Forced.OverlayShowFlags = PinWrightReadGameViewOverlayFlags(Drawn);
+        TestFalse(TEXT("ShowFlag.Splines 0 clears splines in the overlay report"),
+            Forced.OverlayShowFlags.bSplines);
+        TestTrue(TEXT("ShowFlag.Navigation 1 sets navigation in the overlay report"),
+            Forced.OverlayShowFlags.bNavigation);
+        TestTrue(TEXT("with the overrides applied only navigation is still drawing"),
+            PinWrightDescribeVisibleGameViewOverlays(Forced.OverlayShowFlags) == TEXT("navigation"));
+        const TSharedPtr<FJsonObject> ForcedViewport = MakeViewportInfoObject(Forced);
+        const TSharedPtr<FJsonObject>* ForcedOverlays = nullptr;
+        FString ForcedWarning;
+        TestTrue(TEXT("the forced navmesh raises overlayWarning"),
+            ForcedViewport->TryGetObjectField(TEXT("overlayShowFlags"), ForcedOverlays) &&
+            ForcedOverlays && (*ForcedOverlays)->TryGetStringField(TEXT("overlayWarning"), ForcedWarning));
+        TestTrue(TEXT("the warning's flag list is navigation alone"),
+            ForcedWarning.Contains(TEXT("were still set: navigation.")));
+    }
+
+    const FString Remedy = PinWrightGameViewOverlayRemedy();
+    TestTrue(TEXT("the shared remedy says a toggle does not clear the flag"),
+        Remedy.Contains(TEXT("Toggling game view does not clear it")));
+
+    return true;
+}
+
+// The set_game_view overlayWarning, forced to fire. The handler test above only checks the text
+// when the host's game set happens to carry Splines, which it usually does not, so it was vacuous.
+// Here Splines is set in the game set (SetGameView reuses it on the enable below) and the remedy
+// is asserted unconditionally. Fails against the old "Toggle game view off and on again" text.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSetGameViewOverlayWarningRemedyTest,
+    "PinWright.editor.set_game_view.OverlayWarningRemedyIsNotAToggle",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FSetGameViewOverlayWarningRemedyTest::RunTest(const FString& Parameters)
+{
+    FEditorViewportClient* Client = GameViewTestClient();
+    if (!Client)
+    {
+        PinWrightTestSkip::SkipAssertions(*this, TEXT("no-level-viewport"),
+            TEXT("Skipped: no active level viewport, so set_game_view has nothing to toggle."));
+        return true;
+    }
+
+    const bool bWasInGameView = Client->IsInGameView();
+    Client->SetGameView(true);
+    const bool bGameSetSplines = Client->EngineShowFlags.Splines != 0;
+    ON_SCOPE_EXIT
+    {
+        // Put the game set back as it was (it persists in the viewport and the editor ini), then
+        // the game-view state.
+        Client->SetGameView(true);
+        Client->EngineShowFlags.SetSplines(bGameSetSplines);
+        Client->SetGameView(bWasInGameView);
+    };
+    Client->EngineShowFlags.SetSplines(true);
+    TestTrue(TEXT("precondition: Splines is set in the installed game set"),
+        Client->IsInGameView() && Client->EngineShowFlags.Splines != 0);
+
+    FTestResponseCapture Capture;
+    TestTrue(TEXT("editor.set_game_view handler registered"),
+        InvokeHandlerWithCapture(TEXT("editor.set_game_view"), GameViewTestPayload(true), Capture));
+    FString Warning;
+    TestTrue(TEXT("overlayWarning fires when Splines survives game view"),
+        Capture.Result.IsValid() && Capture.Result->TryGetStringField(TEXT("overlayWarning"), Warning));
+    TestFalse(TEXT("overlayWarning does not prescribe toggling game view off and on"),
+        Warning.Contains(TEXT("off and on again")) || Warning.Contains(TEXT("fresh game flag set")));
+    TestTrue(TEXT("overlayWarning says a toggle does not clear the flag"),
+        Warning.Contains(TEXT("Toggling game view does not clear it")));
     return true;
 }

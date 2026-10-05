@@ -945,6 +945,13 @@ namespace PinWrightRenderCapture
     // scene. Costs one console lookup per show flag (a few hundred hash probes) once per capture.
     TArray<FForcedShowFlagOverride> SurveyForcedShowFlagOverrides();
 
+    // Applies the surveyed overrides to a flag set the way the engine applies them to the drawn
+    // view family (UE 5.8 ShowFlags.cpp:767-782: Force0 clears, Force1 sets). Used on a COPY of the
+    // client's flags so the overlay report describes the frame: a `ShowFlag.Splines 0` remedy
+    // clears `splines`, and `ShowFlag.Navigation 1` reports the navmesh it draws.
+    void ApplyForcedShowFlagOverrides(FEngineShowFlags& Flags,
+        const TArray<FForcedShowFlagOverride>& Overrides);
+
     struct FViewportCaptureOutput
     {
         FString Path;

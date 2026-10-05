@@ -58,6 +58,21 @@
   `asset.generate_thumbnail`. It used to return `success:true` for that image. Every capture
   response now carries `materialReadiness`. Behaviour change: pass the new `allowFallback: true` to
   keep the fallback image; the success then carries a fallback warning.
+- Changed: `overlayShowFlags` on `editor.set_game_view` (and its `previous` block) and on every
+  capture's `viewport.overlayShowFlags` no longer carries `billboardSprites`, `selectionOutline` or
+  `modeWidgets`, and now carries `editor`. The removed three read the same after
+  every game-view enable, so `billboardSprites: true` looked like a failed toggle. Editor-only
+  sprites and icons are hidden in game view by the `Editor` show flag, which `editor` reports. The
+  capture's `overlayWarning` no longer fires on every game-view frame: it used to list
+  `billboardSprites` and `modeWidgets` as still drawing even when the game flag set was correct.
+- Fixed: both game-view `overlayWarning` texts (`editor.set_game_view` and the capture
+  `viewport.overlayShowFlags`) no longer tell the caller to toggle game view off and on for a fresh
+  game flag set. That never worked: after the first enable the editor restores the stored game set,
+  flag included. They now say to clear the flag on the viewport (Show menu), or force it off for a
+  shot with `system.console_command` `"ShowFlag.<Name> 0"` and restore it with `2`. A capture's
+  `viewport.overlayShowFlags` now includes forced `ShowFlag.<Name>` cvars, so it matches the frame:
+  `ShowFlag.Splines 0` clears `splines` and its warning, and `ShowFlag.Navigation 1` now sets
+  `navigation` and raises the warning.
 - Added: `static_mesh.describe` and the `asset.dump` `static_mesh.json` sidecar now carry a
   `nanite` object with the mesh's stored Nanite settings (`enabled`, `trianglePercent`,
   `fallbackPercent`, `positionPrecision`, `positionPrecisionAuto`). The namespace page already

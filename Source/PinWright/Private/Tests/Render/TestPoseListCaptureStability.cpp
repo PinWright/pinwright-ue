@@ -499,8 +499,8 @@ bool FEightIdenticalPosesAdjacentMaxDeltaTest::RunTest(const FString& Parameters
             TEXT("resolutionFraction=%.9f screenPercentage=%d exposurePinned=%s ")
             TEXT("ev100Requested=%.9f ev100Applied=%.9f taaSuppressed=%s aa=%s ")
             TEXT("setScopedPinPath=true gameView=%s realtime=%s overlayMeasured=%s ")
-            TEXT("splines=%s billboardSprites=%s selection=%s selectionOutline=%s grid=%s ")
-            TEXT("volumes=%s lightRadius=%s audioRadius=%s modeWidgets=%s navigation=%s game=%s ")
+            TEXT("splines=%s editor=%s selection=%s grid=%s ")
+            TEXT("volumes=%s lightRadius=%s audioRadius=%s navigation=%s game=%s ")
             TEXT("hideEditorSpritesRequested=%s billboardSpritesApplied=%s forcedShowFlags=%d"),
             Index, Capture.Width, Capture.Height, Capture.RenderWidth, Capture.RenderHeight,
             BoolText(Capture.bRenderResolutionPinned), Capture.RenderPrimaryResolutionFraction,
@@ -510,11 +510,11 @@ bool FEightIdenticalPosesAdjacentMaxDeltaTest::RunTest(const FString& Parameters
             BoolText(Capture.bTemporalAntiAliasingSuppressed), *Capture.RenderAntiAliasingMethod,
             BoolText(Capture.bGameView), BoolText(Capture.bRealtime),
             BoolText(Capture.bOverlayShowFlagsMeasured), BoolText(Overlays.bSplines),
-            BoolText(Overlays.bBillboardSprites), BoolText(Overlays.bSelection),
-            BoolText(Overlays.bSelectionOutline), BoolText(Overlays.bGrid),
+            BoolText(Overlays.bEditor), BoolText(Overlays.bSelection),
+            BoolText(Overlays.bGrid),
             BoolText(Overlays.bVolumes), BoolText(Overlays.bLightRadius),
-            BoolText(Overlays.bAudioRadius), BoolText(Overlays.bModeWidgets),
-            BoolText(Overlays.bNavigation), BoolText(Overlays.bGame),
+            BoolText(Overlays.bAudioRadius), BoolText(Overlays.bNavigation),
+            BoolText(Overlays.bGame),
             BoolText(Capture.bHideEditorSpritesRequested),
             BoolText(Capture.bBillboardSpritesApplied), Capture.ForcedShowFlags.Num());
     }

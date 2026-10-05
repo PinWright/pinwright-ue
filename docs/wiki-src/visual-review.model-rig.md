@@ -75,9 +75,9 @@ What the switch to asset preview does and does not fix:
 
 ## Suppressing editor decoration
 
-`editor.set_game_view {enabled: true}` before a `render.capture_open_level` burst removes the axis gizmo, the grid, selection outlines, spline handles and component visualizers. Measured here: it cleared `splines`, `selection`, `selectionOutline`, `grid`, `volumes`, `lightRadius` and `audioRadius`, and the captured frames lost the gizmo and two stray overlay lines.
+`editor.set_game_view {enabled: true}` before a `render.capture_open_level` burst removes the axis gizmo, the grid, selection outlines, spline handles and component visualizers. Measured here: it cleared `splines`, `selection`, `grid`, `volumes`, `lightRadius` and `audioRadius`, and the captured frames lost the gizmo and two stray overlay lines.
 
-**It did not clear `billboardSprites`.** The verb's own response reports `overlayShowFlags.billboardSprites: true` immediately after a confirmed `gameViewEnabled: true`, so light-bulb and arrow icons still draw. Read that field rather than trusting the toggle. Game view is per-viewport state the verb does not restore itself — it returns `previous.gameViewEnabled` so you can put it back, and you should.
+Light-bulb and arrow icons are hidden by the `Editor` show flag, which the response reports as `overlayShowFlags.editor`; read that field rather than trusting the toggle. The `BillboardSprites` flag stays on in the game set as well, so it is not reported and says nothing about game view. Game view is per-viewport state the verb does not restore itself — it returns `previous.gameViewEnabled` so you can put it back, and you should.
 
 A dedicated `hideEditorSprites` boolean clears `EngineShowFlags.BillboardSprites` for one capture and restores it afterwards. Level-viewport verbs take it: `render.capture_open_level`, `render.capture_annotated`, `camera.frame_actor`, `camera.orbit_shots` and `camera.animation_shots`. Preview verbs answer `UNKNOWN_PARAMS` because their scene has no icon sprites; older editors do too, so fall back to `editor.set_game_view` when refused.
 
