@@ -27,7 +27,7 @@ Bug body = minimal repro, expected, actual, environment. Feature body = the task
 
 ## Open the draft — only with approval
 
-Bug-form field ids, all text, prefill via the query string: `version`, `engine`, `os`, `repro`, `expected`, `actual`, `notes`, plus `title` (write a real summary — no `[Bug]:` prefix). Type and severity are **labels**, not form fields (GitHub can't prefill dropdowns), so set them with the `labels=` param — which **replaces** the form's default labels, so list every label you want. Always include `type/bug` (or `type/critical-gap`), `status/needs-triage`, and `ai-assisted`; you may also suggest a severity, e.g. `severity/s3-medium`. So append `&labels=type/bug,status/needs-triage,ai-assisted` (keep the label values literal — don't URL-encode the commas or slashes).
+Bug-form field ids, all text, prefill via the query string: `version`, `engine`, `os`, `repro`, `expected`, `actual`, `notes`, plus `title` (write a real summary — no `[Bug]:` prefix). The form sets the issue type (Bug) itself and a maintainer sets severity at triage, so prefill neither. Labels go in the `labels=` param, which **replaces** the form's default labels, so list every label you want: always include `status/needs-triage` and `ai-assisted`. So append `&labels=status/needs-triage,ai-assisted` (keep the label values literal — don't URL-encode the commas or slashes).
 
 - **Disclosure** is the `ai-assisted` label — that's enough. Don't prefill a "drafted by AI" sentence into `notes`; leave `notes` empty unless there's genuinely useful extra context.
 - **Long body** → copy the full markdown to the clipboard (`Set-Clipboard`) and leave a `paste from clipboard (Ctrl+V)` placeholder in the prefilled field, to dodge the URL length limit.

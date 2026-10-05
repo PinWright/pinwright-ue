@@ -27,17 +27,21 @@ Commands:
   reopen   comment, then reopen
   file     file a new issue, or bump encounters on an existing match (dedupe); a new
            issue needs --rice R,I,C,E unless it is --area harness
-  meta     edit fields of the hidden <!-- pinwright ... --> metadata block (setting rice
-           recomputes priority; priority itself is derived and cannot be set);
-           --sync-field alone re-pushes the metadata priority to the issue field
-  label    add or remove labels (one sev/* label at a time: adding one drops the others;
-           a severity change recomputes priority)
-
-Priority: score = R x Iw x C / E with Iw = 1/2/4 for I = 1/2/3; priority = round(100 x
-score / 12), at least 90 for sev/critical and sev/high. rice and priority live in the
-metadata block (the source of truth for list); every write that changes priority also sets the
-org number issue field "RICE priority" (cleared when rice is unset; a missing field only warns).
+  score    classify an issue: set its issue type, Severity and RICE input fields, and
+           recompute the RICE priority field
+  migrate  move one issue from type/* and sev/* labels and metadata rice/priority to the
+           issue type and fields (idempotent, works on closed issues)
+  meta     edit fields of the hidden <!-- pinwright ... --> metadata block (not rice or
+           priority: those are issue fields, set with score)
+  label    add or remove labels (not type/* or sev/*: use score)
   edit     change the title, or replace the body text below the metadata block
+
+Classification lives in GitHub, not in labels or the metadata block: the native issue type
+(Bug, Feature, Ergonomic, Compatibility) and the org issue fields Severity, Reach, Impact,
+Confidence and Effort (single-select; an option's leading number is its RICE value) and
+RICE priority (number). The helper computes RICE priority whenever it writes Severity or a
+RICE input: score = R x Iw x C / E with Iw = 1/2/4 for I = 1/2/3; priority = round(100 x
+score / 12), at least 90 for Critical and High; cleared while any RICE input is unset.
 
 Exit codes:
   0  success (claim: WON)
@@ -53,8 +57,15 @@ Global flags:
                      reads still run, and claim simulates its own comment when re-reading
   --fake-data FILE   answer reads from a JSON fixture instead of GitHub (for tests):
                      {"issues": [<REST issue>...], "comments": {"<n>": [<REST comment>...]},
-                      "issueFields": [<REST org issue field: node_id, name, data_type>...]}
-                     (no "issueFields" key means the org has no RICE priority field)
+                      "issueFields": [<GraphQL org issue field>...]}
+                     A REST issue carries "type": {"name": "Bug"} or null and
+                     "issue_field_values": [{"issue_field_name": "Severity", "value": "High"},
+                     {"issue_field_name": "Reach", "value": "3 Common"},
+                     {"issue_field_name": "RICE priority", "value": 90}, ...], as GitHub
+                     returns them (a single-select value may instead carry its option name in
+                     "single_select_option": {"name": ...}, which wins). An org issue field is {"id": "<node id>", "name": "Severity",
+                     "options": [{"id": "<option node id>", "name": "High"}, ...]}, with no
+                     "options" key for the number field.
 """
 from __future__ import annotations
 
@@ -74,9 +85,13 @@ TRUSTED = {"OWNER", "MEMBER", "COLLABORATOR"}
 SEVERITY_RANK = {"critical": 4, "high": 3, "medium": 2, "low": 1}
 LEASE_HOURS = 4
 TITLE_MAX = 80
-TYPE_PREFIX = {"bug": "B", "feature": "F", "ergonomic": "E"}
+TYPE_PREFIX = {"bug": "B", "feature": "F", "ergonomic": "E", "compatibility": "C"}
+TYPE_NAME = {"bug": "Bug", "feature": "Feature", "ergonomic": "Ergonomic",
+             "compatibility": "Compatibility"}
 IMPACT_WEIGHT = {1: 1, 2: 2, 3: 4}
 CONFIDENCE = (1, 0.8, 0.5)
+SEVERITY_FIELD = "Severity"
+RICE_FIELDS = ("Reach", "Impact", "Confidence", "Effort")
 PRIORITY_FIELD = "RICE priority"
 
 META_RE = re.compile(r"\A(\s*)<!-- pinwright\n(.*?)-->[ \t]*\n?", re.S)
@@ -122,7 +137,7 @@ class Gh:
             self.fake.setdefault("issues", [])
             self.fake.setdefault("comments", {})
         self._fake_id = 10_000_000
-        self._priority_field = False  # not looked up yet
+        self._fields = None  # not looked up yet
 
     # -- process
 
@@ -227,25 +242,20 @@ class Gh:
             })
         return res
 
-    def priority_field_id(self) -> str | None:
-        """Node id of the org's PRIORITY_FIELD number field, looked up once; warns if absent."""
-        if self._priority_field is False:
-            org = self.repo.split("/")[0]
+    def issue_fields(self) -> dict:
+        """The org's issue fields by name ({id, name, options?}, GraphQL node ids), looked up once."""
+        if self._fields is None:
             if self.fake is not None:
-                fields = self.fake.get("issueFields", [])
+                nodes = self.fake.get("issueFields", [])
             else:
-                try:
-                    fields = self._api_json(f"orgs/{org}/issue-fields", paginate=True)
-                except PwError as e:
-                    if e.code != 4:
-                        raise
-                    fields = []
-            self._priority_field = next((f["node_id"] for f in fields if f.get("name") == PRIORITY_FIELD
-                                         and f.get("data_type") == "number"), None)
-            if self._priority_field is None:
-                print(f'warning: org {org} has no number issue field "{PRIORITY_FIELD}"; '
-                      "priority stays in the metadata block only", file=sys.stderr)
-        return self._priority_field
+                q = ("query($org: String!) { organization(login: $org) { issueFields(first: 50) { "
+                     "nodes { ... on IssueFieldSingleSelect { id name options { id name } } "
+                     "... on IssueFieldNumber { id name } } } } }")
+                out = self._run(["api", "graphql", "-f", f"query={q}",
+                                 "-f", f"org={self.repo.split('/')[0]}"])
+                nodes = json.loads(out)["data"]["organization"]["issueFields"]["nodes"]
+            self._fields = {f["name"]: f for f in nodes if f.get("name")}
+        return self._fields
 
     # -- simulation for dry-run re-reads
 
@@ -353,16 +363,95 @@ def strip_priority_line(body: str) -> str:
     return head + "\n" + body[old.end():]
 
 
-def sync_priority_field(gh: Gh, n, node_id: str, priority: int | None):
-    """Set the RICE priority issue field to `priority`, or clear it when None."""
-    fid = gh.priority_field_id()
-    if fid is None:
+def _lead(option_name: str):
+    """The RICE value an option name starts with ("3 Common" -> 3, "0.8 Likely" -> 0.8)."""
+    try:
+        x = float(str(option_name).split()[0])
+    except (ValueError, IndexError):
+        return None
+    return int(x) if x.is_integer() else x
+
+
+def current_fields(issue: dict) -> dict:
+    """The issue's field values by name: RICE inputs as numbers, priority as int, others as is."""
+    out = {}
+    for v in issue.get("issue_field_values") or []:
+        name = v.get("issue_field_name")
+        value = (v.get("single_select_option") or {}).get("name", v.get("value"))
+        if name in RICE_FIELDS:
+            value = _lead(value)
+        elif name == PRIORITY_FIELD and isinstance(value, (int, float)):
+            value = int(value)
+        out[name] = value
+    return out
+
+
+def type_of(issue: dict) -> str | None:
+    return (issue.get("type") or {}).get("name")
+
+
+def rice_of(fields: dict) -> list | None:
+    try:
+        return check_rice([fields.get(n) for n in RICE_FIELDS])
+    except PwError:
+        return None
+
+
+def set_fields(gh: Gh, n, node_id: str, values: dict):
+    """One setIssueFieldValue call. values: {field name: option name (Severity), RICE number
+    (matched to the option it leads), number (RICE priority), or None to clear}."""
+    if not values:
         return
-    value = "delete: true" if priority is None else f"numberValue: {priority}"
+    fields = gh.issue_fields()
+    entries = []
+    for name, v in values.items():
+        f = fields.get(name)
+        if f is None:
+            raise PwError(f'org {gh.repo.split("/")[0]} has no issue field "{name}"')
+        if v is None:
+            value = "delete: true"
+        elif "options" in f:
+            oid = next((o["id"] for o in f["options"] if o["name"].lower() == str(v).lower()
+                        or (not isinstance(v, str) and _lead(o["name"]) == v)), None)
+            if oid is None:
+                raise PwError(f'issue field "{name}" has no option for {v!r}')
+            value = f"singleSelectOptionId: {json.dumps(oid)}"
+        else:
+            value = f"numberValue: {v}"
+        entries.append(f"{{fieldId: {json.dumps(f['id'])}, {value}}}")
     gh.write("POST", "graphql", {"query": (
         f"mutation {{ setIssueFieldValue(input: {{issueId: {json.dumps(node_id)}, issueFields: "
-        f"[{{fieldId: {json.dumps(fid)}, {value}}}]}}) {{ clientMutationId }} }}")})
-    print(f"#{n} {PRIORITY_FIELD} field " + ("cleared" if priority is None else f"= {priority}"))
+        f"[{', '.join(entries)}]}}) {{ clientMutationId }} }}")})
+    print(f"#{n} fields: " + ", ".join(f"{k}={'(cleared)' if v is None else v}"
+                                       for k, v in values.items()))
+
+
+def rescore(gh: Gh, issue: dict, severity: str | None = None, rice: list | None = None):
+    """Write the Severity / RICE inputs given that differ from the issue's fields, and the
+    RICE priority they imply. Returns the priority (None while any RICE input is unset)."""
+    have = current_fields(issue)
+    want = {}
+    if severity:
+        want[SEVERITY_FIELD] = severity.capitalize()
+    if rice:
+        want.update(zip(RICE_FIELDS, rice))
+    rice = rice or rice_of(have)
+    sev = (severity or have.get(SEVERITY_FIELD) or "none").lower()
+    want[PRIORITY_FIELD] = priority_of(rice, sev) if rice else None
+    set_fields(gh, issue["number"], issue.get("node_id"),
+               {k: v for k, v in want.items() if have.get(k) != v})
+    return want[PRIORITY_FIELD]
+
+
+def require_migrated(issue: dict):
+    """Refuse to rescore an issue whose classification still sits in labels or metadata:
+    its RICE fields are unset, so a rescore would clear its RICE priority."""
+    meta = parse_meta(issue.get("body")) if trusted(issue) else {}
+    if ({"rice", "priority"} & set(meta)
+            or any(l.startswith(("type/", "sev/")) for l in label_names(issue))):
+        n = issue["number"]
+        raise PwError(f"#{n} still has type/* or sev/* labels or metadata rice/priority: "
+                      f"run migrate {n} first", 2)
 
 
 # --------------------------------------------------------------------------- helpers
@@ -381,10 +470,8 @@ def login(obj: dict) -> str:
 
 
 def severity_of(issue: dict) -> str:
-    for name in label_names(issue):
-        if name.startswith("sev/"):
-            return name[4:]
-    return "none"
+    v = current_fields(issue).get(SEVERITY_FIELD)
+    return v.lower() if isinstance(v, str) else "none"
 
 
 def rank_key(issue: dict):
@@ -396,8 +483,7 @@ def rank_key(issue: dict):
     enc = meta.get("encounters")
     if not isinstance(enc, int):
         enc = 1
-    p = meta.get("priority")
-    p = p if isinstance(p, int) and not isinstance(p, bool) else None
+    p = current_fields(issue).get(PRIORITY_FIELD)
     return ((p is None, -(p or 0), -SEVERITY_RANK.get(severity_of(issue), 0), -costly, -enc,
              issue["number"]), costly, enc, meta)
 
@@ -510,19 +596,23 @@ def cmd_list(gh: Gh, args) -> int:
         ranked.append((key, i, costly, enc, meta))
     ranked.sort(key=lambda r: r[0])
     if args.json:
-        out = [{"number": i["number"], "title": safe_title(i), "state": i.get("state"),
-                "priority": meta.get("priority"), "rice": meta.get("rice"),
-                "severity": severity_of(i), "costly": costly, "encounters": enc,
-                "id": meta.get("id"), "labels": sorted(label_names(i)), "trusted": trusted(i)}
-               for _, i, costly, enc, meta in ranked]
+        out = []
+        for _, i, costly, enc, meta in ranked:
+            f = current_fields(i)
+            out.append({"number": i["number"], "title": safe_title(i), "state": i.get("state"),
+                        "type": type_of(i), "severity": severity_of(i),
+                        **{k.lower(): f.get(k) for k in RICE_FIELDS},
+                        "priority": f.get(PRIORITY_FIELD), "costly": costly, "encounters": enc,
+                        "id": meta.get("id"), "labels": sorted(label_names(i)),
+                        "trusted": trusted(i)})
         print(json.dumps(out, indent=1, ensure_ascii=False))
     else:
         if not ranked:
             print("(no matching issues)")
         for _, i, costly, enc, meta in ranked:
-            p = meta.get("priority")
-            print(f"#{i['number']}\tp={'-' if p is None else p}\t{severity_of(i)}\t"
-                  f"costly={costly}\tenc={enc}\t"
+            p = current_fields(i).get(PRIORITY_FIELD)
+            print(f"#{i['number']}\tp={'-' if p is None else p}\t{type_of(i) or '-'}\t"
+                  f"{severity_of(i)}\tcostly={costly}\tenc={enc}\t"
                   f"{meta.get('id') or '-'}\t{safe_title(i)}")
     return 0
 
@@ -536,6 +626,7 @@ def cmd_show(gh: Gh, args) -> int:
             "number": issue["number"], "state": issue.get("state"),
             "state_reason": issue.get("state_reason"), "title": safe_title(issue),
             "author": login(issue), "trusted": t, "labels": sorted(label_names(issue)),
+            "type": type_of(issue), "fields": current_fields(issue),
             "meta": parse_meta(issue.get("body")) if t else None,
             "body": issue.get("body") if t else withheld(issue),
             "comments": [{"author": login(c), "trusted": trusted(c), "created_at": c["created_at"],
@@ -543,8 +634,11 @@ def cmd_show(gh: Gh, args) -> int:
         }
         print(json.dumps(out, indent=1, ensure_ascii=False))
         return 0
-    p = parse_meta(issue.get("body")).get("priority") if t else None
-    print(f"#{issue['number']} {safe_title(issue)}" + ("" if p is None else f"   priority: {p}"))
+    f = current_fields(issue)
+    rice = ",".join("-" if f.get(k) is None else str(f[k]) for k in RICE_FIELDS)
+    p = f.get(PRIORITY_FIELD)
+    print(f"#{issue['number']} {safe_title(issue)}   type: {type_of(issue) or '-'}   "
+          f"severity: {severity_of(issue)}   rice: {rice}   priority: {'-' if p is None else p}")
     reason = f" ({issue['state_reason']})" if issue.get("state_reason") else ""
     print(f"state: {issue.get('state')}{reason}   author: {login(issue)} "
           f"({issue.get('author_association', '?')})")
@@ -673,6 +767,8 @@ def cmd_file(gh: Gh, args) -> int:
         issue = get_issue_checked(gh, match)
         if not trusted(issue):
             raise PwError(f"#{match} was written by an untrusted author; file a new issue", 2)
+        if rice or args.severity:
+            require_migrated(issue)
         meta = parse_meta(issue.get("body"))
         enc = meta.get("encounters") if isinstance(meta.get("encounters"), int) else 1
         sets = {"encounters": enc + 1, "lastSeen": now}
@@ -681,13 +777,10 @@ def cmd_file(gh: Gh, args) -> int:
             sets["costly"] = c + 1
         if tags:
             sets["tags"] = list(dict.fromkeys(list(meta.get("tags") or []) + tags))
-        if rice:
-            sets["rice"] = rice
-            sets["priority"] = priority_of(rice, severity_of(issue))
         gh.write("PATCH", f"repos/{gh.repo}/issues/{match}",
                  {"body": strip_priority_line(edit_meta(issue.get("body"), sets))})
-        if rice:
-            sync_priority_field(gh, match, issue["node_id"], sets["priority"])
+        if rice or args.severity:
+            rescore(gh, issue, args.severity, rice)
         _post_comment(gh, match, f"New encounter ({enc + 1}).\n\n" + body)
         if args.costly and "costly" not in label_names(issue):
             _add_labels(gh, match, ["costly"])
@@ -702,24 +795,17 @@ def cmd_file(gh: Gh, args) -> int:
     meta = {"id": slug, "tags": tags, "encounters": 1, "lastSeen": now}
     if args.costly:
         meta["costly"] = 1
-    if rice:
-        meta["rice"] = rice
-        meta["priority"] = priority_of(rice, args.severity or "none")
     block = "<!-- pinwright\n" + yaml.safe_dump(meta, sort_keys=False, default_flow_style=None,
                                                 width=100000, allow_unicode=True) + "-->\n\n"
-    labels = [f"type/{args.type}", "status/accepted"]
-    if args.severity:
-        labels.append(f"sev/{args.severity}")
+    labels = ["status/accepted"]
     if harness:
         labels.append("area/harness")
     if args.costly:
         labels.append("costly")
-    r = gh.write("POST", f"repos/{gh.repo}/issues",
-                 {"title": title, "body": block + body, "labels": labels})
+    r = gh.write("POST", f"repos/{gh.repo}/issues", {"title": title, "body": block + body,
+                                                      "labels": labels, "type": TYPE_NAME[args.type]})
     print(f"#{r['number']} created ({slug})" if r else f"(dry-run) would create {slug}")
-    if rice:
-        sync_priority_field(gh, r["number"] if r else slug, r["node_id"] if r else "<new issue>",
-                            meta["priority"])
+    rescore(gh, r or {"number": slug, "node_id": "<new issue>"}, args.severity, rice)
     return 0
 
 
@@ -734,26 +820,17 @@ def cmd_meta(gh: Gh, args) -> int:
         k, v = kv.split("=", 1)
         sets[k.strip()] = yaml.safe_load(v) if v.strip() else None
     unsets = tuple(args.unset or ())
-    if not sets and not unsets and not args.sync_field:
-        raise PwError("nothing to change: pass --set k=v, --unset k or --sync-field", 2)
-    if "priority" in sets or "priority" in unsets:
-        raise PwError("priority is derived from rice and severity; set rice instead "
-                      "(meta N --set rice=[R,I,C,E])", 2)
-    if "rice" in sets:
-        v = sets["rice"]
-        sets["rice"] = parse_rice(v) if isinstance(v, str) else check_rice(v)
-        sets["priority"] = priority_of(sets["rice"], severity_of(issue))
-    if "rice" in unsets:
-        unsets += ("priority",)
+    if not sets and not unsets:
+        raise PwError("nothing to change: pass --set k=v or --unset k", 2)
+    if {"rice", "priority"} & (set(sets) | set(unsets)):
+        raise PwError("rice and priority are issue fields, not metadata: "
+                      "use score N --rice R,I,C,E (priority is computed)", 2)
     old = issue.get("body") or ""
-    body = strip_priority_line(edit_meta(old, sets, unsets) if sets or unsets else old)
+    body = strip_priority_line(edit_meta(old, sets, unsets))
     if body != old:
         gh.write("PATCH", f"repos/{gh.repo}/issues/{args.number}", {"body": body})
-    if sets or unsets:
-        print(f"#{args.number} metadata updated: " + ", ".join(
-            [f"{k}={v!r}" for k, v in sets.items()] + [f"-{k}" for k in unsets]))
-    if args.sync_field or "rice" in sets or "rice" in unsets:
-        sync_priority_field(gh, args.number, issue["node_id"], parse_meta(body).get("priority"))
+    print(f"#{args.number} metadata updated: " + ", ".join(
+        [f"{k}={v!r}" for k, v in sets.items()] + [f"-{k}" for k in unsets]))
     return 0
 
 
@@ -764,8 +841,9 @@ def cmd_label(gh: Gh, args) -> int:
     remove = list(dict.fromkeys(args.remove or []))
     if not add and not remove:
         raise PwError("nothing to change: pass --add L or --remove L", 2)
-    if any(l.startswith("sev/") for l in add):
-        remove += [l for l in have if l.startswith("sev/") and l not in add and l not in remove]
+    if any(l.startswith(("type/", "sev/")) for l in add + remove):
+        raise PwError("type and severity are the issue type and Severity field, not labels: "
+                      "use score N --type T / --severity S", 2)
     if "status/accepted" in add and not trusted(issue):
         print(f"note: #{args.number} is by an untrusted author; agents will read only "
               "maintainer comments on it", file=sys.stderr)
@@ -776,15 +854,57 @@ def cmd_label(gh: Gh, args) -> int:
         if l in have:
             _remove_label(gh, args.number, l)
     print(f"#{args.number} labels: +{to_add} -{[l for l in remove if l in have]}")
-    meta = parse_meta(issue.get("body")) if trusted(issue) else {}
-    if meta.get("rice"):
-        sev = severity_of({"labels": (have | set(add)) - set(remove)})
-        p = priority_of(check_rice(meta["rice"]), sev)
-        if p != meta.get("priority"):
-            gh.write("PATCH", f"repos/{gh.repo}/issues/{args.number}",
-                     {"body": strip_priority_line(edit_meta(issue.get("body"), {"priority": p}))})
-            print(f"#{args.number} priority {meta.get('priority')} -> {p}")
-            sync_priority_field(gh, args.number, issue["node_id"], p)
+    return 0
+
+
+def _type_patch(issue: dict, kind) -> dict:
+    """{"type": <name>} when `kind` (bug, feature, ...) maps to a type the issue lacks."""
+    name = TYPE_NAME.get(str(kind))
+    return {"type": name} if name and type_of(issue) != name else {}
+
+
+def cmd_score(gh: Gh, args) -> int:
+    if not (args.severity or args.rice or args.type):
+        raise PwError("nothing to change: pass --severity, --rice or --type", 2)
+    rice = parse_rice(args.rice) if args.rice else None
+    issue = get_issue_checked(gh, args.number)
+    require_migrated(issue)
+    patch = _type_patch(issue, args.type)
+    if patch:
+        gh.write("PATCH", f"repos/{gh.repo}/issues/{args.number}", patch)
+    p = rescore(gh, issue, args.severity, rice)
+    print(f"#{args.number} type: {patch.get('type') or type_of(issue) or '-'}   "
+          f"priority: {'-' if p is None else p}")
+    return 0
+
+
+def cmd_migrate(gh: Gh, args) -> int:
+    """Move one issue's type/* and sev/* labels and metadata rice/priority to the issue type
+    and fields. Idempotent: an already migrated issue gets no write."""
+    issue = get_issue_checked(gh, args.number)
+    n = args.number
+    old_labels = sorted(l for l in label_names(issue) if l.startswith(("type/", "sev/")))
+    kinds = [l[5:] for l in old_labels if l.startswith("type/")]
+    sevs = [l[4:] for l in old_labels if l.startswith("sev/")]
+    t = trusted(issue)
+    meta = parse_meta(issue.get("body")) if t else {}
+    patch = _type_patch(issue, kinds[0] if kinds else meta.get("category"))
+    rice = check_rice(meta["rice"]) if meta.get("rice") else None
+    p = rescore(gh, issue, sevs[0] if sevs else None, rice)
+    if "priority" in meta and meta["priority"] != p:
+        print(f"warning: #{n} metadata priority {meta.get('priority')} != computed {p}",
+              file=sys.stderr)
+    old = issue.get("body") or ""
+    if t:
+        body = edit_meta(old, {}, ("rice", "priority")) if {"rice", "priority"} & set(meta) else old
+        if strip_priority_line(body) != old:
+            patch["body"] = strip_priority_line(body)
+    if patch:
+        gh.write("PATCH", f"repos/{gh.repo}/issues/{n}", patch)
+    for l in old_labels:
+        _remove_label(gh, n, l)
+    print(f"#{n} migrated: type {patch.get('type') or type_of(issue) or '-'}, "
+          f"priority {'-' if p is None else p}")
     return 0
 
 
@@ -876,14 +996,15 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("file", help="file a new issue or bump an existing match")
     s.add_argument("--title", required=True, help=f"at most {TITLE_MAX} characters")
     s.add_argument("--type", required=True, choices=list(TYPE_PREFIX))
-    s.add_argument("--severity", choices=list(SEVERITY_RANK))
+    s.add_argument("--severity", choices=list(SEVERITY_RANK),
+                   help="Severity field; on a match it replaces the issue's severity")
     s.add_argument("--tags", help="comma-separated")
     s.add_argument("--costly", action="store_true", help="this encounter cost real work")
     s.add_argument("--area", choices=["harness"])
     s.add_argument("--rice", metavar="R,I,C,E",
-                   help="RICE factors (R, I, E in 1..3; C 1, 0.8 or 0.5); priority is derived "
-                   "from them. Required for a new issue unless --area harness; on a match it "
-                   "replaces the issue's rice")
+                   help="RICE fields (R, I, E in 1..3; C 1, 0.8 or 0.5); RICE priority is "
+                   "computed from them. Required for a new issue unless --area harness; on a "
+                   "match it replaces the issue's RICE fields")
     s.add_argument("--id", help="metadata id slug (default: derived from the title)")
     s.add_argument("--dedupe-query", help="search text for the dedupe (default: the title)")
     s.add_argument("--into", type=int, metavar="N",
@@ -895,10 +1016,18 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("number", type=int)
     s.add_argument("--set", action="append", metavar="K=V", help="value is parsed as YAML")
     s.add_argument("--unset", action="append", metavar="K")
-    s.add_argument("--sync-field", action="store_true",
-                   help=f'set the "{PRIORITY_FIELD}" issue field from the metadata priority '
-                   "(cleared when there is none) and drop a legacy **Priority:** body line")
     s.set_defaults(fn=cmd_meta)
+
+    s = sub.add_parser("score", help="set issue type, Severity and RICE fields; recompute priority")
+    s.add_argument("number", type=int)
+    s.add_argument("--type", choices=list(TYPE_PREFIX))
+    s.add_argument("--severity", choices=list(SEVERITY_RANK))
+    s.add_argument("--rice", metavar="R,I,C,E", help="R, I, E in 1..3; C 1, 0.8 or 0.5")
+    s.set_defaults(fn=cmd_score)
+
+    s = sub.add_parser("migrate", help="move type/sev labels and metadata rice to type and fields")
+    s.add_argument("number", type=int)
+    s.set_defaults(fn=cmd_migrate)
 
     s = sub.add_parser("label", help="add or remove labels")
     s.add_argument("number", type=int)

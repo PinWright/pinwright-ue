@@ -1,6 +1,7 @@
 name: Bug report
 description: Report a bug or a critical gap in an existing feature of the PinWright plugin.
-labels: ["type/bug", "status/needs-triage"]
+type: Bug
+labels: ["status/needs-triage"]
 body:
   - type: markdown
     attributes:

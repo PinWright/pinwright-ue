@@ -33,7 +33,7 @@ You implement **and** verify. There is no review stage: an issue goes from open 
 
 ## Phase 1: List and Claim Tasks
 
-Run `uv run scripts/pw_issues.py list --json`. It is already in work order (`priority` highest first with unscored issues last, then severity, `costly`, `encounters`, number) and already excludes blocked, harness and live-claimed issues. Select 4–6 tasks from the top, following the priority rules in the plugin `CLAUDE.md` -> **Issue tracker** -> **Priority (RICE)** (batch by area, split an E=3 issue instead of starting it as filed), read each with `pw_issues.py show N`, then claim each one with `pw_issues.py claim N --host <host id>` (a stable id for this checkout, such as the machine name). Exit 3 (`LOST`) means another host holds it: drop it and take the next one. In plan mode, nothing is written before approval: select from `list` now and claim right after `ExitPlanMode`, before Phase 4, dropping any task you lose.
+Run `uv run scripts/pw_issues.py list --json`. It is already in work order (`RICE priority` highest first with unscored issues last, then severity, `costly`, `encounters`, number) and already excludes blocked, harness and live-claimed issues. Select 4–6 tasks from the top, following the priority rules in the plugin `CLAUDE.md` -> **Issue tracker** -> **Priority (RICE)** (batch by area, split an E=3 issue instead of starting it as filed), read each with `pw_issues.py show N`, then claim each one with `pw_issues.py claim N --host <host id>` (a stable id for this checkout, such as the machine name). Exit 3 (`LOST`) means another host holds it: drop it and take the next one. In plan mode, nothing is written before approval: select from `list` now and claim right after `ExitPlanMode`, before Phase 4, dropping any task you lose.
 
 **Closed issues are off-limits.** Closed as completed (DONE) and closed as not planned (WONTFIX) are both terminal: never re-analyze, never re-investigate, never reopen from inside this skill. If an issue was closed as not planned, the user already decided it isn't worth fixing; we respect that decision. The only path back to open is via `mcp-audit` (or an `mcp-review` re-test) when the problem is re-encountered. Sprint never reasons about why something was closed or whether the decision should be revisited.
 
@@ -60,13 +60,13 @@ Dispatch **one subagent per selected task**, all in the same tool-call batch so 
    - `valid-as-written` — proceed with the task unchanged.
    - `valid-bug-wrong-fix` — the bug is real but the proposed fix is wrong; propose a cleaner fix and the rewrite of the `**Fix:**` paragraph.
    - `reformulate`: same issue, new title/body/type/severity; include the rewritten title and body.
-   - `reclassify-ergonomic`: this bug is really an ergonomic issue (error message improvement, discovery method, doc update). Include the new title, the targeted new body and the new `E-*` metadata id; the issue is relabelled `type/ergonomic`, not closed.
+   - `reclassify-ergonomic`: this bug is really an ergonomic issue (error message improvement, discovery method, doc update). Include the new title, the targeted new body and the new `E-*` metadata id; the issue's type becomes Ergonomic, not closed.
    - `wontfix-candidate` — surface a recommendation in the final summary; do not change anything.
    Reporters frequently misuse the MCP or file the symptom rather than the root cause, so the subagent must actively consider these outcomes rather than defaulting to `valid-as-written`.
 
 2. **Investigation findings.** The root cause in prose: which file/handler is involved, what UE API is relevant (grep the engine source under `C:\UE_5.8\Engine\Source\` for engine internals, the plugin source for plugin code), what the correct behavior should be, and any existing utility/pattern to reuse.
 
-3. **Per-task implementation plan (high-level, no code).** Files to modify with line numbers, what changes at each site, why. If the outcome was `valid-bug-wrong-fix`, `reformulate`, or `reclassify-ergonomic`, also include the exact issue edits (`pw_issues.py edit` title/body, `label` changes, `meta --set id=...`, and the comment explaining the change).
+3. **Per-task implementation plan (high-level, no code).** Files to modify with line numbers, what changes at each site, why. If the outcome was `valid-bug-wrong-fix`, `reformulate`, or `reclassify-ergonomic`, also include the exact issue edits (`pw_issues.py edit` title/body, `score` changes to type, severity or RICE, `meta --set id=...`, and the comment explaining the change).
 
 4. **Regression test spec.** For every `B-*` (bug) ticket: produce a spec for a regression test that would have failed on the unmodified code and passes after the fix. Fields: test file path under `Source/PinWright/Private/Tests/<SubFolder>/`, `IMPLEMENT_SIMPLE_AUTOMATION_TEST` macro identifier, the assertion(s), and a one-sentence counterfactual — "if the fix in `<file>` is reverted, this assertion fails because `<reason>`." The counterfactual is the bar: if you can't write a true counterfactual sentence, the test isn't a regression test and is rejected in Phase 4.5.
 
@@ -214,8 +214,8 @@ Comments are the issue's history: never edit or delete an earlier one, just add 
 
 For reshaped / reclassified tasks (applied by the main agent after Phase 2, before implementation):
 - valid-bug-wrong-fix: `pw_issues.py edit N --body-file <body>` with the rewritten `**Fix:**` paragraph, plus a comment naming the replaced approach.
-- reformulate: `edit N --title ... --body-file ...` and `label N --add sev/<s>` as planned (`meta N --set rice=R,I,C,E` too if the investigation changed a factor), plus a comment saying why.
-- reclassify-ergonomic: `label N --add type/ergonomic --remove type/bug`, `meta N --set id=E-<slug>`, `edit` with the new title and body, plus a comment saying why.
+- reformulate: `edit N --title ... --body-file ...` and `score N --severity <s>` as planned (with `--rice R,I,C,E` too if the investigation changed a factor, `--type T` if the type changed), plus a comment saying why.
+- reclassify-ergonomic: `score N --type ergonomic`, `meta N --set id=E-<slug>`, `edit` with the new title and body, plus a comment saying why.
 
 ## Final Summary
 

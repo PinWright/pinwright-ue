@@ -1,6 +1,7 @@
 name: Compatibility / engine version report
 description: PinWright will not install, load, or run at all on a particular Unreal Engine version or install.
-labels: ["type/compatibility", "status/needs-triage"]
+type: Compatibility
+labels: ["status/needs-triage"]
 body:
   - type: markdown
     attributes:

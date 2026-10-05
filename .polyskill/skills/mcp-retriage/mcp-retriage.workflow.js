@@ -1,12 +1,12 @@
-// mcp-retriage: re-score the `sev/*` label of every open, accepted PinWright
+// mcp-retriage: re-score the Severity issue field of every open, accepted PinWright
 // GitHub issue against a fixed impact×reach rubric, as a bounded one-pass
 // background Workflow, so the mcp-fix-workflow picker (which works open issues in
-// `pw_issues.py list` order: priority first, which Critical/High severity floors
+// `pw_issues.py list` order: RICE priority first, which Critical/High severity floors
 // at 90, then severity) works the genuinely-most-important issues first.
 //
 // One bounded sweep: list the open issues, score them in parallel against one
-// shared rubric, write back ONLY the issues whose severity changed (the sev/*
-// label plus one retriage comment each), stop. NOT an infinite supervised loop —
+// shared rubric, write back ONLY the issues whose severity changed (the Severity
+// field plus one retriage comment each), stop. NOT an infinite supervised loop —
 // it returns on its own and re-running is safe (idempotent: an unchanged backlog
 // produces zero writes).
 //
@@ -21,7 +21,7 @@
 
 export const meta = {
     name: 'mcp-retriage',
-    description: 'Re-score the severity of every open, accepted PinWright GitHub issue against a fixed impact×reach rubric, writing back only the changed issues (sev/* label plus one comment each), so the fix-workflow picker works the most important issues first.',
+    description: 'Re-score the severity of every open, accepted PinWright GitHub issue against a fixed impact×reach rubric, writing back only the changed issues (Severity field plus one comment each), so the fix-workflow picker works the most important issues first.',
     phases: [
         { title: 'Read' },
         { title: 'Score' },
@@ -41,7 +41,7 @@ const MAX = (typeof opts.maxTickets === 'number' && opts.maxTickets > 0) ? opts.
 const FANOUT = (typeof opts.scoreFanout === 'number' && opts.scoreFanout > 0) ? opts.scoreFanout : 5;
 const DRY = !!opts.dryRun;
 
-// Severity ladder (high → low) for the up/down tally and ordering; 'none' = no sev/* label yet.
+// Severity ladder (high → low) for the up/down tally and ordering; 'none' = no Severity field yet.
 const RANK = { critical: 4, high: 3, medium: 2, low: 1, none: 0 };
 
 // The canonical rubric — interpolated VERBATIM into every Score prompt so all
@@ -117,7 +117,7 @@ const writeSchema = {
     type: 'object', required: ['status', 'written'],
     properties: {
         status: { type: 'string', enum: ['OK', 'FATAL'] },
-        written: { type: 'array', items: { type: 'integer' } },  // issue numbers actually re-labelled
+        written: { type: 'array', items: { type: 'integer' } },  // issue numbers actually re-scored
         skipped: { type: 'array', items: { type: 'integer' } },  // skipped (closed, or claimed by a fix host, at write time)
         reason: { type: 'string' },
         excerpt: { type: 'string' },
@@ -129,7 +129,7 @@ function readPrompt() {
 
 1. NOW: run \`Get-Date -Format o\` ONCE and return it as 'now' (the single time sample for this pass).
 2. LIST: run \`${PW} list --json\` and \`${PW} list --label status/blocked --json\`, and take the union by number. These are the only way to pick issues: they return just open issues labelled status/accepted, and already leave out issues a fix host holds a live lease on. Never list issues with raw gh or a search.
-3. For each entry return {number, id, currentSeverity: its 'severity' field (critical|high|medium|low|none), type: the type/* label without the prefix}.
+3. For each entry return {number, id, currentSeverity: its 'severity' field (critical|high|medium|low|none), type: its 'type' field (the issue type)}.
 4. Return {status:'OK', now:'<iso>', open:[...]}. If the helper exits nonzero (gh missing or unauthenticated, repo unreachable), return {status:'FATAL', reason:'<the helper's error line>'}. An empty list is OK, not FATAL.`;
 }
 
@@ -155,13 +155,13 @@ function writePrompt(changed) {
 
 For EACH issue below:
 1. RE-CHECK: run \`${PW} show <number> --json\`. If its state is no longer open, or its labels include status/claimed (a fix host is working it), SKIP it, write nothing, and add its number to 'skipped'. Otherwise proceed.
-2. SEVERITY: \`${PW} label <number> --add sev/<new>\` (the helper drops the old sev/* label). Change no other label; never close or reopen.
+2. SEVERITY: \`${PW} score <number> --severity <new>\` (sets the Severity field and recomputes RICE priority). Change nothing else: no label, no other field; never close or reopen.
 3. COMMENT: \`${PW} comment <number> --body "Retriage: <old> -> <new>: <reason>"\`, using the per-issue <old>, <new> and <reason> given below. Never edit or delete an earlier comment.
 
 Issues:
 ${list}
 
-Return {status:'OK', written:[<numbers actually re-labelled>], skipped:[<numbers skipped>]}. If the helper fails in a way a retry cannot fix (auth, repo unreachable), return {status:'FATAL', reason, excerpt} and stop.`;
+Return {status:'OK', written:[<numbers actually re-scored>], skipped:[<numbers skipped>]}. If the helper fails in a way a retry cannot fix (auth, repo unreachable), return {status:'FATAL', reason, excerpt} and stop.`;
 }
 
 // Terminal payload for a hard failure (supervisor: stop, surface, do not relaunch).
@@ -219,17 +219,17 @@ log(`changed: ${changed.length} (${counts.changedUp} up, ${counts.changedDown} d
 if (changed.length === 0) return { stop_reason: 'done', dryRun: DRY, now, counts, changed: [], note: 'backlog already converged: nothing to write' };
 if (DRY) { log('dryRun: writing nothing'); return { stop_reason: 'done', dryRun: true, now, counts, changed }; }
 
-// --- Write (single serial agent: one label change + one comment per issue) ---
+// --- Write (single serial agent: one severity change + one comment per issue) ---
 phase('Write');
 const w = await agentOrRetry(() => agent(writePrompt(changed), { schema: writeSchema, label: 'write', phase: 'Write' }));
-if (!w) return { stop_reason: 'agent_died', note: 'write agent died: a re-run re-converges (re-labelled issues now read unchanged)', counts, changed };
+if (!w) return { stop_reason: 'agent_died', note: 'write agent died: a re-run re-converges (re-scored issues now read unchanged)', counts, changed };
 if (w.status === 'FATAL') return fatal('Write', w);
 const written = Array.isArray(w.written) ? w.written : [];
 counts.written = written.length;
 counts.skipped = Array.isArray(w.skipped) ? w.skipped.length : 0;
 if (counts.skipped) log(`write skipped ${counts.skipped} issue(s) closed or claimed since the read: ${w.skipped.join(', ')}`);
 
-log(`done: ${counts.written} re-labelled`);
+log(`done: ${counts.written} re-scored`);
 return {
     stop_reason: 'done',
     dryRun: false,

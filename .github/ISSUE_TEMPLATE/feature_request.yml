@@ -1,6 +1,7 @@
 name: Feature request
 description: Suggest a new tool, method, or workflow for the PinWright plugin.
-labels: ["type/feature", "status/needs-triage"]
+type: Feature
+labels: ["status/needs-triage"]
 body:
   - type: markdown
     attributes:

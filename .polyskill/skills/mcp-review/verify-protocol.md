@@ -59,7 +59,7 @@ If a referenced asset doesn't exist, use `asset.search` to find a substitute tha
 | **PASS** | A live observation (MCP response, dumped file on disk, file deletion, doc content) confirms the fix works as the closing comment described. Source review alone is never PASS — see "Source code is not verification" above. | stays closed; `comment` |
 | **FAIL** | Test confirms the fix does NOT work, OR the new behavior is partially missing (e.g., one of two repro cases still broken). | `reopen` |
 | **SKIP** | Fix can't be exercised via MCP (MCP tool returned a transport error, the fix needs runtime conditions you can't set up, or no representative asset exists). Source-only inspection of a behavioral fix is also SKIP, not PASS. | stays closed; `comment` |
-| **CRASH** | Editor crashed during the test. | `reopen`; if the crash is a new symptom, also `label <number> --add sev/critical` |
+| **CRASH** | Editor crashed during the test. | `reopen`; if the crash is a new symptom, also `score <number> --severity critical` |
 
 Be specific in the result. "PASS" with no detail is useless on a re-read. Capture the MCP call you ran, the field you checked, and the value you observed.
 

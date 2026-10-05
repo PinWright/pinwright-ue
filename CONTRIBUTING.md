@@ -102,13 +102,16 @@ File through the issue forms. The old markdown board,
 [PinWright/pinwright-board](https://github.com/PinWright/pinwright-board), is archived and kept
 only for the history of tickets closed before the move; nothing needs to be cloned.
 
+Each issue has a GitHub issue type (Bug, Feature, Ergonomic or Compatibility; the form you file
+through sets it) and, once a maintainer has triaged it, the issue fields `Severity` (Critical, High,
+Medium, Low) and `Reach`, `Impact`, `Confidence`, `Effort` and `RICE priority`, shown in the issue
+sidebar.
+
 Labels:
 
 | Label | Meaning |
 |---|---|
-| `type/bug`, `type/feature`, `type/ergonomic`, `type/compatibility` | Kind of issue |
 | `area/harness` | The maintainers' workflow tooling |
-| `sev/critical`, `sev/high`, `sev/medium`, `sev/low` | Severity |
 | `status/needs-triage` | New, not yet reviewed by a maintainer |
 | `status/accepted` | Reviewed; the only label that lets maintainer agents work the issue |
 | `status/blocked` | Waiting on another issue |
@@ -120,9 +123,11 @@ as duplicate. The fixer verifies the fix and says how in the closing comment. An
 is its comments; the `## History (board)` section appears only on issues migrated from the old
 board.
 
-Maintainers score each issue they file with RICE (reach, impact, confidence, effort). The helper
-derives a 0-100 `priority` from it, shows it in the `RICE priority` issue field in the sidebar, and
-lists accepted issues in that order; that is the order maintainer agents work them.
+Maintainers score each issue with RICE (reach, impact, confidence, effort) in the four issue fields
+of those names. The helper computes the 0-100 `RICE priority` field from them and the severity, and
+lists accepted issues in that order; that is the order maintainer agents work them. The public
+[PinWright backlog](https://github.com/orgs/PinWright/projects/1) project shows the open issues
+sorted by that field.
 
 Maintainer agents act only on text written by the repository owner, members or collaborators. If
 you are not one of them, a maintainer restates your report in a comment before adding

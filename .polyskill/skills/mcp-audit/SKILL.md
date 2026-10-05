@@ -21,7 +21,7 @@ This skill files rather than picks work, so it also searches: `pw_issues.py file
 
 Tracks **MCP tool issues only** — BPIR compiler bugs, widget_import_xml problems, property resolution failures, missing tool features, ergonomic gaps. NOT game-level bugs.
 
-Issue types: `--type bug`, `feature` or `ergonomic` (labels `type/bug`, `type/feature`, `type/ergonomic`). `file` derives the metadata id from the title with a `B-`/`F-`/`E-` prefix (e.g., `B-enum-raw-integers`); pass `--id` for a sharper slug. Titles are capped at 80 characters: write a short title and put the detail in the body. Every new issue carries `--rice R,I,C,E`, scored by the method in the plugin `CLAUDE.md` -> **Issue tracker** -> **Priority (RICE)**; `file` derives `priority` from it and sets the `RICE priority` issue field (sidebar), so never pass or write `priority` or that field yourself.
+Issue types: `--type bug`, `feature` or `ergonomic` (GitHub issue types Bug, Feature, Ergonomic, not labels). `file` derives the metadata id from the title with a `B-`/`F-`/`E-` prefix (e.g., `B-enum-raw-integers`); pass `--id` for a sharper slug. Titles are capped at 80 characters: write a short title and put the detail in the body. Every new issue carries `--rice R,I,C,E`, scored by the method in the plugin `CLAUDE.md` -> **Issue tracker** -> **Priority (RICE)**; `file` writes the type, `--severity` and the four RICE inputs to the issue's type and fields and computes the `RICE priority` field from them, so never pass or write `priority` or that field yourself.
 
 ## Phase 1: Review Session Usage
 
@@ -167,7 +167,7 @@ Don't edit the body or argue with the earlier not-planned reasoning. The comment
 ```markdown
 Additional evidence: {new finding}.
 ```
-Add `--costly` when this encounter cost real work (see the severity rubric), and `--rice R,I,C,E` when the new evidence changes R, I, C or E. Change severity (`label N --add sev/<s>`, with a comment saying why) only if the new evidence materially shifts impact.
+Add `--costly` when this encounter cost real work (see the severity rubric), and `--rice R,I,C,E` when the new evidence changes R, I, C or E. Change severity (`score N --severity <s>`, with a comment saying why) only if the new evidence materially shifts impact.
 
 **New issues**: `file --title "{Title}" --type {bug|feature|ergonomic} --severity {critical|high|medium|low} --rice R,I,C,E --tags a,b --body-file <body>`, where the body is:
 

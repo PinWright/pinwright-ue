@@ -1,20 +1,20 @@
 ---
 name: mcp-retriage
-description: Re-score the severity of every open, accepted PinWright GitHub issue against a fixed impact×reach rubric, as a bounded one-pass background Workflow, so the mcp-fix-workflow picker (which works open issues in `pw_issues.py list` order, where Critical/High severity floors `priority` at 90 and severity breaks `priority` ties) works the genuinely-most-important issues first. Scores all open issues once, writes back only the issues whose severity changed (the sev/* label plus one retriage comment each), and stops. Use when the user says "mcp-retriage", "re-score the issues", "re-score the board", "retriage tickets", "recompute severities", "re-prioritize the issues", or "rebalance severities".
+description: Re-score the severity of every open, accepted PinWright GitHub issue against a fixed impact×reach rubric, as a bounded one-pass background Workflow, so the mcp-fix-workflow picker (which works open issues in `pw_issues.py list` order, where Critical/High severity floors `priority` at 90 and severity breaks `priority` ties) works the genuinely-most-important issues first. Scores all open issues once, writes back only the issues whose severity changed (the Severity issue field plus one retriage comment each), and stops. Use when the user says "mcp-retriage", "re-score the issues", "re-score the board", "retriage tickets", "recompute severities", "re-prioritize the issues", or "rebalance severities".
 ---
 
 # MCP Retriage
 
-Re-score the `sev/*` label of every **open, accepted** PinWright GitHub issue
+Re-score the `Severity` issue field of every **open, accepted** PinWright GitHub issue
 against the fixed impact×reach rubric (the plugin `CLAUDE.md` -> **Issue tracker**
 severity paragraph), as a background Workflow. The `mcp-fix-workflow` picker works
-open issues in `pw_issues.py list` order: `priority` highest first, which a Critical
+open issues in `pw_issues.py list` order: `RICE priority` highest first, which a Critical
 or High severity raises to at least 90, with severity breaking ties. So a mis-rated
-issue is worked in the wrong order. Changing `sev/*` through `pw_issues.py label`
-recomputes `priority`; this skill does not re-score the RICE factors themselves
-(that is `meta N --set rice=...`). This skill corrects that drift: it lists
+issue is worked in the wrong order. Changing severity through `pw_issues.py score N
+--severity S` recomputes `RICE priority`; this skill does not re-score the RICE factors
+themselves (that is `score N --rice R,I,C,E`). This skill corrects that drift: it lists
 the open issues, scores them in parallel against one shared rubric, writes back
-only the issues whose severity actually changed (the new `sev/*` label plus one
+only the issues whose severity actually changed (the new `Severity` field plus one
 `Retriage: <old> -> <new>: <reason>` comment each), and stops.
 
 ## Issue tracker
@@ -41,7 +41,7 @@ before the real run**; it is not meant for unattended cadence without that revie
 - It coexists with live `mcp-fix-workflow` fuzz hosts working the same issues: it is
   **claim-aware** (`list` leaves out issues with another host's live lease, and the
   Write phase skips anything claimed or closed since), **append-only** (comments
-  only), and **only ever changes the `sev/*` label plus one comment** (never the
+  only), and **only ever changes the `Severity` field plus one comment** (never the
   state), so a concurrent close is not clobbered.
 - Writes land on GitHub immediately; there is no commit or push step. Use `dryRun`
   to review first.
@@ -74,8 +74,8 @@ the counts. Relaunching with the same args is safe (idempotent re-convergence).
 3. **Decide (script).** Drop unchanged (`proposed == current`) so nothing churns;
    keep the rest as `{old, new, reason}`, tallying up vs down.
 4. **Write.** One agent touches only the changed issues: re-checks each is still
-   open and unclaimed (skips it otherwise), runs `pw_issues.py label N --add
-   sev/<new>` (the helper drops the old `sev/*` label), and adds one comment
+   open and unclaimed (skips it otherwise), runs `pw_issues.py score N --severity
+   <new>` (the helper recomputes `RICE priority`), and adds one comment
    `Retriage: <old> -> <new>: <reason>`. Skipped entirely on `dryRun`.
 
 The return value carries `counts` (scored / changedUp / changedDown / unchanged /
@@ -88,7 +88,7 @@ skipped / written), the `changed` list and the `written` issue numbers.
 - **Claim-aware.** Skips an issue under another host's live lease (the helper's
   4h rule); a stale lease is fine to re-score. Retriage never claims an issue
   itself (it is not picking work).
-- **Append-only.** Changes only the `sev/*` label plus one retriage comment; never
+- **Append-only.** Changes only the `Severity` field plus one retriage comment; never
   edits an earlier comment.
 - **Structurally idempotent (not bit-stable).** `proposed == current` means no
   write, so unchanged tickets never churn. But LLM scoring varies run to run, so a
