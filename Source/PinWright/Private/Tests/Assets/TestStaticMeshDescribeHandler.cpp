@@ -16,6 +16,8 @@
 #include "PhysicsEngine/BodySetup.h"
 #include "PhysicsEngine/BoxElem.h"
 #include "UObject/Package.h"
+#include "UObject/StrongObjectPtr.h"
+#include "Misc/EngineVersionComparison.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FStaticMeshDescribeReturnsDumpShapeTest,
     "PinWright.static_mesh.describe.ReturnsDumpShape",
@@ -275,6 +277,92 @@ bool FStaticMeshDescribeReportsRenderConsumersTest::RunTest(const FString& Param
                   "and not to an empty stub"),
         StaticMeshDescribeTest_SortedStrings(*ScannedClasses).Contains(
             FString(TEXT("/Script/Niagara.NiagaraComponent"))));
+
+    return true;
+}
+
+// E-static-mesh-describe-doc-promises-nanite (#206): the namespace page promised Nanite state and
+// neither the describe response nor the static_mesh.json sidecar carried it, so callers fell back
+// to scraping NaniteSettings.bEnabled out of properties.json. Both surfaces share
+// BuildStaticMeshJson, so this pins the field there through the verb. Two distinct settings are
+// written and read back, which a hardcoded or default-valued field cannot satisfy.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FStaticMeshDescribeReportsNaniteSettingsTest,
+    "PinWright.static_mesh.describe.ReportsNaniteSettings",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FStaticMeshDescribeReportsNaniteSettingsTest::RunTest(const FString& Parameters)
+{
+    const FString PackagePath = FString::Printf(TEXT("/Game/PinWrightTests/SM_DescribeNanite_%s"),
+        *FGuid::NewGuid().ToString(EGuidFormats::Digits));
+    const FString AssetName = FPackageName::GetLongPackageAssetName(PackagePath);
+    TStrongObjectPtr<UStaticMesh> Mesh(NewObject<UStaticMesh>(
+        CreatePackage(*PackagePath), FName(*AssetName), RF_Public | RF_Standalone));
+    ON_SCOPE_EXIT
+    {
+        Mesh.Reset();
+        CleanupTestAsset(PackagePath);
+    };
+    if (!TestNotNull(TEXT("Temporary StaticMesh created"), Mesh.Get()))
+    {
+        return false;
+    }
+
+    for (const bool bEnabled : { true, false })
+    {
+        const float KeepPercent = bEnabled ? 0.25f : 0.75f;
+#if UE_VERSION_NEWER_THAN_OR_EQUAL(5, 7, 0)
+        FMeshNaniteSettings& Settings = Mesh->GetNaniteSettings();
+#else
+        FMeshNaniteSettings& Settings = Mesh->NaniteSettings;
+#endif
+        Settings.bEnabled = bEnabled;
+        Settings.KeepPercentTriangles = KeepPercent;
+
+        TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+        Payload->SetStringField(TEXT("assetPath"), Mesh->GetPathName());
+        FTestResponseCapture Capture;
+        const bool bFound = InvokeHandlerWithCapture(TEXT("static_mesh.describe"), Payload, Capture);
+        if (!TestTrue(FString::Printf(TEXT("Handler succeeded (errorCode='%s')"), *Capture.ErrorCode),
+                bFound && Capture.bSuccess && Capture.Result.IsValid()))
+        {
+            return false;
+        }
+
+        const TSharedPtr<FJsonObject>* Nanite = nullptr;
+        if (!TestTrue(TEXT("nanite is an object - the state the namespace page promises"),
+                Capture.Result->TryGetObjectField(TEXT("nanite"), Nanite)))
+        {
+            return false;
+        }
+
+        bool bReportedEnabled = !bEnabled;
+        TestTrue(TEXT("nanite.enabled is a boolean"), (*Nanite)->TryGetBoolField(TEXT("enabled"), bReportedEnabled));
+        TestEqual(TEXT("nanite.enabled reads the stored NaniteSettings.bEnabled"), bReportedEnabled, bEnabled);
+
+        double TrianglePercent = -1.0;
+        TestTrue(TEXT("nanite.trianglePercent is a number"),
+            (*Nanite)->TryGetNumberField(TEXT("trianglePercent"), TrianglePercent));
+        TestEqual(TEXT("nanite.trianglePercent is KeepPercentTriangles * 100"),
+            TrianglePercent, static_cast<double>(KeepPercent * 100.0f), 1e-3);
+
+        // The fixture leaves these at the FMeshNaniteSettings defaults (EngineTypes.h:3319
+        // PositionPrecision = MIN_int32, i.e. auto; :3355 FallbackPercentTriangles = 1.0f).
+        double FallbackPercent = -1.0;
+        TestTrue(TEXT("nanite.fallbackPercent is a number"),
+            (*Nanite)->TryGetNumberField(TEXT("fallbackPercent"), FallbackPercent));
+        TestEqual(TEXT("nanite.fallbackPercent is the default FallbackPercentTriangles * 100"),
+            FallbackPercent, 100.0, 1e-3);
+        double PositionPrecision = 0.0;
+        TestTrue(TEXT("nanite.positionPrecision is a number"),
+            (*Nanite)->TryGetNumberField(TEXT("positionPrecision"), PositionPrecision));
+        TestEqual(TEXT("nanite.positionPrecision is the default MIN_int32"),
+            PositionPrecision, static_cast<double>(MIN_int32));
+        bool bPositionPrecisionAuto = false;
+        TestTrue(TEXT("nanite.positionPrecisionAuto is a boolean"),
+            (*Nanite)->TryGetBoolField(TEXT("positionPrecisionAuto"), bPositionPrecisionAuto));
+        TestTrue(TEXT("nanite.positionPrecisionAuto is true for the default MIN_int32 precision"),
+            bPositionPrecisionAuto);
+    }
 
     return true;
 }

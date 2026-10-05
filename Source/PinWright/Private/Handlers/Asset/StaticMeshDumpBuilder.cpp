@@ -151,6 +151,20 @@ TSharedPtr<FJsonObject> StaticMeshDumpBuilder::BuildStaticMeshJson(const UStatic
     }
     Root->SetStringField(TEXT("collisionTraceFlag"), CollisionTrace);
 
+    // Stored settings, not built data: the same fields asset.nanite_rebuild_mesh reads back.
+#if UE_VERSION_NEWER_THAN_OR_EQUAL(5, 7, 0)
+    const FMeshNaniteSettings& NaniteSettings = Mesh->GetNaniteSettings();
+#else
+    const FMeshNaniteSettings& NaniteSettings = Mesh->NaniteSettings;
+#endif
+    TSharedRef<FJsonObject> Nanite = MakeShared<FJsonObject>();
+    Nanite->SetBoolField(TEXT("enabled"), NaniteSettings.bEnabled != 0);
+    Nanite->SetNumberField(TEXT("trianglePercent"), NaniteSettings.KeepPercentTriangles * 100.0f);
+    Nanite->SetNumberField(TEXT("fallbackPercent"), NaniteSettings.FallbackPercentTriangles * 100.0f);
+    Nanite->SetNumberField(TEXT("positionPrecision"), NaniteSettings.PositionPrecision);
+    Nanite->SetBoolField(TEXT("positionPrecisionAuto"), NaniteSettings.PositionPrecision == MIN_int32);
+    Root->SetObjectField(TEXT("nanite"), Nanite);
+
     return Root;
 }
 

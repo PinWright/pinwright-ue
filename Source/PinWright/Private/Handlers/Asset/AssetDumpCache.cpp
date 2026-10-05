@@ -788,7 +788,8 @@ int32 GetAspectVersion(const FString& RelativeFile)
         { TEXT("data_table.json"),          2 },
         // 2: sections, LOD0 slotUsage, UV channel counts, and light-map coordinate index added.
         // 3: boundingBox on every sections[] and slotUsage[] row.
-        { TEXT("static_mesh.json"),         3 },
+        // 4: nanite {enabled, trianglePercent, fallbackPercent, positionPrecision(Auto)}.
+        { TEXT("static_mesh.json"),         4 },
         { TEXT("static_mesh.txt"),          3 },
         { TEXT("level_sequence.json"),      3 },
         // 4: curves[] reads the data model instead of the runtime RawCurveData copy, which strips

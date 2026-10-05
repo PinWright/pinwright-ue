@@ -2,6 +2,12 @@
 
 ## 1.0.0
 
+- Added: `static_mesh.describe` and the `asset.dump` `static_mesh.json` sidecar now carry a
+  `nanite` object with the mesh's stored Nanite settings (`enabled`, `trianglePercent`,
+  `fallbackPercent`, `positionPrecision`, `positionPrecisionAuto`). The namespace page already
+  promised Nanite state, but neither surface returned it, so callers had to read
+  `NaniteSettings.bEnabled` out of `properties.json`. The `static_mesh.json` aspect version is
+  bumped, so cached folder dumps regenerate.
 - Added: `actor.add_instances` and `actor.remove_instances` fill and empty an existing ISM/HISM
   component's instances, which before only `python.execute` could do. `add_instances` appends a
   `transforms[]` batch (the shape `spatial.scatter_layout` returns), reads every new instance back,
