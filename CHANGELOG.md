@@ -2,6 +2,18 @@
 
 ## 1.0.0
 
+- Fixed: `sequence.add_keyframe` and `sequencer.add_keyframes` no longer write part of a transform
+  key and report success. Inside a `Transform` value, an unknown key such as a misspelt `rotaton`
+  group or a `w` component used to be dropped while the other groups wrote. A non-number component,
+  or an array that is not exactly three numbers, was dropped the same way. The whole call is now
+  refused, naming the bad key and the expected shape: `UNSUPPORTED_PROPERTY` for
+  `sequence.add_keyframe`, and `INVALID_ARGUMENT` with the key index for `sequencer.add_keyframes`.
+  Each `Transform` group now also accepts the flat forms the `Location` / `Rotation` / `Scale`
+  properties take: `rotation:{x,y,z}` (x = roll, y = pitch, z = yaw) and `location:[a,b,c]`. A
+  refused `sequence.add_keyframe` call no longer leaves an empty Transform track on the binding,
+  because the value is now checked before the track is created. Behaviour change: a flat value
+  carrying an extra key, or a one- or two-element array, used to key the axes it could read and
+  is now refused.
 - Added: `minSupportedColumns` on `spatial.ground_actors`, `spatial.verify_grounding` and
   `spatial.ground_instances`, an absolute count of footprint columns that must find ground.
   `minCoverage` is a ratio over the columns the object's geometry answered, so a footprint that

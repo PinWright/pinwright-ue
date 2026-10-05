@@ -22,6 +22,7 @@
 #include "Handlers/Sequencer/SequencerBindingUtils.h"
 #include "Handlers/Sequencer/SequencerKeyInterp.h"
 #include "Handlers/Sequencer/SequencePlayheadUtils.h"
+#include "Compat/JsonKeyCompat.h"
 // UE_VERSION_OLDER_THAN — used to gate the 5.6+ time-warp variant header below.
 #include "Misc/EngineVersionComparison.h"
 #include "PinWrightSubsystem.h"
@@ -2251,96 +2252,134 @@ namespace SequenceKeyframeHelpers
         }
     };
 
-    // Read three consecutively-named components off an object into three consecutive channel slots.
-    static void ReadNamedAxes(const TSharedPtr<FJsonObject>& Obj, const TCHAR* const* Names,
-                              int32 ChannelBase, FTransformKeyWrite& OutKey)
+    // The `value` shape a transform property expects, quoted by both keyframe verbs' refusals.
+    static const TCHAR* ExpectedValueShape(ETransformKeyShape Shape)
     {
-        for (int32 i = 0; i < 3; ++i)
-        {
-            if (Obj->TryGetNumberField(Names[i], OutKey.Axis[ChannelBase + i]))
-            {
-                OutKey.bHasAxis[ChannelBase + i] = true;
-            }
-        }
+        return Shape == ETransformKeyShape::FullNine
+            ? TEXT("{location:{x,y,z}, rotation:{roll,pitch,yaw}, scale:{x,y,z}} (any subset; each group "
+                   "also takes {x,y,z} or [a,b,c], with rotation {x,y,z} read as x=roll, y=pitch, z=yaw)")
+            : TEXT("{x,y,z} (rotation also accepts {roll,pitch,yaw}) or [a,b,c]");
     }
 
-    // The {x,y,z} / {X,Y,Z} object (rotation also honours {roll,pitch,yaw}) or the bare [a,b,c]
-    // array form of a single axis group — verbatim the acceptance sequence.add_keyframe's per-axis
-    // branch has always had, hoisted so the batch verb cannot drift from it.
-    static void ReadAxisTriple(const TSharedPtr<FJsonValue>& Value, bool bIsRotation,
-                               int32 ChannelBase, FTransformKeyWrite& OutKey)
+    // One three-channel group: an {x,y,z} object (rotation also {roll,pitch,yaw}, x=roll, y=pitch,
+    // z=yaw) or an exactly-three-number [a,b,c] array. STRICT: an unknown key, a non-number
+    // component, two keys for one channel or a wrong-length array refuses the whole value, naming
+    // `Where`. Silently dropping such a component let a partial key report success (a nested
+    // rotation:{x,y,z} used to be ignored while location still wrote).
+    static bool ReadAxisTriple(const TSharedPtr<FJsonValue>& Value, bool bIsRotation, int32 ChannelBase,
+                               const FString& Where, FTransformKeyWrite& OutKey, FString& OutError)
     {
         static const TCHAR* const Keys[3] = { TEXT("x"), TEXT("y"), TEXT("z") };
         static const TCHAR* const RotKeys[3] = { TEXT("roll"), TEXT("pitch"), TEXT("yaw") };
 
-        if (Value.IsValid() && Value->Type == EJson::Object)
+        if (Value.IsValid() && Value->Type == EJson::Object && Value->AsObject().IsValid())
         {
-            const TSharedPtr<FJsonObject> ValObj = Value->AsObject();
-            if (ValObj.IsValid())
+            for (const auto& Pair : Value->AsObject()->Values)
             {
-                for (int32 i = 0; i < 3; ++i)
+                const FString Key = EARGCompat::JsonKeyToString(Pair.Key);
+                int32 Index = INDEX_NONE;
+                for (int32 i = 0; i < 3 && Index == INDEX_NONE; ++i)
                 {
-                    if (ValObj->TryGetNumberField(Keys[i], OutKey.Axis[ChannelBase + i]))
+                    if (Key.Equals(Keys[i], ESearchCase::IgnoreCase) ||
+                        (bIsRotation && Key.Equals(RotKeys[i], ESearchCase::IgnoreCase)))
                     {
-                        OutKey.bHasAxis[ChannelBase + i] = true;
-                    }
-                    else if (bIsRotation && ValObj->TryGetNumberField(RotKeys[i], OutKey.Axis[ChannelBase + i]))
-                    {
-                        OutKey.bHasAxis[ChannelBase + i] = true;
+                        Index = i;
                     }
                 }
+                if (Index == INDEX_NONE)
+                {
+                    OutError = FString::Printf(TEXT("%s has unknown key '%s' (accepted: %s)"), *Where, *Key,
+                        bIsRotation ? TEXT("x, y, z or roll, pitch, yaw") : TEXT("x, y, z"));
+                    return false;
+                }
+                if (!Pair.Value.IsValid() || Pair.Value->Type != EJson::Number)
+                {
+                    OutError = FString::Printf(TEXT("%s.%s must be a number"), *Where, *Key);
+                    return false;
+                }
+                if (OutKey.bHasAxis[ChannelBase + Index])
+                {
+                    OutError = FString::Printf(TEXT("%s gives channel '%s' twice ('%s' and '%s' are the same axis)"),
+                        *Where, bIsRotation ? RotKeys[Index] : Keys[Index], Keys[Index], RotKeys[Index]);
+                    return false;
+                }
+                OutKey.Axis[ChannelBase + Index] = Pair.Value->AsNumber();
+                OutKey.bHasAxis[ChannelBase + Index] = true;
             }
+            return true;
         }
-        else if (Value.IsValid() && Value->Type == EJson::Array)
+        if (Value.IsValid() && Value->Type == EJson::Array)
         {
             const TArray<TSharedPtr<FJsonValue>>& Arr = Value->AsArray();
-            for (int32 i = 0; i < 3 && i < Arr.Num(); ++i)
+            bool bThreeNumbers = Arr.Num() == 3;
+            for (int32 i = 0; bThreeNumbers && i < 3; ++i)
             {
-                if (Arr[i].IsValid() && Arr[i]->Type == EJson::Number)
-                {
-                    OutKey.Axis[ChannelBase + i] = Arr[i]->AsNumber();
-                    OutKey.bHasAxis[ChannelBase + i] = true;
-                }
+                bThreeNumbers = Arr[i].IsValid() && Arr[i]->Type == EJson::Number;
             }
+            if (!bThreeNumbers)
+            {
+                OutError = FString::Printf(TEXT("%s array must hold exactly three numbers"), *Where);
+                return false;
+            }
+            for (int32 i = 0; i < 3; ++i)
+            {
+                OutKey.Axis[ChannelBase + i] = Arr[i]->AsNumber();
+                OutKey.bHasAxis[ChannelBase + i] = true;
+            }
+            return true;
         }
+        OutError = FString::Printf(TEXT("%s must be an object or a three-number array"), *Where);
+        return false;
     }
 
-    // Resolve a key's `value` field into channel slots. Nothing is written when the shape does not
-    // match — the caller decides whether that is a fall-through (singular verb) or a rejection
-    // (batch verb, which cannot leave a half-authored path behind).
-    static void ParseTransformKeyValue(ETransformKeyShape Shape, int32 ChannelBase,
-                                       const TSharedPtr<FJsonValue>& Value, FTransformKeyWrite& OutKey)
+    // Resolve a key's `value` field into channel slots, refusing (false + OutError naming the bad
+    // key) anything the selected shape does not read, so no caller can write part of a key and
+    // report success. Pure: it writes only OutKey, so both verbs call it BEFORE
+    // GetOrAddTransformChannels, whose track/section creation is itself a mutation. A value that
+    // parses but names no channel ({}) returns true with TouchesAnyChannel() false; callers refuse it.
+    static bool ParseTransformKeyValue(ETransformKeyShape Shape, int32 ChannelBase,
+                                       const TSharedPtr<FJsonValue>& Value, FTransformKeyWrite& OutKey,
+                                       FString& OutError)
     {
-        if (Shape == ETransformKeyShape::FullNine)
-        {
-            static const TCHAR* const XyzKeys[3] = { TEXT("x"), TEXT("y"), TEXT("z") };
-            static const TCHAR* const RotKeys[3] = { TEXT("roll"), TEXT("pitch"), TEXT("yaw") };
-
-            const TSharedPtr<FJsonObject> ValueObj =
-                (Value.IsValid() && Value->Type == EJson::Object) ? Value->AsObject() : nullptr;
-            if (!ValueObj.IsValid())
-            {
-                return;
-            }
-            const TSharedPtr<FJsonObject>* SubObj = nullptr;
-            if (ValueObj->TryGetObjectField(TEXT("location"), SubObj) && SubObj)
-            {
-                ReadNamedAxes(*SubObj, XyzKeys, 0, OutKey);
-            }
-            if (ValueObj->TryGetObjectField(TEXT("rotation"), SubObj) && SubObj)
-            {
-                ReadNamedAxes(*SubObj, RotKeys, 3, OutKey);
-            }
-            if (ValueObj->TryGetObjectField(TEXT("scale"), SubObj) && SubObj)
-            {
-                ReadNamedAxes(*SubObj, XyzKeys, 6, OutKey);
-            }
-            return;
-        }
         if (Shape == ETransformKeyShape::AxisTriple)
         {
-            ReadAxisTriple(Value, /*bIsRotation=*/ChannelBase == 3, ChannelBase, OutKey);
+            return ReadAxisTriple(Value, /*bIsRotation=*/ChannelBase == 3, ChannelBase, TEXT("value"),
+                                  OutKey, OutError);
         }
+        if (Shape != ETransformKeyShape::FullNine)
+        {
+            return true;
+        }
+        if (!Value.IsValid() || Value->Type != EJson::Object || !Value->AsObject().IsValid())
+        {
+            OutError = TEXT("value must be an object");
+            return false;
+        }
+        static const TCHAR* const Groups[3] = { TEXT("location"), TEXT("rotation"), TEXT("scale") };
+        for (const auto& Pair : Value->AsObject()->Values)
+        {
+            const FString Key = EARGCompat::JsonKeyToString(Pair.Key);
+            int32 Group = INDEX_NONE;
+            for (int32 i = 0; i < 3 && Group == INDEX_NONE; ++i)
+            {
+                if (Key.Equals(Groups[i], ESearchCase::IgnoreCase))
+                {
+                    Group = i;
+                }
+            }
+            if (Group == INDEX_NONE)
+            {
+                OutError = FString::Printf(TEXT("value has unknown key '%s' (accepted: location, rotation, scale)"),
+                                           *Key);
+                return false;
+            }
+            if (!ReadAxisTriple(Pair.Value, /*bIsRotation=*/Group == 1, Group * 3,
+                                FString::Printf(TEXT("value.%s"), Groups[Group]), OutKey, OutError))
+            {
+                return false;
+            }
+        }
+        return true;
     }
 
     // Apply one resolved key to the section's channels. Two contracts live here and nowhere else:
@@ -2435,9 +2474,9 @@ REGISTER_RPC_HANDLER("sequence.add_keyframe", "Sequencer", "Add a keyframe to a 
         RPC_PARAM_OPT("path", "path", "Sequence asset path"),
         RPC_PARAM_OPT("bindingId", "string", "GUID of the binding (from add_actor/get_bindings)"),
         RPC_PARAM_OPT("actorName", "string", "Actor label (alternative to bindingId)"),
-        RPC_PARAM_OPT("property", "string", "Property name (e.g. Transform, Location)"),
+        RPC_PARAM_OPT("property", "string", "Transform | Location | Rotation | Scale (channels of the binding's 3D transform track), or any other property name for a float/bool property track. Selects the shape `value` must take."),
         RPC_PARAM_REQ("frame", "integer", "Frame number for the keyframe"),
-        RPC_PARAM_OPT("value", "object|number|boolean", "Value for the keyframe"),
+        RPC_PARAM_OPT("value", "object|number|boolean", "Shape depends on `property`. Transform: NESTED {location:{x,y,z}, rotation:{roll,pitch,yaw}, scale:{x,y,z}}, any subset; each group also takes its flat form below. Location | Scale: FLAT {x,y,z} or [x,y,z]. Rotation: FLAT {roll,pitch,yaw}, {x,y,z} (x=roll, y=pitch, z=yaw) or [roll,pitch,yaw]. Any other property: a number keys a float track, a boolean a bool track. A transform value that names no channel, or carries a key, a non-number component or an array length the shape does not read (e.g. a nested object for Location, a misspelt group), writes no key and fails with UNSUPPORTED_PROPERTY naming it; no track is created."),
         RPC_PARAM_OPT("interp", "string", "Key interpolation: constant (holds/stepped) | linear | cubic. Default cubic. Pass linear for constant-rate motion — a 2-key span keyed cubic eases in and out."),
         RPC_PARAM_OPT("tangentMode", "string", "Cubic tangent mode: auto | user | break | none. Default auto; ignored for constant/linear."),
         RPC_PARAM_OPT("arriveTangent", "number", "Explicit incoming slope for this key, in curve value per TICK (not per second, not per display frame): a slope of V units/second is V / tickResolution. Requires tangentMode 'user' or 'break' — 'auto' re-solves every key and would discard it. Omit to keep whatever the channel solves."),
@@ -2559,38 +2598,48 @@ REGISTER_RPC_HANDLER("sequence.add_keyframe", "Sequencer", "Add a keyframe to a 
                 SequenceKeyframeHelpers::ClassifyTransformProperty(PropertyName, ChannelBase);
             if (KeyShape != SequenceKeyframeHelpers::ETransformKeyShape::None)
             {
+                // Resolve the value BEFORE GetOrAddTransformChannels: creating the track and its
+                // section is itself a mutation, so a refusal found after it would leave an empty,
+                // dirty Transform track evaluating its defaults on the binding.
+                SequenceKeyframeHelpers::FTransformKeyWrite KeyWrite;
+                FString ValueError;
+                if (!SequenceKeyframeHelpers::ParseTransformKeyValue(
+                        KeyShape, ChannelBase, LocalPayload->TryGetField(TEXT("value")), KeyWrite, ValueError) ||
+                    !KeyWrite.TouchesAnyChannel())
+                {
+                    Ctx.SendError(ErrorCodes::ERR_UNSUPPORTED_PROPERTY,
+                        FString::Printf(TEXT("%s; nothing was written. property '%s' expects value %s."),
+                            ValueError.IsEmpty() ? TEXT("value names no channel") : *ValueError,
+                            *PropertyName, SequenceKeyframeHelpers::ExpectedValueShape(KeyShape)));
+                    return true;
+                }
+
                 UMovieSceneSection* TransformSection = nullptr;
                 TArrayView<FMovieSceneDoubleChannel*> Channels =
                     SequenceHelpers::GetOrAddTransformChannels(MovieScene, BindingGuid, &TransformSection);
                 if (Channels.Num() >= SequenceKeyframeHelpers::RequiredChannelCount(KeyShape, ChannelBase))
                 {
-                    SequenceKeyframeHelpers::FTransformKeyWrite KeyWrite;
                     KeyWrite.Frame = Frame;
                     KeyWrite.TickFrame = SequenceHelpers::DisplayFrameToTick(MovieScene, Frame);
                     KeyWrite.InterpMode = KeyInterpMode;
                     KeyWrite.TangentMode = KeyTangentMode;
                     KeyWrite.Tangents = KeyTangents;
-                    SequenceKeyframeHelpers::ParseTransformKeyValue(
-                        KeyShape, ChannelBase, LocalPayload->TryGetField(TEXT("value")), KeyWrite);
 
-                    if (KeyWrite.TouchesAnyChannel())
+                    TArray<FMovieSceneDoubleChannel*> TouchedChannels;
+                    SequenceKeyframeHelpers::ApplyTransformKeyWrite(Channels, KeyWrite, TouchedChannels);
+                    // Honour the requested tangent mode: RCTM_Auto is only an intent until the
+                    // channel solves it (see ApplyTransformKeyWrite's second contract).
+                    SequenceKeyframeHelpers::AutoSetTangentsOn(TouchedChannels);
+                    // Grow the section to span the written key — FindOrAddSection(0) creates it
+                    // collapsed to [0,0], so without this the key sits outside the section
+                    // bounds (the authored animation plays no time).
+                    if (TransformSection)
                     {
-                        TArray<FMovieSceneDoubleChannel*> TouchedChannels;
-                        SequenceKeyframeHelpers::ApplyTransformKeyWrite(Channels, KeyWrite, TouchedChannels);
-                        // Honour the requested tangent mode: RCTM_Auto is only an intent until the
-                        // channel solves it (see ApplyTransformKeyWrite's second contract).
-                        SequenceKeyframeHelpers::AutoSetTangentsOn(TouchedChannels);
-                        // Grow the section to span the written key — FindOrAddSection(0) creates it
-                        // collapsed to [0,0], so without this the key sits outside the section
-                        // bounds (the authored animation plays no time).
-                        if (TransformSection)
-                        {
-                            TransformSection->ExpandToFrame(KeyWrite.TickFrame);
-                        }
-                        MovieScene->Modify();
-                        Ctx.SendSuccess(TSharedPtr<FJsonObject>(nullptr));
-                        return true;
+                        TransformSection->ExpandToFrame(KeyWrite.TickFrame);
                     }
+                    MovieScene->Modify();
+                    Ctx.SendSuccess(TSharedPtr<FJsonObject>(nullptr));
+                    return true;
                 }
             }
             else
@@ -2710,7 +2759,7 @@ REGISTER_RPC_HANDLER("sequencer.add_keyframes", "Sequencer",
         RPC_PARAM_OPT("bindingId", "string", "GUID of the binding (from add_actor/get_bindings)"),
         RPC_PARAM_OPT("actorName", "string", "Actor label (alternative to bindingId)"),
         RPC_PARAM_OPT("property", "string", "Which channels the keys address: Transform (a {location,rotation,scale} envelope over all nine channels) | Location | Rotation | Scale (one three-channel group). Default Transform."),
-        RPC_PARAM_REQ("keys", "array", "The keys to write: each {frame, value} in the shape `property` selects, plus optional per-key interp / tangentMode / arriveTangent / leaveTangent that override the batch-level defaults field by field. Must be non-empty. A key whose frame is missing or non-finite, or whose value names no channel, rejects the WHOLE batch with INVALID_ARGUMENT naming its index."),
+        RPC_PARAM_REQ("keys", "array", "The keys to write: each {frame, value} in the shape `property` selects, plus optional per-key interp / tangentMode / arriveTangent / leaveTangent that override the batch-level defaults field by field. Must be non-empty. A key whose frame is missing or non-finite, or whose value names no channel or carries a key, a non-number component or an array length its property does not read, rejects the WHOLE batch with INVALID_ARGUMENT naming its index and the bad key."),
         RPC_PARAM_OPT("interp", "string", "Batch default key interpolation: constant (holds/stepped) | linear | cubic. Default cubic. Pass linear for constant-rate motion - a 2-key span keyed cubic eases in and out."),
         RPC_PARAM_OPT("tangentMode", "string", "Batch default cubic tangent mode: auto | user | break | none. Default auto; ignored for constant/linear."),
         RPC_PARAM_OPT("arriveTangent", "number", "Batch default incoming slope, in curve value per TICK (a slope of V units/second is V / tickResolution). Requires tangentMode 'user' or 'break'."),
@@ -2897,16 +2946,20 @@ REGISTER_RPC_HANDLER("sequencer.add_keyframes", "Sequencer",
             return true;
         }
 
-        SequenceKeyframeHelpers::ParseTransformKeyValue(
-            KeyShape, ChannelBase, EntryObj->TryGetField(TEXT("value")), KeyWrite);
+        FString ValueError;
+        if (!SequenceKeyframeHelpers::ParseTransformKeyValue(
+                KeyShape, ChannelBase, EntryObj->TryGetField(TEXT("value")), KeyWrite, ValueError))
+        {
+            Ctx.SendError(ErrorCodes::ERR_INVALID_ARGUMENT,
+                FString::Printf(TEXT("keys[%d].%s. Expected %s."),
+                    KeyIndex, *ValueError, SequenceKeyframeHelpers::ExpectedValueShape(KeyShape)));
+            return true;
+        }
         if (!KeyWrite.TouchesAnyChannel())
         {
             Ctx.SendError(ErrorCodes::ERR_INVALID_ARGUMENT,
                 FString::Printf(TEXT("keys[%d].value names no channel of '%s'. Expected %s."),
-                    KeyIndex, *PropertyName,
-                    KeyShape == SequenceKeyframeHelpers::ETransformKeyShape::FullNine
-                        ? TEXT("{location:{x,y,z}} and/or {rotation:{roll,pitch,yaw}} and/or {scale:{x,y,z}}")
-                        : TEXT("{x,y,z} (rotation also accepts {roll,pitch,yaw}) or [a,b,c]")));
+                    KeyIndex, *PropertyName, SequenceKeyframeHelpers::ExpectedValueShape(KeyShape)));
             return true;
         }
         Resolved.Add(MoveTemp(KeyWrite));

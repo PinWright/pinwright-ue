@@ -4,7 +4,7 @@ Author and play back `ULevelSequence` assets — UE's track-based timeline for c
 
 ## Namespace consolidation
 
-This namespace consolidates what used to be split across `sequence.*` and `sequencer.*`; every method now lives at `sequencer.*`. It contains both typed-track conveniences and general track management, and `add_keyframe` has two registered call shapes; see its H3 below for disambiguation.
+This namespace consolidates what used to be split across `sequence.*` and `sequencer.*`; every method now lives at `sequencer.*` except the frame-numbered keyframe writer `sequence.add_keyframe`. It contains both typed-track conveniences and general track management; the `sequencer.add_keyframe` page says which of the two keyframe writers to use.
 
 ## Typed track wrappers vs. the general add_track
 
@@ -126,12 +126,21 @@ For non-skeletal animation (transforms, materials, visibility) use the correspon
 
 ### sequencer.add_keyframe
 
-**Two distinct call shapes share this method name** because the rename in plan chunk 1B collided two pre-existing handlers (the modern `SequencerHandler` version and the legacy `SequenceHandler` version, both originally registered at this path). Pick by parameter shape:
+**Two keyframe writers, under two method names.** Dispatch is by name, so the parameter set never selects the handler:
 
-- **Seconds-based, float-only float-track writer** (from `SequencerHandler.cpp`): required `sequencePath`, `bindingGuid`, `propertyName`, `time` (seconds), `value` (number). Use this for writing values on an existing float property track when you know the binding GUID and property name and want to express time in seconds.
-- **Frame-numbered, broader-track writer** (from `SequenceHandler.cpp`): optional `path` / `bindingId` / `actorName` / `property`, required `frame` (frame number), optional `value` (object / number / boolean). Use this for transform / vector / object-typed tracks, or when you only have an actor label and not a binding GUID, or when you prefer to express time in frames.
+- `sequencer.add_keyframe` (this method) keys a **float** property track on an existing binding, creating the track when missing: required `sequencePath`, `bindingGuid`, `propertyName`, `time` (seconds), `value` (a number).
+- `sequence.add_keyframe` (no `r`) keys a **transform** channel or a float/bool property track, creating the track when missing: `path`, `bindingId` or `actorName`, `property`, required `frame` (display-rate frame number), `value`. To write many transform keys onto one binding as one undo step, use `sequencer.add_keyframes`.
 
-Which one wins at dispatch time depends on registration order — call the wiki against this method (omit `params`) for the live param schema. If you need deterministic behavior, prefer the seconds-based form's exact param set; missing required keys force the legacy form's path.
+**`sequence.add_keyframe`'s `value` shape depends on `property`.** The two transform shapes are not interchangeable:
+
+| `property` | `value` | Example |
+|---|---|---|
+| `Transform` | nested, any subset of `{location:{x,y,z}, rotation:{roll,pitch,yaw}, scale:{x,y,z}}`; each group also takes its flat form from the rows below | `{property:"Transform", frame:0, value:{location:{x:0,y:0,z:150}, rotation:{yaw:90}}}` |
+| `Location`, `Scale` | flat `{x,y,z}` or `[x,y,z]` | `{property:"Location", frame:120, value:{x:1500,y:600,z:150}}` |
+| `Rotation` | flat `{roll,pitch,yaw}`, `{x,y,z}` (x = roll, y = pitch, z = yaw) or `[roll,pitch,yaw]` | `{property:"Rotation", frame:0, value:{yaw:45}}` |
+| any other name | a number keys a float track, a boolean keys a bool track | `{property:"MyFloat", frame:0, value:0.5}` |
+
+All four transform properties write the same `MovieScene3DTransformTrack` on the binding; an axis you omit keeps its current curve. A value that addresses no channel of the selected shape writes no key and fails with `UNSUPPORTED_PROPERTY`, so a nested `{location:{...}}` sent with `property:"Location"` is refused, not half-applied. The same refusal covers any part of the value the shape does not read: an unknown key (a misspelt `rotaton` group, a `w` component), a non-number component, or an array that is not exactly three numbers. The error names the bad key and the expected shape, and the refused call creates no track. `sequencer.add_keyframes` applies the same rules per key and rejects the whole batch with `INVALID_ARGUMENT`. Read the written keys back with `sequencer.list_sections` and `includeKeys:true`.
 
 ### sequencer.set_playhead
 

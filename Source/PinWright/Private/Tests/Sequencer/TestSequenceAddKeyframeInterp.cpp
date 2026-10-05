@@ -1579,3 +1579,226 @@ bool FSequencerMeasureMotionAutoTangentSeamTest::RunTest(const FString& Paramete
 
     return true;
 }
+
+// ============================================================================
+// Value-shape refusals (#188 review, #361). sequence.add_keyframe used to create the binding's
+// transform track and section BEFORE it parsed `value`, so a value naming no channel of the
+// selected property left an empty, dirty Transform track behind while reporting
+// UNSUPPORTED_PROPERTY. And inside a `Transform` envelope an unrecognised key (`rotaton`), or a
+// sub-shape the envelope did not read (`rotation:{x,y,z}`, `location:[...]`), was dropped silently
+// while the other groups wrote, so a partial key reported success. Both drive the production
+// handlers through the real registration list.
+// ============================================================================
+namespace TestSequenceAddKeyframeInterpHelpers
+{
+    // One sequence.add_keyframe call on a binding at frame 0.
+    FTestResponseCapture InvokeSeqAddKeyframeValueShape(const FString& FullPath, const FGuid& BindingGuid,
+                                                        const TCHAR* Property, const TSharedPtr<FJsonObject>& Value)
+    {
+        TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+        Payload->SetStringField(TEXT("path"), FullPath);
+        Payload->SetStringField(TEXT("bindingId"), BindingGuid.ToString());
+        Payload->SetStringField(TEXT("property"), Property);
+        Payload->SetNumberField(TEXT("frame"), 0);
+        Payload->SetObjectField(TEXT("value"), Value);
+        FTestResponseCapture Capture;
+        InvokeHandlerWithCapture(TEXT("sequence.add_keyframe"), Payload, Capture);
+        return Capture;
+    }
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSequenceAddKeyframeMismatchedShapeLeavesNoTrackTest,
+    "PinWright.Sequencer.SequenceAddKeyframe.MismatchedValueShapeIsRefusedWithoutATrack",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FSequenceAddKeyframeMismatchedShapeLeavesNoTrackTest::RunTest(const FString& Parameters)
+{
+    FString FullPath;
+    ULevelSequence* Sequence = CreateSequenceAddKeyframeInterpSequence(*this, FullPath);
+    if (!Sequence)
+    {
+        return false; // error already emitted by helper
+    }
+    ON_SCOPE_EXIT { CleanupTestAsset(FullPath); };
+
+    UMovieScene* MovieScene = Sequence->GetMovieScene();
+    if (!TestNotNull(TEXT("MovieScene present on the probe sequence"), MovieScene))
+    {
+        return false;
+    }
+    const FGuid BindingGuid =
+        MovieScene->AddPossessable(TEXT("MCP_SeqAddKeyframeShapeActor"), AActor::StaticClass());
+    if (!TestTrue(TEXT("possessable binding GUID is valid"), BindingGuid.IsValid()) ||
+        !TestNull(TEXT("precondition: the fresh binding has no transform track"),
+            MovieScene->FindTrack<UMovieScene3DTransformTrack>(BindingGuid)))
+    {
+        return false;
+    }
+
+    // The Transform envelope sent with the flat Location property: the documented mismatch.
+    TSharedPtr<FJsonObject> Value = MakeShared<FJsonObject>();
+    Value->SetObjectField(TEXT("location"), MakeSeqAddKeyframeXyzValue(1.0, 2.0, 3.0));
+    const FTestResponseCapture Capture =
+        TestSequenceAddKeyframeInterpHelpers::InvokeSeqAddKeyframeValueShape(FullPath, BindingGuid, TEXT("Location"), Value);
+
+    TestFalse(TEXT("a nested value for property Location is refused"), Capture.bSuccess);
+    TestEqual(TEXT("the refusal is UNSUPPORTED_PROPERTY"), Capture.ErrorCode, FString(TEXT("UNSUPPORTED_PROPERTY")));
+    TestTrue(*FString::Printf(TEXT("the refusal names the offending key (got '%s')"), *Capture.Message),
+        Capture.Message.Contains(TEXT("'location'")));
+    TestTrue(*FString::Printf(TEXT("the refusal states the expected shape (got '%s')"), *Capture.Message),
+        Capture.Message.Contains(TEXT("{x,y,z}")));
+    // Before the fix GetOrAddTransformChannels ran first, so the refused call still left a track.
+    TestNull(TEXT("the refused call left no transform track on the binding"),
+        MovieScene->FindTrack<UMovieScene3DTransformTrack>(BindingGuid));
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSequenceAddKeyframeTransformSubKeysTest,
+    "PinWright.Sequencer.SequenceAddKeyframe.TransformRefusesUnreadSubKeysAndReadsFlatForms",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FSequenceAddKeyframeTransformSubKeysTest::RunTest(const FString& Parameters)
+{
+    FString FullPath;
+    ULevelSequence* Sequence = CreateSequenceAddKeyframeInterpSequence(*this, FullPath);
+    if (!Sequence)
+    {
+        return false; // error already emitted by helper
+    }
+    ON_SCOPE_EXIT { CleanupTestAsset(FullPath); };
+
+    UMovieScene* MovieScene = Sequence->GetMovieScene();
+    if (!TestNotNull(TEXT("MovieScene present on the probe sequence"), MovieScene))
+    {
+        return false;
+    }
+    const FGuid BindingGuid =
+        MovieScene->AddPossessable(TEXT("MCP_SeqAddKeyframeSubKeyActor"), AActor::StaticClass());
+    if (!TestTrue(TEXT("possessable binding GUID is valid"), BindingGuid.IsValid()) ||
+        !TestNull(TEXT("precondition: the fresh binding has no transform track"),
+            MovieScene->FindTrack<UMovieScene3DTransformTrack>(BindingGuid)))
+    {
+        return false;
+    }
+
+    // 1. A misspelt group beside a valid one. Pre-fix: location wrote, `rotaton` was dropped, success.
+    {
+        TSharedPtr<FJsonObject> Value = MakeShared<FJsonObject>();
+        Value->SetObjectField(TEXT("location"), MakeSeqAddKeyframeXyzValue(0.0, 0.0, 150.0));
+        Value->SetObjectField(TEXT("rotaton"), MakeSeqAddKeyframeXyzValue(0.0, 0.0, 90.0));
+        const FTestResponseCapture Capture =
+            TestSequenceAddKeyframeInterpHelpers::InvokeSeqAddKeyframeValueShape(FullPath, BindingGuid, TEXT("Transform"), Value);
+        TestFalse(TEXT("a misspelt Transform group is refused"), Capture.bSuccess);
+        TestEqual(TEXT("the refusal is UNSUPPORTED_PROPERTY"), Capture.ErrorCode, FString(TEXT("UNSUPPORTED_PROPERTY")));
+        TestTrue(*FString::Printf(TEXT("the refusal names 'rotaton' (got '%s')"), *Capture.Message),
+            Capture.Message.Contains(TEXT("'rotaton'")));
+    }
+    // 2. An unknown component inside a group. Pre-fix: scale.x wrote, `q` was dropped, success.
+    {
+        TSharedPtr<FJsonObject> Scale = MakeShared<FJsonObject>();
+        Scale->SetNumberField(TEXT("x"), 2.0);
+        Scale->SetNumberField(TEXT("q"), 2.0);
+        TSharedPtr<FJsonObject> Value = MakeShared<FJsonObject>();
+        Value->SetObjectField(TEXT("scale"), Scale);
+        const FTestResponseCapture Capture =
+            TestSequenceAddKeyframeInterpHelpers::InvokeSeqAddKeyframeValueShape(FullPath, BindingGuid, TEXT("Transform"), Value);
+        TestFalse(TEXT("an unknown key inside a Transform group is refused"), Capture.bSuccess);
+        TestTrue(*FString::Printf(TEXT("the refusal names value.scale and 'q' (got '%s')"), *Capture.Message),
+            Capture.Message.Contains(TEXT("value.scale has unknown key 'q'")));
+    }
+    // 3. The batch verb shares the parser: the same misspelling rejects the batch by index.
+    {
+        TSharedPtr<FJsonObject> Value = MakeShared<FJsonObject>();
+        Value->SetObjectField(TEXT("location"), MakeSeqAddKeyframeXyzValue(0.0, 0.0, 150.0));
+        Value->SetObjectField(TEXT("rotaton"), MakeSeqAddKeyframeXyzValue(0.0, 0.0, 90.0));
+        TSharedPtr<FJsonObject> Entry = MakeShared<FJsonObject>();
+        Entry->SetNumberField(TEXT("frame"), 0);
+        Entry->SetObjectField(TEXT("value"), Value);
+        TArray<TSharedPtr<FJsonValue>> Keys;
+        Keys.Add(MakeShared<FJsonValueObject>(Entry));
+        TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+        Payload->SetStringField(TEXT("path"), FullPath);
+        Payload->SetStringField(TEXT("bindingId"), BindingGuid.ToString());
+        Payload->SetStringField(TEXT("property"), TEXT("Transform"));
+        Payload->SetArrayField(TEXT("keys"), Keys);
+        FTestResponseCapture Capture;
+        InvokeHandlerWithCapture(TEXT("sequencer.add_keyframes"), Payload, Capture);
+        TestFalse(TEXT("sequencer.add_keyframes refuses the misspelt group"), Capture.bSuccess);
+        TestTrue(*FString::Printf(TEXT("the batch refusal names keys[0] and 'rotaton' (got '%s')"), *Capture.Message),
+            Capture.Message.Contains(TEXT("keys[0]")) && Capture.Message.Contains(TEXT("'rotaton'")));
+    }
+    // 3b. Flat values the parser used to half-read, now refused (the CHANGELOG behaviour change):
+    //     a two-element array keyed x and y and dropped z; {x, roll} on Rotation keyed x and
+    //     silently ignored roll for the same channel.
+    {
+        TArray<TSharedPtr<FJsonValue>> TwoNumbers;
+        TwoNumbers.Add(MakeShared<FJsonValueNumber>(1.0));
+        TwoNumbers.Add(MakeShared<FJsonValueNumber>(2.0));
+        TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+        Payload->SetStringField(TEXT("path"), FullPath);
+        Payload->SetStringField(TEXT("bindingId"), BindingGuid.ToString());
+        Payload->SetStringField(TEXT("property"), TEXT("Location"));
+        Payload->SetNumberField(TEXT("frame"), 0);
+        Payload->SetArrayField(TEXT("value"), TwoNumbers);
+        FTestResponseCapture Capture;
+        InvokeHandlerWithCapture(TEXT("sequence.add_keyframe"), Payload, Capture);
+        TestFalse(TEXT("a two-element Location array is refused"), Capture.bSuccess);
+        TestTrue(*FString::Printf(TEXT("the refusal asks for exactly three numbers (got '%s')"), *Capture.Message),
+            Capture.Message.Contains(TEXT("exactly three numbers")));
+    }
+    {
+        TSharedPtr<FJsonObject> Value = MakeShared<FJsonObject>();
+        Value->SetNumberField(TEXT("x"), 1.0);
+        Value->SetNumberField(TEXT("roll"), 2.0);
+        const FTestResponseCapture Capture =
+            TestSequenceAddKeyframeInterpHelpers::InvokeSeqAddKeyframeValueShape(FullPath, BindingGuid, TEXT("Rotation"), Value);
+        TestFalse(TEXT("x plus roll on Rotation is refused"), Capture.bSuccess);
+        TestTrue(*FString::Printf(TEXT("the refusal names the doubled roll channel (got '%s')"), *Capture.Message),
+            Capture.Message.Contains(TEXT("gives channel 'roll' twice")));
+    }
+    TestNull(TEXT("no refused call left a transform track on the binding"),
+        MovieScene->FindTrack<UMovieScene3DTransformTrack>(BindingGuid));
+
+    // 4. The flat forms inside the envelope are read, not dropped: rotation:{x,y,z} (x=roll,
+    //    y=pitch, z=yaw) and location:[a,b,c]. Pre-fix both were ignored and the call wrote nothing.
+    {
+        TArray<TSharedPtr<FJsonValue>> LocationArray;
+        LocationArray.Add(MakeShared<FJsonValueNumber>(1.0));
+        LocationArray.Add(MakeShared<FJsonValueNumber>(2.0));
+        LocationArray.Add(MakeShared<FJsonValueNumber>(3.0));
+        TSharedPtr<FJsonObject> Value = MakeShared<FJsonObject>();
+        Value->SetArrayField(TEXT("location"), LocationArray);
+        // Distinct components so x->roll (channel 3), y->pitch (4), z->yaw (5) are each pinned.
+        Value->SetObjectField(TEXT("rotation"), MakeSeqAddKeyframeXyzValue(10.0, 20.0, 30.0));
+        const FTestResponseCapture Capture =
+            TestSequenceAddKeyframeInterpHelpers::InvokeSeqAddKeyframeValueShape(FullPath, BindingGuid, TEXT("Transform"), Value);
+        if (!TestTrue(*FString::Printf(TEXT("flat forms inside Transform are accepted (code=%s msg=%s)"),
+                *Capture.ErrorCode, *Capture.Message), Capture.bSuccess))
+        {
+            return false;
+        }
+    }
+    TArrayView<FMovieSceneDoubleChannel*> Channels =
+        FindSeqAddKeyframeTransformDoubleChannels(MovieScene, BindingGuid);
+    if (!TestEqual(TEXT("the transform section exposes nine channels"), Channels.Num(), 9))
+    {
+        return false;
+    }
+    // Location 1,2,3 on channels 0-2; roll=10, pitch=20, yaw=30 on channels 3-5.
+    const double Expected[6] = { 1.0, 2.0, 3.0, 10.0, 20.0, 30.0 };
+    for (int32 ChannelIndex = 0; ChannelIndex < 6; ++ChannelIndex)
+    {
+        const auto Values = Channels[ChannelIndex]->GetData().GetValues();
+        if (TestEqual(*FString::Printf(TEXT("channel %d carries one key"), ChannelIndex), Values.Num(), 1))
+        {
+            TestEqual(*FString::Printf(TEXT("channel %d holds its authored value"), ChannelIndex),
+                Values[0].Value, Expected[ChannelIndex]);
+        }
+    }
+    for (int32 ChannelIndex = 6; ChannelIndex < 9; ++ChannelIndex)
+    {
+        TestEqual(*FString::Printf(TEXT("unaddressed scale channel %d stays empty"), ChannelIndex),
+            Channels[ChannelIndex]->GetData().GetValues().Num(), 0);
+    }
+    return true;
+}
