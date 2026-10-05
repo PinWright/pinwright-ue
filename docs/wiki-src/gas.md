@@ -6,7 +6,7 @@ Create and wire Gameplay Ability System assets: Gameplay Ability, Gameplay Effec
 
 Use `call("gameplay_tags")` for registry-level tag declaration, source management, and `FGameplayTagQuery` construction; then use `gas.*` for applying tags to GAS assets. Registry mutation belongs to `IGameplayTagsEditorModule`: add/remove tag entries through the editor module APIs, and read listing metadata from `UGameplayTagsManager::GetTagEditorData` so rows include source, comment, and explicitness information.
 
-The current gameplay-tags namespace is still IN-REVIEW. A known unresolved review gap remains in source-scoped adds: `gameplay_tags.add(tag, sourceB)` must not globally short-circuit just because the same tag already exists in `sourceA`; it needs to ensure the requested source entry exists.
+The gameplay-tags namespace has one known open gap, in source-scoped adds: `gameplay_tags.add(tag, sourceB)` must not globally short-circuit just because the same tag already exists in `sourceA`; it needs to ensure the requested source entry exists.
 
 ## Execution-calc captures (`gas.set_execution_capture`)
 

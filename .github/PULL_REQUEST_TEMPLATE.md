@@ -1,6 +1,6 @@
 ## What changed, and why
 
-<!-- The behaviour before and after, and the reason. Link an issue or a board ticket if there is one. -->
+<!-- The behaviour before and after, and the reason. Link the issue if there is one. -->
 
 ## Tests run
 

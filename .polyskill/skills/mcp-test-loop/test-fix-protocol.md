@@ -46,9 +46,9 @@ Two outcomes are possible per failing test:
 
 **(a) Production-bug.** The test's assertion is correct; the production code is wrong. Default to this.
 
-**(b) Test-wrong.** The test's assertion contradicts a documented behavior, an issue board decision, or another currently-passing test. You can only choose this with a concrete pointer — name the doc, the ticket id, or the contradicting test that justifies the call. "It would be easier to make the test green by softening the assertion" is **not** a concrete pointer; that is the failure mode the project rule was written to prevent.
+**(b) Test-wrong.** The test's assertion contradicts a documented behavior, an issue decision, or another currently-passing test. You can only choose this with a concrete pointer — name the doc, the ticket id, or the contradicting test that justifies the call. "It would be easier to make the test green by softening the assertion" is **not** a concrete pointer; that is the failure mode the project rule was written to prevent.
 
-Edge case: the test may have been valid when written but is now testing legacy behavior the code intentionally moved away from. Even here, hypothesis (b) requires a **named** signal — a board ticket, a doc page, a PR or commit message that documented the intentional change.
+Edge case: the test may have been valid when written but is now testing legacy behavior the code intentionally moved away from. Even here, hypothesis (b) requires a **named** signal — an issue, a doc page, a PR or commit message that documented the intentional change.
 
 If you have multiple failing tests and they suggest different hypotheses (some prod-bug, some test-wrong), that's fine — categorize each individually.
 

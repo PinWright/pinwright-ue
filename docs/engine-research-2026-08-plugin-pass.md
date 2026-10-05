@@ -271,7 +271,7 @@ CONSEQUENCES:
 2. The new `level-blockout` page must say: top-down ORTHOGRAPHIC capture does not work in any surface
    today; use the perspective top-down recipe. Remove the camera.* workaround recommendation entirely.
 3. This is stronger evidence than the ortho agent had (it argued from source; we have blank PNGs).
-   Add it to the board entry as the reproduction.
+   Add it to the issue as the reproduction.
 4. After the ortho patch is applied, RE-RUN this exact test — it is the acceptance test for the fix.
 
 ## C2 — `level.save`: docs say async ticket, EMPIRICALLY it returned synchronously

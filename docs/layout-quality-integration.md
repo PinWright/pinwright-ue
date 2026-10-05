@@ -17,7 +17,7 @@ Do this **only after** the prerequisite tickets below are `DONE`. Until then, th
 metrics core still does its job through the L2 engine regression tests (the unit
 suite guards layout quality); this step adds the *runtime* catch.
 
-## Prerequisites (all must be `DONE` on the board)
+## Prerequisites (all must be closed as completed)
 
 - `F-graph-layout-metrics-core` (L1) — the `FGraphLayoutMetrics` util + node-size
   estimator, **and its calibration pass** (this is where the score thresholds come
@@ -54,7 +54,7 @@ a constant in the metrics core) and have the test-workflow read/restate that val
 
 This mirrors how the **CorruptionCheck** phase was added (see
 `mcp-test-workflow.workflow.js`): a bounded check that only fires when the Attempt
-actually touched a graph, integrated through the existing single board-writer.
+actually touched a graph, integrated through the existing single issue writer.
 
 1. **Pre-flight (MANDATORY).** Sync all four fuzz hosts first — see the fuzz
    pre-flight rule (push/clean all four review checkouts, rebase if
@@ -81,14 +81,14 @@ actually touched a graph, integrated through the existing single board-writer.
        engine gap (the bounds-aware engine can't resolve it) or hand-placed nodes
        the re-flow won't touch. File a finding.
 
-4. **File a `layout-quality` finding** through the existing Judge/Audit board
-   writer (single-writer invariant — do not write the board from a parallel step).
-   Use category `ergonomic` (`E-`), `tags: [layout, layout-quality]`, severity per
-   the board README rubric (a graph that stays poor after auto_layout is Medium
+4. **File a `layout-quality` finding** through the existing Judge/Audit issue
+   writer (single-writer invariant: do not file issues from a parallel step).
+   File with `pw_issues.py file --type ergonomic --tags layout,layout-quality`, severity per
+   the rubric in `CLAUDE.md` -> **Issue tracker** (a graph that stays poor after auto_layout is Medium
    friction at most — it still functions). Body: the asset + graph, the
    `layout_report` score + the specific flagged overlaps/edges, and whether
-   auto_layout was tried. Dedup first (a recurring poor-layout pattern appends
-   evidence to an existing ticket, it does not spawn duplicates).
+   auto_layout was tried. `file` dedupes first (a recurring poor-layout pattern bumps
+   an existing issue with the new evidence, it does not spawn duplicates).
 
 5. **Bounded cost.** The check only runs for Attempts that touched a graph;
    `layout_report` is cheap (no editor restart needed, unlike CorruptionCheck), so

@@ -21,7 +21,7 @@ For task-level dump/reference review, see [`asset-audit`](asset-audit.md). For N
 
 `chooser.*` owns the first authoring slice: `chooser.create`, `add_column`, `add_row`, `set_cell`, `set_result`, and `compile` create `UChooserTable` assets. Column kinds: `bool`, `float`, `enum`, `object`, `randomize`; result kinds: `asset`, `class`, `evaluate_chooser`.
 
-Status: IN-REVIEW. Invalid `enumType` / `allowedClass` must fail rather than create weak columns; `chooser.set_cell` must validate before resizing row storage; Chooser must not include the EQS handler header solely to reuse token normalization.
+Status: not yet verified end to end. Known open requirements: invalid `enumType` / `allowedClass` must fail rather than create weak columns; `chooser.set_cell` must validate before resizing row storage; Chooser must not include the EQS handler header solely to reuse token normalization.
 
 ## No renderer (headless mode)
 
@@ -454,7 +454,7 @@ Deletes many assets in one call and then cleans up the redirectors left beside t
 
 **`success` is `true` only when nothing the caller named survived**, and every requested path is probed afterwards against **both** the asset registry and the `.uasset` on disk - `existsAfter` is the union. Read `results[]` per entry (`path`, `existedBefore`, `attempted`, `existsAfter`, `existsOnDisk`, `deleted`, `missing`) plus the `deleted[]` / `failed[]` / `missing[]` roll-ups and the `deletedCount` / `failedCount` / `missingCount` / `requestedCount` / `attemptedCount` counters. A partial batch is refused with `BULK_DELETE_FAILED`, and the full response body travels with that error. `engineDeletedCount` is `ObjectTools::DeleteObjects`' own return, kept separate on purpose: `AddExtraObjectsToDelete` appends secondary and external-package objects, so it can exceed the request and is not evidence that any named asset went.
 
-**Until 2026-08-28 it verified nothing.** `deleted[]` was the requested list, filled in before the delete ran, and `success` was `DeletedCount > 0` - so deleting 1 of 20 answered `success: true` with all 20 names in `deleted[]`. A path that failed `DoesAssetExist` / `LoadAsset` was dropped silently and `requested` counted what *loaded* rather than what was asked. If you are reading an older transcript that treats this verb's `deleted[]` as unverified, that is the defect, not current behaviour (board `B-bulk-delete-unverified-deletions`).
+**Until 2026-08-28 it verified nothing.** `deleted[]` was the requested list, filled in before the delete ran, and `success` was `DeletedCount > 0` - so deleting 1 of 20 answered `success: true` with all 20 names in `deleted[]`. A path that failed `DoesAssetExist` / `LoadAsset` was dropped silently and `requested` counted what *loaded* rather than what was asked. If you are reading an older transcript that treats this verb's `deleted[]` as unverified, that is the defect, not current behaviour (tracked as `B-bulk-delete-unverified-deletions`).
 
 **`attempted: false` means the path was never handed to the engine** - it did not exist, or it existed and failed to load. Such a path is reported under `missing[]` when it was already absent; it is never counted as a deletion this call performed. `requestedCount` is the length of the array you sent, so it always reconciles against your own input.
 

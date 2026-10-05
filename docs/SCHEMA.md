@@ -15,7 +15,7 @@ docs/
   *.md                           Maintainer-facing docs and references.
 ```
 
-The issue board is not part of this directory. It is the public repo `PinWright/pinwright-board`, cloned outside this repo at `../../../.pinwright-board` relative to the plugin directory, with its own schema in its `README.md`.
+Issues are not part of this directory. They live in GitHub Issues on `PinWright/pinwright-ue`; labels, the metadata block and the `scripts/pw_issues.py` helper are described in the plugin `CLAUDE.md` -> **Issue tracker**. The old markdown board, `PinWright/pinwright-board`, is archived.
 
 ## Page Types
 

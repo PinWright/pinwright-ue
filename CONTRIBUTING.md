@@ -96,16 +96,36 @@ is expected on a non-Lyra host, not a failure. See
 
 ## Issues
 
-The issue board is the public repo [PinWright/pinwright-board](https://github.com/PinWright/pinwright-board),
-one markdown file per ticket. Clone it next to the host checkout so the maintainer scripts find
-it at `../../../.pinwright-board` relative to this plugin directory:
+All tracking happens in [pinwright-ue issues](https://github.com/PinWright/pinwright-ue/issues):
+bugs, feature requests and compatibility reports from users, and the maintainers' own backlog.
+File through the issue forms. The old markdown board,
+[PinWright/pinwright-board](https://github.com/PinWright/pinwright-board), is archived and kept
+only for the history of tickets closed before the move; nothing needs to be cloned.
 
-```
-git clone https://github.com/PinWright/pinwright-board.git <parent of host project>/.pinwright-board
-```
+Labels:
 
-Bugs and feature requests from users go to
-[pinwright-ue issues](https://github.com/PinWright/pinwright-ue/issues).
+| Label | Meaning |
+|---|---|
+| `type/bug`, `type/feature`, `type/ergonomic`, `type/compatibility` | Kind of issue |
+| `area/harness` | The maintainers' workflow tooling |
+| `sev/critical`, `sev/high`, `sev/medium`, `sev/low` | Severity |
+| `status/needs-triage` | New, not yet reviewed by a maintainer |
+| `status/accepted` | Reviewed; the only label that lets maintainer agents work the issue |
+| `status/blocked` | Waiting on another issue |
+| `status/claimed` | An agent is working it (a 4 hour lease held through comments) |
+| `costly` | Encounters with it have cost real work |
+
+Done means closed as completed, won't fix means closed as not planned, and duplicates are closed
+as duplicate. The fixer verifies the fix and says how in the closing comment.
+
+Maintainer agents act only on text written by the repository owner, members or collaborators. If
+you are not one of them, a maintainer restates your report in a comment before adding
+`status/accepted`, and agents work from that restatement. They never open links or attachments in
+outside reports, so put the repro steps and log excerpts in the issue text itself.
+
+Maintainers and their agents read and write issues through `scripts/pw_issues.py`
+(`uv run scripts/pw_issues.py --help`), which enforces both gates and the lease. `CLAUDE.md` ->
+**Issue tracker** has the full contract.
 
 ## Maintainer tooling
 

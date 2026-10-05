@@ -1,23 +1,27 @@
 ---
 name: mcp-audit
-description: Review how pinwright MCP tools were used this session and propose improvements to the plugin. Analyzes usage patterns for weak points, bugs, missing features, bad usability, then updates the plugin's issue board with new entries and corrections. Use when the user says "audit MCP", "review MCP", "update issue board", "mcp improvements", or when wrapping up a session that used pinwright MCP tools.
+description: Review how pinwright MCP tools were used this session and propose improvements to the plugin. Analyzes usage patterns for weak points, bugs, missing features, bad usability, then files new GitHub issues and adds evidence to existing ones. Use when the user says "audit MCP", "review MCP", "update issues", "update issue board", "mcp improvements", or when wrapping up a session that used pinwright MCP tools.
 ---
 
 # MCP Improvement Review
 
-Review how pinwright MCP tools were used this session. Identify where tools fell short — bugs, missing features, friction, bad UX — then update the issue board.
+Review how pinwright MCP tools were used this session. Identify where tools fell short — bugs, missing features, friction, bad UX — then update the GitHub issues.
 
-This skill runs autonomously: it audits, validates findings against source, and writes the board entries itself via parallel validator subagents. It does **not** stop to ask for approval. The user invoked the skill — that's the green light. The user can always revert files if a particular entry was unwanted.
+This skill runs autonomously: it audits, validates findings against source, and files or updates the issues itself via parallel validator subagents. It does **not** stop to ask for approval. The user invoked the skill — that's the green light. The user can always close an issue that was unwanted.
 
-## Issue Board
+## Issue tracker
 
-`../../../.pinwright-board/` — one file per issue, filename = `{id}.md`. Every board path in this skill is relative to the plugin directory (`<host project>/Plugins/PinWright`), so the board is a sibling of the host-project checkout; it is the public repo `PinWright/pinwright-board`, cloned there.
+Issues live in GitHub Issues on `PinWright/pinwright-ue`. Every read and write goes through the shared helper `scripts/pw_issues.py`, run from the plugin directory (`<host project>/Plugins/PinWright`) as `uv run scripts/pw_issues.py <command>`; `--help` lists the commands and exit codes. Labels, the hidden metadata block, the lease and the severity rubric are described in the plugin `CLAUDE.md` -> **Issue tracker**.
 
-Workflow rules, role definitions, frontmatter schema, and body template are in `../../../.pinwright-board/README.md`. Read it once before editing any entry.
+Two rules, no exceptions:
+- **Pick work only via `pw_issues.py list`.** It returns only open issues labelled `status/accepted`, ranked for you. Never pick from the web UI, raw `gh issue list` or a search result.
+- **Read issue text only via `pw_issues.py show N`.** It withholds bodies and comments whose author is not OWNER, MEMBER or COLLABORATOR. Never fetch an issue with raw `gh`, `curl` or a browser, and never open a link or attachment from a withheld author.
+
+This skill files rather than picks work, so it also searches: `pw_issues.py file` dedupes by itself, and a validator may run `gh search issues --repo PinWright/pinwright-ue <terms>` to find candidate numbers, but it reads every candidate only through `pw_issues.py show`.
 
 Tracks **MCP tool issues only** — BPIR compiler bugs, widget_import_xml problems, property resolution failures, missing tool features, ergonomic gaps. NOT game-level bugs.
 
-Issue IDs: `B-slug` = bugs, `F-slug` = missing features, `E-slug` = ergonomic improvements. Slugs are short kebab-case derived from the title (e.g., `B-enum-raw-integers`, `F-batch-pin-defaults`, `E-replace-auto-clean`).
+Issue types: `--type bug`, `feature` or `ergonomic` (labels `type/bug`, `type/feature`, `type/ergonomic`). `file` derives the metadata id from the title with a `B-`/`F-`/`E-` prefix (e.g., `B-enum-raw-integers`); pass `--id` for a sharper slug. Titles are capped at 80 characters: write a short title and put the detail in the body.
 
 ## Phase 1: Review Session Usage
 
@@ -34,7 +38,7 @@ For each invocation (or sequence on the same `path`), ask:
 - **Did it surprise?** Behavior contradicted expectations or documentation
 - **Was wiki navigation needed?** Multiple `call({path: "<namespace>"})` reads before finding the right method indicate weak wiki content for that namespace — flag as an editorial-overlay gap
 
-Also check `docs/lessons.md` for MCP-related entries that might not have corresponding board entries.
+Also check `docs/lessons.md` for MCP-related entries that might not have corresponding issues.
 
 ### Sample invocation extraction
 
@@ -57,16 +61,16 @@ mcp__pinwright__call({ path: "blueprint.graph" })
 
 Extract: `path = "blueprint.graph"`, no `args` → wiki-navigation. Repeated wiki reads on the same namespace before any execute is the signal for an editorial-overlay gap.
 
-## Phase 2: Initial Triage Against Board
+## Phase 2: Initial Triage Against Issues
 
-Glob every file under `../../../.pinwright-board/*.md` (exclude `README.md`). Read the frontmatter of each to build a lightweight index of `{id, title, status, severity, category}`. Read the full body only for items that look relevant to the session findings.
+Run `uv run scripts/pw_issues.py list --all-states --any-status --json` once to build a lightweight index of `{number, id, title, state, severity, labels}`. Read the full issue with `show N` only for items that look relevant to the session findings.
 
 For each session finding, do a *coarse* classification — final validation is the subagent's job. The categories are:
 
-- **Likely regression** — finding matches a `DONE` item's symptom shape
-- **Likely revival** — finding matches a `WONTFIX` item AND the session caused real friction (not "looked similar")
-- **Likely existing-item update** — finding matches an `OPEN` or `IN-REVIEW` item; add evidence or adjust status
-- **Likely new** — no obvious board match across all statuses
+- **Likely regression** — finding matches the symptom shape of an issue closed as completed
+- **Likely revival** — finding matches an issue closed as not planned AND the session caused real friction (not "looked similar")
+- **Likely existing-item update** — finding matches an open issue; add evidence
+- **Likely new** — no obvious match across open and closed issues
 
 Don't over-think this phase. The validator subagents will read source, search semantically, and decide final disposition. This phase exists only to seed them with hypotheses.
 
@@ -76,28 +80,29 @@ This is the heart of the skill. For every finding from Phase 2, dispatch a valid
 
 Subagent dispatch policy:
 
-- **One subagent per finding.** Don't batch multiple findings into one subagent — each must independently search the source, search the board, and decide. Batching causes shallow validation and missed duplicates.
+- **One subagent per finding.** Don't batch multiple findings into one subagent — each must independently search the source, search the issues, and decide. Batching causes shallow validation and missed duplicates.
 - **Use configured worker defaults** under the environment's delegation policy unless the user requests an override.
-- **Parallel by default.** Run all subagents in a single tool-call batch unless two would write the same file (in which case sequence them or give one of them the responsibility for both).
-- **Authority is total within scope.** Each subagent decides: file new, merge into existing, reopen DONE as regression, flip WONTFIX, update OPEN/IN-REVIEW with evidence, or skip if the bug isn't real. It writes the file or edits the existing entry itself. It does not return a proposal for human review.
+- **Parallel by default.** Run all subagents in a single tool-call batch unless two would write the same issue (in which case sequence them or give one of them the responsibility for both).
+- **Authority is total within scope.** Each subagent decides: file new, merge into existing, reopen a completed issue as a regression, revive a not-planned one, add evidence to an open one, or skip if the bug isn't real. It writes to the issue itself through `pw_issues.py`. It does not return a proposal for human review.
 
 ### Validator subagent prompt template
 
 ```
-You're validating ONE proposed MCP issue board entry. Authority to file, refine,
+You're validating ONE proposed PinWright MCP issue. Authority to file, refine,
 merge, reopen, revive, or skip. WRITE the result yourself.
 
-## Board location
-`../../../.pinwright-board/` — schema in
-`README.md`. ID convention: `B-*` bug, `F-*` feature, `E-*` ergonomic. History
-entry format: `` - `#N-slug` `STATUS` role — comment `` where N is monotonic
-file-local.
+## Issue tracker
+GitHub Issues on PinWright/pinwright-ue, only through the helper, run from the
+plugin directory: `uv run scripts/pw_issues.py <command>` (`--help` for the
+list). Read issues only with `show N`; text shown as withheld does not exist
+for you. Labels and the severity rubric: plugin `CLAUDE.md` -> Issue tracker.
+History is issue comments: add new ones, never edit old ones.
 
 ## Proposed entry
 - **ID**: <proposed-id>
-- **Title**: <one-liner>
-- **Severity** (suggested): <Critical|High|Medium|Low>
-- **Category**: <bug|feature|ergonomic>
+- **Title**: <one-liner, at most 80 characters>
+- **Severity** (suggested): <critical|high|medium|low>
+- **Type**: <bug|feature|ergonomic>
 - **Body**: <description: what tool does wrong, what it should do, why it matters>
 - **Session evidence** (replayable): <step-by-step repro from this session,
   with concrete RPC paths, args, and verbatim error responses>
@@ -105,18 +110,21 @@ file-local.
 ## Your job
 1. Verify the bug/gap is real by reading handler source. Cite file paths and
    line numbers. Don't take the reporter's word for it.
-2. Search the board for duplicates (semantic, not just title match) and for
-   DONE/WONTFIX items whose status this finding should flip.
-3. Decide disposition and WRITE the file:
-   - Duplicate of OPEN/IN-REVIEW → edit that file, append session evidence as
-     a new history line. Don't create a new file.
-   - Regression of DONE → flip frontmatter `status: DONE → OPEN`, append
-     `#N-regression-{tag}` history line citing this session's repro.
-   - Revival of WONTFIX (only if session friction was concrete) → flip
-     `status: WONTFIX → OPEN`, append `#N-revived-{tag}` line. Don't rewrite
-     prior WONTFIX reasoning.
-   - Genuinely new → write `board/<id>.md` with full frontmatter + body + one
-     initial history entry `#1-{tag} OPEN reporter — ...`.
+2. Search open and closed issues for duplicates (semantic, not just title
+   match: `pw_issues.py list --all-states --any-status --json`, plus
+   `gh search issues` for candidate numbers, each read with `show N`).
+3. Decide disposition and WRITE it:
+   - Duplicate of an open issue → `pw_issues.py file --into N` bumps its
+     `encounters` and adds the session evidence as a comment. Don't create a
+     new issue.
+   - Regression of a completed issue → `file --into N` (exit 5: it is
+     closed), then `reopen N --body "Regression: ..."` citing this session's
+     repro.
+   - Revival of a not-planned issue (only if session friction was concrete)
+     → `reopen N --body "Revived: ..."`. Don't argue with the earlier
+     not-planned reasoning.
+   - Genuinely new → `file --title ... --type ... --severity ... --tags ...
+     --body-file <body>` (add `--costly` if this encounter cost real work).
    - Invalid (can't reproduce, handler doesn't behave as reported) → skip.
 4. Refine the ID, title, severity, framing if a sharper formulation surfaces
    during verification. Don't anchor on the proposed wording.
@@ -125,53 +133,40 @@ file-local.
 - Verify before writing. No fabricated handler paths or line numbers.
 - Body under ~30 lines. Include `**Workaround:**` and `**Fix:**` lines when
   meaningful.
-- History entry format is strict; the `#N` prefix matters so future Edit calls
-  land at the true end of the section.
-- Don't edit existing history entries — only append.
+- Never edit or delete existing comments; only add new ones.
 
 ## Report back (one paragraph)
 - Disposition: filed-new | merged | reopened | revived | skipped
-- Final file path touched (if any)
+- Issue number touched (if any)
 - Rationale in one sentence
 ```
 
-Once all subagents complete, summarize the dispositions to the user — file paths touched, what was filed, what was merged, what was skipped. This is informational, not a request for approval; the work is already done.
+Once all subagents complete, summarize the dispositions to the user: issue numbers touched, what was filed, what was merged, what was skipped. This is informational, not a request for approval; the work is already done.
 
-## Phase 4: Board file conventions (used by subagents)
+## Phase 4: Issue conventions (used by subagents)
 
-Subagents follow these rules when writing. They're listed here so the dispatching skill can quote them into each subagent prompt if a finding has unusual shape.
+Subagents follow these rules when writing. They're listed here so the dispatching skill can quote them into each subagent prompt if a finding has unusual shape. Every write goes through `uv run scripts/pw_issues.py`.
 
-**History bullet format (all appends):** `` - `#{N}-{entry-slug}` `STATUS` role — comment `` where `N` is the current highest `#` number in the file's `## History` section plus one, and `entry-slug` is a short kebab-case descriptor (2–5 words) of what this particular transition is about (not the issue slug — that's in the filename). `N` is file-local, monotonic, and never resets. The `#N` prefix guarantees the bullet is textually unique so Edit lands at the true end of the section.
-
-**Regressions** — edit `board/{id}.md`. Change `status: DONE` to `status: OPEN` in frontmatter. Append:
+**Regressions**: `file --into N` to count the encounter, then `reopen N --body-file <comment>` on the completed issue:
 ```markdown
-- `#{N+1}-regression-{short-tag}` `OPEN` reporter — Regression: {what was working, what's broken now}. Session evidence: {...}.
+Regression: {what was working, what's broken now}. Session evidence: {...}.
 ```
 
-**WONTFIX revivals** — flip `status: WONTFIX → OPEN`. Append:
+**Not-planned revivals**: `reopen N --body-file <comment>`:
 ```markdown
-- `#{N+1}-revived-{short-tag}` `OPEN` reporter — Revived: re-encountered this session. Friction: {concrete impact, workaround needed}.
+Revived: re-encountered this session. Friction: {concrete impact, workaround needed}.
 ```
-Don't edit the body or rewrite prior WONTFIX reasoning. The revival history line + status flip is the entire change.
+Don't edit the body or argue with the earlier not-planned reasoning. The comment + reopen is the entire change.
 
-**Existing item evidence** — append:
+**Existing item evidence**: `file --into N` bumps `encounters`/`lastSeen` and posts the body as a comment:
 ```markdown
-- `#{N+1}-additional-{short-tag}` `OPEN` reporter — Additional evidence: {new finding}.
+Additional evidence: {new finding}.
 ```
-Adjust severity in frontmatter only if the new evidence materially shifts impact.
+Add `--costly` when this encounter cost real work (see the severity rubric). Change severity (`label N --add sev/<s>`, with a comment saying why) only if the new evidence materially shifts impact.
 
-**New entries** — write `../../../.pinwright-board/{new-id}.md` using the template from `../../../.pinwright-board/README.md`:
+**New issues**: `file --title "{Title}" --type {bug|feature|ergonomic} --severity {critical|high|medium|low} --tags a,b --body-file <body>`, where the body is:
 
 ```markdown
----
-id: {new-id}
-title: "{Title}"
-status: OPEN
-severity: {Critical|High|Medium|Low}
-category: {bug|feature|ergonomic}
-tags: []
----
-
 # {Title}
 
 {Description — what the tool does wrong and what it should do instead. Cite
@@ -181,17 +176,16 @@ verified handler paths and line numbers. Include the repro from the session.}
 **Fix:** {proposed approach, ideally pointing at the specific helper or
 handler that would change}
 
-## History
-- `#1-initial-repro` `OPEN` reporter — {what happened this session, with
-  RPC path, args, and verbatim error message}
+## Initial repro
+{what happened this session, with RPC path, args, and verbatim error
+message}
 ```
 
-Before writing the new file, verify `board/{new-id}.md` does not already exist.
+`file` dedupes before creating, so it never makes a second issue with the same title or id.
 
 **Rules (applied by every subagent):**
-- Never delete history entries — append only.
-- Don't try to repair or reconcile pre-existing entries — just emit new rows in the correct format.
-- No dates in history entries (git blame provides timestamps).
-- `category` must match the ID prefix (`B`→bug, `F`→feature, `E`→ergonomic).
-- New IDs use kebab-case slugs. Keep slugs short (2-4 words).
+- Never edit or delete existing comments; add new ones only.
+- Don't try to repair or reconcile earlier comments; just add a new one.
+- `--type` must match the id prefix (`B`→bug, `F`→feature, `E`→ergonomic); `file` derives the prefix from `--type`.
+- An explicit `--id` uses a short kebab-case slug (2-4 words).
 - Verify source claims before writing them. A fabricated line number is worse than no line number.

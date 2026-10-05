@@ -5,7 +5,7 @@ Authoring surface for the project's `GameplayTagsManager` registry and `FGamepla
 ## Cross-cluster overlap
 
 - **Registry vs application** — `gameplay_tags.add` declares a tag exists; it does not assign the tag to any asset. Per-asset application lives in [`gas`](gas.md) (effects, abilities, attribute sets) or via [`property`](property.md) for arbitrary `FGameplayTagContainer` properties.
-- **Source-scoped adds** — `gameplay_tags.add(tag, sourceB)` must not globally short-circuit when the same tag already exists in `sourceA`; the source entry needs to actually exist. This is a known IN-REVIEW caveat for the namespace.
+- **Source-scoped adds** — `gameplay_tags.add(tag, sourceB)` must not globally short-circuit when the same tag already exists in `sourceA`; the source entry needs to actually exist. This is a known open caveat for the namespace.
 
 ## See also
 
