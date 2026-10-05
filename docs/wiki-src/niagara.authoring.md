@@ -39,6 +39,32 @@ Call this as `niagara.set_stack_enabled` to enable or disable one stack entry.
 
 Emitter ownership gotcha: emitters are owned assets. Editing an emitter can affect every system that includes that emitter asset; duplicate the emitter first if the change should be local to one effect.
 
+## Standard particle stack
+
+`niagara.create_emitter` makes an emitter with empty stacks, so a visible effect needs its modules added. These engine module paths ship with the Niagara plugin (`Engine/Plugins/FX/Niagara/Content/Modules/`, checked on UE 5.8); pass them straight to `niagara.add_module` with no `niagara.search_modules` round trip:
+
+| `scriptUsage` | `modulePath` | Role |
+|---|---|---|
+| `EmitterUpdate` | `/Niagara/Modules/Emitter/EmitterState.EmitterState` | Emitter life cycle and loop |
+| `EmitterUpdate` | `/Niagara/Modules/Emitter/SpawnRate.SpawnRate` | Continuous spawn (`SpawnRate` input, particles per second) |
+| `ParticleSpawn` | `/Niagara/Modules/Spawn/Initialization/V2/InitializeParticle.InitializeParticle` | Lifetime, color, mass, sprite size |
+| `ParticleSpawn` | `/Niagara/Modules/Spawn/Velocity/AddVelocity.AddVelocity` | Initial velocity (`Velocity` input) |
+| `ParticleUpdate` | `/Niagara/Modules/Update/Lifetime/ParticleState.ParticleState` | Ages particles and kills them once `Lifetime` elapses |
+| `ParticleUpdate` | `/Niagara/Modules/Solvers/SolveForcesAndVelocity.SolveForcesAndVelocity` | Integrates forces into velocity and position; keep it last in ParticleUpdate |
+
+Two `InitializeParticle` modules ship: the legacy `/Niagara/Modules/Spawn/Initialization/InitializeParticle` and `.../V2/InitializeParticle`. The stock emitter templates `Minimal`, `Fountain` and `SimpleSpriteBurst` (`/Niagara/DefaultAssets/Templates/Emitters/`) use V2, together with `EmitterState` and `ParticleState`. For a one-shot burst, replace `SpawnRate` with `/Niagara/Modules/Emitter/SpawnBurst_Instantaneous.SpawnBurst_Instantaneous`. Forces such as `/Niagara/Modules/Update/Forces/GravityForce.GravityForce` and `/Niagara/Modules/Update/Forces/Drag.Drag` go in ParticleUpdate before the solver; see [`niagara.forces`](niagara.forces.md).
+
+Call sequence for a minimal visible system:
+
+1. `niagara.create_system {name, savePath}` and `niagara.create_emitter {name, savePath}`.
+2. `niagara.add_emitter {systemPath, emitterPath}`; the handle name defaults to the emitter asset name.
+3. `niagara.add_module {assetPath: <system>, emitter: <handle>, modulePath, scriptUsage}` once per row above, in table order (`add_module` appends).
+4. `niagara.add_renderer {assetPath: <system>, emitter: <handle>, rendererClassPath: "NiagaraSpriteRendererProperties"}`.
+5. `niagara.set_module_input` for the values you care about (`SpawnRate`, `Velocity`, `Lifetime`, `Color`).
+6. `niagara.compile {assetPath: <system>}` (it waits for the result by default), `niagara.validate {assetPath: <system>}`, then `asset.save {assetPath: <system>}`, or pass `save: true` on the last edit instead. `niagara.simulate` confirms particles actually spawn.
+
+For any other module, `niagara.search_modules` matches the query against the module's name with case, spaces and underscores ignored (`"spawn rate"` is an exact hit on `SpawnRate`), and otherwise requires every query word to appear, in any order: all in the name ranks above words spread over the name, description and keywords. Scope with `usage` and `stage` to cut the list.
+
 ## Module inputs: literal value vs linked parameter
 
 `niagara.set_module_input` accepts three value shapes:

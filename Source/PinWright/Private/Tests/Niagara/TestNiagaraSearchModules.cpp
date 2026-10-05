@@ -6,6 +6,9 @@
 #include "Tests/TestUtils.h"
 
 #include "Handlers/Niagara/NiagaraSearchHandler.h"
+#include "Tests/Infra/WikiDocTestHelpers.h"
+#include "Internationalization/Regex.h"
+#include "Misc/PackageName.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     FNiagaraSearchModulesClassifyAndScoreTest,
@@ -116,5 +119,118 @@ bool FNiagaraSearchModulesStageAliasTest::RunTest(const FString& Parameters)
     TestFalse(TEXT("bad stage fails"), BadCapture.bSuccess);
     TestEqual(TEXT("bad stage error code"), BadCapture.ErrorCode, FString(TEXT("INVALID_STAGE")));
 
+    return true;
+}
+
+// Issue #152: a descriptive multi-word query must find the PascalCase module it names.
+// Before the fix the whole query was one literal substring, so "spawn rate" never matched
+// "SpawnRate", and "force gravity" (words reversed) never matched GravityForce.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FNiagaraSearchModulesMultiWordQueryTest,
+    "PinWright.niagara.search_modules.MultiWordQueryFindsPascalCaseModule",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FNiagaraSearchModulesMultiWordQueryTest::RunTest(const FString& Parameters)
+{
+    using namespace NiagaraSearch;
+
+    TestEqual(TEXT("'spawn rate' is an exact name hit on SpawnRate"),
+        ScoreModuleMatch(TEXT("spawn rate"), TEXT("SpawnRate"), TEXT(""), TEXT("")), 1000);
+    TestEqual(TEXT("'Initialize Particle' is an exact name hit on InitializeParticle"),
+        ScoreModuleMatch(TEXT("Initialize Particle"), TEXT("InitializeParticle"), TEXT(""), TEXT("")), 1000);
+    TestEqual(TEXT("'solve forces' is a name prefix of SolveForcesAndVelocity"),
+        ScoreModuleMatch(TEXT("solve forces"), TEXT("SolveForcesAndVelocity"), TEXT(""), TEXT("")), 500);
+    TestEqual(TEXT("'spawn burst instantaneous' ignores the underscore in SpawnBurst_Instantaneous"),
+        ScoreModuleMatch(TEXT("spawn burst instantaneous"), TEXT("SpawnBurst_Instantaneous"), TEXT(""), TEXT("")), 1000);
+    TestEqual(TEXT("'force gravity' matches GravityForce in any word order"),
+        ScoreModuleMatch(TEXT("force gravity"), TEXT("GravityForce"), TEXT(""), TEXT("")), 75);
+    TestTrue(TEXT("all words in the name outrank all words only in the description"),
+        ScoreModuleMatch(TEXT("force gravity"), TEXT("GravityForce"), TEXT(""), TEXT(""))
+        > ScoreModuleMatch(TEXT("force gravity"), TEXT("CurlNoise"), TEXT("Applies a gravity-like force."), TEXT("")));
+    TestEqual(TEXT("query words may come from name and description together"),
+        ScoreModuleMatch(TEXT("solve forces position"), TEXT("SolveForcesAndVelocity"),
+            TEXT("Integrates velocity and position."), TEXT("")), 50);
+    TestEqual(TEXT("one missing word is still no match"),
+        ScoreModuleMatch(TEXT("spawn zzz"), TEXT("SpawnRate"), TEXT(""), TEXT("")), 0);
+    TestEqual(TEXT("blank query = 0"),
+        ScoreModuleMatch(TEXT("   "), TEXT("SpawnRate"), TEXT(""), TEXT("")), 0);
+
+    // Through the verb, against the stock engine modules the issue's callers searched for.
+    struct FCase { const TCHAR* Query; const TCHAR* ExpectedName; };
+    const FCase Cases[] = {
+        { TEXT("spawn rate"),          TEXT("SpawnRate") },
+        { TEXT("initialize particle"), TEXT("InitializeParticle") },
+        { TEXT("particle state"),      TEXT("ParticleState") },
+    };
+    for (const FCase& Case : Cases)
+    {
+        TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+        Payload->SetStringField(TEXT("usage"), TEXT("Module"));
+        Payload->SetStringField(TEXT("sourceFilter"), TEXT("engine"));
+        Payload->SetStringField(TEXT("query"), Case.Query);
+        Payload->SetNumberField(TEXT("limit"), 1);
+
+        FTestResponseCapture Capture;
+        InvokeHandlerWithCapture(TEXT("niagara.search_modules"), Payload, Capture);
+        if (!TestTrue(FString::Printf(TEXT("'%s' succeeds"), Case.Query), Capture.bSuccess && Capture.Result.IsValid()))
+        {
+            continue;
+        }
+        const TArray<TSharedPtr<FJsonValue>>* Results = nullptr;
+        if (!TestTrue(FString::Printf(TEXT("'%s' returns a result"), Case.Query),
+                Capture.Result->TryGetArrayField(TEXT("results"), Results) && Results && Results->Num() == 1))
+        {
+            continue;
+        }
+        TestEqual(FString::Printf(TEXT("'%s' top result"), Case.Query),
+            (*Results)[0]->AsObject()->GetStringField(TEXT("name")), FString(Case.ExpectedName));
+    }
+
+    return true;
+}
+
+// Issue #152: niagara.authoring's "Standard particle stack" recipe names engine module paths for
+// callers to pass straight to niagara.add_module. Each must be a package on disk, and
+// the recipe must keep listing the six stack modules.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FNiagaraStandardStackRecipePathsResolveTest,
+    "PinWright.infra.wiki_handler.Topic.NiagaraStandardStackRecipePathsResolve",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FNiagaraStandardStackRecipePathsResolveTest::RunTest(const FString& Parameters)
+{
+    FString Text;
+    if (!WikiDocTestHelpers::RenderOrFail(*this, TEXT("niagara.authoring"), Text))
+    {
+        return false;
+    }
+    FString Section;
+    if (!TestTrue(TEXT("niagara.authoring has a Standard particle stack section"),
+            WikiDocTestHelpers::ExtractSection(Text, TEXT("Standard particle stack"), Section)))
+    {
+        return false;
+    }
+
+    const FRegexPattern Pattern(TEXT("/Niagara/Modules/[A-Za-z0-9_/]+\\.[A-Za-z0-9_]+"));
+    FRegexMatcher Matcher(Pattern, Section);
+    TSet<FString> Paths;
+    while (Matcher.FindNext())
+    {
+        Paths.Add(Matcher.GetCaptureGroup(0));
+    }
+    for (const TCHAR* Required : { TEXT("/Niagara/Modules/Emitter/EmitterState.EmitterState"),
+                                   TEXT("/Niagara/Modules/Emitter/SpawnRate.SpawnRate"),
+                                   TEXT("/Niagara/Modules/Spawn/Initialization/V2/InitializeParticle.InitializeParticle"),
+                                   TEXT("/Niagara/Modules/Spawn/Velocity/AddVelocity.AddVelocity"),
+                                   TEXT("/Niagara/Modules/Update/Lifetime/ParticleState.ParticleState"),
+                                   TEXT("/Niagara/Modules/Solvers/SolveForcesAndVelocity.SolveForcesAndVelocity") })
+    {
+        TestTrue(FString::Printf(TEXT("recipe lists %s"), Required), Paths.Contains(Required));
+    }
+    for (const FString& Path : Paths)
+    {
+        TestTrue(FString::Printf(TEXT("%s is a package on disk"), *Path),
+            FPackageName::DoesPackageExist(FSoftObjectPath(Path).GetLongPackageName()));
+    }
     return true;
 }

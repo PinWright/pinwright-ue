@@ -400,38 +400,58 @@ int32 ScoreModuleMatch(const FString& Query,
     }
 
     const FString QueryLow  = Query.ToLower();
-    const FString NameLow   = Name.ToLower();
     const FString DescLow   = Description.ToLower();
     const FString KwLow     = Keywords.ToLower();
+
+    // Module names are PascalCase leaves ("SpawnRate", "SpawnBurst_Instantaneous"), so compare the
+    // name tiers with spaces and underscores dropped on both sides: "spawn rate" is "SpawnRate".
+    const FString QueryCompact = QueryLow.Replace(TEXT(" "), TEXT("")).Replace(TEXT("_"), TEXT(""));
+    const FString NameCompact = Name.ToLower().Replace(TEXT(" "), TEXT("")).Replace(TEXT("_"), TEXT(""));
+    if (QueryCompact.IsEmpty())
+    {
+        return 0;
+    }
 
     int32 Score = 0;
 
     // Name exact / prefix / contains
-    if (NameLow == QueryLow)
+    if (NameCompact == QueryCompact)
     {
         Score = FMath::Max(Score, 1000);
     }
-    else if (NameLow.StartsWith(QueryLow))
+    else if (NameCompact.StartsWith(QueryCompact))
     {
         Score = FMath::Max(Score, 500);
     }
-    else if (NameLow.Contains(QueryLow))
+    else if (NameCompact.Contains(QueryCompact))
     {
         Score = FMath::Max(Score, 100);
     }
 
-    // Token-level match on name
+    // Every query word, in any order: 75 when all are in the name ("force gravity" finds
+    // GravityForce), 50 when they spread over name / description / keywords.
     if (Score < 50)
     {
         TArray<FString> Tokens;
-        NameLow.ParseIntoArray(Tokens, TEXT(" "));
-        for (const FString& Token : Tokens)
+        QueryLow.ParseIntoArrayWS(Tokens);
+        auto AllTokensIn = [&Tokens](const FString& Haystack)
         {
-            if (Token.Contains(QueryLow))
+            for (const FString& Token : Tokens)
             {
-                Score = FMath::Max(Score, 50);
-                break;
+                if (!Haystack.Contains(Token))
+                {
+                    return false;
+                }
             }
+            return Tokens.Num() > 0;
+        };
+        if (AllTokensIn(NameCompact))
+        {
+            Score = 75;
+        }
+        else if (AllTokensIn(NameCompact + TEXT(" ") + DescLow + TEXT(" ") + KwLow))
+        {
+            Score = 50;
         }
     }
 

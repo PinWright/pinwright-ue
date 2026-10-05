@@ -2,6 +2,13 @@
 
 ## 1.0.0
 
+- Changed: `niagara.search_modules` now finds a module from a descriptive multi-word `query`.
+  The name is compared with case, spaces and underscores ignored, so `"spawn rate"` is an exact hit
+  on `SpawnRate` (it used to return no rows). A row holding every query word in any order now
+  matches: 75 when all are in the name (`"force gravity"` finds `GravityForce`), 50 when they
+  spread over name, description and keywords. Result sets and
+  scores change for multi-word queries. The `niagara.authoring` page gains a *Standard particle
+  stack* recipe with the engine module paths a basic emitter needs.
 - Fixed: `render.capture_mesh` now refuses a capture whose drawn material slot rendered as the
   engine Default Material, because its shader map failed or the slot is unassigned, with
   `MATERIAL_FALLBACK` (`success:false`), like `render.capture_asset_preview` and

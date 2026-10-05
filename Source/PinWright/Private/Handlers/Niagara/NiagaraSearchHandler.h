@@ -72,7 +72,11 @@ namespace NiagaraSearch
 
     /**
      * Score how well Query matches a module script by name / description / keywords.
-     * Same tier structure as ScoreOpMatch.  Returns 0 if Query is empty.
+     * Name tiers (1000 exact / 500 prefix / 100 contains) ignore case, spaces and underscores,
+     * so "spawn rate" is an exact hit on SpawnRate. Otherwise, with every whitespace-separated
+     * query word present in any order: 75 when all are in the name, 50 when they spread over
+     * name, description and keywords. The whole query inside the description or keywords also
+     * scores 50. Returns 0 if Query is empty or blank.
      */
     PINWRIGHT_API int32 ScoreModuleMatch(const FString& Query,
                            const FString& Name,
