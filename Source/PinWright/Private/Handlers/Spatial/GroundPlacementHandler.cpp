@@ -123,16 +123,6 @@ namespace
         return GEditor->GetEditorWorldContext().World();
     }
 
-    bool GroundRpcMapChannel(const FString& Name, ECollisionChannel& OutChannel)
-    {
-        const FString Lower = Name.ToLower();
-        if (Lower == TEXT("visibility"))  { OutChannel = ECC_Visibility;   return true; }
-        if (Lower == TEXT("camera"))      { OutChannel = ECC_Camera;       return true; }
-        if (Lower == TEXT("worldstatic")) { OutChannel = ECC_WorldStatic;  return true; }
-        if (Lower == TEXT("worlddynamic")){ OutChannel = ECC_WorldDynamic; return true; }
-        return false;
-    }
-
     // Non-empty trimmed strings out of a JSON array field, skipping non-strings.
     void GroundRpcCollectStrings(const TSharedPtr<FJsonObject>& Obj, const TCHAR* Key,
                                  TArray<FString>& Out)
@@ -220,11 +210,11 @@ namespace
         FString ChannelName;
         if (SurfaceObj->TryGetStringField(TEXT("channel"), ChannelName) && !ChannelName.IsEmpty())
         {
-            if (!GroundRpcMapChannel(ChannelName, OutSpec.Channel))
+            if (!SpatialTraceUtils::ParseTraceChannel(ChannelName, OutSpec.Channel))
             {
                 Ctx.SendError(ErrorCodes::ERR_INVALID_SURFACE_SPEC,
-                    FString::Printf(TEXT("Unknown surface channel '%s'. Valid: visibility, camera, "
-                        "worldstatic, worlddynamic."), *ChannelName));
+                    FString::Printf(TEXT("Unknown surface channel '%s'. Valid: %s."),
+                        *ChannelName, *SpatialTraceUtils::TraceChannelNames()));
                 return false;
             }
         }

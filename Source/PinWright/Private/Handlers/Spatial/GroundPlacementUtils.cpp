@@ -352,16 +352,10 @@ namespace GroundPlacement
         FString ChannelName;
         if (SurfaceObj->TryGetStringField(TEXT("channel"), ChannelName) && !ChannelName.IsEmpty())
         {
-            const FString Lower = ChannelName.ToLower();
-            if      (Lower == TEXT("visibility"))   { Spec.Channel = ECC_Visibility; }
-            else if (Lower == TEXT("camera"))       { Spec.Channel = ECC_Camera; }
-            else if (Lower == TEXT("worldstatic"))  { Spec.Channel = ECC_WorldStatic; }
-            else if (Lower == TEXT("worlddynamic")) { Spec.Channel = ECC_WorldDynamic; }
-            else
+            if (!SpatialTraceUtils::ParseTraceChannel(ChannelName, Spec.Channel))
             {
-                OutError = FString::Printf(
-                    TEXT("Unknown surface channel '%s'. Valid: visibility, camera, worldstatic, "
-                         "worlddynamic."), *ChannelName);
+                OutError = FString::Printf(TEXT("Unknown surface channel '%s'. Valid: %s."),
+                    *ChannelName, *SpatialTraceUtils::TraceChannelNames());
                 return false;
             }
         }

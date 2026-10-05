@@ -7,6 +7,7 @@
 #include "CollisionQueryParams.h"
 #include "CollisionShape.h"
 #include "Compat/EngineVersionCompat.h" // MCP_OVERLAP_ITEM_INDEX - GetItemIndex() is 5.7+
+#include "Engine/CollisionProfile.h" // the project's channel display names (ParseTraceChannel)
 #include "Engine/HitResult.h"
 #include "Engine/OverlapResult.h"
 #include "Engine/World.h"
@@ -276,6 +277,51 @@ namespace SpatialTraceUtils
         // effect geometry" so this predicate never becomes a second, quieter way of rejecting
         // actors the trace was never going to hit.
         return CollidableCount > 0;
+    }
+
+    // Display name of the channel in ECollisionChannel slot Index when a trace may name it,
+    // else NAME_None. Stock slots (WorldStatic..Destructible) always qualify. Any other slot
+    // qualifies only once the project named it: UCollisionProfile::LoadProfileConfig seeds
+    // every slot's display name from its enum name minus "ECC_" and overwrites it only for a
+    // DefaultChannelResponses entry (CollisionProfile.cpp:339-385, :428), so a slot whose
+    // name is still "GameTraceChannel7" is unconfigured and stays unreachable.
+    FName TraceChannelNameAt(int32 Index)
+    {
+        const FName Name = UCollisionProfile::Get()->ReturnChannelNameFromContainerIndex(Index);
+        if (Index <= ECC_Destructible || Name.IsNone())
+        {
+            return Name;
+        }
+        const FString EnumName = StaticEnum<ECollisionChannel>()->GetNameStringByValue(Index);
+        return EnumName.RightChop(4) == Name.ToString() ? NAME_None : Name;
+    }
+
+    bool ParseTraceChannel(const FString& Name, ECollisionChannel& OutChannel)
+    {
+        for (int32 Index = 0; Index < ECC_OverlapAll_Deprecated; ++Index)
+        {
+            const FName Channel = TraceChannelNameAt(Index);
+            if (!Channel.IsNone() && Channel.ToString().Equals(Name, ESearchCase::IgnoreCase))
+            {
+                OutChannel = static_cast<ECollisionChannel>(Index);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    FString TraceChannelNames()
+    {
+        TArray<FString> Names;
+        for (int32 Index = 0; Index < ECC_OverlapAll_Deprecated; ++Index)
+        {
+            const FName Channel = TraceChannelNameAt(Index);
+            if (!Channel.IsNone())
+            {
+                Names.Add(Channel.ToString());
+            }
+        }
+        return FString::Join(Names, TEXT(", "));
     }
 
     FSpatialHit TraceLine(UWorld* World, const FVector& Start, const FVector& End,

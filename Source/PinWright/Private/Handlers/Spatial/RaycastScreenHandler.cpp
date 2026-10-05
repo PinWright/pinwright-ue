@@ -38,19 +38,6 @@ namespace
         Data->SetStringField(TEXT("axis"), TEXT("+X fwd, +Y right, +Z up, left-handed"));
     }
 
-    // Maps the wire `channel` string to a trace channel. Same accepted strings as
-    // spatial.raycast (RaycastHandler::RaycastMapChannel) so both spatial verbs speak
-    // one channel vocabulary; anything else is a caller error.
-    bool RaycastScreenMapChannel(const FString& Name, ECollisionChannel& OutChannel)
-    {
-        const FString Lower = Name.ToLower();
-        if (Lower == TEXT("visibility"))   { OutChannel = ECC_Visibility;    return true; }
-        if (Lower == TEXT("camera"))       { OutChannel = ECC_Camera;        return true; }
-        if (Lower == TEXT("worldstatic"))  { OutChannel = ECC_WorldStatic;   return true; }
-        if (Lower == TEXT("worlddynamic")) { OutChannel = ECC_WorldDynamic;  return true; }
-        return false;
-    }
-
     // The deproject util returns typed errors shaped "CODE: message" (e.g.
     // "NO_ACTIVE_LEVEL_VIEWPORT: no active Level Editor viewport"). Split off the CODE
     // so it becomes the SendError code; the full string stays as the human message.
@@ -98,7 +85,7 @@ REGISTER_RPC_HANDLER("spatial.raycast_screen", "spatial",
         RPC_PARAM_OPT("maxDistance", "number",
             "Max ray length in cm along the deprojected direction (default 1e7)."),
         RPC_PARAM_OPT("channel", "string",
-            "Trace channel: visibility (default), camera, worldstatic, or worlddynamic."),
+            "Trace channel by name, any case, as in spatial.raycast: visibility (default), camera, worldstatic, worlddynamic, pawn, physicsbody, vehicle, destructible, or a custom channel the project named."),
         FParamSpec{TEXT("traceComplex"), TEXT("boolean"),
             TEXT("Trace against per-triangle (complex) collision instead of simple collision. Default false."),
             false, TEXT(""), TArray<FString>({TEXT("trace_complex")})},
@@ -189,11 +176,11 @@ REGISTER_RPC_HANDLER("spatial.raycast_screen", "spatial",
 
     ECollisionChannel Channel = ECC_Visibility;
     const FString ChannelName = Ctx.GetString(TEXT("channel"));
-    if (!ChannelName.IsEmpty() && !RaycastScreenMapChannel(ChannelName, Channel))
+    if (!ChannelName.IsEmpty() && !SpatialTraceUtils::ParseTraceChannel(ChannelName, Channel))
     {
         Ctx.SendError(TEXT("INVALID_PARAMS"),
-            FString::Printf(TEXT("Unknown channel '%s'. Valid: visibility, camera, worldstatic, worlddynamic."),
-                *ChannelName));
+            FString::Printf(TEXT("Unknown channel '%s'. Valid: %s."),
+                *ChannelName, *SpatialTraceUtils::TraceChannelNames()));
         return true;
     }
 

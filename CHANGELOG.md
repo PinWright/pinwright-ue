@@ -2,6 +2,15 @@
 
 ## 1.0.0
 
+- Added: `channel` on `spatial.raycast` and `spatial.raycast_screen`, and `surface.channel` on
+  `spatial.ground_actors`, `spatial.verify_grounding`, `spatial.ground_instances`,
+  `foliage.paint` and `level.audit`, now accept every stock collision channel (`pawn`,
+  `physicsbody`, `vehicle`, `destructible` besides the old four) and every custom channel the
+  project named in its collision settings, by display name in any case. The names are read from
+  the engine's collision profile through one shared parser, replacing four hand-kept copies. So
+  a `pawn` trace now shows what a walking character would collide with, which a `visibility`
+  probe cannot. The unknown-channel refusal keeps its error code, and its message now lists this
+  project's channels instead of the fixed four.
 - Changed: `niagara.search_modules` now finds a module from a descriptive multi-word `query`.
   The name is compared with case, spaces and underscores ignored, so `"spawn rate"` is an exact hit
   on `SpawnRate` (it used to return no rows). A row holding every query word in any order now

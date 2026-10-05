@@ -183,6 +183,16 @@ namespace SpatialTraceUtils
     // blocking volumes that legitimately are the surface.
     bool IsEffectGeometryActor(AActor* Actor);
 
+    // The one wire `channel` vocabulary of every tracing verb (spatial.raycast,
+    // spatial.raycast_screen, the ground verbs' surface.channel). Read from
+    // UCollisionProfile, so it is the eight stock channels (WorldStatic ... Destructible)
+    // plus every engine/game channel the host project named in DefaultChannelResponses,
+    // matched case-insensitively by display name. Returns false for anything else.
+    bool ParseTraceChannel(const FString& Name, ECollisionChannel& OutChannel);
+
+    // The names ParseTraceChannel accepts, comma-separated, for "Valid: ..." errors.
+    FString TraceChannelNames();
+
     struct FSpatialLayeredTraceOptions
     {
         // Hard bound on trace passes, i.e. how many distinct actors may be peeled off the

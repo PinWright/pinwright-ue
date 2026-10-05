@@ -67,34 +67,6 @@ namespace
         return GEditor->GetEditorWorldContext().World();
     }
 
-    // Maps the wire `channel` string to a trace channel. Only the channels a caller
-    // realistically raycasts against are accepted; anything else is a caller error.
-    bool RaycastMapChannel(const FString& Name, ECollisionChannel& OutChannel)
-    {
-        const FString Lower = Name.ToLower();
-        if (Lower == TEXT("visibility"))
-        {
-            OutChannel = ECC_Visibility;
-            return true;
-        }
-        if (Lower == TEXT("camera"))
-        {
-            OutChannel = ECC_Camera;
-            return true;
-        }
-        if (Lower == TEXT("worldstatic"))
-        {
-            OutChannel = ECC_WorldStatic;
-            return true;
-        }
-        if (Lower == TEXT("worlddynamic"))
-        {
-            OutChannel = ECC_WorldDynamic;
-            return true;
-        }
-        return false;
-    }
-
     // Reads a {x,y,z}/[x,y,z] vector from the first present key among Keys. Returns
     // false when none of the keys is present so the caller can distinguish an omitted
     // vector from a legitimately-zero one (GetVector alone cannot).
@@ -261,7 +233,7 @@ REGISTER_RPC_HANDLER("spatial.raycast", "spatial",
             TEXT("Max ray length in cm when using direction (default 1e7). Ignored when target is given."),
             false, TEXT(""), TArray<FString>({TEXT("max_distance"), TEXT("distance")})},
         RPC_PARAM_OPT("channel", "string",
-            "Trace channel: visibility (default), camera, worldstatic, or worlddynamic."),
+            "Trace channel by name, any case: visibility (default), camera, worldstatic, worlddynamic, pawn, physicsbody, vehicle, destructible, or a custom channel the project named in its collision settings. An unknown name is INVALID_PARAMS listing this project's channels."),
         FParamSpec{TEXT("traceComplex"), TEXT("boolean"),
             TEXT("Trace against per-triangle (complex) collision instead of simple collision. Default false. WARNING: complex collision for a StaticMesh IS its render triangle soup, so a mesh with NO collision set up still BLOCKS the ray - expected engine behaviour, and the usual cause of a ground probe reporting the height of a tree. Filter with onlyActors/actorFilter/onlyClasses, or use multiHit and pick the hit you want."),
             false, TEXT(""), TArray<FString>({TEXT("trace_complex")})},
@@ -342,11 +314,11 @@ REGISTER_RPC_HANDLER("spatial.raycast", "spatial",
     // Channel (optional, default visibility).
     ECollisionChannel Channel = ECC_Visibility;
     const FString ChannelName = Ctx.GetString(TEXT("channel"));
-    if (!ChannelName.IsEmpty() && !RaycastMapChannel(ChannelName, Channel))
+    if (!ChannelName.IsEmpty() && !SpatialTraceUtils::ParseTraceChannel(ChannelName, Channel))
     {
         Ctx.SendError(TEXT("INVALID_PARAMS"),
-            FString::Printf(TEXT("Unknown channel '%s'. Valid: visibility, camera, worldstatic, worlddynamic."),
-                *ChannelName));
+            FString::Printf(TEXT("Unknown channel '%s'. Valid: %s."),
+                *ChannelName, *SpatialTraceUtils::TraceChannelNames()));
         return true;
     }
 
