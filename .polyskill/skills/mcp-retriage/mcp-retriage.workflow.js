@@ -6,7 +6,7 @@
 //
 // One bounded sweep: list the open issues, score them in parallel against one
 // shared rubric, write back ONLY the issues whose severity changed (the Severity
-// field plus one retriage comment each), stop. NOT an infinite supervised loop —
+// field plus one retriage comment each), stop. NOT an infinite supervised loop:
 // it returns on its own and re-running is safe (idempotent: an unchanged backlog
 // produces zero writes).
 //
