@@ -33,26 +33,26 @@ strings rather than `SendError` literals and so are outside the scan on both cou
 **A callsite is one regex match**, and the constant pattern cannot tell an emit from a
 mention: 13 comparisons (`ErrorCode == ErrorCodes::ERR_*`, recounted 2026-10-02) and the 4
 schema-listing field names in `Handlers/Audio/AudioSynthSchemaHandler.cpp` (2026-08-29 count) are
-counted as callsites here. About 17 of 5644 — the figures are an upper bound on emits, not an
+counted as callsites here. About 17 of 5654 — the figures are an upper bound on emits, not an
 exact one. The scan is also blind in the other direction: a raw code literal passed to a helper
 other than `SendError` is not counted (`EXPRESSION_NOT_FOUND`, passed as an argument to
 `ResolveExpressionOrSendError` in `MaterialAuthoringHandler.cpp`, has no row for that reason).
 
 Counts come from the scan itself, not from the rows below.
 
-- **Unique codes:** 878 — one row each in `## Codes by frequency`.
-- **Total callsites:** 5644 — sum of that table's `Callsites` column.
+- **Unique codes:** 880 — one row each in `## Codes by frequency`.
+- **Total callsites:** 5654 — sum of that table's `Callsites` column.
 - **Handler files:** 330 of the 703 `.cpp`/`.h` files under the 6 roots emit at
   least one code. Do not sum the `Files` column instead: it is per-code and overlapping
-  (one handler file emits many codes), so it double-counts to 2351.
+  (one handler file emits many codes), so it double-counts to 2354.
 
-Adding the codes only the two tables below carry gives 882 distinct codes file-wide. Quote
+Adding the codes only the two tables below carry gives 884 distinct codes file-wide. Quote
 which of the two figures you mean.
 
 The frequency table and these totals are the scan's output verbatim; no row is appended by hand.
 Codes that need prose go in the two tables above it.
 
-Scanned 2026-10-03 against the clean tree at `9828d554`. Source is edited concurrently;
+Scanned 2026-10-05 against the clean tree at `0314bc76`. Source is edited concurrently;
 re-run the snippet rather than trusting these totals to the day.
 
 > **Scope widened 2026-08-19; the earlier staleness warning is resolved.** The previous snippet
@@ -116,10 +116,10 @@ these also carry a row in the frequency table. Kept for the semantics a count ca
 
 | Code | Callsites | Files |
 |---|---:|---:|
-| `INVALID_ARGUMENT` | 1091 | 179 |
+| `INVALID_ARGUMENT` | 1093 | 179 |
 | `INVALID_PARAMS` | 261 | 69 |
 | `NOT_FOUND` | 196 | 38 |
-| `ASSET_NOT_FOUND` | 183 | 82 |
+| `ASSET_NOT_FOUND` | 184 | 82 |
 | `NO_WORLD` | 94 | 14 |
 | `MISSING_PARAM` | 93 | 12 |
 | `EDITOR_NOT_AVAILABLE` | 83 | 34 |
@@ -376,6 +376,7 @@ these also carry a row in the frequency table. Kept for the semantics a count ca
 | `FOLIAGE_ACTOR_FAILED` | 3 | 1 |
 | `GROUND_HITS_ALL_REJECTED` | 3 | 2 |
 | `INCOMPATIBLE_DATA_INTERFACE` | 3 | 1 |
+| `INSUFFICIENT_GROUND_CONTACT` | 3 | 1 |
 | `INVALID_BONE_CONTROL_SPACE` | 3 | 1 |
 | `INVALID_BP` | 3 | 3 |
 | `INVALID_CONTEXT` | 3 | 1 |
@@ -389,6 +390,7 @@ these also carry a row in the frequency table. Kept for the semantics a count ca
 | `INVALID_REFERENCED_ASSET` | 3 | 1 |
 | `INVALID_ROW_VALUES` | 3 | 1 |
 | `LANDSCAPE_NO_HEIGHT_DATA` | 3 | 1 |
+| `MATERIAL_FALLBACK` | 3 | 2 |
 | `MATERIAL_NOT_FOUND` | 3 | 3 |
 | `MESH_AUDIT_READ_FAILED` | 3 | 1 |
 | `MISSING_VALUE` | 3 | 3 |
@@ -419,6 +421,7 @@ these also carry a row in the frequency table. Kept for the semantics a count ca
 | `TYPE_MISMATCH` | 3 | 3 |
 | `TYPE_NOT_FOUND` | 3 | 3 |
 | `UNKNOWN_VIEW_MODE` | 3 | 1 |
+| `UNSUPPORTED_PROPERTY` | 3 | 1 |
 | `UnsupportedNodeClass` | 3 | 1 |
 | `VIEW_MODE_NOT_RENDERABLE` | 3 | 2 |
 | `WINDOW_NOT_FOUND` | 3 | 2 |
@@ -462,6 +465,7 @@ these also carry a row in the frequency table. Kept for the semantics a count ca
 | `CREATE_COMPONENT_FAILED` | 2 | 2 |
 | `DATA_INTERFACE_EXISTS` | 2 | 1 |
 | `DELETE_FAILED` | 2 | 2 |
+| `DERIVED_PROPERTY` | 2 | 2 |
 | `EDITOR_NOT_OPEN` | 2 | 2 |
 | `EFFECT_NOT_ACTIVE` | 2 | 1 |
 | `EMITTER_DATA_MISSING` | 2 | 2 |
@@ -504,7 +508,6 @@ these also carry a row in the frequency table. Kept for the semantics a count ca
 | `LEVEL_NOT_LOADED` | 2 | 2 |
 | `LIVE_CODING_NOT_AVAILABLE` | 2 | 1 |
 | `LIVE_INSTANCES_WOULD_BE_REINSTANCED` | 2 | 2 |
-| `MATERIAL_FALLBACK` | 2 | 2 |
 | `MERGE_FAILED` | 2 | 1 |
 | `MERGE_NOT_POSSIBLE` | 2 | 1 |
 | `MESH_AUDIT_Z_FIGHTING_UNRUNNABLE` | 2 | 1 |
@@ -583,7 +586,6 @@ these also carry a row in the frequency table. Kept for the semantics a count ca
 | `UNSUPPORTED_ARGUMENT` | 2 | 2 |
 | `UNSUPPORTED_CHANNEL` | 2 | 2 |
 | `UNSUPPORTED_COLUMN` | 2 | 1 |
-| `UNSUPPORTED_PROPERTY` | 2 | 1 |
 | `UNSUPPORTED_VALUE_TYPE` | 2 | 1 |
 | `UV_GENERATION_FAILED` | 2 | 1 |
 | `WEB_QUERY_FAILED` | 2 | 1 |
@@ -669,7 +671,6 @@ these also carry a row in the frequency table. Kept for the semantics a count ca
 | `DECOMPILE_FAILED` | 1 | 1 |
 | `DEFAULT_PROPERTY_NOT_FOUND` | 1 | 1 |
 | `DELETE_PARTIAL` | 1 | 1 |
-| `DERIVED_PROPERTY` | 1 | 1 |
 | `DESTINATION_FOLDER_NOT_FOUND` | 1 | 1 |
 | `DETACH_FAILED` | 1 | 1 |
 | `DISPATCHER_NOT_FOUND` | 1 | 1 |
@@ -703,6 +704,7 @@ these also carry a row in the frequency table. Kept for the semantics a count ca
 | `GEOREFERENCE_MISMATCH` | 1 | 1 |
 | `GRAPH_ERROR` | 1 | 1 |
 | `GRID_TOO_DENSE` | 1 | 1 |
+| `GROUND_ABOVE_PROBE_START` | 1 | 1 |
 | `GROUND_SEAT_READBACK_MISMATCH` | 1 | 1 |
 | `IMAGE_GRID_MISMATCH` | 1 | 1 |
 | `IMAGE_SIZE_MISMATCH` | 1 | 1 |
@@ -711,7 +713,6 @@ these also carry a row in the frequency table. Kept for the semantics a count ca
 | `INDEX_NOT_FOUND` | 1 | 1 |
 | `INDEX_PARSE_ERROR` | 1 | 1 |
 | `INPUT_ACTION_PROPERTY_NOT_FOUND` | 1 | 1 |
-| `INSUFFICIENT_GROUND_CONTACT` | 1 | 1 |
 | `INTEGRITY_FAILURE` | 1 | 1 |
 | `INTERFACE_MUTATION_FAILED` | 1 | 1 |
 | `INVALID_ACTOR_LABEL` | 1 | 1 |
@@ -920,6 +921,7 @@ these also carry a row in the frequency table. Kept for the semantics a count ca
 | `SCS_OPERATION_FAILED` | 1 | 1 |
 | `SCS_PARENT_NOT_FOUND` | 1 | 1 |
 | `SCS_UNAVAILABLE` | 1 | 1 |
+| `SEAT_MOVE_EXCEEDS_BOUND` | 1 | 1 |
 | `SECTION_READ_ONLY` | 1 | 1 |
 | `SESSION_LOAD_FAILED` | 1 | 1 |
 | `SET_FAILED` | 1 | 1 |
