@@ -1,0 +1,41 @@
+name: Feature request
+description: Suggest a new tool, method, or workflow for the PinWright plugin.
+labels: ["type/feature", "status/needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for **new or extra feature ideas**. If an existing feature works incorrectly,
+        use the [bug report](https://github.com/PinWright/pinwright-ue/issues/new?template=bug_report.yml)
+        form instead.
+
+        Requests usually get a first response within two business days. That is a target rather than
+        a guarantee, and replies can take longer around holidays and engine releases.
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What the tool or workflow should do
+      description: Describe the capability you want, and the task it would help you finish.
+    validations:
+      required: true
+  - type: textarea
+    id: current
+    attributes:
+      label: Current behavior or workaround
+      description: What you do today instead, or why the current tools do not cover this.
+    validations:
+      required: true
+  - type: input
+    id: engine
+    attributes:
+      label: Unreal Engine version (optional)
+      placeholder: "5.6.2"
+    validations:
+      required: false
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else? (optional)
+      description: Links, examples, or any extra context.
+    validations:
+      required: false

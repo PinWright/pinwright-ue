@@ -5,7 +5,9 @@ body:
   - type: markdown
     attributes:
       value: |
-        For **new or extra feature ideas**, open a blank issue instead. This form is for bugs
+        For **new or extra feature ideas**, use the
+        [feature request](https://github.com/PinWright/pinwright-ue/issues/new?template=feature_request.yml)
+        form instead. This form is for bugs
         and critical gaps in features that already exist.
 
         If the plugin does not load or install at all on your engine version, use the
