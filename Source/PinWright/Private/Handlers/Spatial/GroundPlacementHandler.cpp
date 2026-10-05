@@ -1265,8 +1265,9 @@ REGISTER_RPC_HANDLER("spatial.ground_instances", "spatial",
     "`surface` is REQUIRED - state what counts as ground; the verb will not guess. "
     "apply:false runs the identical solve and writes nothing, reporting proposedDeltaZCm per "
     "instance: that is the dry run, and it is why there is no separate verify verb. "
-    "Every instance this verb moves is listed in movedInstances[] with its pre-move transform and "
-    "space:\"world\", at every detail level - that is the undo, and actor.set_instance_transforms "
+    "Every instance this verb moves is listed in movedInstances[] with its pre-move transform, "
+    "space:\"world\" and the signed deltaZCm it moved by, at every detail level - that is the "
+    "undo, and actor.set_instance_transforms "
     "writes it back verbatim, adopting the rows' stated space rather than assuming its own default "
     "agrees. The apply path is also wrapped in one editor transaction, so editor.undo reaches it. "
     "The scatter's holder actor is excluded from the ground probe, so an instance is "
@@ -1376,6 +1377,20 @@ REGISTER_RPC_HANDLER("spatial.ground_instances", "spatial",
                  "what the solve predicted within this much, or the instance is reported "
                  "GROUND_SEAT_READBACK_MISMATCH and NOT counted as placed."),
             TEXT("1"), TArray<FString>({TEXT("max_seat_error")})),
+        GroundRpcParam(TEXT("maxLift"), TEXT("number"),
+            TEXT("Largest upward move in cm (>= 0) the solve may make; omit for no bound. An "
+                 "instance whose solved move lifts it further is REFUSED - not clamped - with "
+                 "status 'move_exceeds_bound', reasonCode SEAT_MOVE_EXCEEDS_BOUND and its "
+                 "proposedDeltaZCm, left where it was and counted in failed. Honoured by the dry "
+                 "run too. maxLift: 0 means never lift an instance; both bounds allow 0.01 cm of slack so a "
+                 "re-seat of an already-seated batch is not refused over trace noise. A negative "
+                 "value is refused."),
+            TEXT(""), TArray<FString>({TEXT("max_lift")})),
+        GroundRpcParam(TEXT("maxSink"), TEXT("number"),
+            TEXT("Largest downward move in cm (>= 0, a distance, not a signed delta) the solve may "
+                 "make, embed included; omit for no bound. Refused like maxLift, never clamped. "
+                 "A negative value is refused."),
+            TEXT(""), TArray<FString>({TEXT("max_sink")})),
         RPC_PARAM_DEF("limit", "number",
             "Maximum instances to process in this call (1-5000). Pair with offset to page a larger "
             "scatter; instanceCount always reports the component's true total.", "512"),
@@ -1543,6 +1558,33 @@ REGISTER_RPC_HANDLER("spatial.ground_instances", "spatial",
             Ctx.GetNumber(TEXT("contact_tolerance"),
                 GroundPlacement::DefaultContactToleranceCm)), 0.0);
 
+    // maxLift / maxSink: absent = unbounded. A negative bound is refused rather than floored: a
+    // caller who wrote maxSink: -50 meant a signed delta, and flooring it to 0 would refuse every
+    // sink in the batch.
+    auto ReadMoveBound = [&Ctx](const TCHAR* Name, const TCHAR* Alias, TOptional<double>& Out)
+    {
+        const TSharedPtr<FJsonValue> Value = Ctx.GetJsonValueFirstOf({Name, Alias});
+        if (!Value.IsValid() || Value->IsNull())
+        {
+            return true;
+        }
+        double Number = 0.0;
+        if (!Value->TryGetNumber(Number) || Number < 0.0)
+        {
+            Ctx.SendError(ErrorCodes::ERR_INVALID_ARGUMENT,
+                FString::Printf(TEXT("'%s' must be a distance in cm >= 0 (omit it for no bound). "
+                                     "NOTHING WAS MOVED."), Name));
+            return false;
+        }
+        Out = Number;
+        return true;
+    };
+    if (!ReadMoveBound(TEXT("maxLift"), TEXT("max_lift"), Config.MaxLiftCm)
+        || !ReadMoveBound(TEXT("maxSink"), TEXT("max_sink"), Config.MaxSinkCm))
+    {
+        return true;
+    }
+
     const int32 Offset = FMath::Max(Ctx.GetInt(TEXT("offset"), 0), 0);
     const int32 Limit = FMath::Clamp(Ctx.GetInt(TEXT("limit"), GroundRpcDefaultLimit),
         1, GroundRpcMaxBatch);
@@ -1592,9 +1634,12 @@ REGISTER_RPC_HANDLER("spatial.ground_instances", "spatial",
             // Replaying these rows through actor.set_instance_transforms used to be correct only by
             // coincidence: one verb's hardcode happened to equal the other verb's default, recorded
             // in no field on either side. The stamp makes the dependency explicit and checked.
-            MovedRows.Add(MakeShared<FJsonValueObject>(
-                InstancedMeshUtils::MakeMovedInstanceRow(Result.InstanceIndex,
-                    Result.Seat.PreviousTransform.GetValue(), /*bWorldSpace*/ true)));
+            // deltaZCm rides on the receipt so a clean batch - no results[] rows at the default
+            // detail - still says how far each instance moved. The replay verb ignores it.
+            const TSharedPtr<FJsonObject> MovedRow = InstancedMeshUtils::MakeMovedInstanceRow(
+                Result.InstanceIndex, Result.Seat.PreviousTransform.GetValue(), /*bWorldSpace*/ true);
+            MovedRow->SetNumberField(TEXT("deltaZCm"), Result.Seat.AppliedDeltaZCm);
+            MovedRows.Add(MakeShared<FJsonValueObject>(MovedRow));
         }
 
         const bool bWantRow = bPlaced ? bIncludeSuccesses : bIncludeFailures;
@@ -1683,6 +1728,14 @@ REGISTER_RPC_HANDLER("spatial.ground_instances", "spatial",
     SeatEcho->SetNumberField(TEXT("embedFraction"), Config.EmbedFraction);
     SeatEcho->SetNumberField(TEXT("embedDepthCm"), Config.EmbedDepthCm);
     SeatEcho->SetNumberField(TEXT("maxSeatErrorCm"), Config.MaxSeatErrorCm);
+    if (Config.MaxLiftCm.IsSet())
+    {
+        SeatEcho->SetNumberField(TEXT("maxLiftCm"), Config.MaxLiftCm.GetValue());
+    }
+    if (Config.MaxSinkCm.IsSet())
+    {
+        SeatEcho->SetNumberField(TEXT("maxSinkCm"), Config.MaxSinkCm.GetValue());
+    }
     // Which footprint the batch sampled over, at call level. The per-instance half-extent the
     // grid actually spanned is on every row (contact.footprintHalfExtentCm) and is the truthful
     // one - contactRadius is mesh-local and scaled by each instance's own XY scale, so one call

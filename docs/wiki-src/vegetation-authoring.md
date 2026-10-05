@@ -349,8 +349,9 @@ consequences compound. `foliage.add_instances` given a bare **mesh** path reuses
 `Auto_<Mesh>` foliage type, so two callers planting the same mesh land in the same component,
 separable only by coordinate. The response names the actor but returns **no component name and no
 index range**, so nothing supported maps "the instances I just added" to "the component to seat".
-And `spatial.ground_instances` without an explicit `component` defaults to the component with the
-most instances — which in a shared level is never yours.
+And `spatial.ground_instances` without an explicit `component` used to default to the component
+with the most instances (now refused `AMBIGUOUS_INSTANCED_COMPONENT`) — which in a shared level is
+never yours.
 
 That produced three incidents in one session, two unrecoverable: one call re-seated 512 instances
 belonging to a region 16 km away; a caller that inferred component indices from creation order

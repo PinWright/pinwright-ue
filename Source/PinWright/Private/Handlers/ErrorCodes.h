@@ -1450,6 +1450,9 @@ namespace ErrorCodes
     inline constexpr TCHAR ERR_SCS_PARENT_NOT_FOUND[]                       = TEXT("SCS_PARENT_NOT_FOUND");
     inline constexpr TCHAR ERR_SCS_UNAVAILABLE[]                            = TEXT("SCS_UNAVAILABLE");
     inline constexpr TCHAR ERR_SC_DISABLED[]                                = TEXT("SC_DISABLED");
+    // spatial.ground_instances: the solved move is a lift above maxLift or a sink below maxSink.
+    // The instance is refused and left where it was - never clamped, which would look seated.
+    inline constexpr TCHAR ERR_SEAT_MOVE_EXCEEDS_BOUND[]                    = TEXT("SEAT_MOVE_EXCEEDS_BOUND");
     inline constexpr TCHAR ERR_SECTION_CREATION_FAILED[]                    = TEXT("SECTION_CREATION_FAILED");
     inline constexpr TCHAR ERR_SECTION_FAILED[]                             = TEXT("SECTION_FAILED");
     inline constexpr TCHAR ERR_SECTION_NOT_FOUND[]                          = TEXT("SECTION_NOT_FOUND");

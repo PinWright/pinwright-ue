@@ -11,6 +11,14 @@
   a `pawn` trace now shows what a walking character would collide with, which a `visibility`
   probe cannot. The unknown-channel refusal keeps its error code, and its message now lists this
   project's channels instead of the fixed four.
+- Added: `spatial.ground_instances` takes `maxLift` and `maxSink` (cm, `>= 0`, optional). An
+  instance whose solved move lifts it further than `maxLift` or sinks it further than `maxSink` is
+  refused, not clamped: it stays where it was, counts in `failed`, and its row reports
+  `status: "move_exceeds_bound"`, the new `SEAT_MOVE_EXCEEDS_BOUND` reason code and the
+  `proposedDeltaZCm` it declined. The dry run honours both bounds. A negative bound is refused with
+  `INVALID_ARGUMENT`. With neither passed, behaviour is unchanged. Each `movedInstances[]` row now
+  also carries the signed `deltaZCm` the instance moved by, so a clean batch, which has no
+  `results[]` rows at the default detail, still says how far it moved things.
 - Changed: `niagara.search_modules` now finds a module from a descriptive multi-word `query`.
   The name is compared with case, spaces and underscores ignored, so `"spawn rate"` is an exact hit
   on `SpawnRate` (it used to return no rows). A row holding every query word in any order now

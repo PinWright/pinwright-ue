@@ -96,6 +96,10 @@ namespace GroundPlacement
     // map edge" screenshot.
     constexpr double DefaultMinCoverage = 0.5;
 
+    // Slack on FGroundSeatConfig::MaxLiftCm / MaxSinkCm, in cm. Re-seating an already-seated batch
+    // solves moves of trace noise (~1e-3 cm); without slack maxLift: 0 would refuse half of them.
+    constexpr double MoveBoundToleranceCm = 0.01;
+
     // Default tilt ceiling when surface alignment is requested, in degrees. Terrain normals
     // on a cliff face approach horizontal; letting a prop follow one lays it on its side.
     constexpr double DefaultMaxTiltDegrees = 20.0;
@@ -622,6 +626,13 @@ namespace GroundPlacement
         // echoed per actor either way.
         bool bRevertOnFailure = false;
 
+        // Bounds on the solved move, in cm, both non-negative; unset = unbounded. A solve that
+        // lifts by more than MaxLiftCm or sinks by more than MaxSinkCm is REFUSED (status
+        // MoveExceedsBound, nothing written), never clamped: a clamped seat satisfies nothing and
+        // would read as a good one. Read only by SeatInstance, in the dry run and the apply alike.
+        TOptional<double> MaxLiftCm;
+        TOptional<double> MaxSinkCm;
+
         // Total embed depth in cm for an actor of the given world bounds height.
         double ResolveEmbedCm(double BoundsHeightCm) const;
     };
@@ -644,6 +655,9 @@ namespace GroundPlacement
         // was written. The only status other than Seated that carries an empty ReasonCode,
         // because a dry run is not a failure - it is the absence of an attempt.
         DryRun,
+        // spatial.ground_instances: the solved move broke FGroundSeatConfig::MaxLiftCm or
+        // MaxSinkCm. Nothing was written; the proposed move is still reported.
+        MoveExceedsBound,
         NoGroundFound,
         GroundHitsAllRejected,
         PartialGroundCoverage,
@@ -790,9 +804,9 @@ namespace GroundPlacement
         // where a write followed, so "what it was" and "what to put back" cannot be confused.
         TOptional<FTransform> CurrentTransform;
 
-        // Dry run only (bApply == false): what an applying call would have written, and the
-        // signed Z it would have moved by. Unset on an applying call, where Seat.AppliedTransform
-        // and Seat.AppliedDeltaZCm carry what actually happened.
+        // Dry run (bApply == false) or a move refused by MaxLiftCm / MaxSinkCm: what an applying
+        // call would have written, and the signed Z it would have moved by. Unset when the move
+        // was written, where Seat.AppliedTransform and Seat.AppliedDeltaZCm carry what happened.
         TOptional<FTransform> ProposedTransform;
         double ProposedDeltaZCm = 0.0;
     };

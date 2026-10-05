@@ -462,6 +462,7 @@ namespace GroundPlacement
             case EGroundSeatStatus::ActorLocationLocked:   return TEXT("actor_location_locked");
             case EGroundSeatStatus::HolderNotSeatable:     return TEXT("holder_not_seatable");
             case EGroundSeatStatus::DryRun:                return TEXT("dry_run");
+            case EGroundSeatStatus::MoveExceedsBound:      return TEXT("move_exceeds_bound");
             case EGroundSeatStatus::NoGroundFound:         return TEXT("no_ground_found");
             case EGroundSeatStatus::GroundHitsAllRejected: return TEXT("ground_hits_all_rejected");
             case EGroundSeatStatus::PartialGroundCoverage: return TEXT("partial_ground_coverage");
@@ -1716,6 +1717,28 @@ namespace GroundPlacement
 
         FTransform Proposed = InstanceWorld;
         Proposed.AddToTranslation(FVector(0.0, 0.0, DeltaZ));
+
+        // Move bounds, checked before the dry-run branch so a dry run predicts the refusal. A
+        // refused instance keeps its proposed move on the result so the caller sees what was
+        // declined, and gets no write and no undo record.
+        const bool bLiftTooFar = Config.MaxLiftCm.IsSet()
+            && DeltaZ > Config.MaxLiftCm.GetValue() + MoveBoundToleranceCm;
+        const bool bSinkTooFar = Config.MaxSinkCm.IsSet()
+            && -DeltaZ > Config.MaxSinkCm.GetValue() + MoveBoundToleranceCm;
+        if (bLiftTooFar || bSinkTooFar)
+        {
+            Result.ProposedTransform = Proposed;
+            Result.ProposedDeltaZCm = DeltaZ;
+            Result.Seat.AppliedEmbedCm = EmbedCm;
+            GroundFailResult(Result.Seat, EGroundSeatStatus::MoveExceedsBound,
+                ErrorCodes::ERR_SEAT_MOVE_EXCEEDS_BOUND,
+                FString::Printf(TEXT("The solve would %s this instance by %.2f cm, past %s %.2f cm. "
+                                     "It was left where it was."),
+                    bLiftTooFar ? TEXT("lift") : TEXT("sink"), FMath::Abs(DeltaZ),
+                    bLiftTooFar ? TEXT("maxLift") : TEXT("maxSink"),
+                    bLiftTooFar ? Config.MaxLiftCm.GetValue() : Config.MaxSinkCm.GetValue()));
+            return Result;
+        }
 
         if (!bApply)
         {

@@ -304,11 +304,12 @@ Args:
 
 - `surface` (object, **required**) - identical shape and defaults to `spatial.ground_actors`' `surface`. `excludeComponentClasses` earns its keep here in particular: this verb seats instances against whatever surrounds them, and a plain ISM/HISM neighbour is nameable on no other axis. The holder actor itself is always excluded, so an instance is never seated onto a sibling.
 - `actorName` (string, **required**; aliases `objectPath` / `actorPath` / `actor_name`) - the actor carrying the scatter.
-- `component` (string, optional; aliases `componentName` / `component_name`) - object name of the component, case-insensitive. Omit to take the component with the MOST instances. **Resolve it by static mesh plus instance count immediately before writing:** component object names are not stable across a session - a procedural generator can rebuild and rename its components between two calls - and a stale name silently addresses a different scatter.
+- `component` (string, optional; aliases `componentName` / `component_name`) - object name of the component, case-insensitive. Omit ONLY when the actor carries exactly one instanced component; with several the call is refused `AMBIGUOUS_INSTANCED_COMPONENT` before anything is probed or moved, and the refusal lists every candidate with its instance count. **Resolve it by static mesh plus instance count immediately before writing:** component object names are not stable across a session - a procedural generator can rebuild and rename its components between two calls - and a stale name silently addresses a different scatter.
 - `indices` (array, optional) - specific instance indices. Omit to walk the component under `limit` / `offset`. An out-of-range index refuses the call rather than being skipped.
 - `apply` (boolean, default `true`) - `false` runs the identical solve, writes nothing, and reports `proposedDeltaZCm` / `proposedTransform` with `status: "dry_run"` per instance. This is the verify half of the verb; there is no separate non-mutating sibling, because instances are addressed by index against one named component and so carry no name-pattern scope hazard.
 - `samples` (`3`), `footprintInset` (`0.1`), `seatPercentile` (`0`), `embedFraction` (`0.02`), `embedDepth` (`0`) - the seat solve, same meanings as `spatial.ground_actors`.
 - `minCoverage` (`0.5`), `minContactPoints` (`1`), `contactTolerance` (`2`), `maxSeatError` (`1`) - pass criteria.
+- `maxLift` / `maxSink` (number, cm, `>= 0`, optional; aliases `max_lift` / `max_sink`) - bounds on the solved move, embed included; omitted means unbounded, a negative value is `INVALID_ARGUMENT`. An instance whose move would lift further than `maxLift` or sink further than `maxSink` is **refused, not clamped**: it stays where it was, counts in `failed`, and its row carries `status: "move_exceeds_bound"`, `reasonCode: "SEAT_MOVE_EXCEEDS_BOUND"` and the `proposedDeltaZCm` / `proposedTransform` it declined. The dry run honours both, and both allow 0.01 cm of slack for trace noise. `maxLift: 0` is "never lift an already-bedded instance".
 - `limit` (`512`, max 5000), `offset` (`0`), `detail` (`summary` | `failures` | `all`, default `failures`).
 
 ```js
@@ -330,7 +331,7 @@ call({
 })
 ```
 
-Gotchas: returns `{instanceCount, selected, requested, placed, moved, solved, failed, offset, truncated, surface, seat, movedInstances[], results[], units, axis}`. `movedInstances[]` is the undo - `actor.set_instance_transforms` writes those rows back verbatim - and it is **not** governed by `detail`, so it is present even at `detail: "summary"`; capture it before the response scrolls away. Instance indices are **positional**: anything that re-scatters, adds or removes instances renumbers them.
+Gotchas: returns `{instanceCount, selected, requested, placed, moved, solved, failed, offset, truncated, surface, seat, movedInstances[], results[], units, axis}`; `seat` echoes `maxLiftCm` / `maxSinkCm` only when they were passed. `movedInstances[]` is the undo - `actor.set_instance_transforms` writes those rows back verbatim - and each row also carries the signed `deltaZCm` the instance moved by (the replay ignores it), so a clean batch with no `results[]` rows still states how far it moved things. It is **not** governed by `detail`, so it is present even at `detail: "summary"`; capture it before the response scrolls away. Instance indices are **positional**: anything that re-scatters, adds or removes instances renumbers them.
 
 Three limits are structural rather than tunable, and each has cost the caller real work:
 

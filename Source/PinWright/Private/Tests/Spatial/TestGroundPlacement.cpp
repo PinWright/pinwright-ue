@@ -3991,3 +3991,184 @@ bool FGroundInstancesContactRadiusSamplesTheContactPatchTest::RunTest(const FStr
     TestEqual(TEXT("...and echoes the radius it was given"), EchoedRadius, ContactRadiusCm, 0.001);
     return true;
 }
+
+// ---- maxLift / maxSink refuse the move, and the receipt states how far each instance moved ----
+//
+// Three instances over one floor with embed off, so each solved move is exact: instance 0 is
+// buried 40 cm (the solve lifts it 40), instance 1 floats 250 cm (sinks 250), instance 2 floats
+// 30 cm (sinks 30). maxLift 0 / maxSink 50 must refuse the first two - in the dry run and the
+// apply alike - leave them untouched, count them failed, and still let the third seat. Without
+// the bound check instance 0 and 1 move and failed reads 0; without the receipt field the moved
+// row carries no deltaZCm; without the sign check maxSink -5 is accepted.
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGroundInstancesMoveBoundsRefuseTest,
+    "PinWright.spatial.ground_instances.MaxLiftAndMaxSinkRefuseTheMove",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FGroundInstancesMoveBoundsRefuseTest::RunTest(const FString& Parameters)
+{
+    UWorld* World = GroundTestEditorWorld();
+    if (!World)
+    {
+        PinWrightTestSkip::SkipAssertions(*this, TEXT("no_editor_world"),
+            TEXT("GEditor->GetEditorWorldContext().World() returned null; the "
+                 "spatial.ground_instances move-bound assertions were stepped over."));
+        return true;
+    }
+
+    const FString FloorLabel = GroundTestLabel(TEXT("BoundIFloor"));
+    const FString HolderLabel = GroundTestLabel(TEXT("BoundInstances"));
+    AActor* Floor = GroundTestSpawnWideFloor(*this, World, FloorLabel,
+        FVector(GroundTestColX, GroundTestColY, -GroundTestCubeHalf), 20.0);
+    AActor* Holder = GroundTestSpawnScatterHolder(*this, World, HolderLabel,
+        FVector(GroundTestColX, GroundTestColY, 300.0), 3, 600.0);
+    ON_SCOPE_EXIT
+    {
+        if (Floor) { Floor->Destroy(); }
+        if (Holder) { Holder->Destroy(); }
+    };
+    if (!Floor || !Holder)
+    {
+        AddError(TEXT("move-bound fixture did not spawn"));
+        return true;
+    }
+    GroundTestFlushPhysics(World);
+
+    const double FloorTopZ = GroundTestTopZ(Floor);
+    UInstancedStaticMeshComponent* Component = GroundTestScatterComponent(Holder);
+    const double BelowCm[3] = {40.0, -250.0, -30.0};
+    FTransform Before[3];
+    for (int32 Index = 0; Index < 3; ++Index)
+    {
+        if (!GroundTestSeatInstanceExactly(Component, Index, FloorTopZ, BelowCm[Index])
+            || !GroundTestInstanceWorld(Holder, Index, Before[Index]))
+        {
+            AddError(*FString::Printf(TEXT("could not place fixture instance %d"), Index));
+            return true;
+        }
+    }
+
+    auto MakePayload = [&HolderLabel](bool bApply, double MaxSink)
+    {
+        TSharedPtr<FJsonObject> Payload = GroundTestHolderPayload(HolderLabel);
+        Payload->SetObjectField(TEXT("surface"), GroundTestAnySolidSurface());
+        Payload->SetBoolField(TEXT("apply"), bApply);
+        Payload->SetNumberField(TEXT("embedFraction"), 0.0);
+        Payload->SetNumberField(TEXT("maxLift"), 0.0);
+        Payload->SetNumberField(TEXT("maxSink"), MaxSink);
+        return Payload;
+    };
+    auto ExpectUnmoved = [this, Holder, &Before](int32 Index, const TCHAR* When)
+    {
+        FTransform Now;
+        TestTrue(*FString::Printf(TEXT("instance %d is untouched %s"), Index, When),
+            GroundTestInstanceWorld(Holder, Index, Now)
+            && Now.GetLocation().Equals(Before[Index].GetLocation(), 0.01));
+    };
+    auto ExpectRefusedRow = [this](const TSharedPtr<FJsonObject>& Result, int32 Index,
+                                   double ExpectedDelta)
+    {
+        const TSharedPtr<FJsonObject> Row = GroundTestRowForIndex(Result, TEXT("results"), Index);
+        if (!Row.IsValid())
+        {
+            AddError(*FString::Printf(TEXT("no results row for refused instance %d"), Index));
+            return;
+        }
+        FString Status;
+        FString Code;
+        double Proposed = 0.0;
+        bool bMoved = true;
+        Row->TryGetStringField(TEXT("status"), Status);
+        Row->TryGetStringField(TEXT("reasonCode"), Code);
+        Row->TryGetBoolField(TEXT("moved"), bMoved);
+        TestEqual(*FString::Printf(TEXT("instance %d status"), Index), Status,
+            FString(TEXT("move_exceeds_bound")));
+        TestEqual(*FString::Printf(TEXT("instance %d reasonCode"), Index), Code,
+            FString(TEXT("SEAT_MOVE_EXCEEDS_BOUND")));
+        TestFalse(*FString::Printf(TEXT("instance %d row says not moved"), Index), bMoved);
+        TestTrue(*FString::Printf(TEXT("instance %d row carries proposedDeltaZCm"), Index),
+            Row->TryGetNumberField(TEXT("proposedDeltaZCm"), Proposed));
+        TestEqual(*FString::Printf(TEXT("instance %d proposed delta"), Index), Proposed,
+            ExpectedDelta, 0.5);
+    };
+
+    // A negative bound is a signed-delta misunderstanding: refused before anything moves.
+    {
+        FTestResponseCapture Capture;
+        InvokeHandlerWithCapture(TEXT("spatial.ground_instances"), MakePayload(true, -5.0), Capture);
+        TestFalse(TEXT("maxSink -5 is refused"), Capture.bSuccess);
+        TestEqual(TEXT("...as INVALID_ARGUMENT"), Capture.ErrorCode, FString(TEXT("INVALID_ARGUMENT")));
+        for (int32 Index = 0; Index < 3; ++Index)
+        {
+            ExpectUnmoved(Index, TEXT("after the refused negative bound"));
+        }
+    }
+
+    // Dry run: the bounds are honoured by the prediction too.
+    {
+        TSharedPtr<FJsonObject> Payload = MakePayload(false, 50.0);
+        Payload->SetStringField(TEXT("detail"), TEXT("all"));
+        FTestResponseCapture Capture;
+        InvokeHandlerWithCapture(TEXT("spatial.ground_instances"), Payload, Capture);
+        TestTrue(TEXT("the dry run succeeds"), Capture.bSuccess);
+        if (!Capture.bSuccess || !Capture.Result.IsValid())
+        {
+            return true;
+        }
+        double Failed = -1.0;
+        double Solved = -1.0;
+        Capture.Result->TryGetNumberField(TEXT("failed"), Failed);
+        Capture.Result->TryGetNumberField(TEXT("solved"), Solved);
+        TestEqual(TEXT("dry run: the lift and the deep sink are failed"), Failed, 2.0);
+        TestEqual(TEXT("dry run: the shallow sink is solved"), Solved, 1.0);
+        ExpectRefusedRow(Capture.Result, 0, 40.0);
+        ExpectRefusedRow(Capture.Result, 1, -250.0);
+        const TSharedPtr<FJsonObject> Within = GroundTestRowForIndex(Capture.Result, TEXT("results"), 2);
+        FString Status;
+        if (Within.IsValid())
+        {
+            Within->TryGetStringField(TEXT("status"), Status);
+        }
+        TestEqual(TEXT("dry run: the in-bound instance is a plain dry_run"), Status,
+            FString(TEXT("dry_run")));
+    }
+
+    // Apply at the default detail ("failures"): refused rows are listed, the seated one is not,
+    // so movedInstances[] is the only place its move can be read.
+    FTestResponseCapture Capture;
+    InvokeHandlerWithCapture(TEXT("spatial.ground_instances"), MakePayload(true, 50.0), Capture);
+    TestTrue(TEXT("the applying call succeeds"), Capture.bSuccess);
+    if (!Capture.bSuccess || !Capture.Result.IsValid())
+    {
+        return true;
+    }
+    double Failed = -1.0;
+    double Moved = -1.0;
+    double Placed = -1.0;
+    Capture.Result->TryGetNumberField(TEXT("failed"), Failed);
+    Capture.Result->TryGetNumberField(TEXT("moved"), Moved);
+    Capture.Result->TryGetNumberField(TEXT("placed"), Placed);
+    TestEqual(TEXT("apply: two instances refused"), Failed, 2.0);
+    TestEqual(TEXT("apply: one instance moved"), Moved, 1.0);
+    TestEqual(TEXT("apply: one instance placed"), Placed, 1.0);
+    ExpectUnmoved(0, TEXT("after a lift past maxLift 0"));
+    ExpectUnmoved(1, TEXT("after a sink past maxSink 50"));
+    ExpectRefusedRow(Capture.Result, 0, 40.0);
+    ExpectRefusedRow(Capture.Result, 1, -250.0);
+
+    FTransform After;
+    TestTrue(TEXT("the in-bound instance sank 30 cm"), GroundTestInstanceWorld(Holder, 2, After)
+        && FMath::IsNearlyEqual(After.GetLocation().Z, Before[2].GetLocation().Z - 30.0, 0.5));
+    TestFalse(TEXT("no results row for the seated instance at detail 'failures'"),
+        GroundTestRowForIndex(Capture.Result, TEXT("results"), 2).IsValid());
+    TestFalse(TEXT("no undo row for a refused instance"),
+        GroundTestRowForIndex(Capture.Result, TEXT("movedInstances"), 0).IsValid());
+    const TSharedPtr<FJsonObject> Receipt =
+        GroundTestRowForIndex(Capture.Result, TEXT("movedInstances"), 2);
+    double ReceiptDelta = 0.0;
+    TestTrue(TEXT("the movedInstances row carries deltaZCm"),
+        Receipt.IsValid() && Receipt->TryGetNumberField(TEXT("deltaZCm"), ReceiptDelta));
+    TestEqual(TEXT("...equal to the measured move"), ReceiptDelta,
+        After.GetLocation().Z - Before[2].GetLocation().Z, 0.01);
+    return true;
+}
