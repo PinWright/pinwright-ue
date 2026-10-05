@@ -16,7 +16,8 @@ Two rules this helper enforces, and that every agent workflow relies on:
     links or attachments from such authors are never printed.
 
 Commands:
-  list     open issues an agent may work, ranked severity > costly > encounters > number
+  list     open issues an agent may work, ranked priority > severity > costly > encounters
+           > number (issues with no priority sort after those with one)
            (--closed [--since DATE]: issues closed as completed, for re-testing)
   show     one issue with its comments, trust-filtered
   claim    take the 4h lease on an issue (prints WON or LOST)
@@ -24,9 +25,16 @@ Commands:
   comment  add a comment
   close    comment, then close as completed / not_planned / duplicate (also releases)
   reopen   comment, then reopen
-  file     file a new issue, or bump encounters on an existing match (dedupe)
-  meta     edit fields of the hidden <!-- pinwright ... --> metadata block
-  label    add or remove labels (one sev/* label at a time: adding one drops the others)
+  file     file a new issue, or bump encounters on an existing match (dedupe); a new
+           issue needs --rice R,I,C,E unless it is --area harness
+  meta     edit fields of the hidden <!-- pinwright ... --> metadata block (setting rice
+           recomputes priority; priority itself is derived and cannot be set)
+  label    add or remove labels (one sev/* label at a time: adding one drops the others;
+           a severity change recomputes priority)
+
+Priority: score = R x Iw x C / E with Iw = 1/2/4 for I = 1/2/3; priority = round(100 x
+score / 12), at least 90 for sev/critical and sev/high. Every write that touches the
+metadata block keeps one visible line under it: **Priority:** <p> (RICE R<r> I<i> C<c> E<e>).
   edit     change the title, or replace the body text below the metadata block
 
 Exit codes:
@@ -63,10 +71,13 @@ SEVERITY_RANK = {"critical": 4, "high": 3, "medium": 2, "low": 1}
 LEASE_HOURS = 4
 TITLE_MAX = 80
 TYPE_PREFIX = {"bug": "B", "feature": "F", "ergonomic": "E"}
+IMPACT_WEIGHT = {1: 1, 2: 2, 3: 4}
+CONFIDENCE = (1, 0.8, 0.5)
 
 META_RE = re.compile(r"\A(\s*)<!-- pinwright\n(.*?)-->[ \t]*\n?", re.S)
 CLAIM_RE = re.compile(r"^pinwright-claim host=(\S+)", re.M)
 RELEASE_RE = re.compile(r"^pinwright-release host=(\S+)", re.M)
+PRIORITY_LINE_RE = re.compile(r"\n*\*\*Priority:\*\* [^\n]*(\n+|\Z)")
 
 
 class PwError(Exception):
@@ -276,6 +287,61 @@ def edit_meta(body: str | None, sets: dict, unsets: tuple = ()) -> str:
     return new_head + body[m.end():]
 
 
+# --------------------------------------------------------------------------- priority
+
+
+def check_rice(rice) -> list:
+    """Validate [R, I, C, E]: R, I, E in 1..3, C one of CONFIDENCE. Returns it as a list."""
+    ok = isinstance(rice, (list, tuple)) and len(rice) == 4
+    if ok:
+        r, i, c, e = rice
+        ok = (all(isinstance(x, int) and not isinstance(x, bool) and 1 <= x <= 3 for x in (r, i, e))
+              and isinstance(c, (int, float)) and not isinstance(c, bool) and c in CONFIDENCE)
+    if not ok:
+        raise PwError(f"rice must be R,I,C,E with R, I, E in 1..3 and C one of 1, 0.8, 0.5; "
+                      f"got {rice!r}", 2)
+    return [r, i, int(c) if c == 1 else c, e]
+
+
+def parse_rice(text: str) -> list:
+    try:
+        parts = [yaml.safe_load(x) for x in text.split(",")]
+    except yaml.YAMLError:
+        parts = text
+    return check_rice(parts)
+
+
+def priority_of(rice: list, severity: str) -> int:
+    r, i, c, e = rice
+    p = round(100 * (r * IMPACT_WEIGHT[i] * c / e) / 12)
+    return max(p, 90) if severity in ("critical", "high") else p
+
+
+def priority_line(meta: dict) -> str | None:
+    """The one visible line kept under the metadata block, or None when there is no rice."""
+    rice, p = meta.get("rice"), meta.get("priority")
+    if not (isinstance(rice, list) and len(rice) == 4 and isinstance(p, int)):
+        return None
+    r, i, c, e = rice
+    return f"**Priority:** {p} (RICE R{r} I{i} C{c:g} E{e})"
+
+
+def sync_priority_line(body: str) -> str:
+    """Create, update or drop the priority line directly after the metadata block."""
+    m = META_RE.match(body or "")
+    if not m:
+        return body
+    head = m.group(0) if m.group(0).endswith("\n") else m.group(0) + "\n"
+    rest = body[m.end():]
+    old = PRIORITY_LINE_RE.match(rest)
+    if old:
+        rest = rest[old.end():]
+    line = priority_line(parse_meta(body))
+    if line is None:
+        return head + "\n" + rest if old else body
+    return head + "\n" + line + "\n\n" + rest.lstrip("\n")
+
+
 # --------------------------------------------------------------------------- helpers
 
 
@@ -307,7 +373,10 @@ def rank_key(issue: dict):
     enc = meta.get("encounters")
     if not isinstance(enc, int):
         enc = 1
-    return (-SEVERITY_RANK.get(severity_of(issue), 0), -costly, -enc, issue["number"]), costly, enc, meta
+    p = meta.get("priority")
+    p = p if isinstance(p, int) and not isinstance(p, bool) else None
+    return ((p is None, -(p or 0), -SEVERITY_RANK.get(severity_of(issue), 0), -costly, -enc,
+             issue["number"]), costly, enc, meta)
 
 
 def lease_state(comments: list[dict], now: datetime) -> tuple[str | None, dict | None]:
@@ -419,6 +488,7 @@ def cmd_list(gh: Gh, args) -> int:
     ranked.sort(key=lambda r: r[0])
     if args.json:
         out = [{"number": i["number"], "title": safe_title(i), "state": i.get("state"),
+                "priority": meta.get("priority"), "rice": meta.get("rice"),
                 "severity": severity_of(i), "costly": costly, "encounters": enc,
                 "id": meta.get("id"), "labels": sorted(label_names(i)), "trusted": trusted(i)}
                for _, i, costly, enc, meta in ranked]
@@ -427,7 +497,9 @@ def cmd_list(gh: Gh, args) -> int:
         if not ranked:
             print("(no matching issues)")
         for _, i, costly, enc, meta in ranked:
-            print(f"#{i['number']}\t{severity_of(i)}\tcostly={costly}\tenc={enc}\t"
+            p = meta.get("priority")
+            print(f"#{i['number']}\tp={'-' if p is None else p}\t{severity_of(i)}\t"
+                  f"costly={costly}\tenc={enc}\t"
                   f"{meta.get('id') or '-'}\t{safe_title(i)}")
     return 0
 
@@ -553,6 +625,7 @@ def cmd_file(gh: Gh, args) -> int:
     if args.severity and args.severity not in SEVERITY_RANK:
         raise PwError(f"--severity must be one of {', '.join(SEVERITY_RANK)}", 2)
     harness = args.area == "harness"
+    rice = parse_rice(args.rice) if args.rice else None
     prefix = "H" if harness else TYPE_PREFIX[args.type]
     slug = args.id or slugify(title, prefix)
     body = read_body_arg(args)
@@ -584,8 +657,11 @@ def cmd_file(gh: Gh, args) -> int:
             sets["costly"] = c + 1
         if tags:
             sets["tags"] = list(dict.fromkeys(list(meta.get("tags") or []) + tags))
+        if rice:
+            sets["rice"] = rice
+            sets["priority"] = priority_of(rice, severity_of(issue))
         gh.write("PATCH", f"repos/{gh.repo}/issues/{match}",
-                 {"body": edit_meta(issue.get("body"), sets)})
+                 {"body": sync_priority_line(edit_meta(issue.get("body"), sets))})
         _post_comment(gh, match, f"New encounter ({enc + 1}).\n\n" + body)
         if args.costly and "costly" not in label_names(issue):
             _add_labels(gh, match, ["costly"])
@@ -594,9 +670,15 @@ def cmd_file(gh: Gh, args) -> int:
               + (f", reason={issue.get('state_reason')}" if state == "closed" else "") + ")")
         return 5 if state == "closed" else 0
 
+    if rice is None and not harness:
+        raise PwError("a new issue needs --rice R,I,C,E (see CLAUDE.md -> Issue tracker -> "
+                      "Priority (RICE)); without it the issue sorts below every scored one", 2)
     meta = {"id": slug, "tags": tags, "encounters": 1, "lastSeen": now}
     if args.costly:
         meta["costly"] = 1
+    if rice:
+        meta["rice"] = rice
+        meta["priority"] = priority_of(rice, args.severity or "none")
     block = "<!-- pinwright\n" + yaml.safe_dump(meta, sort_keys=False, default_flow_style=None,
                                                 width=100000, allow_unicode=True) + "-->\n\n"
     labels = [f"type/{args.type}", "status/accepted"]
@@ -607,7 +689,7 @@ def cmd_file(gh: Gh, args) -> int:
     if args.costly:
         labels.append("costly")
     r = gh.write("POST", f"repos/{gh.repo}/issues",
-                 {"title": title, "body": block + body, "labels": labels})
+                 {"title": title, "body": sync_priority_line(block + body), "labels": labels})
     print(f"#{r['number']} created ({slug})" if r else f"(dry-run) would create {slug}")
     return 0
 
@@ -622,12 +704,22 @@ def cmd_meta(gh: Gh, args) -> int:
             raise PwError(f"--set expects key=value, got {kv!r}", 2)
         k, v = kv.split("=", 1)
         sets[k.strip()] = yaml.safe_load(v) if v.strip() else None
-    if not sets and not args.unset:
+    unsets = tuple(args.unset or ())
+    if not sets and not unsets:
         raise PwError("nothing to change: pass --set k=v or --unset k", 2)
+    if "priority" in sets or "priority" in unsets:
+        raise PwError("priority is derived from rice and severity; set rice instead "
+                      "(meta N --set rice=[R,I,C,E])", 2)
+    if "rice" in sets:
+        v = sets["rice"]
+        sets["rice"] = parse_rice(v) if isinstance(v, str) else check_rice(v)
+        sets["priority"] = priority_of(sets["rice"], severity_of(issue))
+    if "rice" in unsets:
+        unsets += ("priority",)
     gh.write("PATCH", f"repos/{gh.repo}/issues/{args.number}",
-             {"body": edit_meta(issue.get("body"), sets, tuple(args.unset or ()))})
+             {"body": sync_priority_line(edit_meta(issue.get("body"), sets, unsets))})
     print(f"#{args.number} metadata updated: " + ", ".join(
-        [f"{k}={v!r}" for k, v in sets.items()] + [f"-{k}" for k in args.unset or []]))
+        [f"{k}={v!r}" for k, v in sets.items()] + [f"-{k}" for k in unsets]))
     return 0
 
 
@@ -650,6 +742,14 @@ def cmd_label(gh: Gh, args) -> int:
         if l in have:
             _remove_label(gh, args.number, l)
     print(f"#{args.number} labels: +{to_add} -{[l for l in remove if l in have]}")
+    meta = parse_meta(issue.get("body")) if trusted(issue) else {}
+    if meta.get("rice"):
+        sev = severity_of({"labels": (have | set(add)) - set(remove)})
+        p = priority_of(check_rice(meta["rice"]), sev)
+        if p != meta.get("priority"):
+            gh.write("PATCH", f"repos/{gh.repo}/issues/{args.number}",
+                     {"body": sync_priority_line(edit_meta(issue.get("body"), {"priority": p}))})
+            print(f"#{args.number} priority {meta.get('priority')} -> {p}")
     return 0
 
 
@@ -667,7 +767,7 @@ def cmd_edit(gh: Gh, args) -> int:
         old = issue.get("body") or ""
         m = META_RE.match(old)
         head = (m.group(0).rstrip("\n") + "\n\n") if m else ""
-        payload["body"] = head + read_body_arg(args)
+        payload["body"] = sync_priority_line(head + read_body_arg(args))
     if not payload:
         raise PwError("nothing to change: pass --title and/or --body/--body-file", 2)
     gh.write("PATCH", f"repos/{gh.repo}/issues/{args.number}", payload)
@@ -745,6 +845,10 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--tags", help="comma-separated")
     s.add_argument("--costly", action="store_true", help="this encounter cost real work")
     s.add_argument("--area", choices=["harness"])
+    s.add_argument("--rice", metavar="R,I,C,E",
+                   help="RICE factors (R, I, E in 1..3; C 1, 0.8 or 0.5); priority is derived "
+                   "from them. Required for a new issue unless --area harness; on a match it "
+                   "replaces the issue's rice")
     s.add_argument("--id", help="metadata id slug (default: derived from the title)")
     s.add_argument("--dedupe-query", help="search text for the dedupe (default: the title)")
     s.add_argument("--into", type=int, metavar="N",

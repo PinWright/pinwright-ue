@@ -1,16 +1,18 @@
 ---
 name: mcp-retriage
-description: Re-score the severity of every open, accepted PinWright GitHub issue against a fixed impact×reach rubric, as a bounded one-pass background Workflow, so the mcp-fix-workflow picker (which works open issues in severity order) works the genuinely-most-important issues first. Scores all open issues once, writes back only the issues whose severity changed (the sev/* label plus one retriage comment each), and stops. Use when the user says "mcp-retriage", "re-score the issues", "re-score the board", "retriage tickets", "recompute severities", "re-prioritize the issues", or "rebalance severities".
+description: Re-score the severity of every open, accepted PinWright GitHub issue against a fixed impact×reach rubric, as a bounded one-pass background Workflow, so the mcp-fix-workflow picker (which works open issues in `pw_issues.py list` order, where Critical/High severity floors `priority` at 90 and severity breaks `priority` ties) works the genuinely-most-important issues first. Scores all open issues once, writes back only the issues whose severity changed (the sev/* label plus one retriage comment each), and stops. Use when the user says "mcp-retriage", "re-score the issues", "re-score the board", "retriage tickets", "recompute severities", "re-prioritize the issues", or "rebalance severities".
 ---
 
 # MCP Retriage
 
 Re-score the `sev/*` label of every **open, accepted** PinWright GitHub issue
 against the fixed impact×reach rubric (the plugin `CLAUDE.md` -> **Issue tracker**
-severity paragraph), as a background Workflow. The `mcp-fix-workflow` picker ranks
-open issues by severity and works the top band first, so a mis-rated issue is
-worked in the wrong order, and an unscored backlog where almost everything is `low`
-degenerates to issue-number pick order. This skill corrects that drift: it lists
+severity paragraph), as a background Workflow. The `mcp-fix-workflow` picker works
+open issues in `pw_issues.py list` order: `priority` highest first, which a Critical
+or High severity raises to at least 90, with severity breaking ties. So a mis-rated
+issue is worked in the wrong order. Changing `sev/*` through `pw_issues.py label`
+recomputes `priority`; this skill does not re-score the RICE factors themselves
+(that is `meta N --set rice=...`). This skill corrects that drift: it lists
 the open issues, scores them in parallel against one shared rubric, writes back
 only the issues whose severity actually changed (the new `sev/*` label plus one
 `Retriage: <old> -> <new>: <reason>` comment each), and stops.

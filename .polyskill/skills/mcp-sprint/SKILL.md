@@ -33,7 +33,7 @@ You implement **and** verify. There is no review stage: an issue goes from open 
 
 ## Phase 1: List and Claim Tasks
 
-Run `uv run scripts/pw_issues.py list --json`. It is already ranked (severity, then `costly`, then `encounters`, then number) and already excludes blocked, harness and live-claimed issues. Select 4–6 tasks from the top, read each with `pw_issues.py show N`, then claim each one with `pw_issues.py claim N --host <host id>` (a stable id for this checkout, such as the machine name). Exit 3 (`LOST`) means another host holds it: drop it and take the next one. In plan mode, nothing is written before approval: select from `list` now and claim right after `ExitPlanMode`, before Phase 4, dropping any task you lose.
+Run `uv run scripts/pw_issues.py list --json`. It is already in work order (`priority` highest first with unscored issues last, then severity, `costly`, `encounters`, number) and already excludes blocked, harness and live-claimed issues. Select 4–6 tasks from the top, following the priority rules in the plugin `CLAUDE.md` -> **Issue tracker** -> **Priority (RICE)** (batch by area, split an E=3 issue instead of starting it as filed), read each with `pw_issues.py show N`, then claim each one with `pw_issues.py claim N --host <host id>` (a stable id for this checkout, such as the machine name). Exit 3 (`LOST`) means another host holds it: drop it and take the next one. In plan mode, nothing is written before approval: select from `list` now and claim right after `ExitPlanMode`, before Phase 4, dropping any task you lose.
 
 **Closed issues are off-limits.** Closed as completed (DONE) and closed as not planned (WONTFIX) are both terminal: never re-analyze, never re-investigate, never reopen from inside this skill. If an issue was closed as not planned, the user already decided it isn't worth fixing; we respect that decision. The only path back to open is via `mcp-audit` (or an `mcp-review` re-test) when the problem is re-encountered. Sprint never reasons about why something was closed or whether the decision should be revisited.
 
@@ -214,7 +214,7 @@ Comments are the issue's history: never edit or delete an earlier one, just add 
 
 For reshaped / reclassified tasks (applied by the main agent after Phase 2, before implementation):
 - valid-bug-wrong-fix: `pw_issues.py edit N --body-file <body>` with the rewritten `**Fix:**` paragraph, plus a comment naming the replaced approach.
-- reformulate: `edit N --title ... --body-file ...` and `label N --add sev/<s>` as planned, plus a comment saying why.
+- reformulate: `edit N --title ... --body-file ...` and `label N --add sev/<s>` as planned (`meta N --set rice=R,I,C,E` too if the investigation changed a factor), plus a comment saying why.
 - reclassify-ergonomic: `label N --add type/ergonomic --remove type/bug`, `meta N --set id=E-<slug>`, `edit` with the new title and body, plus a comment saying why.
 
 ## Final Summary

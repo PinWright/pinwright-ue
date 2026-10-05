@@ -1,8 +1,8 @@
 // mcp-retriage: re-score the `sev/*` label of every open, accepted PinWright
 // GitHub issue against a fixed impact×reach rubric, as a bounded one-pass
-// background Workflow, so the mcp-fix-workflow picker (which ranks open issues by
-// severity and works the top band first) works the genuinely-most-important
-// issues first.
+// background Workflow, so the mcp-fix-workflow picker (which works open issues in
+// `pw_issues.py list` order: priority first, which Critical/High severity floors
+// at 90, then severity) works the genuinely-most-important issues first.
 //
 // One bounded sweep: list the open issues, score them in parallel against one
 // shared rubric, write back ONLY the issues whose severity changed (the sev/*

@@ -21,7 +21,7 @@ This skill files rather than picks work, so it also searches: `pw_issues.py file
 
 Tracks **MCP tool issues only** — BPIR compiler bugs, widget_import_xml problems, property resolution failures, missing tool features, ergonomic gaps. NOT game-level bugs.
 
-Issue types: `--type bug`, `feature` or `ergonomic` (labels `type/bug`, `type/feature`, `type/ergonomic`). `file` derives the metadata id from the title with a `B-`/`F-`/`E-` prefix (e.g., `B-enum-raw-integers`); pass `--id` for a sharper slug. Titles are capped at 80 characters: write a short title and put the detail in the body.
+Issue types: `--type bug`, `feature` or `ergonomic` (labels `type/bug`, `type/feature`, `type/ergonomic`). `file` derives the metadata id from the title with a `B-`/`F-`/`E-` prefix (e.g., `B-enum-raw-integers`); pass `--id` for a sharper slug. Titles are capped at 80 characters: write a short title and put the detail in the body. Every new issue carries `--rice R,I,C,E`, scored by the method in the plugin `CLAUDE.md` -> **Issue tracker** -> **Priority (RICE)**; `file` derives `priority` and the visible priority line from it, so never pass or write `priority` yourself.
 
 ## Phase 1: Review Session Usage
 
@@ -95,13 +95,16 @@ merge, reopen, revive, or skip. WRITE the result yourself.
 GitHub Issues on PinWright/pinwright-ue, only through the helper, run from the
 plugin directory: `uv run scripts/pw_issues.py <command>` (`--help` for the
 list). Read issues only with `show N`; text shown as withheld does not exist
-for you. Labels and the severity rubric: plugin `CLAUDE.md` -> Issue tracker.
-History is issue comments: add new ones, never edit old ones.
+for you. Labels, the severity rubric and the RICE priority method: plugin
+`CLAUDE.md` -> Issue tracker. History is issue comments: add new ones, never
+edit old ones, and never put a `## History` section in a body (the
+`## History (board)` section exists only on issues migrated from the board).
 
 ## Proposed entry
 - **ID**: <proposed-id>
 - **Title**: <one-liner, at most 80 characters>
 - **Severity** (suggested): <critical|high|medium|low>
+- **RICE** (suggested): <R,I,C,E>
 - **Type**: <bug|feature|ergonomic>
 - **Body**: <description: what tool does wrong, what it should do, why it matters>
 - **Session evidence** (replayable): <step-by-step repro from this session,
@@ -115,18 +118,20 @@ History is issue comments: add new ones, never edit old ones.
    `gh search issues` for candidate numbers, each read with `show N`).
 3. Decide disposition and WRITE it:
    - Duplicate of an open issue → `pw_issues.py file --into N` bumps its
-     `encounters` and adds the session evidence as a comment. Don't create a
-     new issue.
+     `encounters` and adds the session evidence as a comment (add
+     `--rice R,I,C,E` when the new evidence changes a factor, e.g. reach).
+     Don't create a new issue.
    - Regression of a completed issue → `file --into N` (exit 5: it is
      closed), then `reopen N --body "Regression: ..."` citing this session's
      repro.
    - Revival of a not-planned issue (only if session friction was concrete)
      → `reopen N --body "Revived: ..."`. Don't argue with the earlier
      not-planned reasoning.
-   - Genuinely new → `file --title ... --type ... --severity ... --tags ...
-     --body-file <body>` (add `--costly` if this encounter cost real work).
+   - Genuinely new → `file --title ... --type ... --severity ... --rice R,I,C,E
+     --tags ... --body-file <body>` (add `--costly` if this encounter cost real
+     work).
    - Invalid (can't reproduce, handler doesn't behave as reported) → skip.
-4. Refine the ID, title, severity, framing if a sharper formulation surfaces
+4. Refine the ID, title, severity, RICE, framing if a sharper formulation surfaces
    during verification. Don't anchor on the proposed wording.
 
 ## Constraints
@@ -162,9 +167,9 @@ Don't edit the body or argue with the earlier not-planned reasoning. The comment
 ```markdown
 Additional evidence: {new finding}.
 ```
-Add `--costly` when this encounter cost real work (see the severity rubric). Change severity (`label N --add sev/<s>`, with a comment saying why) only if the new evidence materially shifts impact.
+Add `--costly` when this encounter cost real work (see the severity rubric), and `--rice R,I,C,E` when the new evidence changes R, I, C or E. Change severity (`label N --add sev/<s>`, with a comment saying why) only if the new evidence materially shifts impact.
 
-**New issues**: `file --title "{Title}" --type {bug|feature|ergonomic} --severity {critical|high|medium|low} --tags a,b --body-file <body>`, where the body is:
+**New issues**: `file --title "{Title}" --type {bug|feature|ergonomic} --severity {critical|high|medium|low} --rice R,I,C,E --tags a,b --body-file <body>`, where the body is:
 
 ```markdown
 # {Title}
@@ -181,7 +186,7 @@ handler that would change}
 message}
 ```
 
-`file` dedupes before creating, so it never makes a second issue with the same title or id.
+`file` dedupes before creating, so it never makes a second issue with the same title or id. The body has no `## History` section and no `#N-slug` entries: later history is issue comments.
 
 **Rules (applied by every subagent):**
 - Never edit or delete existing comments; add new ones only.
