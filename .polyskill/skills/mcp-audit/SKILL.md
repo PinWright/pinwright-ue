@@ -21,7 +21,7 @@ This skill files rather than picks work, so it also searches: `pw_issues.py file
 
 Tracks **MCP tool issues only** — BPIR compiler bugs, widget_import_xml problems, property resolution failures, missing tool features, ergonomic gaps. NOT game-level bugs.
 
-Issue types: `--type bug`, `feature` or `ergonomic` (labels `type/bug`, `type/feature`, `type/ergonomic`). `file` derives the metadata id from the title with a `B-`/`F-`/`E-` prefix (e.g., `B-enum-raw-integers`); pass `--id` for a sharper slug. Titles are capped at 80 characters: write a short title and put the detail in the body. Every new issue carries `--rice R,I,C,E`, scored by the method in the plugin `CLAUDE.md` -> **Issue tracker** -> **Priority (RICE)**; `file` derives `priority` and the visible priority line from it, so never pass or write `priority` yourself.
+Issue types: `--type bug`, `feature` or `ergonomic` (labels `type/bug`, `type/feature`, `type/ergonomic`). `file` derives the metadata id from the title with a `B-`/`F-`/`E-` prefix (e.g., `B-enum-raw-integers`); pass `--id` for a sharper slug. Titles are capped at 80 characters: write a short title and put the detail in the body. Every new issue carries `--rice R,I,C,E`, scored by the method in the plugin `CLAUDE.md` -> **Issue tracker** -> **Priority (RICE)**; `file` derives `priority` from it and sets the `RICE priority` issue field (sidebar), so never pass or write `priority` or that field yourself.
 
 ## Phase 1: Review Session Usage
 

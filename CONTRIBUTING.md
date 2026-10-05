@@ -121,7 +121,7 @@ is its comments; the `## History (board)` section appears only on issues migrate
 board.
 
 Maintainers score each issue they file with RICE (reach, impact, confidence, effort). The helper
-derives a 0-100 `priority` from it, shows it as a `**Priority:**` line at the top of the body, and
+derives a 0-100 `priority` from it, shows it in the `RICE priority` issue field in the sidebar, and
 lists accepted issues in that order; that is the order maintainer agents work them.
 
 Maintainer agents act only on text written by the repository owner, members or collaborators. If

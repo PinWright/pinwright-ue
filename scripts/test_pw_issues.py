@@ -24,7 +24,7 @@ def issue(n, title, sev, meta_lines, text="Body text.", priority_line=""):
     labels = [{"name": "status/accepted"}, {"name": "type/bug"}]
     if sev:
         labels.append({"name": f"sev/{sev}"})
-    return {"number": n, "title": title, "state": "open", "body": body,
+    return {"number": n, "node_id": f"I_{n}", "title": title, "state": "open", "body": body,
             "author_association": "OWNER", "labels": labels}
 
 
@@ -37,7 +37,11 @@ FIXTURE = {"issues": [
                                            "rice: [1, 1, 0.5, 3]", "priority: 90"]),
     issue(4, "Medium tie a", "medium", ["id: B-tie-a", "encounters: 2", "rice: [3, 2, 1, 1]",
                                         "priority: 50"]),
-], "comments": {}}
+], "comments": {}, "issueFields": [
+    {"node_id": "IFSS_x", "name": "Priority", "data_type": "single_select"},
+    {"node_id": "IFN_rice", "name": "RICE priority", "data_type": "number"},
+]}
+NO_FIELD = dict(FIXTURE, issueFields=[])
 
 
 def run(fixture_path, *argv):
@@ -54,6 +58,17 @@ def patched_body(output):
             if "body" in payload:
                 return payload["body"]
     raise AssertionError("no body payload in:\n" + output)
+
+
+def field_writes(output):
+    """numberValue (or None for a clear) of every setIssueFieldValue the dry-run printed."""
+    vals = []
+    for line in output.splitlines():
+        if line.startswith("[dry-run]   payload: ") and "setIssueFieldValue" in line:
+            q = json.loads(line[len("[dry-run]   payload: "):])["query"]
+            assert 'fieldId: "IFN_rice"' in q, q
+            vals.append(None if "delete: true" in q else int(q.split("numberValue: ")[1].split("}")[0]))
+    return vals
 
 
 def main():
@@ -78,6 +93,9 @@ def main():
     fd, path = tempfile.mkstemp(suffix=".json")
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         json.dump(FIXTURE, f)
+    fd, nofield = tempfile.mkstemp(suffix=".json")
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(NO_FIELD, f)
     try:
         # list: priority desc, ties by severity, unscored last whatever its severity.
         code, out = run(path, "list", "--json")
@@ -89,7 +107,7 @@ def main():
         assert out.splitlines()[0].startswith("#3\tp=90\thigh\t"), out
         assert out.splitlines()[3].startswith("#1\tp=-\tcritical\t"), out
 
-        # file: a new issue needs --rice; with it, rice/priority and the visible line are written.
+        # file: a new issue needs --rice; with it, rice/priority are written and the field set.
         code, out = run(path, "file", "--title", "Brand new defect", "--type", "bug",
                         "--body", "Details.")
         assert code == 2 and "--rice" in out, out
@@ -98,27 +116,32 @@ def main():
         body = patched_body(out)
         assert code == 0
         assert "rice: [1, 2, 1, 2]\npriority: 90\n" in body, body
-        assert "-->\n\n**Priority:** 90 (RICE R1 I2 C1 E2)\n\nDetails." in body, body
+        assert body.endswith("-->\n\nDetails.") and "**Priority:**" not in body, body
         assert "History" not in body
+        assert field_writes(out) == [90], out
         code, out = run(path, "file", "--title", "Harness gap", "--type", "bug",
                         "--area", "harness", "--body", "x")
-        assert code == 0 and "**Priority:**" not in patched_body(out)
+        assert code == 0 and "**Priority:**" not in patched_body(out) and field_writes(out) == []
 
-        # file dedupe: --rice replaces rice, recomputes priority, updates the existing line.
+        # file dedupe: --rice replaces rice, recomputes priority, strips the legacy line.
         code, out = run(path, "file", "--title", "Low scored item", "--type", "bug",
                         "--rice", "1,1,0.8,1", "--body", "Again.")
         body = patched_body(out)
         assert "encounters: 2" in body and "rice: [1, 1, 0.8, 1]" in body and "priority: 7" in body
-        assert body.count("**Priority:**") == 1
-        assert "-->\n\n**Priority:** 7 (RICE R1 I1 C0.8 E1)\n\nBody text." in body, body
+        assert body.endswith("-->\n\nBody text.\n"), body
+        assert field_writes(out) == [7] and 'issueId: \\"I_2\\"' in out, out
 
-        # meta: setting rice recomputes priority (High floor) and creates the line.
+        # meta: setting rice recomputes priority (High floor) and sets the field, no body line.
         code, out = run(path, "meta", "3", "--set", "rice=[2,3,1,1]")
         body = patched_body(out)
-        assert "priority: 90" in body and "**Priority:** 90 (RICE R2 I3 C1 E1)" in body
+        assert "priority: 90" in body and "**Priority:**" not in body and field_writes(out) == [90]
         code, out = run(path, "meta", "4", "--set", "rice=2,3,1,1")
         body = patched_body(out)
-        assert "-->\n\n**Priority:** 67 (RICE R2 I3 C1 E1)\n\nBody text." in body, body
+        assert body.endswith("-->\n\nBody text.\n") and field_writes(out) == [67], out
+        # a missing field warns once and does not fail the command.
+        code, out = run(nofield, "meta", "4", "--set", "rice=2,3,1,1")
+        assert code == 0 and "priority: 67" in patched_body(out), out
+        assert out.count('no number issue field "RICE priority"') == 1 and field_writes(out) == []
         code, out = run(path, "meta", "4", "--set", "priority=99")
         assert code == 2 and "derived" in out
         code, out = run(path, "meta", "4", "--set", "rice=[1,1,2,1]")
@@ -127,24 +150,40 @@ def main():
         body = patched_body(out)
         assert "priority" not in body and "**Priority:**" not in body
         assert body.endswith("-->\n\nBody text.\n"), body
+        assert field_writes(out) == [None], out
 
-        # label: a severity change recomputes the floor and rewrites the line.
+        # meta --sync-field: the backfill; field from metadata, legacy line stripped.
+        code, out = run(path, "meta", "2", "--sync-field")
+        assert code == 0 and patched_body(out).endswith("-->\n\nBody text.\n"), out
+        assert field_writes(out) == [50], out
+        code, out = run(path, "meta", "4", "--sync-field")
+        assert code == 0 and '"body"' not in out and field_writes(out) == [50], out
+        code, out = run(path, "meta", "1", "--sync-field")
+        assert code == 0 and field_writes(out) == [None], out
+
+        # label: a severity change recomputes the floor and sets the field.
         code, out = run(path, "label", "3", "--add", "sev/low")
         body = patched_body(out)
-        assert "priority: 1\n" in body and "**Priority:** 1 (RICE R1 I1 C0.5 E3)" in body, body
+        assert "priority: 1\n" in body and field_writes(out) == [1], out
         code, out = run(path, "label", "2", "--add", "sev/high")
-        assert "**Priority:** 90 (RICE R3 I2 C1 E1)" in patched_body(out)
+        assert "priority: 90" in patched_body(out) and "**Priority:**" not in patched_body(out)
+        assert field_writes(out) == [90], out
         code, out = run(path, "label", "4", "--add", "costly")
-        assert '"body"' not in out, out  # priority unchanged: no body write
+        assert '"body"' not in out and field_writes(out) == [], out  # priority unchanged
 
-        # edit: replacing the body keeps the metadata block and the priority line.
+        # show: the priority is in the header line.
+        code, out = run(path, "show", "4")
+        assert out.splitlines()[0] == "#4 Medium tie a   priority: 50", out
+
+        # edit: replacing the body keeps the metadata block and drops the legacy line.
         code, out = run(path, "edit", "2", "--body", "New text.")
         body = patched_body(out)
-        assert body.endswith("-->\n\n**Priority:** 50 (RICE R3 I2 C1 E1)\n\nNew text."), body
+        assert body.endswith("priority: 50\n-->\n\nNew text."), body
         code, out = run(path, "edit", "1", "--body", "New text.")
         assert "**Priority:**" not in patched_body(out)
     finally:
         os.unlink(path)
+        os.unlink(nofield)
     print("pw_issues self-check: OK")
 
 

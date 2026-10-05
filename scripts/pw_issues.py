@@ -28,13 +28,15 @@ Commands:
   file     file a new issue, or bump encounters on an existing match (dedupe); a new
            issue needs --rice R,I,C,E unless it is --area harness
   meta     edit fields of the hidden <!-- pinwright ... --> metadata block (setting rice
-           recomputes priority; priority itself is derived and cannot be set)
+           recomputes priority; priority itself is derived and cannot be set);
+           --sync-field alone re-pushes the metadata priority to the issue field
   label    add or remove labels (one sev/* label at a time: adding one drops the others;
            a severity change recomputes priority)
 
 Priority: score = R x Iw x C / E with Iw = 1/2/4 for I = 1/2/3; priority = round(100 x
-score / 12), at least 90 for sev/critical and sev/high. Every write that touches the
-metadata block keeps one visible line under it: **Priority:** <p> (RICE R<r> I<i> C<c> E<e>).
+score / 12), at least 90 for sev/critical and sev/high. rice and priority live in the
+metadata block (the source of truth for list); every write that changes priority also sets the
+org number issue field "RICE priority" (cleared when rice is unset; a missing field only warns).
   edit     change the title, or replace the body text below the metadata block
 
 Exit codes:
@@ -50,7 +52,9 @@ Global flags:
   --dry-run          print every write (gh command plus JSON payload) instead of running it;
                      reads still run, and claim simulates its own comment when re-reading
   --fake-data FILE   answer reads from a JSON fixture instead of GitHub (for tests):
-                     {"issues": [<REST issue>...], "comments": {"<n>": [<REST comment>...]}}
+                     {"issues": [<REST issue>...], "comments": {"<n>": [<REST comment>...]},
+                      "issueFields": [<REST org issue field: node_id, name, data_type>...]}
+                     (no "issueFields" key means the org has no RICE priority field)
 """
 from __future__ import annotations
 
@@ -73,6 +77,7 @@ TITLE_MAX = 80
 TYPE_PREFIX = {"bug": "B", "feature": "F", "ergonomic": "E"}
 IMPACT_WEIGHT = {1: 1, 2: 2, 3: 4}
 CONFIDENCE = (1, 0.8, 0.5)
+PRIORITY_FIELD = "RICE priority"
 
 META_RE = re.compile(r"\A(\s*)<!-- pinwright\n(.*?)-->[ \t]*\n?", re.S)
 CLAIM_RE = re.compile(r"^pinwright-claim host=(\S+)", re.M)
@@ -117,6 +122,7 @@ class Gh:
             self.fake.setdefault("issues", [])
             self.fake.setdefault("comments", {})
         self._fake_id = 10_000_000
+        self._priority_field = False  # not looked up yet
 
     # -- process
 
@@ -221,6 +227,26 @@ class Gh:
             })
         return res
 
+    def priority_field_id(self) -> str | None:
+        """Node id of the org's PRIORITY_FIELD number field, looked up once; warns if absent."""
+        if self._priority_field is False:
+            org = self.repo.split("/")[0]
+            if self.fake is not None:
+                fields = self.fake.get("issueFields", [])
+            else:
+                try:
+                    fields = self._api_json(f"orgs/{org}/issue-fields", paginate=True)
+                except PwError as e:
+                    if e.code != 4:
+                        raise
+                    fields = []
+            self._priority_field = next((f["node_id"] for f in fields if f.get("name") == PRIORITY_FIELD
+                                         and f.get("data_type") == "number"), None)
+            if self._priority_field is None:
+                print(f'warning: org {org} has no number issue field "{PRIORITY_FIELD}"; '
+                      "priority stays in the metadata block only", file=sys.stderr)
+        return self._priority_field
+
     # -- simulation for dry-run re-reads
 
     def simulated_comment(self, body: str) -> dict:
@@ -317,29 +343,26 @@ def priority_of(rice: list, severity: str) -> int:
     return max(p, 90) if severity in ("critical", "high") else p
 
 
-def priority_line(meta: dict) -> str | None:
-    """The one visible line kept under the metadata block, or None when there is no rice."""
-    rice, p = meta.get("rice"), meta.get("priority")
-    if not (isinstance(rice, list) and len(rice) == 4 and isinstance(p, int)):
-        return None
-    r, i, c, e = rice
-    return f"**Priority:** {p} (RICE R{r} I{i} C{c:g} E{e})"
-
-
-def sync_priority_line(body: str) -> str:
-    """Create, update or drop the priority line directly after the metadata block."""
+def strip_priority_line(body: str) -> str:
+    """Drop the legacy visible **Priority:** line directly after the metadata block."""
     m = META_RE.match(body or "")
-    if not m:
+    old = m and PRIORITY_LINE_RE.match(body, m.end())
+    if not old:
         return body
     head = m.group(0) if m.group(0).endswith("\n") else m.group(0) + "\n"
-    rest = body[m.end():]
-    old = PRIORITY_LINE_RE.match(rest)
-    if old:
-        rest = rest[old.end():]
-    line = priority_line(parse_meta(body))
-    if line is None:
-        return head + "\n" + rest if old else body
-    return head + "\n" + line + "\n\n" + rest.lstrip("\n")
+    return head + "\n" + body[old.end():]
+
+
+def sync_priority_field(gh: Gh, n, node_id: str, priority: int | None):
+    """Set the RICE priority issue field to `priority`, or clear it when None."""
+    fid = gh.priority_field_id()
+    if fid is None:
+        return
+    value = "delete: true" if priority is None else f"numberValue: {priority}"
+    gh.write("POST", "graphql", {"query": (
+        f"mutation {{ setIssueFieldValue(input: {{issueId: {json.dumps(node_id)}, issueFields: "
+        f"[{{fieldId: {json.dumps(fid)}, {value}}}]}}) {{ clientMutationId }} }}")})
+    print(f"#{n} {PRIORITY_FIELD} field " + ("cleared" if priority is None else f"= {priority}"))
 
 
 # --------------------------------------------------------------------------- helpers
@@ -520,7 +543,8 @@ def cmd_show(gh: Gh, args) -> int:
         }
         print(json.dumps(out, indent=1, ensure_ascii=False))
         return 0
-    print(f"#{issue['number']} {safe_title(issue)}")
+    p = parse_meta(issue.get("body")).get("priority") if t else None
+    print(f"#{issue['number']} {safe_title(issue)}" + ("" if p is None else f"   priority: {p}"))
     reason = f" ({issue['state_reason']})" if issue.get("state_reason") else ""
     print(f"state: {issue.get('state')}{reason}   author: {login(issue)} "
           f"({issue.get('author_association', '?')})")
@@ -661,7 +685,9 @@ def cmd_file(gh: Gh, args) -> int:
             sets["rice"] = rice
             sets["priority"] = priority_of(rice, severity_of(issue))
         gh.write("PATCH", f"repos/{gh.repo}/issues/{match}",
-                 {"body": sync_priority_line(edit_meta(issue.get("body"), sets))})
+                 {"body": strip_priority_line(edit_meta(issue.get("body"), sets))})
+        if rice:
+            sync_priority_field(gh, match, issue["node_id"], sets["priority"])
         _post_comment(gh, match, f"New encounter ({enc + 1}).\n\n" + body)
         if args.costly and "costly" not in label_names(issue):
             _add_labels(gh, match, ["costly"])
@@ -689,8 +715,11 @@ def cmd_file(gh: Gh, args) -> int:
     if args.costly:
         labels.append("costly")
     r = gh.write("POST", f"repos/{gh.repo}/issues",
-                 {"title": title, "body": sync_priority_line(block + body), "labels": labels})
+                 {"title": title, "body": block + body, "labels": labels})
     print(f"#{r['number']} created ({slug})" if r else f"(dry-run) would create {slug}")
+    if rice:
+        sync_priority_field(gh, r["number"] if r else slug, r["node_id"] if r else "<new issue>",
+                            meta["priority"])
     return 0
 
 
@@ -705,8 +734,8 @@ def cmd_meta(gh: Gh, args) -> int:
         k, v = kv.split("=", 1)
         sets[k.strip()] = yaml.safe_load(v) if v.strip() else None
     unsets = tuple(args.unset or ())
-    if not sets and not unsets:
-        raise PwError("nothing to change: pass --set k=v or --unset k", 2)
+    if not sets and not unsets and not args.sync_field:
+        raise PwError("nothing to change: pass --set k=v, --unset k or --sync-field", 2)
     if "priority" in sets or "priority" in unsets:
         raise PwError("priority is derived from rice and severity; set rice instead "
                       "(meta N --set rice=[R,I,C,E])", 2)
@@ -716,10 +745,15 @@ def cmd_meta(gh: Gh, args) -> int:
         sets["priority"] = priority_of(sets["rice"], severity_of(issue))
     if "rice" in unsets:
         unsets += ("priority",)
-    gh.write("PATCH", f"repos/{gh.repo}/issues/{args.number}",
-             {"body": sync_priority_line(edit_meta(issue.get("body"), sets, unsets))})
-    print(f"#{args.number} metadata updated: " + ", ".join(
-        [f"{k}={v!r}" for k, v in sets.items()] + [f"-{k}" for k in unsets]))
+    old = issue.get("body") or ""
+    body = strip_priority_line(edit_meta(old, sets, unsets) if sets or unsets else old)
+    if body != old:
+        gh.write("PATCH", f"repos/{gh.repo}/issues/{args.number}", {"body": body})
+    if sets or unsets:
+        print(f"#{args.number} metadata updated: " + ", ".join(
+            [f"{k}={v!r}" for k, v in sets.items()] + [f"-{k}" for k in unsets]))
+    if args.sync_field or "rice" in sets or "rice" in unsets:
+        sync_priority_field(gh, args.number, issue["node_id"], parse_meta(body).get("priority"))
     return 0
 
 
@@ -748,8 +782,9 @@ def cmd_label(gh: Gh, args) -> int:
         p = priority_of(check_rice(meta["rice"]), sev)
         if p != meta.get("priority"):
             gh.write("PATCH", f"repos/{gh.repo}/issues/{args.number}",
-                     {"body": sync_priority_line(edit_meta(issue.get("body"), {"priority": p}))})
+                     {"body": strip_priority_line(edit_meta(issue.get("body"), {"priority": p}))})
             print(f"#{args.number} priority {meta.get('priority')} -> {p}")
+            sync_priority_field(gh, args.number, issue["node_id"], p)
     return 0
 
 
@@ -767,7 +802,7 @@ def cmd_edit(gh: Gh, args) -> int:
         old = issue.get("body") or ""
         m = META_RE.match(old)
         head = (m.group(0).rstrip("\n") + "\n\n") if m else ""
-        payload["body"] = sync_priority_line(head + read_body_arg(args))
+        payload["body"] = head + read_body_arg(args)
     if not payload:
         raise PwError("nothing to change: pass --title and/or --body/--body-file", 2)
     gh.write("PATCH", f"repos/{gh.repo}/issues/{args.number}", payload)
@@ -860,6 +895,9 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("number", type=int)
     s.add_argument("--set", action="append", metavar="K=V", help="value is parsed as YAML")
     s.add_argument("--unset", action="append", metavar="K")
+    s.add_argument("--sync-field", action="store_true",
+                   help=f'set the "{PRIORITY_FIELD}" issue field from the metadata priority '
+                   "(cleared when there is none) and drop a legacy **Priority:** body line")
     s.set_defaults(fn=cmd_meta)
 
     s = sub.add_parser("label", help="add or remove labels")
