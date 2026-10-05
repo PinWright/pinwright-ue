@@ -329,6 +329,11 @@ TUniquePtr<FMeshCaptureSession> FMeshCaptureSession::Create(const FString& Asset
     return Session;
 }
 
+UMeshComponent* FMeshCaptureSession::GetMeshComponent() const
+{
+    return Impl->MeshComponent;
+}
+
 bool FMeshCaptureSession::Capture(const FMeshCaptureRequest& Request,
     FMeshCaptureOutput& OutCapture, FString& OutErrCode, FString& OutErrMsg)
 {

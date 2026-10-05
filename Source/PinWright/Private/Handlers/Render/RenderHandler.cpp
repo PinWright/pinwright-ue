@@ -54,6 +54,7 @@
 #endif
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "EditorAssetLibrary.h"
+#include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/Texture.h"
 #include "UObject/Package.h"
@@ -218,6 +219,16 @@ namespace
 // reason CameraShotPlanUtils.h and PinWrightCameraFrameSubject (CameraFrameHandler.cpp) are named.
 namespace PinWrightRenderSubject
 {
+    inline bool IsNaniteStaticMesh(const UObject* Asset)
+    {
+        const UStaticMesh* Mesh = Cast<UStaticMesh>(Asset);
+#if UE_VERSION_NEWER_THAN_OR_EQUAL(5, 7, 0)
+        return Mesh && Mesh->GetNaniteSettings().bEnabled;
+#else
+        return Mesh && Mesh->NaniteSettings.bEnabled;
+#endif
+    }
+
     inline bool HasSubjectField(const TSharedPtr<FJsonObject>& Payload)
     {
         return Payload.IsValid() && Payload->HasField(TEXT("subject"));
@@ -366,7 +377,8 @@ REGISTER_RPC_HANDLER("render.capture_mesh", "render", "Capture a Static Mesh or 
         RPC_PARAM_DEF("distribution", "string", "How `count` spreads its shots. 'ring' (default) puts them at evenly-spaced azimuths on ONE horizontal circle at `elevation`, which never sees the top or the underside. 'sphere' uses a golden-angle (Fibonacci) spiral over the whole viewing sphere - deterministic, near-optimal even coverage for any N - and IGNORES `elevation`. Only affects `count`; `views` names its own poses.", "ring"),
         RPC_PARAM_OPT("seed", "number", "Jitter the shot distribution by a seeded azimuth offset. Omitted, output is deterministic (offset 0); supplied, output is STILL deterministic and the seed is echoed in shotDistribution so any set can be retaken exactly."),
         RPC_PARAM_DEF("measureCoverage", "boolean", "Draw once more with only the mesh hidden and report the fraction of pixels it changed. Defaults to true.", "true"),
-        RPC_PARAM_DEF("padding", "number", "Bounds-fit margin multiplier. Default 1.25.", "1.25")
+        RPC_PARAM_DEF("padding", "number", "Bounds-fit margin multiplier. Default 1.25.", "1.25"),
+        PinWright::MaterialShaderState::AllowFallbackParamSpec()
     ))
 {
     if (!PinWrightRendering::RequireRenderer(Ctx))
@@ -498,6 +510,8 @@ REGISTER_RPC_HANDLER("render.capture_mesh", "render", "Capture a Static Mesh or 
     }
 
     const bool bMeasureCoverage = Ctx.GetBool(TEXT("measureCoverage"), true);
+    const bool bAllowFallback = Ctx.GetBool(
+        PinWright::MaterialShaderState::AllowFallbackParamName(), false);
     constexpr int64 MaxMeshCaptureFramePixels = 16ll * 1024ll * 1024ll;
     constexpr int64 MaxMeshCaptureRequestPixels = 64ll * 1024ll * 1024ll;
     const int64 FramePixels = static_cast<int64>(CaptureRequest.Width)
@@ -554,6 +568,20 @@ REGISTER_RPC_HANDLER("render.capture_mesh", "render", "Capture a Static Mesh or 
         }
         Captures.Add(MoveTemp(Capture));
     }
+
+    // Probe the component that drew the last shot while the session still owns it, as
+    // render.capture_asset_preview does: a failed shader map or an unassigned drawn slot renders
+    // the engine Default Material and must not pass as a clean capture.
+    UMeshComponent* MeshComponent = Session->GetMeshComponent();
+    const PinWright::MaterialShaderState::FCaptureReadiness MaterialReadiness =
+        PinWright::MaterialShaderState::ProbeCaptureComponent(MeshComponent);
+    // The four debug material-swap view modes replace the subject's materials, except on Nanite,
+    // whose draw bypasses that substitution (see IsDebugMaterialSubstitutionMode).
+    const UStaticMeshComponent* StaticComponent = Cast<UStaticMeshComponent>(MeshComponent);
+    const bool bCaptureUsesSubjectMaterials = !(CaptureRequest.ViewMode.WantsOverride()
+        && PinWrightRenderCapture::IsDebugMaterialSubstitutionMode(CaptureRequest.ViewMode.ViewMode))
+        || PinWrightRenderSubject::IsNaniteStaticMesh(
+            StaticComponent ? StaticComponent->GetStaticMesh() : nullptr);
 
     // Disposal is part of the response contract, so destroy the RPC-owned preview scene before
     // serialising any `previewScene.disposed:true` receipt.
@@ -615,6 +643,18 @@ REGISTER_RPC_HANDLER("render.capture_mesh", "render", "Capture a Static Mesh or 
         DistributionPlan.PlannedShots = Plans.Num();
         Result->SetObjectField(TEXT("shotDistribution"),
             PinWrightCameraFrame::MakeShotDistributionObject(DistributionPlan));
+    }
+    if (!PinWright::MaterialShaderState::ApplyCaptureFallbackPolicy(
+            Result, MaterialReadiness, bAllowFallback, bCaptureUsesSubjectMaterials))
+    {
+        Result->SetBoolField(TEXT("success"), false);
+        Ctx.SendError(ErrorCodes::ERR_MATERIAL_FALLBACK,
+            TEXT("A mesh material used the engine Default Material because shader compilation "
+                 "failed or a rendered material slot was unassigned. materialReadiness names the "
+                 "failed or unassigned subject. Fix it, or pass allowFallback:true to retain the "
+                 "image explicitly."),
+            Result);
+        return true;
     }
     Ctx.SendSuccess(Result);
     return true;
@@ -890,15 +930,7 @@ REGISTER_RPC_HANDLER("render.capture_asset_preview", "render", "Open an asset ed
 
     const bool bDebugMaterialSubstitutionRequested = Request.ViewMode.WantsOverride() &&
         PinWrightRenderCapture::IsDebugMaterialSubstitutionMode(Request.ViewMode.ViewMode);
-    bool bSubjectIsNanite = false;
-    if (const UStaticMesh* SubjectMesh = Cast<UStaticMesh>(Asset))
-    {
-#if UE_VERSION_NEWER_THAN_OR_EQUAL(5, 7, 0)
-        bSubjectIsNanite = SubjectMesh->GetNaniteSettings().bEnabled;
-#else
-        bSubjectIsNanite = SubjectMesh->NaniteSettings.bEnabled;
-#endif
-    }
+    const bool bSubjectIsNanite = PinWrightRenderSubject::IsNaniteStaticMesh(Asset);
     // These debug modes replace the subject's materials. Nanite is the measured exception: its
     // static relevance bypasses that substitution, so its real material still reaches the frame.
     const bool bCaptureUsesSubjectMaterials =

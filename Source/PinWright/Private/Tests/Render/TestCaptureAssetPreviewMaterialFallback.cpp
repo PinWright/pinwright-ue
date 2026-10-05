@@ -645,3 +645,146 @@ bool FRenderCaptureAssetPreviewMaterialFallbackPolicyTest::RunTest(const FString
         PWMtlFallbackHasFallbackWarning(Clean.Result));
     return true;
 }
+
+// B-capture-mesh-no-material-fallback-gate. Counterfactual: drop render.capture_mesh's
+// ApplyCaptureFallbackPolicy call and the default invocation returns success with no
+// materialReadiness; drop the allowFallback declaration and the opt-in call never succeeds.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRenderCaptureMeshMaterialFallbackPolicyTest,
+    "PinWright.render.capture_mesh.MaterialFallbackRequiresOptIn",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FRenderCaptureMeshMaterialFallbackPolicyTest::RunTest(const FString& Parameters)
+{
+    if (PinWrightTestSkip::SkipIfRenderingUnavailable(*this)) { return true; }
+    FString MaterialPath;
+    UMaterial* Material = nullptr;
+    if (!PWMtlFallbackRequireBrokenMaterial(*this, TEXT("PWMeshCaptureFallback"),
+            MaterialPath, Material))
+    {
+        return true;
+    }
+    ON_SCOPE_EXIT { CleanupTestAsset(MaterialPath); };
+    const FString MaterialObjectPath = Material->GetPathName();
+
+    FString CleanMaterialPath;
+    UMaterial* CleanMaterial = nullptr;
+    if (!PWMtlFallbackRequireCleanMaterial(*this, TEXT("PWMeshCaptureClean"),
+            CleanMaterialPath, CleanMaterial))
+    {
+        return true;
+    }
+    ON_SCOPE_EXIT { CleanupTestAsset(CleanMaterialPath); };
+    const FString CleanMaterialObjectPath = CleanMaterial->GetPathName();
+
+    UStaticMesh* SourceMesh = LoadObject<UStaticMesh>(nullptr,
+        TEXT("/Engine/BasicShapes/Cube.Cube"));
+    if (!SourceMesh)
+    {
+        PinWrightTestSkip::SkipAssertions(*this, TEXT("fixture-missing"),
+            TEXT("/Engine/BasicShapes/Cube.Cube is unavailable."));
+        return true;
+    }
+
+    const FString MeshPath = FString::Printf(
+        TEXT("/Game/PinWrightTests/__PW_GatewayTests/PWMeshCaptureFallbackMesh_%s"),
+        *FGuid::NewGuid().ToString(EGuidFormats::Digits));
+    UPackage* MeshPackage = CreatePackage(*MeshPath);
+    UStaticMesh* Mesh = MeshPackage
+        ? DuplicateObject<UStaticMesh>(SourceMesh, MeshPackage,
+            FName(*FPackageName::GetLongPackageAssetName(MeshPath)))
+        : nullptr;
+    if (!TestNotNull(TEXT("mesh fixture created"), Mesh))
+    {
+        CleanupTestAsset(MeshPath);
+        return true;
+    }
+    ON_SCOPE_EXIT { CleanupTestAsset(MeshPath); };
+    if (!TestTrue(TEXT("cube fixture has a material slot"), Mesh->GetStaticMaterials().Num() > 0))
+    {
+        return false;
+    }
+    Mesh->GetStaticMaterials()[0].MaterialInterface = Material;
+    Mesh->PostEditChange();
+    FAssetRegistryModule::AssetCreated(Mesh);
+
+    TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+    Payload->SetStringField(TEXT("assetPath"), Mesh->GetPathName());
+    Payload->SetNumberField(TEXT("width"), 128);
+    Payload->SetNumberField(TEXT("height"), 128);
+    Payload->SetBoolField(TEXT("measureCoverage"), false);
+
+    FTestResponseCapture Rejected;
+    if (!PWMtlFallbackInvoke(*this, TEXT("default mesh capture"),
+            TEXT("render.capture_mesh"), Payload, Rejected))
+    {
+        return false;
+    }
+    ON_SCOPE_EXIT { PWMtlFallbackDeleteCapture(Rejected); };
+    if (PWMtlFallbackSkipEnvironmentFailure(*this, Rejected,
+            TEXT("mesh-capture-unavailable"), TEXT("Default mesh capture")))
+    {
+        return true;
+    }
+    TestFalse(TEXT("fallback is not a successful capture by default"), Rejected.bSuccess);
+    TestEqual(TEXT("default rejection has the dedicated code"), Rejected.ErrorCode,
+        FString(ErrorCodes::ERR_MATERIAL_FALLBACK));
+    if (Rejected.bSuccess || Rejected.ErrorCode != ErrorCodes::ERR_MATERIAL_FALLBACK)
+    {
+        return false;
+    }
+    PWMtlFallbackAssertReadiness(*this, Rejected.Result, MaterialObjectPath);
+    const TSharedPtr<FJsonObject>* MeshReadiness = nullptr;
+    TestEqual(TEXT("mesh readiness scopes the captured component's sections"),
+        Rejected.Result.IsValid() &&
+        Rejected.Result->TryGetObjectField(TEXT("materialReadiness"), MeshReadiness) && MeshReadiness
+            ? (*MeshReadiness)->GetStringField(TEXT("meshUsagePolicy")) : FString(),
+        FString(TEXT("capturedComponentSections")));
+
+    Payload->SetBoolField(TEXT("allowFallback"), true);
+    FTestResponseCapture Allowed;
+    if (!PWMtlFallbackInvoke(*this, TEXT("opt-in mesh capture"),
+            TEXT("render.capture_mesh"), Payload, Allowed))
+    {
+        return false;
+    }
+    ON_SCOPE_EXIT { PWMtlFallbackDeleteCapture(Allowed); };
+    if (PWMtlFallbackSkipEnvironmentFailure(*this, Allowed,
+            TEXT("mesh-capture-unavailable"), TEXT("Opt-in mesh capture")))
+    {
+        return true;
+    }
+    if (!TestTrue(TEXT("allowFallback retains a successful mesh capture"), Allowed.bSuccess))
+    {
+        return false;
+    }
+    TestTrue(TEXT("allowFallback retains the captured image"),
+        Allowed.Result.IsValid() && Allowed.Result->HasField(TEXT("path")) &&
+        Allowed.Result->HasField(TEXT("imageStats")));
+    TestTrue(TEXT("allowFallback retains an explicit fallback warning"),
+        PWMtlFallbackHasFallbackWarning(Allowed.Result));
+    PWMtlFallbackAssertReadiness(*this, Allowed.Result, MaterialObjectPath);
+
+    Mesh->GetStaticMaterials()[0].MaterialInterface = CleanMaterial;
+    Mesh->PostEditChange();
+    Payload->RemoveField(TEXT("allowFallback"));
+    FTestResponseCapture Clean;
+    if (!PWMtlFallbackInvoke(*this, TEXT("clean mesh capture"),
+            TEXT("render.capture_mesh"), Payload, Clean))
+    {
+        return false;
+    }
+    ON_SCOPE_EXIT { PWMtlFallbackDeleteCapture(Clean); };
+    if (PWMtlFallbackSkipEnvironmentFailure(*this, Clean,
+            TEXT("mesh-capture-unavailable"), TEXT("Clean mesh capture")))
+    {
+        return true;
+    }
+    if (!TestTrue(TEXT("clean mesh capture succeeds without allowFallback"), Clean.bSuccess))
+    {
+        return false;
+    }
+    PWMtlFallbackAssertCleanReadiness(*this, Clean.Result, CleanMaterialObjectPath);
+    TestFalse(TEXT("clean mesh capture has no fallback warning"),
+        PWMtlFallbackHasFallbackWarning(Clean.Result));
+    return true;
+}

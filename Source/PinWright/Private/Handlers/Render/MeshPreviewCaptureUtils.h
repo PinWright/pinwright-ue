@@ -8,6 +8,8 @@
 #include "Handlers/Render/PreviewViewportCaptureUtils.h"
 #include "Templates/Function.h"
 
+class UMeshComponent;
+
 namespace PinWrightSceneCaptureProbe
 {
     struct FColorCaptureRequest;
@@ -82,6 +84,9 @@ namespace PinWrightMeshPreviewCapture
 
         bool Capture(const FMeshCaptureRequest& Request, FMeshCaptureOutput& OutCapture,
             FString& OutErrCode, FString& OutErrMsg);
+
+        // The session's transient mesh component, for probing what the last draw rendered.
+        UMeshComponent* GetMeshComponent() const;
 
     private:
         struct FImpl;

@@ -2,6 +2,12 @@
 
 ## 1.0.0
 
+- Fixed: `render.capture_mesh` now refuses a capture whose drawn material slot rendered as the
+  engine Default Material, because its shader map failed or the slot is unassigned, with
+  `MATERIAL_FALLBACK` (`success:false`), like `render.capture_asset_preview` and
+  `asset.generate_thumbnail`. It used to return `success:true` for that image. Every capture
+  response now carries `materialReadiness`. Behaviour change: pass the new `allowFallback: true` to
+  keep the fallback image; the success then carries a fallback warning.
 - Added: `static_mesh.describe` and the `asset.dump` `static_mesh.json` sidecar now carry a
   `nanite` object with the mesh's stored Nanite settings (`enabled`, `trianglePercent`,
   `fallbackPercent`, `positionPrecision`, `positionPrecisionAuto`). The namespace page already
