@@ -13,13 +13,18 @@
 
 #include "Components/SkeletalMeshComponent.h"
 #include "Dom/JsonObject.h"
+#include "Dom/JsonValue.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/SkeletalMesh.h"
 #include "Engine/StaticMesh.h"
 #include "Compat/EngineVersionCompat.h"
 #include "HAL/IConsoleManager.h"
+#include "HAL/PlatformProcess.h"
 #include "Misc/FileHelper.h"
 #include "PreviewScene.h"
+#include "RenderingThread.h"
+#include "RenderUtils.h"
+#include "RHI.h"
 #include "SkinnedAssetCompiler.h"
 #include "ShowFlags.h"
 #include "StaticMeshCompiler.h"
@@ -113,11 +118,153 @@ bool SettleFrame(TFunctionRef<bool(TArray<FColor>&)> Redraw, TArray<FColor>& InO
     }
 }
 
+bool SettleAcrossFrames(TFunctionRef<bool(TArray<FColor>&)> AdvanceAndRedraw,
+    TArray<FColor>& InOutPixels, int32 StableFrames, int32 MaxFrames,
+    FNaniteResidencyReport& OutReport)
+{
+    OutReport = FNaniteResidencyReport();
+    OutReport.bWaited = true;
+    int32 Stable = 0;
+    while (OutReport.PumpedFrames < MaxFrames)
+    {
+        TArray<FColor> Next;
+        if (!AdvanceAndRedraw(Next))
+        {
+            return false;
+        }
+        ++OutReport.PumpedFrames;
+        const PinWrightFlatRegion::FFrameDifferenceStats Difference =
+            PinWrightFlatRegion::MeasureFrameDifference(InOutPixels, Next, SettleChannelThreshold);
+        InOutPixels = MoveTemp(Next);
+        OutReport.ChangedPixelFraction = Difference.ChangedPixelFraction;
+        if (Difference.bMeasured && Difference.ChangedPixelFraction <= SettledChangedPixelFraction)
+        {
+            if (++Stable >= StableFrames)
+            {
+                OutReport.bSettled = true;
+                return true;
+            }
+        }
+        else
+        {
+            Stable = 0;
+            OutReport.bChangedAcrossFrames = true;
+        }
+    }
+    return true;
+}
+
+void AdvanceRenderFrameNumber()
+{
+    // The streaming manager's readback and page install are gated on GFrameCounterRenderThread
+    // changing (NaniteStreamingManager.cpp:2289,2312). The engine loop advances it once per tick
+    // (LaunchEngineLoop.cpp:6131-6137); the high-resolution screenshot run-up advances it the same
+    // way between its own draws inside one tick (UnrealClient.cpp:1603-1611).
+    ++GFrameCounter;
+    ENQUEUE_RENDER_COMMAND(PinWrightMeshCaptureAdvanceFrame)(
+        [Frame = GFrameCounter](FRHICommandListImmediate&)
+        {
+            GFrameCounterRenderThread = Frame;
+        });
+}
+
+TSharedPtr<FJsonObject> MakeNaniteResidencyObject(const FNaniteResidencyReport& Report)
+{
+    TSharedPtr<FJsonObject> Object = MakeShared<FJsonObject>();
+    Object->SetBoolField(TEXT("waited"), Report.bWaited);
+    if (!Report.bWaited)
+    {
+        Object->SetStringField(TEXT("reason"), Report.SkipReason);
+        return Object;
+    }
+    Object->SetNumberField(TEXT("pumpedFrames"), Report.PumpedFrames);
+    Object->SetBoolField(TEXT("changedAcrossFrames"), Report.bChangedAcrossFrames);
+    Object->SetBoolField(TEXT("settled"), Report.bSettled);
+    Object->SetBoolField(TEXT("budgetExhausted"), Report.bBudgetExhausted);
+    Object->SetNumberField(TEXT("changedPixelFraction"), Report.ChangedPixelFraction);
+    return Object;
+}
+
+int32 NaniteSessionPumpBudget(int64 FramePixels)
+{
+    const int64 ByPixels = NanitePumpPixelBudget / FMath::Max<int64>(FramePixels, 1);
+    return static_cast<int32>(FMath::Clamp<int64>(ByPixels, 2 * NaniteStableFrames,
+        NaniteSessionMaxPumpedFrames));
+}
+
+FString MakeNaniteWarning(const FNaniteResidencyReport& Report)
+{
+    if (!Report.bWaited || Report.bSettled)
+    {
+        return FString();
+    }
+    return FString::Printf(
+        TEXT("Nanite pages may still have been streaming in: after %d pumped frames %s, %.4f of ")
+        TEXT("the pixels changed between the last two (tolerance %.4f, %d stable frames ")
+        TEXT("required). The returned frame may draw coarser clusters than a later capture; ")
+        TEXT("call again, with fewer or smaller shots if the budget ran out."),
+        Report.PumpedFrames,
+        Report.bBudgetExhausted ? TEXT("(the call's pump budget ran out)") : TEXT("(the per-shot cap)"),
+        Report.ChangedPixelFraction, SettledChangedPixelFraction, NaniteStableFrames);
+}
+
+namespace MeshPreviewCaptureUtilsLocal
+{
+    void AppendFrameWarning(const TSharedPtr<FJsonObject>& Result, const FString& Warning)
+    {
+        if (Warning.IsEmpty())
+        {
+            return;
+        }
+        FString Existing;
+        Result->SetStringField(TEXT("frameWarning"),
+            Result->TryGetStringField(TEXT("frameWarning"), Existing) && !Existing.IsEmpty()
+                ? Existing + TEXT(" ") + Warning : Warning);
+    }
+}
+
+void AddNaniteShotFields(TConstArrayView<FMeshCaptureOutput> Captures,
+    TConstArrayView<TSharedPtr<FJsonValue>> Shots, const TSharedPtr<FJsonObject>& Result)
+{
+    TArray<TSharedPtr<FJsonValue>> Unsettled;
+    for (int32 Index = 0; Index < Captures.Num() && Index < Shots.Num(); ++Index)
+    {
+        const TSharedPtr<FJsonObject> Shot = Shots[Index].IsValid() ? Shots[Index]->AsObject() : nullptr;
+        if (!Shot.IsValid())
+        {
+            continue;
+        }
+        Shot->SetObjectField(TEXT("naniteResidency"),
+            MakeNaniteResidencyObject(Captures[Index].Nanite));
+        const FString Warning = MakeNaniteWarning(Captures[Index].Nanite);
+        if (!Warning.IsEmpty())
+        {
+            MeshPreviewCaptureUtilsLocal::AppendFrameWarning(Shot, Warning);
+            Unsettled.Add(MakeShared<FJsonValueNumber>(Index));
+        }
+    }
+    if (Unsettled.IsEmpty())
+    {
+        return;
+    }
+    Result->SetArrayField(TEXT("naniteUnsettledShots"), Unsettled);
+    FString Indices;
+    for (const TSharedPtr<FJsonValue>& Value : Unsettled)
+    {
+        Indices += (Indices.IsEmpty() ? TEXT("") : TEXT(", "))
+            + FString::FromInt(static_cast<int32>(Value->AsNumber()));
+    }
+    MeshPreviewCaptureUtilsLocal::AppendFrameWarning(Result, FString::Printf(
+        TEXT("Nanite pages did not settle on shots [%s]; see each shot's frameWarning."), *Indices));
+}
+
 void AddMeshFrameEvidenceFields(const FMeshCaptureOutput& Capture,
     const TSharedPtr<FJsonObject>& Result)
 {
-    Result->SetObjectField(TEXT("readiness"),
-        PinWrightThumbnail::MakeReadinessObject(Capture.Readiness));
+    TSharedPtr<FJsonObject> Readiness = PinWrightThumbnail::MakeReadinessObject(Capture.Readiness);
+    Readiness->SetObjectField(TEXT("naniteResidency"), MakeNaniteResidencyObject(Capture.Nanite));
+    Result->SetObjectField(TEXT("readiness"), Readiness);
+    MeshPreviewCaptureUtilsLocal::AppendFrameWarning(Result, MakeNaniteWarning(Capture.Nanite));
     if (!Capture.Settle.bMeasured)
     {
         return;
@@ -127,7 +274,7 @@ void AddMeshFrameEvidenceFields(const FMeshCaptureOutput& Capture,
         Capture.Settle.ChangedPixelFraction);
     if (!Capture.Settle.bSettled)
     {
-        Result->SetStringField(TEXT("frameWarning"), FString::Printf(
+        MeshPreviewCaptureUtilsLocal::AppendFrameWarning(Result, FString::Printf(
             TEXT("The first shot did not settle: after %d redraw retr%s with identical inputs, ")
             TEXT("%.4f of the pixels still changed between the last two draws (tolerance %.4f). ")
             TEXT("The returned frame is the newest draw, but something in the scene was still ")
@@ -155,6 +302,10 @@ struct FMeshCaptureSession::FImpl
     FString AssetClass;
     PinWrightThumbnail::FThumbnailReadinessReport Readiness;
     bool bFirstFrameSettled = false;
+    // Pumped frames left for the rest of the call; INDEX_NONE until the first shot sizes it.
+    int32 NanitePumpFramesLeft = INDEX_NONE;
+    // Empty when the subject draws through Nanite and every shot pumps frames for its pages.
+    FString NaniteSkipReason;
 };
 
 FMeshCaptureSession::FMeshCaptureSession(TUniquePtr<FImpl>&& InImpl)
@@ -311,6 +462,21 @@ TUniquePtr<FMeshCaptureSession> FMeshCaptureSession::Create(const FString& Asset
     // The mesh build alone is not drawable: its slot materials' shader maps and the mips of the
     // textures they sample are waited on too (B-capture-mesh-cold-first-frame-no-readiness-wait).
     PinWrightThumbnail::WaitForThumbnailSubjectReadiness(Resolved.Object, NewImpl.Readiness);
+    // Same test the deferred renderer makes before it touches the streaming manager
+    // (DeferredShadingRenderer.cpp:556-558); a mesh without Nanite data draws its fallback LODs.
+    if (!StaticMesh)
+    {
+        // ponytail: Nanite skeletal meshes are not waited on; add them if one draws coarse.
+        NewImpl.NaniteSkipReason = TEXT("notStaticMesh");
+    }
+    else if (!StaticMesh->HasValidNaniteData())
+    {
+        NewImpl.NaniteSkipReason = TEXT("noNaniteData");
+    }
+    else if (!UseNanite(GMaxRHIShaderPlatform))
+    {
+        NewImpl.NaniteSkipReason = TEXT("naniteNotRendered");
+    }
     NewImpl.AssetPath = Resolved.Object->GetPathName();
     NewImpl.AssetClass = MoveTemp(AssetClass);
     NewImpl.MeshComponent = MeshComponent;
@@ -392,10 +558,41 @@ bool FMeshCaptureSession::Capture(const FMeshCaptureRequest& Request,
     {
         return false;
     }
+    // Every shot, not only the first: a new pose can need pages the earlier views never asked for.
+    OutCapture.Nanite.SkipReason = Impl->NaniteSkipReason;
+    const FEngineShowFlags* PumpShowFlags = Impl->Probe.GetShowFlags();
+    if (OutCapture.Nanite.SkipReason.IsEmpty() && PumpShowFlags && !PumpShowFlags->NaniteMeshes)
+    {
+        // The view mode hid Nanite meshes, so the renderer skips Nanite and its streaming.
+        OutCapture.Nanite.SkipReason = TEXT("naniteMeshesHidden");
+    }
+    if (OutCapture.Nanite.SkipReason.IsEmpty())
+    {
+        if (Impl->NanitePumpFramesLeft == INDEX_NONE)
+        {
+            Impl->NanitePumpFramesLeft = NaniteSessionPumpBudget(
+                static_cast<int64>(ColorRequest.Width) * static_cast<int64>(ColorRequest.Height));
+        }
+        const int32 MaxFrames = FMath::Min(NaniteMaxPumpedFrames, Impl->NanitePumpFramesLeft);
+        if (!SettleAcrossFrames([&](TArray<FColor>& OutPixels)
+            {
+                AdvanceRenderFrameNumber();
+                // Lets the page IO and DDC requests issued by the previous frame land.
+                FPlatformProcess::Sleep(NanitePumpSleepSeconds);
+                return Impl->Probe.CaptureColor(ColorRequest, OutPixels, Metadata,
+                    OutErrCode, OutErrMsg);
+            }, OutCapture.Capture.Pixels, NaniteStableFrames, MaxFrames, OutCapture.Nanite))
+        {
+            return false;
+        }
+        Impl->NanitePumpFramesLeft -= OutCapture.Nanite.PumpedFrames;
+        OutCapture.Nanite.bBudgetExhausted = !OutCapture.Nanite.bSettled
+            && MaxFrames < NaniteMaxPumpedFrames;
+    }
     if (!Impl->bFirstFrameSettled)
     {
-        // The readiness wait cannot see everything a first draw depends on (Nanite page
-        // streaming, the preview sky capture), so the session's first shot is drawn again until
+        // The readiness wait cannot see everything a first draw depends on (the preview sky
+        // capture; Nanite pages are pumped above), so the session's first shot is drawn again until
         // two consecutive frames agree, and `redrawRetries` reports how many extra draws that
         // took instead of a constant 0.
         if (!SettleFrame([&](TArray<FColor>& OutPixels)

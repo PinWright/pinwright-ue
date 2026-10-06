@@ -627,6 +627,7 @@ REGISTER_RPC_HANDLER("render.capture_mesh", "render", "Capture a Static Mesh or 
             Shot->SetObjectField(TEXT("angle"), Angle);
             Shots.Add(MakeShared<FJsonValueObject>(Shot));
         }
+        PinWrightMeshPreviewCapture::AddNaniteShotFields(Captures, Shots, Result);
         Result->SetNumberField(TEXT("count"), Captures.Num());
         Result->SetArrayField(TEXT("shots"), Shots);
     }

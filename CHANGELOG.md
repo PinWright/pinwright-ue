@@ -6,6 +6,20 @@
   hook skipped its Python gc pass when the script itself called `gc.enable()`. That undoes the
   collector suspension for the rest of the script, so the warning now says the pass may have run
   inside the live script.
+- Fixed: `render.capture_mesh` now waits for Nanite pages. Its first-shot redraw ran inside one
+  engine frame, and the engine installs streamed Nanite pages only when the render-thread frame
+  number changes, so a cold Nanite mesh could draw its coarse root clusters twice and report
+  `frameSettled: true`. For a Static Mesh that draws through Nanite, every shot is now redrawn
+  across advanced frame numbers until 8 consecutive frames agree (at most 120 per shot). The whole
+  call shares one pump budget: 64M extra rendered pixels, at least 16 and at most 240 frames. New
+  field: `readiness.naniteResidency` (and `shots[i].naniteResidency`) with `waited`, and either
+  `reason` or `pumpedFrames` / `changedAcrossFrames` / `settled` / `budgetExhausted` /
+  `changedPixelFraction`. A shot that stops unsettled gets a `frameWarning`, and multi-shot calls
+  list such shots in `naniteUnsettledShots` with a top-level `frameWarning`. Shot 0's Nanite and
+  in-tick settle warnings are now joined instead of the second replacing the first. Nanite meshes
+  now take longer to capture: at least 8 extra draws per shot. Each pumped frame also advances the
+  engine frame counter (`GFrameCounter`), so recorder and `drive.*` frame stamps jump by
+  `pumpedFrames` across such a call.
 - Fixed: `sequence.add_keyframe` and `sequencer.add_keyframes` no longer write part of a transform
   key and report success. Inside a `Transform` value, an unknown key such as a misspelt `rotaton`
   group or a `w` component used to be dropped while the other groups wrote. A non-number component,
