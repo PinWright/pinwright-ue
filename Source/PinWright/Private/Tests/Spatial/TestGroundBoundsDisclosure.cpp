@@ -3,12 +3,12 @@
 // TestGroundBoundsDisclosure.cpp - what the grounding verbs tell a caller about the BOX they
 // measured, as opposed to the object.
 //
-//   - spatial.ground_instances models an instance's underside as the floor of its WORLD AABB, and
-//     FBox::TransformBy re-fits that box around the rotated mesh, so a pitched or rolled instance's
-//     plane sits below the mesh. The response used to publish only differences against that plane
-//     (maxGapCm = UndersideZ - GroundZ, neither term known) and asserted undersideReliefCm: 0 - a
-//     measured flat underside - about tumbled rocks. It now publishes contact.undersideZCm /
-//     groundZCm, the per-row boundsRotationInflationCm, and omits the relief it never measured.
+//   - spatial.ground_instances used to model an instance's underside as the floor of its WORLD
+//     AABB, and FBox::TransformBy re-fits that box around the rotated mesh, so a pitched or rolled
+//     instance's plane sat below the mesh (#298 disclosed it, #366 fixed it). The plane is now the
+//     mesh's lowest LOD0 vertex under the instance transform; the response publishes it as
+//     contact.undersideZCm beside groundZCm and boundsRotationInflationCm, and omits the relief a
+//     plane never measures.
 //   - samples:1 makes coverage, contactPoints and the gap terms fixed by the parameter, at a
 //     column placed on the world-AABB centre rather than the pivot. The response now says so in
 //     warnings[], names the centre (contact.footprintCentreCm), and omits groundSpreadCm /
@@ -34,6 +34,10 @@
 #include "Editor.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/World.h"
+#include "Handlers/Spatial/GroundPlacementUtils.h"
+#include "MeshDescription.h"
+#include "StaticMeshAttributes.h"
+#include "StaticMeshResources.h"
 #include "GameFramework/Actor.h"
 #include "Misc/Guid.h"
 #include "Misc/ScopeExit.h"
@@ -101,9 +105,11 @@ namespace GroundBoundsDisclosureTest
             FVector(ColX, ColY, FloorTopZ - 50.0), FVector(20.0, 20.0, 1.0));
     }
 
-    // A holder whose root HISM carries one Mesh instance per rotation, 300 cm apart along X.
+    // A holder whose root HISM carries one Mesh instance per rotation, 300 cm apart along X, each
+    // raised by its ZOffsets entry (0 when absent).
     AActor* SpawnScatter(FAutomationTestBase& Test, UWorld* World, const FString& ActorLabel,
-                         const FVector& Location, UStaticMesh* Mesh, const TArray<FRotator>& Rotations)
+                         const FVector& Location, UStaticMesh* Mesh, const TArray<FRotator>& Rotations,
+                         const TArray<double>& ZOffsets = TArray<double>())
     {
         if (!World || !Mesh)
         {
@@ -127,7 +133,8 @@ namespace GroundBoundsDisclosureTest
         Hism->RegisterComponent();
         for (int32 Index = 0; Index < Rotations.Num(); ++Index)
         {
-            Hism->AddInstance(FTransform(Rotations[Index], FVector(300.0 * Index, 0.0, 0.0)));
+            Hism->AddInstance(FTransform(Rotations[Index], FVector(300.0 * Index, 0.0,
+                ZOffsets.IsValidIndex(Index) ? ZOffsets[Index] : 0.0)));
         }
         Holder->SetActorLocation(Location);
         Holder->SetActorLabel(ActorLabel);
@@ -210,6 +217,112 @@ namespace GroundBoundsDisclosureTest
         return Joined;
     }
 
+    // A closed BASE-PIVOT octahedron: bottom vertex at the origin, top at z 200, a waist of four
+    // vertices at z 100 and radius 50. It fills none of its box's corners, so a tilt drops the
+    // rotated box's floor well below the mesh, while the mesh's lowest point is known exactly.
+    const TArray<FVector>& DiamondPoints()
+    {
+        static const TArray<FVector> Points = {
+            FVector(0, 0, 0), FVector(0, 0, 200),
+            FVector(50, 0, 100), FVector(0, 50, 100), FVector(-50, 0, 100), FVector(0, -50, 100)};
+        return Points;
+    }
+
+    // Lowest Z of the diamond's vertices under Rotation, from the analytic points rather than the
+    // render data the verb reads, so the expectation does not share the code under test.
+    double DiamondLowestZ(const FRotator& Rotation)
+    {
+        double Lowest = TNumericLimits<double>::Max();
+        for (const FVector& Point : DiamondPoints())
+        {
+            Lowest = FMath::Min(Lowest, Rotation.RotateVector(Point).Z);
+        }
+        return Lowest;
+    }
+
+    // Lowest LOD0 render vertex under Transform, by full FTransform::TransformPosition per vertex
+    // - a different code path from the verb's matrix-column shortcut, so a sphere miss can be told
+    // apart: a tessellation gap moves both numbers, a solver defect moves only the response.
+    TOptional<double> RenderLowestZ(const UStaticMesh* Mesh, const FTransform& Transform)
+    {
+        const FStaticMeshRenderData* RenderData = Mesh ? Mesh->GetRenderData() : nullptr;
+        if (!RenderData || RenderData->LODResources.Num() == 0)
+        {
+            return TOptional<double>();
+        }
+        const FPositionVertexBuffer& Positions = RenderData->LODResources[0].VertexBuffers.PositionVertexBuffer;
+        if (Positions.GetNumVertices() == 0 || !Positions.GetVertexData())
+        {
+            return TOptional<double>();
+        }
+        double Lowest = TNumericLimits<double>::Max();
+        for (uint32 Index = 0; Index < Positions.GetNumVertices(); ++Index)
+        {
+            Lowest = FMath::Min(Lowest, Transform.TransformPosition(FVector(Positions.VertexPosition(Index))).Z);
+        }
+        return Lowest;
+    }
+
+    // The diamond as a transient static mesh with CPU-resident LOD0 render data.
+    UStaticMesh* BuildDiamond()
+    {
+        UStaticMesh* Mesh = NewObject<UStaticMesh>(GetTransientPackage(),
+            MakeUniqueObjectName(GetTransientPackage(), UStaticMesh::StaticClass(), TEXT("SM_PWGB_Diamond")));
+        Mesh->GetStaticMaterials().Add(FStaticMaterial(nullptr, FName(TEXT("Slot"))));
+
+        FMeshDescription Description;
+        FStaticMeshAttributes Attributes(Description);
+        Attributes.Register();
+        TVertexAttributesRef<FVector3f> Positions = Attributes.GetVertexPositions();
+        TVertexInstanceAttributesRef<FVector3f> Normals = Attributes.GetVertexInstanceNormals();
+        TVertexInstanceAttributesRef<FVector3f> Tangents = Attributes.GetVertexInstanceTangents();
+        TVertexInstanceAttributesRef<float> BinormalSigns = Attributes.GetVertexInstanceBinormalSigns();
+        TVertexInstanceAttributesRef<FVector2f> UVs = Attributes.GetVertexInstanceUVs();
+        UVs.SetNumChannels(1);
+        const FPolygonGroupID Group = Description.CreatePolygonGroup();
+        Attributes.GetPolygonGroupMaterialSlotNames()[Group] = FName(TEXT("Slot"));
+
+        TArray<FVertexID> Vertices;
+        for (const FVector& Point : DiamondPoints())
+        {
+            const FVertexID Vertex = Description.CreateVertex();
+            Positions[Vertex] = FVector3f(Point);
+            Vertices.Add(Vertex);
+        }
+        const auto AddTriangle = [&](int32 A, int32 B, int32 C)
+        {
+            const int32 Corners[3] = {A, B, C};
+            const FVector3f Normal = FVector3f(FVector::CrossProduct(
+                DiamondPoints()[C] - DiamondPoints()[A], DiamondPoints()[B] - DiamondPoints()[A]).GetSafeNormal());
+            FVertexInstanceID Instances[3];
+            for (int32 Corner = 0; Corner < 3; ++Corner)
+            {
+                Instances[Corner] = Description.CreateVertexInstance(Vertices[Corners[Corner]]);
+                Normals[Instances[Corner]] = Normal;
+                Tangents[Instances[Corner]] = FVector3f(1.0f, 0.0f, 0.0f);
+                BinormalSigns[Instances[Corner]] = 1.0f;
+                UVs.Set(Instances[Corner], 0, FVector2f(0.25f * Corner, 0.0f));
+            }
+            Description.CreateTriangle(Group, Instances);
+        };
+        for (int32 Side = 0; Side < 4; ++Side)
+        {
+            const int32 Waist = 2 + Side;
+            const int32 Next = 2 + (Side + 1) % 4;
+            AddTriangle(0, Next, Waist);
+            AddTriangle(1, Waist, Next);
+        }
+
+        UStaticMesh::FBuildMeshDescriptionsParams BuildParams;
+        BuildParams.bFastBuild = true;
+        if (!Mesh->BuildFromMeshDescriptions({&Description}, BuildParams))
+        {
+            Mesh->MarkAsGarbage();
+            return nullptr;
+        }
+        return Mesh;
+    }
+
     TSharedPtr<FJsonObject> AnySolid()
     {
         TSharedPtr<FJsonObject> Surface = MakeShared<FJsonObject>();
@@ -218,18 +331,19 @@ namespace GroundBoundsDisclosureTest
     }
 }
 
-// ---- #298: the bounds plane a tilted instance is seated against is in the response ----
+// ---- #366: a tilted instance is seated on its mesh's lowest vertex, not its rotated AABB floor ----
 //
-// Reverting the fix fails this test four ways: contact.undersideZCm / groundZCm and the row's
-// boundsRotationInflationCm disappear (read back as the -1e9 fallback), and undersideReliefCm
-// comes back as an asserted 0. The solve identity proposedDeltaZCm == groundZCm - undersideZCm
-// is what proves the published plane is the one the solve actually used.
+// Reverting the fix (the plane back at the floor of Mesh bounds.TransformBy(instance)) fails this
+// test on every tilted row: the 45-degree sphere's undersideZCm drops ~20.7 cm below its real
+// bottom and its inflation reads ~20.7, each resting diamond is proposed a lift of 17-48 cm and its
+// undersideZCm sits that far under the floor, and undersideModel reads bounds_plane. The
+// preconditions assert that gap is real before anything is measured.
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGroundInstancesPublishesTiltedBoundsPlaneTest,
-    "PinWright.spatial.ground_instances.PublishesTheTiltedBoundsPlane",
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGroundInstancesSeatOnLowestVertexTest,
+    "PinWright.spatial.ground_instances.SeatsTiltedInstancesOnTheLowestVertex",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 
-bool FGroundInstancesPublishesTiltedBoundsPlaneTest::RunTest(const FString& Parameters)
+bool FGroundInstancesSeatOnLowestVertexTest::RunTest(const FString& Parameters)
 {
     namespace GBD = GroundBoundsDisclosureTest;
 
@@ -237,15 +351,24 @@ bool FGroundInstancesPublishesTiltedBoundsPlaneTest::RunTest(const FString& Para
     if (!World)
     {
         PinWrightTestSkip::SkipAssertions(*this, TEXT("no_editor_world"),
-            TEXT("GEditor->GetEditorWorldContext().World() returned null; the bounds-plane "
-                 "disclosure assertions were stepped over."));
+            TEXT("GEditor->GetEditorWorldContext().World() returned null; the lowest-vertex "
+                 "assertions were stepped over."));
         return true;
+    }
+
+    // The helper itself: a mesh with no render data has no plane to offer.
+    {
+        TStrongObjectPtr<UStaticMesh> Empty(NewObject<UStaticMesh>(GetTransientPackage()));
+        TestFalse(TEXT("LowestVertexZ is unset for a mesh with no render data"),
+            GroundPlacement::LowestVertexZ(Empty.Get(), FTransform::Identity).IsSet());
+        Empty->MarkAsGarbage();
     }
 
     const FString FloorLabel = GBD::Label(TEXT("Floor"));
     const FString HolderLabel = GBD::Label(TEXT("Spheres"));
     AActor* Floor = GBD::SpawnFloor(*this, World, FloorLabel);
-    // Instance 0 upright, instance 1 pitched 45 degrees; both centres 300 cm above the floor.
+    // CENTRE PIVOT. Instance 0 upright, instance 1 pitched 45 degrees; both centres 300 cm above
+    // the floor. A sphere's lowest point does not move when it rotates; its rotated box's does.
     AActor* Holder = GBD::SpawnScatter(*this, World, HolderLabel, FVector(GBD::ColX - 150.0, GBD::ColY, 300.0),
         LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Sphere.Sphere")),
         {FRotator::ZeroRotator, FRotator(45.0, 0.0, 0.0)});
@@ -258,13 +381,15 @@ bool FGroundInstancesPublishesTiltedBoundsPlaneTest::RunTest(const FString& Para
         Holder ? Holder->FindComponentByClass<UInstancedStaticMeshComponent>() : nullptr;
     if (!Floor || !Component || !Component->GetStaticMesh())
     {
-        AddError(TEXT("bounds-disclosure fixture did not spawn"));
+        AddError(TEXT("lowest-vertex sphere fixture did not spawn"));
         return true;
     }
     GBD::FlushPhysics(World);
 
-    // Ground truth from the engine: each instance's world AABB, and the mesh's local half-height.
     const FBox LocalBox = Component->GetStaticMesh()->GetBounds().GetBox();
+    const double Radius = LocalBox.GetExtent().Z;
+    TestTrue(*FString::Printf(TEXT("precondition: the engine sphere is centre-pivot (%s)"), *LocalBox.ToString()),
+        LocalBox.GetCenter().IsNearlyZero(0.01) && Radius > 10.0);
     FBox Boxes[2];
     FTransform Worlds[2];
     for (int32 Index = 0; Index < 2; ++Index)
@@ -276,10 +401,9 @@ bool FGroundInstancesPublishesTiltedBoundsPlaneTest::RunTest(const FString& Para
         }
         Boxes[Index] = LocalBox.TransformBy(Worlds[Index]);
     }
-    // Precondition: the tilt really inflates the box, and the sphere's real bottom does not move.
-    const double TiltedInflation = Boxes[1].GetExtent().Z - LocalBox.GetExtent().Z;
-    TestTrue(*FString::Printf(TEXT("precondition: a 45-degree pitch inflates the sphere's AABB "
-        "(%.2f cm)"), TiltedInflation), TiltedInflation > 15.0);
+    const double TiltedBoxDrop = (Worlds[1].GetLocation().Z - Radius) - Boxes[1].Min.Z;
+    TestTrue(*FString::Printf(TEXT("precondition: the pitched sphere's AABB floor sits %.2f cm below "
+        "its real bottom"), TiltedBoxDrop), TiltedBoxDrop > 15.0);
 
     TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
     Payload->SetStringField(TEXT("actorName"), HolderLabel);
@@ -297,6 +421,13 @@ bool FGroundInstancesPublishesTiltedBoundsPlaneTest::RunTest(const FString& Para
         return true;
     }
     TestTrue(TEXT("samples:3 carries no single-column warning"), GBD::Warnings(Capture.Result).IsEmpty());
+    const TSharedPtr<FJsonObject>* SeatEcho = nullptr;
+    FString EchoModel;
+    if (Capture.Result->TryGetObjectField(TEXT("seat"), SeatEcho) && SeatEcho)
+    {
+        (*SeatEcho)->TryGetStringField(TEXT("undersideModel"), EchoModel);
+    }
+    TestEqual(TEXT("seat.undersideModel echoes lowest_vertex"), EchoModel, FString(TEXT("lowest_vertex")));
 
     constexpr double Missing = -1.0e9;
     for (int32 Index = 0; Index < 2; ++Index)
@@ -308,36 +439,38 @@ bool FGroundInstancesPublishesTiltedBoundsPlaneTest::RunTest(const FString& Para
             AddError(*FString::Printf(TEXT("no contact row for instance %d"), Index));
             continue;
         }
+        FString Model;
+        Body->TryGetStringField(TEXT("undersideModel"), Model);
+        TestEqual(*FString::Printf(TEXT("instance %d: undersideModel is lowest_vertex"), Index),
+            Model, FString(TEXT("lowest_vertex")));
+        TestFalse(*FString::Printf(TEXT("instance %d: no boundsPlaneFallback"), Index),
+            Body->HasField(TEXT("boundsPlaneFallback")));
+
         const double UndersideZ = GBD::Number(Body, TEXT("undersideZCm"), Missing);
         const double GroundZ = GBD::Number(Body, TEXT("groundZCm"), Missing);
-        const double Inflation = GBD::Number(Row, TEXT("boundsRotationInflationCm"), Missing);
-
-        TestEqual(*FString::Printf(TEXT("instance %d: undersideZCm is the floor of its world AABB"),
-            Index), UndersideZ, Boxes[Index].Min.Z, 0.01);
+        const TOptional<double> RenderLowest = GBD::RenderLowestZ(Component->GetStaticMesh(), Worlds[Index]);
+        TestTrue(*FString::Printf(TEXT("instance %d: precondition: the sphere's LOD0 positions are "
+            "CPU-resident"), Index), RenderLowest.IsSet());
+        TestEqual(*FString::Printf(TEXT("instance %d: undersideZCm is the lowest render vertex"), Index),
+            UndersideZ, RenderLowest.Get(Missing), 0.01);
+        // The acceptance bound: the tessellated sphere's lowest vertex is within 0.5 cm of the
+        // analytic bottom at any pitch.
+        TestEqual(*FString::Printf(TEXT("instance %d: undersideZCm is the sphere's real bottom"), Index),
+            UndersideZ, Worlds[Index].GetLocation().Z - Radius, 0.5);
         TestEqual(*FString::Printf(TEXT("instance %d: groundZCm is the floor top"), Index),
             GroundZ, GBD::FloorTopZ, 0.5);
-        TestEqual(*FString::Printf(TEXT("instance %d: boundsRotationInflationCm"), Index),
-            Inflation, Boxes[Index].GetExtent().Z - LocalBox.GetExtent().Z, 0.01);
+        TestEqual(*FString::Printf(TEXT("instance %d: a sphere's tilt does not move its plane "
+            "(boundsRotationInflationCm)"), Index),
+            GBD::Number(Row, TEXT("boundsRotationInflationCm"), Missing), 0.0, 0.5);
         // The published plane is the solved one: seatPercentile 0 over flat ground, no embed.
         TestEqual(*FString::Printf(TEXT("instance %d: proposedDeltaZCm == groundZCm - undersideZCm"),
             Index), GBD::Number(Row, TEXT("proposedDeltaZCm"), Missing), GroundZ - UndersideZ, 0.05);
         // A flat plane has no relief, so none is claimed.
-        TestFalse(*FString::Printf(TEXT("instance %d: undersideReliefCm is omitted under "
-            "bounds_plane"), Index), Body->HasField(TEXT("undersideReliefCm")));
+        TestFalse(*FString::Printf(TEXT("instance %d: undersideReliefCm is omitted under a plane"),
+            Index), Body->HasField(TEXT("undersideReliefCm")));
         TestTrue(*FString::Printf(TEXT("instance %d: groundSpreadCm is still reported over 9 "
             "columns"), Index), Body->HasField(TEXT("groundSpreadCm")));
     }
-    TestTrue(TEXT("an upright instance has no rotation inflation"),
-        FMath::Abs(GBD::Number(GBD::RowForIndex(Capture.Result, 0), TEXT("boundsRotationInflationCm"), Missing))
-            < 0.01);
-
-    // The defect itself, visible from the response alone: the tilted sphere's plane sits below
-    // its real lowest point (rotation-invariant for a sphere) by the published inflation.
-    const double TiltedPlane = GBD::Number(GBD::Contact(GBD::RowForIndex(Capture.Result, 1)), TEXT("undersideZCm"),
-        Missing);
-    const double SphereBottom = Worlds[1].GetLocation().Z + LocalBox.Min.Z;
-    TestEqual(TEXT("the tilted plane is below the sphere's real bottom by boundsRotationInflationCm"),
-        SphereBottom - TiltedPlane, TiltedInflation, 0.05);
 
     // #42 on the same fixture: samples:1 warns, and names where its one column went.
     Payload->SetNumberField(TEXT("samples"), 1);
@@ -352,72 +485,78 @@ bool FGroundInstancesPublishesTiltedBoundsPlaneTest::RunTest(const FString& Para
     TestEqual(TEXT("footprintCentreCm.y is the tilted instance's world-AABB centre"),
         GBD::Nested(SingleBody, TEXT("footprintCentreCm"), TEXT("y"), Missing), Boxes[1].GetCenter().Y, 0.01);
 
-    // ---- A BASE-PIVOT mesh taller than wide: the case a centred sphere cannot catch. ----
-    // A transient copy of the engine cube with its bounds pushed to local x,y -50..50, z 0..200:
-    // pivot at the base, 100 x 100 x 200. Pitched 20 degrees about that base, the box's floor
-    // drops by 50*sin(20) = 17.10 cm (a lower corner swings below the pivot), while the
-    // half-height difference the field used to publish reads 50*sin(20) + 100*cos(20) - 100 =
-    // 11.07 - so the old formula fails here by 6 cm and, on a narrower mesh, by its sign.
-    UStaticMesh* Cube = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cube.Cube"));
-    TStrongObjectPtr<UStaticMesh> Tall(Cube ? DuplicateObject<UStaticMesh>(Cube, GetTransientPackage(),
-        MakeUniqueObjectName(GetTransientPackage(), UStaticMesh::StaticClass(), TEXT("SM_PWGB_BasePivotTall")))
-        : nullptr);
-    const FString TallLabel = GBD::Label(TEXT("BasePivot"));
-    AActor* TallHolder = nullptr;
+    // ---- BASE PIVOT: tilted diamonds already resting on the floor. ----
+    // Each instance is raised so its analytic lowest vertex touches the floor top. At 75 degrees a
+    // waist vertex swings 22.4 cm below the pivot, so that row also pins a positive inflation.
+    TStrongObjectPtr<UStaticMesh> Diamond(GBD::BuildDiamond());
+    const FString DiamondLabel = GBD::Label(TEXT("Diamonds"));
+    AActor* DiamondHolder = nullptr;
     ON_SCOPE_EXIT
     {
-        if (TallHolder) { TallHolder->Destroy(); }
-        if (Tall.IsValid())
+        if (DiamondHolder) { DiamondHolder->Destroy(); }
+        if (Diamond.IsValid())
         {
-            Tall->ClearFlags(RF_Standalone | RF_Public);
-            Tall->MarkAsGarbage();
-            Tall.Reset();
+            Diamond->ClearFlags(RF_Standalone | RF_Public);
+            Diamond->MarkAsGarbage();
+            Diamond.Reset();
         }
     };
-    if (!Tall.IsValid())
+    if (!Diamond.IsValid())
     {
-        AddError(TEXT("could not duplicate the engine cube for the base-pivot fixture"));
+        AddError(TEXT("could not build the base-pivot diamond mesh"));
         return true;
     }
-    // CalculateExtendedBounds does Min -= Negative, Max += Positive (StaticMesh.cpp:7309-7310).
-    const FBox CubeLocal = Tall->GetBounds().GetBox();
-    Tall->SetNegativeBoundsExtension(FVector(0.0, 0.0, CubeLocal.Min.Z));
-    Tall->SetPositiveBoundsExtension(FVector(0.0, 0.0, 200.0 - CubeLocal.Max.Z));
-    Tall->CalculateExtendedBounds();
-    const FBox TallLocal = Tall->GetBounds().GetBox();
-    TestTrue(*FString::Printf(TEXT("precondition: the fixture box is base-pivot and taller than wide "
-        "(%s)"), *TallLocal.ToString()),
-        FMath::IsNearlyZero(TallLocal.Min.Z, 0.01) && FMath::IsNearlyEqual(TallLocal.Max.Z, 200.0, 0.01)
-            && FMath::IsNearlyEqual(TallLocal.GetExtent().X, 50.0, 0.01));
+    TestEqual(TEXT("LowestVertexZ reads the diamond's base vertex under a pure translation"),
+        GroundPlacement::LowestVertexZ(Diamond.Get(), FTransform(FVector(0.0, 0.0, 7.0))).Get(Missing), 7.0, 0.01);
 
-    TallHolder = GBD::SpawnScatter(*this, World, TallLabel, FVector(GBD::ColX + 500.0, GBD::ColY, 300.0),
-        Tall.Get(), {FRotator(20.0, 0.0, 0.0)});
-    UInstancedStaticMeshComponent* TallComponent =
-        TallHolder ? TallHolder->FindComponentByClass<UInstancedStaticMeshComponent>() : nullptr;
-    FTransform TallWorld;
-    if (!TallComponent || !TallComponent->GetInstanceTransform(0, TallWorld, /*bWorldSpace*/ true))
+    const TArray<FRotator> Tilts = {FRotator(20.0, 0.0, 0.0), FRotator(0.0, 0.0, 35.0),
+        FRotator(-40.0, 30.0, 10.0), FRotator(75.0, 0.0, 0.0)};
+    TArray<double> Raise;
+    for (const FRotator& Tilt : Tilts)
     {
-        AddError(TEXT("base-pivot scatter did not spawn"));
+        Raise.Add(GBD::FloorTopZ - GBD::DiamondLowestZ(Tilt));
+    }
+    DiamondHolder = GBD::SpawnScatter(*this, World, DiamondLabel,
+        FVector(GBD::ColX - 600.0, GBD::ColY + 500.0, 0.0), Diamond.Get(), Tilts, Raise);
+    UInstancedStaticMeshComponent* DiamondComponent =
+        DiamondHolder ? DiamondHolder->FindComponentByClass<UInstancedStaticMeshComponent>() : nullptr;
+    if (!DiamondComponent || DiamondComponent->GetInstanceCount() != Tilts.Num())
+    {
+        AddError(TEXT("diamond scatter did not spawn"));
         return true;
     }
     GBD::FlushPhysics(World);
-    const double ExpectedDrop = TallWorld.GetLocation().Z + TallLocal.Min.Z
-        - TallLocal.TransformBy(TallWorld).Min.Z;
-    const double OldFormula = TallLocal.TransformBy(TallWorld).GetExtent().Z - TallLocal.GetExtent().Z;
-    TestEqual(TEXT("precondition: a 20-degree pitch lowers the base-pivot box's floor by 50*sin(20)"),
-        ExpectedDrop, 50.0 * FMath::Sin(FMath::DegreesToRadians(20.0)), 0.05);
-    TestTrue(*FString::Printf(TEXT("precondition: the half-height difference (%.2f) is not the drop "
-        "(%.2f)"), OldFormula, ExpectedDrop), FMath::Abs(OldFormula - ExpectedDrop) > 5.0);
 
-    Payload->SetStringField(TEXT("actorName"), TallLabel);
+    const FBox DiamondLocal = Diamond->GetBounds().GetBox();
+    for (int32 Index = 0; Index < Tilts.Num(); ++Index)
+    {
+        FTransform InstanceWorld;
+        DiamondComponent->GetInstanceTransform(Index, InstanceWorld, /*bWorldSpace*/ true);
+        const double BoxGap = GBD::FloorTopZ - DiamondLocal.TransformBy(InstanceWorld).Min.Z;
+        TestTrue(*FString::Printf(TEXT("precondition: diamond %d's rotated AABB floor is %.2f cm under "
+            "the floor it rests on"), Index, BoxGap), BoxGap > 10.0);
+    }
+
+    Payload->SetStringField(TEXT("actorName"), DiamondLabel);
     Payload->SetNumberField(TEXT("samples"), 3);
-    FTestResponseCapture TallCapture;
-    InvokeHandlerWithCapture(TEXT("spatial.ground_instances"), Payload, TallCapture);
-    TestTrue(TEXT("the base-pivot dry run succeeds"), TallCapture.bSuccess);
-    TestEqual(TEXT("boundsRotationInflationCm is the drop of the box's floor, not a half-height "
-                   "difference"),
-        GBD::Number(GBD::RowForIndex(TallCapture.Result, 0), TEXT("boundsRotationInflationCm"), Missing),
-        ExpectedDrop, 0.05);
+    Payload->SetNumberField(TEXT("seatPercentile"), 0.0);
+    FTestResponseCapture DiamondCapture;
+    InvokeHandlerWithCapture(TEXT("spatial.ground_instances"), Payload, DiamondCapture);
+    TestTrue(TEXT("the diamond dry run succeeds"), DiamondCapture.bSuccess);
+    for (int32 Index = 0; Index < Tilts.Num(); ++Index)
+    {
+        const TSharedPtr<FJsonObject> Row = GBD::RowForIndex(DiamondCapture.Result, Index);
+        const TSharedPtr<FJsonObject> Body = GBD::Contact(Row);
+        const double Proposed = GBD::Number(Row, TEXT("proposedDeltaZCm"), Missing);
+        TestTrue(*FString::Printf(TEXT("diamond %d (%s) resting on the floor: seatPercentile 0 proposes "
+            "no move beyond the contact tolerance (proposedDeltaZCm %.3f)"), Index, *Tilts[Index].ToString(),
+            Proposed), FMath::Abs(Proposed) <= 0.05);
+        TestEqual(*FString::Printf(TEXT("diamond %d: undersideZCm is the floor it rests on"), Index),
+            GBD::Number(Body, TEXT("undersideZCm"), Missing), GBD::FloorTopZ, 0.05);
+        TestEqual(*FString::Printf(TEXT("diamond %d: boundsRotationInflationCm is the drop of its lowest "
+            "vertex from the upright base"), Index),
+            GBD::Number(Row, TEXT("boundsRotationInflationCm"), Missing), -GBD::DiamondLowestZ(Tilts[Index]), 0.05);
+    }
     return true;
 }
 

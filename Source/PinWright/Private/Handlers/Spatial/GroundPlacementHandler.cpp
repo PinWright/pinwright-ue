@@ -489,8 +489,9 @@ namespace
         Obj->SetNumberField(TEXT("coverage"), Report.Coverage);
         Obj->SetNumberField(TEXT("contactPoints"), Report.ContactPoints);
         Obj->SetStringField(TEXT("undersideModel"),
-            Report.UndersideModel == GroundPlacement::EUndersideModel::BoundsPlane
-                ? TEXT("bounds_plane") : TEXT("mesh"));
+            Report.UndersideModel == GroundPlacement::EUndersideModel::BoundsPlane ? TEXT("bounds_plane")
+            : Report.UndersideModel == GroundPlacement::EUndersideModel::LowestVertex ? TEXT("lowest_vertex")
+            : TEXT("mesh"));
         if (Report.bUsedBoundsPlaneFallback)
         {
             Obj->SetBoolField(TEXT("boundsPlaneFallback"), true);
@@ -1442,12 +1443,13 @@ REGISTER_RPC_HANDLER("spatial.ground_instances", "spatial",
             TEXT("Which sampled column the instance comes to rest against, as a percentile over the "
                  "columns' clearances. 0 (default) rests on the FIRST contact; 1 sinks until no "
                  "column floats; 0.5 is the median. Clamped to 0-1. Every clearance is measured "
-                 "from the instance's bounds plane - the floor of its WORLD bounding box, which "
-                 "pitch or roll moves relative to the same box held upright - each row's "
-                 "boundsRotationInflationCm is that drop, positive when the tilt lowered it, and a "
-                 "lowered plane sits below the real lowest point of any mesh that does not fill its "
-                 "box's corners - so the same percentile can lift an upright instance and sink a "
-                 "tilted neighbour. contact.undersideZCm / groundZCm publish the two heights the "
+                 "from the instance's underside plane: the mesh's lowest LOD0 vertex under the "
+                 "instance's transform (undersideModel 'lowest_vertex'), so 0 means the same thing "
+                 "on every instance whatever its tilt. A mesh with no CPU-resident LOD0 positions "
+                 "falls back to the floor of its WORLD bounding box, which sits below a tilted "
+                 "mesh's real bottom, and its row says boundsPlaneFallback: true. Each row's "
+                 "boundsRotationInflationCm is how far the tilt moved that plane from where it "
+                 "sits upright. contact.undersideZCm / groundZCm publish the two heights the "
                  "solve used on a dry run or refused row; after an apply they are the re-measured "
                  "seat."),
             TEXT("0"), TArray<FString>({TEXT("seat_percentile")})),
@@ -1642,7 +1644,8 @@ REGISTER_RPC_HANDLER("spatial.ground_instances", "spatial",
     // which is the only place the bounds are known.
     Config.ContactRadiusCm = FMath::Max(
         Ctx.GetNumber(TEXT("contactRadius"), Ctx.GetNumber(TEXT("contact_radius"), 0.0)), 0.0);
-    Config.UndersideModel = GroundPlacement::EUndersideModel::BoundsPlane;
+    // Not read by SeatInstance, which always uses the lowest-vertex plane; set so the config says so.
+    Config.UndersideModel = GroundPlacement::EUndersideModel::LowestVertex;
     Config.SeatPercentile = FMath::Clamp(
         Ctx.GetNumber(TEXT("seatPercentile"),
             Ctx.GetNumber(TEXT("seat_percentile"), 0.0)), 0.0, 1.0);
@@ -1800,8 +1803,8 @@ REGISTER_RPC_HANDLER("spatial.ground_instances", "spatial",
             Row->SetObjectField(TEXT("proposedTransform"),
                 GroundRpcTransformObject(Result.ProposedTransform.GetValue()));
         }
-        // How far this instance's tilt moved its bounds plane down from where the same box sits
-        // upright (negative = raised): why one seatPercentile lifts one instance and sinks another.
+        // How far this instance's tilt moved its underside plane down from where it sits upright
+        // (negative = raised), under the same model the solve used.
         if (Result.BoundsRotationInflationCm.IsSet())
         {
             Row->SetNumberField(TEXT("boundsRotationInflationCm"),
@@ -1862,8 +1865,9 @@ REGISTER_RPC_HANDLER("spatial.ground_instances", "spatial",
     }
     // Stated rather than parameterised: an instance's underside cannot be probed per column,
     // because UInstancedStaticMeshComponent::LineTraceComponent answers from every instance body
-    // at once and cannot attribute a hit to one of them.
-    SeatEcho->SetStringField(TEXT("undersideModel"), TEXT("bounds_plane"));
+    // at once and cannot attribute a hit to one of them. A row whose mesh had no CPU-resident
+    // LOD0 positions says boundsPlaneFallback: true on its contact.
+    SeatEcho->SetStringField(TEXT("undersideModel"), TEXT("lowest_vertex"));
     Data->SetObjectField(TEXT("seat"), SeatEcho);
 
     // The undo log, written before results[] and deliberately NOT governed by `detail`: it is the

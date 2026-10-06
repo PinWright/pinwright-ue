@@ -20,6 +20,16 @@
   now take longer to capture: at least 8 extra draws per shot. Each pumped frame also advances the
   engine frame counter (`GFrameCounter`), so recorder and `drive.*` frame stamps jump by
   `pumpedFrames` across such a call.
+- Changed: `spatial.ground_instances` (and `foliage.paint`'s ground projection, which uses the same
+  solve) now seats each instance against a plane at the mesh's lowest LOD0 vertex under the
+  instance's transform, not the floor of its world AABB. That floor is re-fitted around the rotated
+  mesh box, so for a pitched or rolled mesh that does not fill its box's corners it sat below the
+  mesh by a different amount on every instance, and `seatPercentile: 0` lifted tilted rocks that
+  were already resting on the ground. Behaviour change: each row's `contact.undersideModel` and the
+  `seat.undersideModel` echo read `lowest_vertex` (was `bounds_plane`), and proposed and applied
+  moves change for every tilted instance. A mesh with no CPU-resident LOD0 positions keeps the AABB
+  floor and its row carries `contact.boundsPlaneFallback: true`. Nanite meshes are measured on their
+  fallback mesh.
 - Fixed: `sequence.add_keyframe` and `sequencer.add_keyframes` no longer write part of a transform
   key and report success. Inside a `Transform` value, an unknown key such as a misspelt `rotaton`
   group or a `w` component used to be dropped while the other groups wrote. A non-number component,
@@ -49,9 +59,9 @@
   `undersideZCm` and `groundZCm`, the absolute world Z of the two terms `maxGapCm` is the
   difference of, and `footprintCentreCm`, the world-bounds centre the sample grid is centred on
   (not the pivot). `spatial.ground_instances` rows also carry `boundsRotationInflationCm`: how far
-  the instance's pitch and roll moved its bounds plane down from where the same box sits upright
-  (negative when the tilt raised it), which is why one `seatPercentile` can
-  lift an upright instance and sink a tilted one. `samples: 1` now adds a `warnings[]` entry,
+  the instance's pitch and roll moved its underside plane down from where the same mesh sits
+  upright (`0` for a tilted sphere, positive for a box tipped onto a corner, negative when the tilt
+  raised it). `samples: 1` now adds a `warnings[]` entry,
   because at one column coverage, contactPoints and the gap terms are fixed by the parameter.
   Behaviour change: `undersideReliefCm` is omitted under the `bounds_plane` model or its
   `boundsPlaneFallback` (always, on

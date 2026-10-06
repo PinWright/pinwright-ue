@@ -169,7 +169,7 @@ Full treatment on [`spatial.ground-placement`](spatial.ground-placement.md); thr
 a vegetation pass does at the workflow level.
 
 **Measure bounds-versus-contact footprint before seating anything.** The seat solve samples a grid
-over the instance's bounds and models its underside as a flat plane at the world-AABB minimum. For a
+over the instance's bounds and models its underside as a flat plane at the mesh's lowest vertex. For a
 rock, slab, log or boulder that is fair — measured ratios of bounds area to contact area of 0.98x,
 1.14x, 1.29x, 2.49x. For anything with a **trunk** it is not: 46.7x on a 19 m oak, 80.8x on a dead
 snag. The grid is then sampling the canopy, and on a slope the solve lifts the whole tree until its
@@ -181,11 +181,13 @@ Compute a trunk seat offline against a ring at the contact radius and write it w
 `actor.set_instance_transforms`; one map's trunks went from 27.9% with measurable daylight
 underneath (worst +252 cm) to 2.3% (worst +1.9 cm).
 
-**Flat slabs and tumbled rocks need a real underside, not a plane at the AABB minimum.** An
-open-bottomed slab cannot be hit by an upward probe at all, so the solve falls back to the plane —
-place those only on ground flat enough for a plane to be fair. A rotated compact prop's AABB minimum
-sits *below* its real lowest point, so a low `seatPercentile` **lifts** something already bedded;
-dry-run every component and keep only the instances whose proposed delta is negative.
+**Flat slabs and logs on uneven ground need a real underside, not a plane.** The instance plane
+sits at the mesh's lowest vertex, so a tumbled rock resting on flat ground is left where it is at
+`seatPercentile: 0`, but a plane still meets a slope or a lumpy surface at one height across the
+whole footprint — place long or flat props only on ground flat enough for a plane to be fair, and
+dry-run every component before applying. A mesh without CPU-resident LOD0 positions falls back to
+the world-AABB minimum (`contact.boundsPlaneFallback: true`), which sits *below* a rotated prop's
+real lowest point, so a low `seatPercentile` **lifts** it even when it is already bedded.
 
 **The seat verb cannot tilt an instance.** `spatial.ground_instances` has no `alignToSurface` /
 `maxTilt` and seats in Z only, and `scatter_layout` emits pitch and roll of zero. Any lean has to be

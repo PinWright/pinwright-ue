@@ -10,6 +10,7 @@
 class AActor;
 class UInstancedStaticMeshComponent;
 class UPrimitiveComponent;
+class UStaticMesh;
 class UWorld;
 
 // Ground placement: seat an actor on terrain so that it looks BEDDED rather than balanced
@@ -195,8 +196,24 @@ namespace GroundPlacement
         // Flat plane at the actor's world-AABB minimum Z. Cheap and fully deterministic, and
         // wrong for anything whose bottom is not flat - this is the model spatial.
         // place_on_surface uses and the reason a boulder ends up balanced on one point.
-        BoundsPlane
+        BoundsPlane,
+        // Flat plane at the LOWEST LOD0 render vertex under the object's own transform
+        // (LowestVertexZ): spatial.ground_instances' model. Still a plane - an instance's
+        // underside cannot be probed per column (see SeatInstance) - but at the mesh's real bottom
+        // rather than at the floor of its rotation-inflated AABB, so seatPercentile has the same
+        // zero on every instance whatever its tilt. MeasureContactForBounds treats it exactly like
+        // BoundsPlane; the caller writes the lowest vertex into the floor of the box it passes.
+        // Without CPU-resident LOD0 positions the box floor is used and
+        // FGroundContactReport::bUsedBoundsPlaneFallback says so.
+        LowestVertex
     };
+
+    // World Z of the lowest LOD0 render vertex of Mesh under World (rotation, scale and
+    // translation). For a Nanite mesh LOD0 is its fallback mesh, so the answer carries the
+    // fallback's simplification error. Unset when LOD0 holds no CPU-resident positions (no render
+    // data yet, or a cooked mesh without bAllowCPUAccess). One pass over LOD0's positions, no
+    // allocation.
+    TOptional<double> LowestVertexZ(const UStaticMesh* Mesh, const FTransform& World);
 
     // ---- One sampled column ------------------------------------------------------------
 
@@ -497,8 +514,9 @@ namespace GroundPlacement
         FGroundProvenance Provenance;
 
         EUndersideModel UndersideModel = EUndersideModel::MeshProfile;
-        // The mesh-profile probe found no geometry in ANY column and the flat AABB plane was
-        // used instead. Reported because it silently changes what the numbers mean.
+        // The mesh-profile probe found no geometry in ANY column, or under LowestVertex the mesh
+        // had no CPU-resident LOD0 positions, and the flat AABB plane was used instead. Reported
+        // because it silently changes what the numbers mean.
         bool bUsedBoundsPlaneFallback = false;
 
         // The XY half-extent, in cm, the sample grid actually spanned - world-axis-aligned and
@@ -524,11 +542,12 @@ namespace GroundPlacement
 
         // ABSOLUTE world Z of the two terms every gap number is a difference of: the lowest
         // underside sample and the lowest accepted ground over the supported columns. Meaningful
-        // only when SupportedColumns > 0. Under a bounds-plane underside UndersideZCm IS the
-        // plane, and for a pitched or rolled object that plane is the floor of the rotation-
-        // inflated AABB, below the real lowest point of any mesh that does not fill its box's
-        // corners (a rock, a sphere) - publishing it is what lets a caller
-        // see how far, instead of reading maxGapCm = UndersideZ - GroundZ with neither term known.
+        // only when SupportedColumns > 0. Under a plane underside UndersideZCm IS the plane: the
+        // lowest vertex under lowest_vertex, and under bounds_plane the floor of the rotation-
+        // inflated AABB, which for a pitched or rolled object sits below the real lowest point of
+        // any mesh that does not fill its box's corners (a rock, a sphere) - publishing it is what
+        // lets a caller see how far, instead of reading maxGapCm = UndersideZ - GroundZ with
+        // neither term known.
         double UndersideZCm = 0.0;
         double GroundZCm = 0.0;
 
@@ -836,14 +855,15 @@ namespace GroundPlacement
         TOptional<FTransform> ProposedTransform;
         double ProposedDeltaZCm = 0.0;
 
-        // How far the instance's pitch and roll moved its bounds plane DOWN: the floor of the
-        // mesh box at the instance's location and scale with NO rotation, minus the floor of the
-        // world AABB the seat actually solves against. Zero for an upright or yaw-only instance;
-        // positive when the tilt lowered the plane, negative when it raised it (a tall mesh
-        // pivoted at its centre, whose box floor rises as it tilts: 10x10x100 at 20 deg reads -2.6). Measured as a difference of the two floors rather
-        // than of half-heights, so an off-pivot bounds origin is included. The term that makes
-        // one seatPercentile lift one instance and sink its tilted neighbour. Set on every path
-        // that read the instance's transform and mesh.
+        // How far the instance's pitch and roll moved its underside plane DOWN: the plane at the
+        // instance's location and scale with NO rotation, minus the plane the seat actually solves
+        // against, both under the same model - the lowest vertex, or the box floor when the
+        // report carries bUsedBoundsPlaneFallback. Zero for an upright or yaw-only instance and,
+        // under lowest_vertex, for any tilt of a mesh whose lowest point does not move (a
+        // sphere); positive when the tilt lowered the plane (a base-pivot box tipping onto a
+        // corner), negative when it raised it (a tall mesh pivoted at its centre). Measured as a
+        // difference of the two planes rather than of half-heights, so an off-pivot origin is
+        // included. Set on every path that read the instance's transform and mesh.
         TOptional<double> BoundsRotationInflationCm;
     };
 
@@ -853,11 +873,15 @@ namespace GroundPlacement
     // footprint source and the write differ.
     //
     // The footprint is the component's static mesh bounds under the instance's world transform,
-    // and the underside is modelled as that box's bottom PLANE. A mesh-profile underside is not
-    // available per instance: UInstancedStaticMeshComponent::LineTraceComponent answers from every
-    // instance body at once (InstancedStaticMesh.cpp:5442-5444) and cannot attribute a hit, so a
-    // per-column probe would silently measure a NEIGHBOUR's geometry. The report says
-    // bounds_plane, which is the honest label for what was measured.
+    // and the underside is modelled as a PLANE at the mesh's lowest LOD0 vertex under that
+    // transform (EUndersideModel::LowestVertex), falling back to the box's floor, flagged, when
+    // LOD0 has no CPU-resident positions. The box floor alone was the wrong zero: FBox::TransformBy
+    // re-fits an axis-aligned box around the rotated mesh box, so for a pitched or rolled mesh
+    // that does not fill its box's corners it sat below the mesh by a different amount on every
+    // instance. A mesh-profile underside is not available per instance:
+    // UInstancedStaticMeshComponent::LineTraceComponent answers from every instance body at once
+    // (InstancedStaticMesh.cpp:5442-5444) and cannot attribute a hit, so a per-column probe would
+    // silently measure a NEIGHBOUR's geometry.
     //
     // FGroundSeatConfig::ContactRadiusCm overrides the XY span of the sample grid - and ONLY that
     // span: mesh-local cm, scaled here by the instance's own mean XY scale. Without it the grid is

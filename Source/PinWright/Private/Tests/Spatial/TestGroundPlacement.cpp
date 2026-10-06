@@ -367,10 +367,10 @@ namespace
     // 109.7 x 102.8 uu contact patch, 46.7x the area. Built from a primitive rather than from a
     // content asset, because the measured meshes live in a different project.
     //
-    // What the solve reads off this mesh is only its AABB - spatial.ground_instances models every
-    // instance's underside as that box's bottom plane and cannot probe an instance's geometry per
-    // column - so the fixture's job is to separate the two footprints, not to model cone
-    // collision. Instances are placed at LOCAL offsets under a holder at Location, the way a real
+    // What the solve reads off this mesh is its AABB footprint and one underside plane at its
+    // lowest vertex - spatial.ground_instances cannot probe an instance's geometry per column, and
+    // for an unrotated cone that vertex IS the box floor - so the fixture's job is to separate the
+    // two footprints, not to model cone collision. Instances are placed at LOCAL offsets under a holder at Location, the way a real
     // scatter is; the caller fixes each one's world Z afterwards.
     AActor* GroundTestSpawnNarrowContactScatter(FAutomationTestBase& Test, UWorld* World,
                                                 const FString& Label, const FVector& Location,
@@ -415,10 +415,11 @@ namespace
         return Holder;
     }
 
-    // Move one instance so its world AABB minimum lands ExactlyBelowCm under TargetTopZ, using the
-    // SAME box expression the verb solves against (mesh bounds under the instance world transform).
-    // That is what makes "already correctly seated" a fact about the verb's own model rather than
-    // an assumption about the mesh: a solve run against it must propose approximately nothing.
+    // Move one instance so its world AABB minimum lands ExactlyBelowCm under TargetTopZ (mesh
+    // bounds under the instance world transform). For the UNROTATED instances these tests seat,
+    // that floor is the mesh's lowest vertex, i.e. the plane the verb solves against, so "already
+    // correctly seated" is a fact about the verb's own model and a solve against it must propose
+    // approximately nothing. A tilted instance would need GroundPlacement::LowestVertexZ instead.
     bool GroundTestSeatInstanceExactly(UInstancedStaticMeshComponent* Component, int32 Index,
                                        double TargetTopZ, double ExactlyBelowCm)
     {

@@ -15,6 +15,7 @@
 #include "Components/PrimitiveComponent.h"
 #include "Engine/HitResult.h"
 #include "Engine/StaticMesh.h" // UStaticMesh::GetBounds, the per-instance footprint source
+#include "StaticMeshResources.h" // LOD0 positions, the per-instance underside plane
 #include "Engine/World.h"
 #include "EngineUtils.h" // TActorIterator
 #include "GameFramework/Actor.h"
@@ -1091,6 +1092,35 @@ namespace GroundPlacement
 
     // ---- Measurement -------------------------------------------------------------------
 
+    TOptional<double> LowestVertexZ(const UStaticMesh* Mesh, const FTransform& World)
+    {
+        const FStaticMeshRenderData* RenderData = Mesh ? Mesh->GetRenderData() : nullptr;
+        if (!RenderData || RenderData->LODResources.Num() == 0)
+        {
+            return TOptional<double>();
+        }
+        // GetAllowCPUAccess before GetVertexData: a buffer built without CPU access discards its
+        // copy after the RHI upload and the cached data pointer is not cleared with it.
+        const FPositionVertexBuffer& Positions = RenderData->LODResources[0].VertexBuffers.PositionVertexBuffer;
+        const uint32 Count = Positions.GetNumVertices();
+        if (Count == 0 || !Positions.GetAllowCPUAccess() || !Positions.GetVertexData())
+        {
+            return TOptional<double>();
+        }
+        // Only the Z column of the (row-vector) matrix matters: z' = x*M02 + y*M12 + z*M22 + M32.
+        // ponytail: one O(LOD0 vertices) pass per call. The lowest point under any linear map is
+        // always on the convex hull, so precompute a per-mesh hull vertex subset if a large batch
+        // of dense meshes measures slow.
+        const FMatrix M = World.ToMatrixWithScale();
+        double Lowest = TNumericLimits<double>::Max();
+        for (uint32 Index = 0; Index < Count; ++Index)
+        {
+            const FVector3f& P = Positions.VertexPosition(Index);
+            Lowest = FMath::Min(Lowest, P.X * M.M[0][2] + P.Y * M.M[1][2] + P.Z * M.M[2][2]);
+        }
+        return Lowest + M.M[3][2];
+    }
+
     FGroundContactReport MeasureContactForBounds(UWorld* World, const FBox& WorldBounds,
                                                  AActor* UndersideGeometry,
                                                  const TArray<AActor*>& ExtraIgnoreActors,
@@ -1671,12 +1701,37 @@ namespace GroundPlacement
         // The instance's footprint: the mesh's own bounds under the instance's world transform,
         // which carries the instance's rotation and scale. This is the box the holder's
         // GetActorBounds could never produce - that one is the union of every instance.
-        const FBox InstanceBounds = Mesh->GetBounds().GetBox().TransformBy(InstanceWorld);
-        // That box's floor is the underside plane, and pitch or roll moves it: published as the
-        // drop from the same box held upright, so the caller need not re-derive the transform.
-        const FBox UprightBounds = Mesh->GetBounds().GetBox().TransformBy(
-            FTransform(FQuat::Identity, InstanceWorld.GetLocation(), InstanceWorld.GetScale3D()));
-        Result.BoundsRotationInflationCm = UprightBounds.Min.Z - InstanceBounds.Min.Z;
+        const FBox MeshBox = Mesh->GetBounds().GetBox();
+        const FBox InstanceBounds = MeshBox.TransformBy(InstanceWorld);
+
+        // The underside plane is the mesh's LOWEST VERTEX under the instance transform, written
+        // into the floor of the box every measurement below samples. The floor of InstanceBounds
+        // is the wrong zero for a pitched or rolled mesh that does not fill its box's corners:
+        // TransformBy re-fits an axis-aligned box around the rotated one, so that floor sat below
+        // the mesh by a different amount on every instance, and one seatPercentile lifted a
+        // bedded rock and sank its neighbour. XY, top and the embed height stay the box's. With
+        // no CPU-resident LOD0 positions the box floor is kept and every report says so.
+        const auto UndersideBox = [Mesh, &MeshBox](const FTransform& Transform)
+        {
+            FBox Box = MeshBox.TransformBy(Transform);
+            if (const TOptional<double> Lowest = LowestVertexZ(Mesh, Transform))
+            {
+                Box.Min.Z = Lowest.GetValue();
+            }
+            return Box;
+        };
+        const TOptional<double> SolveLowestZ = LowestVertexZ(Mesh, InstanceWorld);
+        const bool bLowestVertex = SolveLowestZ.IsSet();
+        FBox SolveBounds = InstanceBounds;
+        if (bLowestVertex)
+        {
+            SolveBounds.Min.Z = SolveLowestZ.GetValue();
+        }
+        // Pitch and roll move that plane: published as the drop from the same mesh held upright,
+        // so the caller need not re-derive the transform.
+        Result.BoundsRotationInflationCm = UndersideBox(
+            FTransform(FQuat::Identity, InstanceWorld.GetLocation(), InstanceWorld.GetScale3D())).Min.Z
+            - SolveBounds.Min.Z;
 
         // ...and the box the sample grid spans, which is NOT the same question. For a mesh whose
         // contact patch is its silhouette - a rock, a slab, a log - the two coincide and the
@@ -1718,9 +1773,10 @@ namespace GroundPlacement
         PreThresholds.MinContactPoints = 0;
 
         TArray<FGroundColumn> SolveColumns;
-        FGroundContactReport Pre = MeasureContactForBounds(World, InstanceBounds, nullptr, Ignore,
+        FGroundContactReport Pre = MeasureContactForBounds(World, SolveBounds, nullptr, Ignore,
             Surface, Config.GridSize, Config.FootprintInset, ContactHalfExtent,
-            EUndersideModel::BoundsPlane, PreThresholds, &SolveColumns);
+            EUndersideModel::LowestVertex, PreThresholds, &SolveColumns);
+        Pre.bUsedBoundsPlaneFallback = !bLowestVertex;
 
         Result.Seat.Contact = Pre;
         if (!Pre.bPass)
@@ -1836,9 +1892,10 @@ namespace GroundPlacement
         // unchanged. A readback taken over a different box would compare two different questions
         // and the SeatErrorCm below would be meaningless.
         FGroundContactReport Post = MeasureContactForBounds(World,
-            Mesh->GetBounds().GetBox().TransformBy(AppliedWorld), nullptr, Ignore, Surface,
+            UndersideBox(AppliedWorld), nullptr, Ignore, Surface,
             Config.GridSize, Config.FootprintInset, ContactHalfExtent,
-            EUndersideModel::BoundsPlane, PostThresholds, &PostColumns);
+            EUndersideModel::LowestVertex, PostThresholds, &PostColumns);
+        Post.bUsedBoundsPlaneFallback = !bLowestVertex;
 
         // The move was Z-only, so the grids are identical in size and ordering and column i
         // corresponds to column i.
