@@ -2,6 +2,10 @@
 
 ## 1.0.0
 
+- Fixed: `python.execute`'s synchronous-collection warning no longer claims the engine's pre-GC
+  hook skipped its Python gc pass when the script itself called `gc.enable()`. That undoes the
+  collector suspension for the rest of the script, so the warning now says the pass may have run
+  inside the live script.
 - Fixed: `sequence.add_keyframe` and `sequencer.add_keyframes` no longer write part of a transform
   key and report success. Inside a `Transform` value, an unknown key such as a misspelt `rotaton`
   group or a `w` component used to be dropped while the other groups wrote. A non-number component,

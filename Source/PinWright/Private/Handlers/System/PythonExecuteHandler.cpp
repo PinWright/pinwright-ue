@@ -309,6 +309,9 @@ REGISTER_RPC_HANDLER("python.execute", "python", "Execute Python code or a .py f
             [&GarbageCollectionsDuringScript]() { ++GarbageCollectionsDuringScript; });
         const bool bSuccess = Python->ExecPythonCommandEx(Cmd);
         FCoreUObjectDelegates::GetPreGarbageCollectDelegate().Remove(PreGcHandle);
+        // A script that calls gc.enable() undoes the suspension for the rest of its run, so the
+        // warning below must not claim the hook skipped its pass.
+        const bool bScriptReenabledGc = bGcOffForScript && PythonExecuteGcGuard::IsCyclicGcEnabled(*Python);
         const bool bPieActiveDuringExecution =
             bPieActiveBeforeExecution || PinWrightPieState::IsPlayInEditorActive();
 
@@ -374,7 +377,9 @@ REGISTER_RPC_HANDLER("python.execute", "python", "Execute Python code or a .py f
                 TEXT("A collection inside a script has crashed the editor; for MaterialEditingLibrary.recompile_material ")
                 TEXT("use material.authoring.compile_material instead."),
                 GarbageCollectionsDuringScript,
-                bGcOffForScript
+                bScriptReenabledGc
+                    ? TEXT("The script re-enabled Python's cyclic collector (gc.enable()), so the engine's pre-GC hook may have run its gc pass inside the live script; leave the collector off and call gc.collect() before a forced collection instead.")
+                    : bGcOffForScript
                     ? TEXT("Python's cyclic collector was disabled for the script, so the engine's pre-GC hook skipped its gc pass; call gc.collect() before a forced collection if the script needs cycle-held objects released.")
                     : TEXT("Python's cyclic collector could NOT be disabled for this call, so the engine's pre-GC hook ran its gc pass inside the live script.")));
             LogArray.Add(MakeShared<FJsonValueObject>(LogEntry));

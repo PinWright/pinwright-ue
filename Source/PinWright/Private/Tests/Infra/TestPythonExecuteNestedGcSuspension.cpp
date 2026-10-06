@@ -138,3 +138,73 @@ bool FPythonExecuteNestedGcSuspensionTest::RunTest(const FString& Parameters)
         GcEnabledAfter, FString(TEXT("True")));
     return true;
 }
+
+// Issue #65 slice 3: a script that calls gc.enable() turns the suspension off for the rest of its
+// run, so a synchronous collect after that runs the pre-GC gc pass inside the live script. The
+// warning used to say the hook skipped its pass because the collector was off before the script.
+// Counterfactual: drop bScriptReenabledGc from PythonExecuteHandler.cpp and the warning claims
+// the collector "was disabled for the script".
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPythonExecuteScriptReenabledGcWarningTest,
+    "PinWright.python.execute.ScriptThatReenablesGcIsWarnedTruthfully",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FPythonExecuteScriptReenabledGcWarningTest::RunTest(const FString& Parameters)
+{
+    IPythonScriptPlugin* Python = IPythonScriptPlugin::Get();
+    if (!Python || !Python->IsPythonAvailable())
+    {
+        PinWrightTestSkip::SkipAssertions(*this, TEXT("python-interpreter-unavailable"),
+            TEXT("PythonScriptPlugin is not loaded or not available"));
+        return true;
+    }
+
+    TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+    Payload->SetStringField(TEXT("code"),
+        TEXT("import gc, unreal\n")
+        TEXT("gc.enable()\n")
+        TEXT("unreal.SystemLibrary.execute_console_command(None, 'obj gc')\n"));
+
+    FTestResponseCapture Capture;
+    if (!InvokeHandlerWithCapture(TEXT("python.execute"), Payload, Capture))
+    {
+        AddError(TEXT("Handler 'python.execute' not registered"));
+        return false;
+    }
+    if (!Capture.bSuccess || !Capture.Result.IsValid())
+    {
+        if (Capture.ErrorCode == TEXT("PYTHON_NOT_AVAILABLE") ||
+            Capture.ErrorCode == TEXT("PYTHON_INIT_FAILED"))
+        {
+            PinWrightTestSkip::SkipAssertions(*this, TEXT("python-interpreter-unavailable"),
+                FString::Printf(TEXT("python.execute answered %s"), *Capture.ErrorCode));
+            return true;
+        }
+        AddError(FString::Printf(TEXT("python.execute failed (errorCode='%s')"), *Capture.ErrorCode));
+        return false;
+    }
+
+    FString GcWarning;
+    const TArray<TSharedPtr<FJsonValue>>* LogEntries = nullptr;
+    Capture.Result->TryGetArrayField(TEXT("log"), LogEntries);
+    for (const TSharedPtr<FJsonValue>& EntryValue : LogEntries ? *LogEntries : TArray<TSharedPtr<FJsonValue>>())
+    {
+        const TSharedPtr<FJsonObject>* Entry = nullptr;
+        FString Output;
+        if (EntryValue.IsValid() && EntryValue->TryGetObject(Entry) && Entry &&
+            (*Entry)->TryGetStringField(TEXT("output"), Output) &&
+            Output.Contains(TEXT("synchronous garbage collection")))
+        {
+            GcWarning = Output;
+        }
+    }
+
+    if (!TestFalse(TEXT("Precondition: `obj gc` ran a synchronous collect inside the script"), GcWarning.IsEmpty()))
+    {
+        return false;
+    }
+    TestTrue(TEXT("the warning says the script re-enabled the collector"),
+        GcWarning.Contains(TEXT("re-enabled Python's cyclic collector")));
+    TestFalse(TEXT("the warning does not claim the collector was disabled for the script"),
+        GcWarning.Contains(TEXT("was disabled for the script")));
+    return true;
+}
