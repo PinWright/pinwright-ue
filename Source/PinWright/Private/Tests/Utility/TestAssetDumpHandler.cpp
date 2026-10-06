@@ -18,6 +18,8 @@
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Tests/TestUtils.h"
 #include "Tests/Utility/AssetDumpMismatchedNameFixture.h"
+#include "Compat/EngineVersionCompat.h"
+#include "Handlers/Asset/AssetDumpHandlerTestHooks.h"
 #include "Tests/TestSkipReporting.h"
 #include "Tests/AutomationSuiteMaintenance.h"
 #include "Misc/ScopeExit.h"
@@ -1138,6 +1140,11 @@ namespace
     // because the slow async tests now target a single-asset folder.
     int32 DrainFolderDump(int32 MaxTicks = 64)
     {
+        // A release step's collect lands at frame end, which a test body never reaches.
+        PinWrightAssetDumpTestHooks::FOverrides Overrides = PinWrightAssetDumpTestHooks::Get();
+        Overrides.bAbortReleaseGcWait = true;
+        PinWrightAssetDumpTestHooks::FScopedOverrides Hooks(Overrides);
+
         int32 Ticks = 0;
         while (AssetDumpHandler::GetAsyncFolderDumpStatus().bInProgress && Ticks < MaxTicks)
         {
@@ -1518,6 +1525,486 @@ bool FAssetDumpHandlerAsyncSingleWorldDumpPromotesStalledMarkerTest::RunTest(con
     TestTrue(TEXT("The stalled list exists"), FFileHelper::LoadFileToString(StalledList, *StalledListPath));
     TestTrue(TEXT("The stalled list names the planted asset"), StalledList.Contains(PlantedPath));
     TestFalse(TEXT("The world dump itself is not listed"), StalledList.Contains(WorldPath));
+    return true;
+}
+
+// ============================================================================
+// Per-asset bounds (issue F-dump-folder-yieldable-asset-phases). A package that is not in
+// memory loads through LoadPackageAsync across ticks instead of inside one synchronous
+// LoadObject; a load past its timeout is skipped with ASSET_LOAD_TIMEOUT; a dump call that
+// holds the game thread past the slow threshold is listed in slowAssets[]; asset.dump
+// refuses a package the freeze journal lists.
+// ============================================================================
+
+namespace AssetDumpAsyncLoadTestLocal
+{
+    // Saves the mismatched-name fixture (Create scans it into the registry), then detaches the
+    // asset and its package from memory so the next load reads them from disk.
+    //
+    // The detach is a plain rename into the transient package, deliberately NOT
+    // PwTestAssetTeardown::DiscardLoadedAssetNoGc: that calls FAssetRegistryModule::AssetDeleted,
+    // which adds a package left empty to the registry's CachedEmptyPackages
+    // (AssetRegistry.cpp:4416-4419), and every on-disk query skips those packages
+    // (EnumerateDiskAssets, AssetRegistry.cpp:2785) until a directory-watcher change for the
+    // file clears the mark (:8501-8505). ScanFilesSynchronous does not clear it, so the sweep
+    // would see no candidate at all. UObject::Rename does not notify the registry.
+    bool CreateUnloadedFixture(
+        FAutomationTestBase& Test,
+        AssetDumpMismatchedNameFixture::FMismatchedNameAsset& Fixture)
+    {
+        FString Error;
+        if (!AssetDumpMismatchedNameFixture::Create(Fixture, Error))
+        {
+            Test.AddError(FString::Printf(TEXT("Fixture creation failed: %s"), *Error));
+            return false;
+        }
+
+        UMaterialInstanceConstant* Asset = Fixture.Instance;
+        UPackage* Package = Asset->GetOutermost();
+        const ERenameFlags Flags = REN_DontCreateRedirectors | REN_NonTransactional | REN_DoNotDirty
+            | MCP_REN_NO_RESET_LOADERS;
+        Asset->ClearFlags(RF_Public | RF_Standalone);
+        Asset->SetFlags(RF_Transient);
+        Package->SetDirtyFlag(false);
+        Package->ClearFlags(RF_Public | RF_Standalone);
+        Package->SetFlags(RF_Transient);
+        const bool bDetached =
+            Asset->Rename(*MakeUniqueObjectName(GetTransientPackage(), Asset->GetClass(), Asset->GetFName()).ToString(),
+                GetTransientPackage(), Flags)
+            && Package->Rename(*MakeUniqueObjectName(GetTransientPackage(), UPackage::StaticClass(), Package->GetFName()).ToString(),
+                GetTransientPackage(), Flags);
+        Fixture.Instance = nullptr;
+        if (!bDetached)
+        {
+            Test.AddError(TEXT("Fixture precondition: could not detach the saved package from memory."));
+            return false;
+        }
+
+        TArray<FAssetData> Rows;
+        IAssetRegistry::GetChecked().GetAssetsByPath(FName(*Fixture.FolderPath), Rows, /*bRecursive=*/false);
+        return Test.TestNull(TEXT("Fixture precondition: the package is not in memory"),
+                   FindPackage(nullptr, *Fixture.PackagePath))
+            && Test.TestEqual(TEXT("Fixture precondition: the registry lists the saved package"), Rows.Num(), 1);
+    }
+
+    // An abandoned load keeps running; finish it before the fixture file is deleted.
+    void CleanupFixture(AssetDumpMismatchedNameFixture::FMismatchedNameAsset& Fixture)
+    {
+        FlushAsyncLoading();
+        AssetDumpMismatchedNameFixture::Cleanup(Fixture);
+    }
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpHandlerAsyncFolderDumpUnloadedPackageLoadsAcrossTicksTest,
+    "PinWright.asset.dump.AsyncFolderDump.UnloadedPackageLoadsAcrossTicks",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetDumpHandlerAsyncFolderDumpUnloadedPackageLoadsAcrossTicksTest::RunTest(const FString& Parameters)
+{
+    AssetDumpMismatchedNameFixture::FMismatchedNameAsset Fixture;
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
+        / TEXT("AssetDumpHandlerTests") / FGuid::NewGuid().ToString();
+    ON_SCOPE_EXIT
+    {
+        DrainFolderDump();
+        AssetDumpAsyncLoadTestLocal::CleanupFixture(Fixture);
+        IFileManager::Get().DeleteDirectory(*ScratchRoot, /*RequireExists=*/false, /*Tree=*/true);
+    };
+    if (!AssetDumpAsyncLoadTestLocal::CreateUnloadedFixture(*this, Fixture))
+    {
+        return false;
+    }
+
+    FString JobTicketId;
+    {
+        // The load cannot progress: the sweep must hand every tick back while it waits.
+        PinWrightAssetDumpTestHooks::FOverrides Overrides;
+        Overrides.bSkipAsyncLoadPump = true;
+        PinWrightAssetDumpTestHooks::FScopedOverrides Hooks(Overrides);
+
+        const AssetDumpHandler::FFolderDumpStart Start = AssetDumpHandler::StartAsyncFolderDump(
+            Fixture.FolderPath, /*bRecursive=*/false, ScratchRoot,
+            /*bIncludeLevels=*/false, /*bIncludeWidgetScreenshot=*/false, /*bForce=*/true);
+        if (!TestTrue(TEXT("Start must succeed"), Start.ErrorCode.IsEmpty())
+            || !TestEqual(TEXT("One package queued"), Start.QueuedCount, 1))
+        {
+            return false;
+        }
+        JobTicketId = AttachFolderDumpJobTicket();
+
+        for (int32 Tick = 0; Tick < 4; ++Tick)
+        {
+            FTSTicker::GetCoreTicker().Tick(0.01f);
+        }
+
+        // Counterfactual: with the synchronous LoadObject the first tick loads, dumps and
+        // finalizes the one-asset sweep, so it is no longer in progress here.
+        const AssetDumpHandler::FFolderDumpStatus Status = AssetDumpHandler::GetAsyncFolderDumpStatus();
+        TestTrue(TEXT("The sweep is still running while its package loads"), Status.bInProgress);
+        TestEqual(TEXT("Progress names the loading phase"), Status.CurrentPhase, FString(TEXT("loading")));
+        TestEqual(TEXT("Progress names the loading asset"), Status.CurrentAsset, Fixture.ObjectPath);
+        TestFalse(TEXT("The freeze journal brackets synchronous calls only, not the wait between ticks"),
+            IFileManager::Get().FileExists(*AssetDumpHandler::GetInFlightDumpMarkerPath(ScratchRoot)));
+    }
+
+    TestTrue(TEXT("Once the loader is pumped the sweep completes"), DrainFolderDump() < 64);
+    FJobTicket Ticket;
+    if (TestTrue(TEXT("The job has a result"),
+            FPluginState::Get().GetJobRegistry().Get(JobTicketId, Ticket) && Ticket.Result.IsValid()))
+    {
+        TestEqual(TEXT("The loaded package is dumped"), Ticket.Result->GetIntegerField(TEXT("dumped")), 1);
+        TestEqual(TEXT("Nothing is skipped"), Ticket.Result->GetIntegerField(TEXT("skipCount")), 0);
+    }
+    TestTrue(TEXT("meta.json written for the loaded package"), IFileManager::Get().FileExists(
+        *(AssetDumpWriter::ResolveDumpDir(Fixture.PackagePath, ScratchRoot) / DumpFileNames::Meta)));
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpHandlerAsyncFolderDumpLoadTimeoutSkipsAssetTest,
+    "PinWright.asset.dump.AsyncFolderDump.LoadTimeoutSkipsAsset",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetDumpHandlerAsyncFolderDumpLoadTimeoutSkipsAssetTest::RunTest(const FString& Parameters)
+{
+    AssetDumpMismatchedNameFixture::FMismatchedNameAsset Fixture;
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
+        / TEXT("AssetDumpHandlerTests") / FGuid::NewGuid().ToString();
+    ON_SCOPE_EXIT
+    {
+        DrainFolderDump();
+        AssetDumpAsyncLoadTestLocal::CleanupFixture(Fixture);
+        IFileManager::Get().DeleteDirectory(*ScratchRoot, /*RequireExists=*/false, /*Tree=*/true);
+    };
+    if (!AssetDumpAsyncLoadTestLocal::CreateUnloadedFixture(*this, Fixture))
+    {
+        return false;
+    }
+
+    {
+        // A load that never progresses, and a timeout that has already expired.
+        PinWrightAssetDumpTestHooks::FOverrides Overrides;
+        Overrides.bSkipAsyncLoadPump = true;
+        Overrides.AsyncLoadTimeoutSeconds = 0.0;
+        PinWrightAssetDumpTestHooks::FScopedOverrides Hooks(Overrides);
+
+        const AssetDumpHandler::FFolderDumpStart Start = AssetDumpHandler::StartAsyncFolderDump(
+            Fixture.FolderPath, /*bRecursive=*/false, ScratchRoot,
+            /*bIncludeLevels=*/false, /*bIncludeWidgetScreenshot=*/false, /*bForce=*/true);
+        if (!TestTrue(TEXT("Start must succeed"), Start.ErrorCode.IsEmpty()))
+        {
+            return false;
+        }
+        FJobTicket Ticket;
+        if (!TestTrue(TEXT("The sweep completes instead of waiting on the load"), CompleteCurrentFolderDump(Ticket)))
+        {
+            return false;
+        }
+
+        // Counterfactual: with the synchronous LoadObject the asset is dumped (dumped=1,
+        // skipCount=0) and no ASSET_LOAD_TIMEOUT skip exists.
+        TestEqual(TEXT("Nothing is dumped"), Ticket.Result->GetIntegerField(TEXT("dumped")), 0);
+        TestEqual(TEXT("The asset is skipped"), Ticket.Result->GetIntegerField(TEXT("skipCount")), 1);
+        TestEqual(TEXT("The timeout is counted"), Ticket.Result->GetIntegerField(TEXT("loadTimeoutCount")), 1);
+        const TArray<TSharedPtr<FJsonValue>>* Skipped = nullptr;
+        if (TestTrue(TEXT("Result lists skipped assets"), Ticket.Result->TryGetArrayField(TEXT("skipped"), Skipped))
+            && TestEqual(TEXT("One skip entry"), Skipped->Num(), 1))
+        {
+            const TSharedPtr<FJsonObject> Entry = (*Skipped)[0]->AsObject();
+            TestEqual(TEXT("Skip names the asset"), Entry->GetStringField(TEXT("assetPath")), Fixture.ObjectPath);
+            TestEqual(TEXT("Skip carries ASSET_LOAD_TIMEOUT"), Entry->GetStringField(TEXT("code")),
+                FString(AssetDumpErrorCodes::AssetLoadTimeout));
+        }
+        TestEqual(TEXT("No dump is written for a timed-out load"),
+            FindFilesNamed(ScratchRoot, DumpFileNames::Meta).Num(), 0);
+        TestFalse(TEXT("No in-flight marker is left behind"),
+            IFileManager::Get().FileExists(*AssetDumpHandler::GetInFlightDumpMarkerPath(ScratchRoot)));
+        TestFalse(TEXT("A timeout is not journaled as a freeze"),
+            IFileManager::Get().FileExists(*AssetDumpHandler::GetStalledDumpListPath(ScratchRoot)));
+    }
+
+    // The abandoned load finishes on its own; the next sweep dumps the asset.
+    FlushAsyncLoading();
+    const AssetDumpHandler::FFolderDumpStart Retry = AssetDumpHandler::StartAsyncFolderDump(
+        Fixture.FolderPath, /*bRecursive=*/false, ScratchRoot,
+        /*bIncludeLevels=*/false, /*bIncludeWidgetScreenshot=*/false, /*bForce=*/true);
+    TestTrue(TEXT("Retry start must succeed"), Retry.ErrorCode.IsEmpty());
+    FJobTicket RetryTicket;
+    if (TestTrue(TEXT("Retry sweep completes"), CompleteCurrentFolderDump(RetryTicket)))
+    {
+        TestEqual(TEXT("The retry dumps the asset"), RetryTicket.Result->GetIntegerField(TEXT("dumped")), 1);
+    }
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpHandlerAsyncFolderDumpSlowAssetIsReportedTest,
+    "PinWright.asset.dump.AsyncFolderDump.SlowAssetIsReported",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetDumpHandlerAsyncFolderDumpSlowAssetIsReportedTest::RunTest(const FString& Parameters)
+{
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
+        / TEXT("AssetDumpHandlerTests") / FGuid::NewGuid().ToString();
+    ON_SCOPE_EXIT
+    {
+        IFileManager::Get().DeleteDirectory(*ScratchRoot, /*RequireExists=*/false, /*Tree=*/true);
+    };
+
+    // Resident first, so the sweep dumps it directly and lists only the dump call; the
+    // load's own entry is covered by SlowLoadIsReported.
+    TArray<FAssetData> Assets;
+    IAssetRegistry::GetChecked().GetAssetsByPath(FName(AsyncDumpTestFolder), Assets, /*bRecursive=*/false);
+    if (!TestEqual(TEXT("Fixture precondition: one registry row"), Assets.Num(), 1)
+        || !TestNotNull(TEXT("Fixture precondition: the asset loads"),
+            LoadObject<UObject>(nullptr, *Assets[0].GetObjectPathString())))
+    {
+        return false;
+    }
+
+    for (const bool bEveryAssetIsSlow : {true, false})
+    {
+        PinWrightAssetDumpTestHooks::FOverrides Overrides;
+        Overrides.SlowAssetThresholdSeconds = bEveryAssetIsSlow ? 0.0 : -1.0;
+        PinWrightAssetDumpTestHooks::FScopedOverrides Hooks(Overrides);
+
+        const AssetDumpHandler::FFolderDumpStart Start = AssetDumpHandler::StartAsyncFolderDump(
+            AsyncDumpTestFolder, /*bRecursive=*/false, ScratchRoot,
+            /*bIncludeLevels=*/false, /*bIncludeWidgetScreenshot=*/false, /*bForce=*/true);
+        if (!TestTrue(TEXT("Start must succeed"), Start.ErrorCode.IsEmpty())
+            || !TestEqual(TEXT("Fixture precondition: one package queued"), Start.QueuedCount, 1))
+        {
+            DrainFolderDump();
+            return false;
+        }
+        FJobTicket Ticket;
+        if (!TestTrue(TEXT("Sweep completes"), CompleteCurrentFolderDump(Ticket)))
+        {
+            return false;
+        }
+
+        // Counterfactual: before the fix the result has no slowAssets field at all.
+        const TArray<TSharedPtr<FJsonValue>>* SlowAssets = nullptr;
+        if (!TestTrue(TEXT("Result lists slowAssets"), Ticket.Result->TryGetArrayField(TEXT("slowAssets"), SlowAssets)))
+        {
+            return false;
+        }
+        if (!bEveryAssetIsSlow)
+        {
+            TestEqual(TEXT("A quick dump is not listed under the production threshold"), SlowAssets->Num(), 0);
+            continue;
+        }
+        if (!TestEqual(TEXT("The dumped asset is listed at a zero threshold"), SlowAssets->Num(), 1))
+        {
+            return false;
+        }
+        const TSharedPtr<FJsonObject> Slow = (*SlowAssets)[0]->AsObject();
+        TestTrue(TEXT("Entry names the asset under the swept folder"),
+            Slow->GetStringField(TEXT("assetPath")).StartsWith(FString(AsyncDumpTestFolder) + TEXT("/")));
+        const FString Phase = Slow->GetStringField(TEXT("phase"));
+        TestTrue(TEXT("Entry names a dump phase"),
+            Phase == TEXT("loading") || Phase == TEXT("building") || Phase == TEXT("writing"));
+        const double Elapsed = Slow->GetNumberField(TEXT("elapsedSeconds"));
+        const double PhaseSeconds = Slow->GetNumberField(TEXT("phaseSeconds"));
+        TestTrue(TEXT("Phase time is non-negative"), PhaseSeconds >= 0.0);
+        TestTrue(TEXT("Phase time fits inside the asset's time"), PhaseSeconds <= Elapsed);
+    }
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpHandlerAsyncFolderDumpSlowLoadIsReportedTest,
+    "PinWright.asset.dump.AsyncFolderDump.SlowLoadIsReported",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetDumpHandlerAsyncFolderDumpSlowLoadIsReportedTest::RunTest(const FString& Parameters)
+{
+    AssetDumpMismatchedNameFixture::FMismatchedNameAsset Fixture;
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
+        / TEXT("AssetDumpHandlerTests") / FGuid::NewGuid().ToString();
+    ON_SCOPE_EXIT
+    {
+        DrainFolderDump();
+        AssetDumpAsyncLoadTestLocal::CleanupFixture(Fixture);
+        IFileManager::Get().DeleteDirectory(*ScratchRoot, /*RequireExists=*/false, /*Tree=*/true);
+    };
+    if (!AssetDumpAsyncLoadTestLocal::CreateUnloadedFixture(*this, Fixture))
+    {
+        return false;
+    }
+
+    PinWrightAssetDumpTestHooks::FOverrides Overrides;
+    Overrides.SlowAssetThresholdSeconds = 0.0;
+    PinWrightAssetDumpTestHooks::FScopedOverrides Hooks(Overrides);
+
+    const AssetDumpHandler::FFolderDumpStart Start = AssetDumpHandler::StartAsyncFolderDump(
+        Fixture.FolderPath, /*bRecursive=*/false, ScratchRoot,
+        /*bIncludeLevels=*/false, /*bIncludeWidgetScreenshot=*/false, /*bForce=*/true);
+    if (!TestTrue(TEXT("Start must succeed"), Start.ErrorCode.IsEmpty()))
+    {
+        return false;
+    }
+    FJobTicket Ticket;
+    if (!TestTrue(TEXT("Sweep completes"), CompleteCurrentFolderDump(Ticket)))
+    {
+        return false;
+    }
+    TestEqual(TEXT("The package is dumped"), Ticket.Result->GetIntegerField(TEXT("dumped")), 1);
+
+    // Counterfactual: without pump timing only the dump call is listed, and its "loading"
+    // part is a lookup of an object the pump already loaded.
+    const TArray<TSharedPtr<FJsonValue>>* SlowAssets = nullptr;
+    if (!TestTrue(TEXT("Result lists slowAssets"), Ticket.Result->TryGetArrayField(TEXT("slowAssets"), SlowAssets))
+        || !TestEqual(TEXT("At a zero threshold the load and the dump call are each listed"), SlowAssets->Num(), 2))
+    {
+        return false;
+    }
+    bool bFoundLoad = false;
+    for (const TSharedPtr<FJsonValue>& Value : *SlowAssets)
+    {
+        const TSharedPtr<FJsonObject> Slow = Value->AsObject();
+        TestEqual(TEXT("Entry names the fixture"), Slow->GetStringField(TEXT("assetPath")), Fixture.ObjectPath);
+        if (Slow->GetStringField(TEXT("phase")) == TEXT("loading")
+            && Slow->GetNumberField(TEXT("phaseSeconds")) == Slow->GetNumberField(TEXT("elapsedSeconds")))
+        {
+            bFoundLoad = true;
+        }
+    }
+    TestTrue(TEXT("The load is listed by its longest pump"), bFoundLoad);
+    return true;
+}
+
+// Issue #370: the sweep finalized in the tick that emptied its queue, so the Final release
+// step never ran and its last loads stayed resident.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpHandlerAsyncFolderDumpFinalReleaseRunsBeforeFinalizeTest,
+    "PinWright.asset.dump.AsyncFolderDump.FinalReleaseRunsBeforeFinalize",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetDumpHandlerAsyncFolderDumpFinalReleaseRunsBeforeFinalizeTest::RunTest(const FString& Parameters)
+{
+    AssetDumpMismatchedNameFixture::FMismatchedNameAsset Fixture;
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
+        / TEXT("AssetDumpHandlerTests") / FGuid::NewGuid().ToString();
+    ON_SCOPE_EXIT
+    {
+        DrainFolderDump();
+        AssetDumpAsyncLoadTestLocal::CleanupFixture(Fixture);
+        IFileManager::Get().DeleteDirectory(*ScratchRoot, /*RequireExists=*/false, /*Tree=*/true);
+    };
+    // The sweep itself must load the package, or it is not the sweep's to release.
+    if (!AssetDumpAsyncLoadTestLocal::CreateUnloadedFixture(*this, Fixture))
+    {
+        return false;
+    }
+
+    const AssetDumpHandler::FFolderDumpStart Start = AssetDumpHandler::StartAsyncFolderDump(
+        Fixture.FolderPath, /*bRecursive=*/false, ScratchRoot,
+        /*bIncludeLevels=*/false, /*bIncludeWidgetScreenshot=*/false, /*bForce=*/true);
+    if (!TestTrue(TEXT("Start must succeed"), Start.ErrorCode.IsEmpty()))
+    {
+        return false;
+    }
+    FJobTicket Ticket;
+    if (!TestTrue(TEXT("Sweep completes"), CompleteCurrentFolderDump(Ticket)))
+    {
+        return false;
+    }
+
+    // Counterfactual: finalizing in the tick that dumped the last asset reports 0 and 0.
+    TestEqual(TEXT("The package is dumped"), Ticket.Result->GetIntegerField(TEXT("dumped")), 1);
+    TestEqual(TEXT("The Final release step ran once"), Ticket.Result->GetIntegerField(TEXT("releaseStepCount")), 1);
+    TestEqual(TEXT("It released the package the sweep loaded"),
+        Ticket.Result->GetIntegerField(TEXT("releasedPackageCount")), 1);
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpHandlerSyncDumpRefusesStalledPackageTest,
+    "PinWright.asset.dump.SyncDump.RefusesStalledPackage",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetDumpHandlerSyncDumpRefusesStalledPackageTest::RunTest(const FString& Parameters)
+{
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
+        / TEXT("AssetDumpHandlerTests") / FGuid::NewGuid().ToString();
+    ON_SCOPE_EXIT
+    {
+        IFileManager::Get().DeleteDirectory(*ScratchRoot, /*RequireExists=*/false, /*Tree=*/true);
+    };
+    TArray<FAssetData> Assets;
+    IAssetRegistry::GetChecked().GetAssetsByPath(FName(AsyncDumpTestFolder), Assets, /*bRecursive=*/false);
+    if (!TestEqual(TEXT("Fixture precondition: one registry row"), Assets.Num(), 1))
+    {
+        return false;
+    }
+    const FString PackagePath = Assets[0].PackageName.ToString();
+    const FString MarkerPath = AssetDumpHandler::GetInFlightDumpMarkerPath(ScratchRoot);
+    const FString StalledListPath = AssetDumpHandler::GetStalledDumpListPath(ScratchRoot);
+
+    // A leftover marker from a different asset is promoted, this dump succeeds, and its own
+    // journal entry is gone once it returns.
+    const FString PlantedPath = TEXT("/Game/PinWrightTests/StalledProbe/SM_Stalled.SM_Stalled");
+    TestTrue(TEXT("Write the leftover in-flight marker"), FFileHelper::SaveStringToFile(PlantedPath, *MarkerPath));
+    {
+        FTestResponseCapture Capture;
+        TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+        Payload->SetStringField(TEXT("assetPath"), PackagePath);
+        Payload->SetStringField(TEXT("outRoot"), ScratchRoot);
+        TestTrue(TEXT("asset.dump is dispatched"), InvokeHandlerWithCapture(TEXT("asset.dump"), Payload, Capture));
+        TestTrue(TEXT("A package that is not listed dumps"), Capture.bSuccess);
+    }
+    TestFalse(TEXT("The synchronous dump leaves no marker behind"), IFileManager::Get().FileExists(*MarkerPath));
+    FString StalledList;
+    TestTrue(TEXT("The stalled list exists"), FFileHelper::LoadFileToString(StalledList, *StalledListPath));
+    TestTrue(TEXT("The leftover marker was promoted"), StalledList.Contains(PlantedPath));
+
+    // A listed package is refused instead of loaded again. Counterfactual: before the fix
+    // asset.dump never read the list and this call succeeds.
+    TestTrue(TEXT("List the swept package"), FFileHelper::SaveStringToFile(
+        Assets[0].GetObjectPathString() + LINE_TERMINATOR, *StalledListPath,
+        FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM, &IFileManager::Get(), FILEWRITE_Append));
+    {
+        FTestResponseCapture Capture;
+        TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+        Payload->SetStringField(TEXT("assetPath"), PackagePath);
+        Payload->SetStringField(TEXT("outRoot"), ScratchRoot);
+        TestTrue(TEXT("asset.dump is dispatched"), InvokeHandlerWithCapture(TEXT("asset.dump"), Payload, Capture));
+        TestFalse(TEXT("A listed package is refused"), Capture.bSuccess);
+        TestEqual(TEXT("Refusal carries ASSET_DUMP_STALLED"), Capture.ErrorCode,
+            FString(AssetDumpErrorCodes::AssetDumpStalled));
+        TestTrue(TEXT("Refusal names the stalled list"), Capture.Message.Contains(TEXT("dump-stalled.txt")));
+    }
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetDumpHandlerAsyncSingleWorldDumpRefusesStalledPackageTest,
+    "PinWright.asset.dump.AsyncSingleWorldDump.RefusesStalledPackage",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FAssetDumpHandlerAsyncSingleWorldDumpRefusesStalledPackageTest::RunTest(const FString& Parameters)
+{
+    const FString WorldPath = TEXT("/Engine/Maps/Entry");
+    if (!AssetDumpHandler::IsWorldAssetPath(WorldPath))
+    {
+        PinWrightTestSkip::SkipAssertions(*this, TEXT("fixture-unavailable"),
+            TEXT("/Engine/Maps/Entry is not available as a UWorld in this configuration."));
+        return true;
+    }
+
+    const FString ScratchRoot = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir())
+        / TEXT("AssetDumpHandlerTests") / FGuid::NewGuid().ToString();
+    ON_SCOPE_EXIT
+    {
+        IFileManager::Get().DeleteDirectory(*ScratchRoot, /*RequireExists=*/false, /*Tree=*/true);
+    };
+    TestTrue(TEXT("List the world package"), FFileHelper::SaveStringToFile(
+        WorldPath + LINE_TERMINATOR, *AssetDumpHandler::GetStalledDumpListPath(ScratchRoot)));
+
+    // Counterfactual: before the fix the world dump starts and loads the listed package.
+    const AssetDumpHandler::FSingleAssetDumpStart Start =
+        AssetDumpHandler::StartAsyncSingleAssetDump(WorldPath, ScratchRoot, /*bDiff=*/false);
+    TestEqual(TEXT("A listed world is refused"), Start.ErrorCode, FString(AssetDumpErrorCodes::AssetDumpStalled));
+    TestFalse(TEXT("No dump job is started"), AssetDumpHandler::GetAsyncFolderDumpStatus().bInProgress);
+    if (Start.ErrorCode.IsEmpty())
+    {
+        DrainFolderDump();
+    }
     return true;
 }
 

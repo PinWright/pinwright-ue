@@ -2,6 +2,25 @@
 
 ## 1.0.0
 
+- Changed: `asset.dump_folder` and level `asset.dump` jobs no longer load a package that is not
+  in memory inside one synchronous call. They load it with `LoadPackageAsync`, pump the loader for
+  about 50 ms per tick (one load step cannot be split, so a single heavy step can run longer), and
+  publish `currentPhase: "loading"` meanwhile, so the editor, progress, `system.job_status` and
+  Cancel stay live during a heavy load. New skip code `ASSET_LOAD_TIMEOUT`: a load that has not
+  finished after 120 seconds of loading (time spent pumping it, not wall time; or after 1200
+  seconds on the wall clock, which still ends a load while async loading is suspended) is skipped, writing
+  nothing and keeping any prior dump, and counted in the new `loadTimeoutCount`. New folder-result
+  field `slowAssets[]` (`assetPath`, `elapsedSeconds`, `phase` = `loading` | `building` |
+  `writing`, `phaseSeconds`) lists every synchronous call that held the editor for 5 seconds or
+  more: an asset's longest load pump (`phase: "loading"`) and its dump call are listed separately.
+  The property/sidecar build and the write are still one synchronous call per asset.
+- Changed: `asset.dump` now refuses a package listed in `<dump root>/dump-stalled.txt` with
+  `ASSET_DUMP_STALLED` (delete the line to retry), and a non-level `asset.dump` now journals its
+  own call in `.dump-inflight.tmp`, so a freeze inside it is listed for later dumps too.
+- Fixed: a completed `asset.dump_folder` sweep no longer leaves the packages it loaded since its
+  last release step resident. It finalized in the tick that dumped its last asset, so the `final`
+  release step never ran; it now runs before the job completes, which adds that step's compilation
+  drain and collect (at most 60 s) to the end of every sweep that loaded anything.
 - Fixed: `python.execute`'s synchronous-collection warning no longer claims the engine's pre-GC
   hook skipped its Python gc pass when the script itself called `gc.enable()`. That undoes the
   collector suspension for the rest of the script, so the warning now says the pass may have run

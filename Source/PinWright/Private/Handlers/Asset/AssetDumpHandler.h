@@ -75,6 +75,8 @@ namespace AssetDumpErrorCodes
     inline constexpr const TCHAR* AssetCompileTimeout = TEXT("ASSET_COMPILE_TIMEOUT");
     // A previous dump of this package never returned (the editor froze, crashed or was killed inside it).
     inline constexpr const TCHAR* AssetDumpStalled = TEXT("ASSET_DUMP_STALLED");
+    // The async-dump ticker's package load did not complete within AsyncLoadTimeoutSeconds.
+    inline constexpr const TCHAR* AssetLoadTimeout = TEXT("ASSET_LOAD_TIMEOUT");
     inline constexpr const TCHAR* NotSupported     = TEXT("NOT_SUPPORTED");
 }
 
@@ -91,6 +93,11 @@ namespace AssetDumpHandler
         // Cooperative async sweeps may return before writing when an asset's
         // platform data is still compiling. No arbitrary UObject work is preempted.
         bool bDeferredForCompilation = false;
+
+        // The longest of this call's synchronous phases ("loading", "building", "writing")
+        // and its wall time; the folder sweep reports it in slowAssets[].
+        FString SlowestPhase;
+        double  SlowestPhaseSeconds = 0.0;
 
         // The widget-preview aspect (preview.png) is opt-in AND only runs for
         // UWidgetBlueprint assets, so the two alpha facts carry a "did it run" gate rather
@@ -146,12 +153,28 @@ namespace AssetDumpHandler
         int32 PendingCount,
         int32 Backlog = DeferredRequeueBacklog);
 
-    // Freeze/crash journal. The ticker cannot preempt a synchronous asset dump, so the
-    // sweep writes the object path it is entering to <dump root>/.dump-inflight.tmp and
-    // deletes the file when the dump returns. A leftover marker means the process stopped
-    // (froze, crashed or was killed) inside that dump: the next async dump appends it to
-    // <dump root>/dump-stalled.txt, and folder sweeps skip every package listed there
-    // with ASSET_DUMP_STALLED.
+    // The async dump ticker loads a package that is not yet in memory with LoadPackageAsync
+    // and pumps the loader at most AsyncLoadPumpSliceSeconds per tick, so the editor keeps
+    // ticking while a heavy package loads (one load step cannot be split, so a pump can run
+    // past the slice). A load still incomplete after AsyncLoadTimeoutSeconds of pumping is
+    // abandoned: the asset is skipped with ASSET_LOAD_TIMEOUT and nothing is written for it.
+    inline constexpr double AsyncLoadTimeoutSeconds = 120.0;
+    // Pumped time stops counting while async loading is suspended, so a load is also ended
+    // with ASSET_LOAD_TIMEOUT once this multiple of the timeout has passed on the wall clock.
+    inline constexpr double AsyncLoadWallClockBackstopFactor = 10.0;
+    inline constexpr double AsyncLoadPumpSliceSeconds = 0.05;
+
+    // A synchronous per-asset dump call that holds the game thread at least this long is
+    // listed in the folder result's slowAssets[] with its slowest phase.
+    inline constexpr double SlowAssetThresholdSeconds = 5.0;
+
+    // Freeze/crash journal. The ticker cannot preempt a synchronous engine call, so the
+    // sweep (and synchronous asset.dump) writes the object path it is entering to
+    // <dump root>/.dump-inflight.tmp around each synchronous load pump and dump call, and
+    // deletes the file when the call returns. A leftover marker means the process stopped
+    // (froze, crashed or was killed) inside that call: the next dump appends it to
+    // <dump root>/dump-stalled.txt, folder sweeps skip every package listed there with
+    // ASSET_DUMP_STALLED, and asset.dump refuses them with that code.
     PINWRIGHT_API FString GetInFlightDumpMarkerPath(const FString& OutRoot);
     PINWRIGHT_API FString GetStalledDumpListPath(const FString& OutRoot);
     // Moves a leftover in-flight marker into the stalled list, then returns the listed

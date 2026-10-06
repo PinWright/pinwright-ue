@@ -34,6 +34,32 @@ struct FAsyncDumpSkip
     FString Message;
 };
 
+// An asset whose synchronous dump held the game thread past the slow-asset threshold.
+struct FAsyncDumpSlowAsset
+{
+    FString AssetPath;
+    double  ElapsedSeconds = 0.0;
+    FString Phase;
+    double  PhaseSeconds = 0.0;
+};
+
+// One LoadPackageAsync request issued before an asset's synchronous dump. Shared with the
+// completion delegate, so a sweep that ends or is cancelled while the load still runs
+// leaves the delegate a live object to write to.
+struct FAsyncDumpLoad
+{
+    FString ObjectPath;
+    bool    bDone = false;
+    // Time this sweep spent pumping the loader for it, and the longest single pump. The
+    // timeout counts the first, so a throttled editor ticking rarely does not time out a
+    // load that got little loading time.
+    double  PumpedSeconds = 0.0;
+    double  LongestPumpSeconds = 0.0;
+    // Wall-clock start, for the backstop that still ends a load nothing can pump (async
+    // loading suspended).
+    double  StartedSeconds = 0.0;
+};
+
 struct FAsyncFolderDumpState
 {
     EAsyncAssetDumpKind Kind = EAsyncAssetDumpKind::None;
@@ -71,6 +97,18 @@ struct FAsyncFolderDumpState
     TSet<FString>   LiveDumpDirs;
     // Package names from the dump root's dump-stalled.txt; folder sweeps skip them.
     TSet<FString>   StalledPackages;
+    // The entry whose package is loading asynchronously; the sweep yields its ticks until
+    // the load completes or times out.
+    FPendingDumpEntry LoadingEntry;
+    TSharedPtr<FAsyncDumpLoad> ActiveLoad;
+    // Timed-out loads still running in the loader. No release step runs while one is in
+    // flight: its FlushAsyncLoading would block on the load the timeout gave up on.
+    TArray<TSharedPtr<FAsyncDumpLoad>> AbandonedLoads;
+    int32 LoadTimeoutCount = 0;
+    TArray<FAsyncDumpSlowAsset> SlowAssets;
+    // Set once the end-of-sweep (Final) release step has run; the sweep finalizes only
+    // after it, so its last loads are not left resident.
+    bool  bFinalReleaseDone = false;
     // Packages this sweep brought into memory itself (absent from memory when the
     // sweep reached them). The release step unloads only these, so packages the user,
     // the editor world or an open asset editor already had resident are never touched.

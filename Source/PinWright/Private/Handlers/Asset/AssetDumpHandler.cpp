@@ -3,6 +3,7 @@
 #include "Handlers/Asset/AssetDumpHandler.h"
 #include "Handlers/Asset/AssetDumpCache.h"
 #include "Handlers/Asset/AssetDumpHandlerInternal.h"
+#include "Handlers/Asset/AssetDumpHandlerTestHooks.h"
 #include "Handlers/HandlerRegistration.h"
 #include "Handlers/HandlerContext.h"
 #include "Handlers/ParamSpec.h"
@@ -205,6 +206,120 @@ private:
     TSharedPtr<STextBlock> StatusText;
     TSharedPtr<STextBlock> AssetText;
 };
+
+namespace AssetDumpHandlerLocal
+{
+    double GetAsyncLoadTimeoutSeconds()
+    {
+#if WITH_DEV_AUTOMATION_TESTS
+        if (PinWrightAssetDumpTestHooks::Get().AsyncLoadTimeoutSeconds >= 0.0)
+        {
+            return PinWrightAssetDumpTestHooks::Get().AsyncLoadTimeoutSeconds;
+        }
+#endif
+        return AssetDumpHandler::AsyncLoadTimeoutSeconds;
+    }
+
+    double GetSlowAssetThresholdSeconds()
+    {
+#if WITH_DEV_AUTOMATION_TESTS
+        if (PinWrightAssetDumpTestHooks::Get().SlowAssetThresholdSeconds >= 0.0)
+        {
+            return PinWrightAssetDumpTestHooks::Get().SlowAssetThresholdSeconds;
+        }
+#endif
+        return AssetDumpHandler::SlowAssetThresholdSeconds;
+    }
+
+    bool ShouldPumpAsyncLoad()
+    {
+#if WITH_DEV_AUTOMATION_TESTS
+        if (PinWrightAssetDumpTestHooks::Get().bSkipAsyncLoadPump)
+        {
+            return false;
+        }
+#endif
+        // ProcessAsyncLoadingUntilComplete is fatal while loading is suspended
+        // (AsyncLoading2.cpp, ProcessLoadingUntilCompleteFromGameThread).
+        return !IsAsyncLoadingSuspended();
+    }
+
+    // Brackets one synchronous engine call (a load pump or a dump) with the freeze journal.
+    void WriteInFlightMarker(const FString& OutRoot, const FString& ObjectPath)
+    {
+        FFileHelper::SaveStringToFile(ObjectPath,
+            *AssetDumpHandler::GetInFlightDumpMarkerPath(OutRoot),
+            FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
+    }
+
+    void ClearInFlightMarker(const FString& OutRoot, const FString& ObjectPath)
+    {
+        const FString MarkerPath = AssetDumpHandler::GetInFlightDumpMarkerPath(OutRoot);
+        if (!IFileManager::Get().Delete(*MarkerPath,
+                /*RequireExists=*/false, /*EvenReadOnly=*/true, /*Quiet=*/true))
+        {
+            UE_LOG(LogPinWrightSubsystem, Warning,
+                TEXT("asset dump: could not delete %s; the next dump will list '%s' as stalled."),
+                *MarkerPath, *ObjectPath);
+        }
+    }
+
+    FString MakeStalledDumpMessage(const FString& OutRoot, const TCHAR* Consequence)
+    {
+        return FString::Printf(
+            TEXT("An earlier dump of this asset never returned (the editor stopped inside it: froze, crashed or was killed), so %s. Remove its line from %s to retry."),
+            Consequence, *AssetDumpHandler::GetStalledDumpListPath(OutRoot));
+    }
+
+    bool ShouldAbortReleaseGcWait()
+    {
+#if WITH_DEV_AUTOMATION_TESTS
+        return PinWrightAssetDumpTestHooks::Get().bAbortReleaseGcWait;
+#else
+        return false;
+#endif
+    }
+
+    // True while a load this sweep issued is still running in the loader. Drops finished
+    // abandoned loads as a side effect.
+    bool HasInFlightLoads(FAsyncFolderDumpState& State)
+    {
+        State.AbandonedLoads.RemoveAll([](const TSharedPtr<FAsyncDumpLoad>& Load)
+        {
+            return Load->bDone;
+        });
+        return State.ActiveLoad.IsValid() || State.AbandonedLoads.Num() > 0;
+    }
+
+    // A pump runs every queued package, not only the active one, so a freeze inside it
+    // may belong to an abandoned load. The journal lists them all, one per line.
+    FString BuildPumpJournal(const FAsyncFolderDumpState& State)
+    {
+        FString Journal = State.LoadingEntry.ObjectPath;
+        for (const TSharedPtr<FAsyncDumpLoad>& Abandoned : State.AbandonedLoads)
+        {
+            if (!Abandoned->bDone)
+            {
+                Journal += TEXT("\n") + Abandoned->ObjectPath;
+            }
+        }
+        return Journal;
+    }
+
+    // A load is listed in slowAssets[] by its longest single pump: one load step cannot be
+    // split, so a heavy serialize or PostLoad holds the editor past the slice.
+    void RecordSlowLoad(FAsyncFolderDumpState& State, const FAsyncDumpLoad& Load)
+    {
+        if (Load.LongestPumpSeconds >= GetSlowAssetThresholdSeconds())
+        {
+            State.SlowAssets.Add({Load.ObjectPath, Load.LongestPumpSeconds,
+                TEXT("loading"), Load.LongestPumpSeconds});
+            UE_LOG(LogPinWrightSubsystem, Warning,
+                TEXT("asset dump: loading '%s' held the editor for %.1f s in one pump."),
+                *Load.ObjectPath, Load.LongestPumpSeconds);
+        }
+    }
+}
 
 namespace
 {
@@ -1100,6 +1215,7 @@ namespace
         Object->SetNumberField(TEXT("lastAssetElapsedSeconds"), State.LastAssetElapsedSeconds);
         Object->SetNumberField(TEXT("compileDeferralCount"), State.CompileDeferralCount);
         Object->SetNumberField(TEXT("compileTimeoutCount"), State.CompileTimeoutCount);
+        Object->SetNumberField(TEXT("loadTimeoutCount"), State.LoadTimeoutCount);
         Object->SetNumberField(TEXT("releaseStepCount"), State.ReleaseStepCount);
         Object->SetNumberField(TEXT("releasedPackageCount"), State.ReleasedPackageCount);
         Object->SetNumberField(TEXT("workingSetBytes"),
@@ -1421,6 +1537,17 @@ namespace
                     SkippedAssets.Add(MakeShared<FJsonValueObject>(Entry));
                 }
                 Result->SetArrayField(TEXT("skipped"), SkippedAssets);
+                TArray<TSharedPtr<FJsonValue>> SlowAssets;
+                for (const FAsyncDumpSlowAsset& Slow : State.SlowAssets)
+                {
+                    TSharedPtr<FJsonObject> Entry = MakeShared<FJsonObject>();
+                    Entry->SetStringField(TEXT("assetPath"), Slow.AssetPath);
+                    Entry->SetNumberField(TEXT("elapsedSeconds"), Slow.ElapsedSeconds);
+                    Entry->SetStringField(TEXT("phase"), Slow.Phase);
+                    Entry->SetNumberField(TEXT("phaseSeconds"), Slow.PhaseSeconds);
+                    SlowAssets.Add(MakeShared<FJsonValueObject>(Entry));
+                }
+                Result->SetArrayField(TEXT("slowAssets"), SlowAssets);
                 AddAsyncDumpDiagnostics(State, Result);
             }
 
@@ -1797,6 +1924,8 @@ namespace
         State.AssetsSinceRelease = 0;
         ++State.ReleaseStepCount;
         State.ReleasedPackageCount += PackagesToReset.Num();
+        State.bFinalReleaseDone =
+            State.bFinalReleaseDone || Trigger == AssetDumpHandler::EDumpReleaseTrigger::Final;
         State.ReleaseWorkingSetBeforeBytes = BeforeBytes;
 
         // 4. Ask the editor for a full purge. ForceGarbageCollection only raises a flag,
@@ -1850,14 +1979,22 @@ namespace
             // memory runs incrementally over the following frames.
             const bool bCollected =
                 Watch.bReachabilityObserved && !IsIncrementalPurgePending();
-            if (!bCollected && WaitedSeconds < ReleaseGcWaitTimeoutSeconds)
+            const bool bAbortWait = !bCollected && AssetDumpHandlerLocal::ShouldAbortReleaseGcWait();
+            if (!bCollected && !bAbortWait && WaitedSeconds < ReleaseGcWaitTimeoutSeconds)
             {
                 UpdateAsyncDumpNotification(State);
                 return true;
             }
 
             State.bAwaitingReleaseGc = false;
-            EndDumpReleaseGcWatch();
+            if (bAbortWait)
+            {
+                AbortDumpReleaseGcWatch();
+            }
+            else
+            {
+                EndDumpReleaseGcWatch();
+            }
 
             const uint64 AfterBytes = FPlatformMemory::GetStats().UsedPhysical;
             // Growth is measured from here, not from the pre-collect figure: whatever the
@@ -1876,6 +2013,15 @@ namespace
                 BytesToGiB(State.ReleaseWorkingSetBeforeBytes) - BytesToGiB(AfterBytes));
 
             // Fall through: the rest of this tick may dump assets again.
+            return false;
+        }
+
+        // The release step calls FlushAsyncLoading, which would finish a load of ours
+        // synchronously - for an abandoned load, exactly the wait its timeout gave up on.
+        // ponytail: a load that never completes stops releases for the rest of the sweep;
+        // releasing around in-flight loads needs per-package import tracking.
+        if (AssetDumpHandlerLocal::HasInFlightLoads(State))
+        {
             return false;
         }
 
@@ -1967,14 +2113,99 @@ namespace
 
         while (!bReleaseConsumedTick
                && !State.bPreflightPending
-               && State.PendingAssets.Num() > 0
+               && (State.PendingAssets.Num() > 0 || State.ActiveLoad.IsValid())
                && (FPlatformTime::Seconds() - TickStart) < BudgetSec)
         {
-            const FPendingDumpEntry Entry = State.PendingAssets.Pop(EAllowShrinking::No);
+            FPendingDumpEntry Entry;
+            bool bResumedLoad = false;
+            if (State.ActiveLoad.IsValid())
+            {
+                // Resume the package load an earlier pass started. The pump is the only
+                // synchronous engine call here, and it returns after one slice.
+                const TSharedPtr<FAsyncDumpLoad> Load = State.ActiveLoad;
+                if (!Load->bDone && AssetDumpHandlerLocal::ShouldPumpAsyncLoad())
+                {
+                    AssetDumpHandlerLocal::WriteInFlightMarker(
+                        State.OutRoot, AssetDumpHandlerLocal::BuildPumpJournal(State));
+                    const double PumpStartedSeconds = FPlatformTime::Seconds();
+                    ProcessAsyncLoadingUntilComplete(
+                        [&Load]() { return Load->bDone; },
+                        AssetDumpHandler::AsyncLoadPumpSliceSeconds);
+                    const double PumpSeconds = FPlatformTime::Seconds() - PumpStartedSeconds;
+                    Load->PumpedSeconds += PumpSeconds;
+                    Load->LongestPumpSeconds = FMath::Max(Load->LongestPumpSeconds, PumpSeconds);
+                    AssetDumpHandlerLocal::ClearInFlightMarker(
+                        State.OutRoot, State.LoadingEntry.ObjectPath);
+                }
+
+                Entry = MoveTemp(State.LoadingEntry);
+                State.LoadingEntry = FPendingDumpEntry{};
+                if (!Load->bDone)
+                {
+                    const double LoadTimeoutSeconds = AssetDumpHandlerLocal::GetAsyncLoadTimeoutSeconds();
+                    const double LoadWallSeconds = FPlatformTime::Seconds() - Load->StartedSeconds;
+                    if (Load->PumpedSeconds < LoadTimeoutSeconds
+                        && LoadWallSeconds < LoadTimeoutSeconds * AssetDumpHandler::AsyncLoadWallClockBackstopFactor)
+                    {
+                        // Still loading: hand the frame back to the editor.
+                        State.LoadingEntry = MoveTemp(Entry);
+                        break;
+                    }
+
+                    // Give up on the load. It keeps running in the loader and cannot be
+                    // cancelled, so it is tracked until it completes (see the release step).
+                    AssetDumpHandlerLocal::RecordSlowLoad(State, *Load);
+                    State.ActiveLoad.Reset();
+                    State.AbandonedLoads.Add(Load);
+                    ++State.LoadTimeoutCount;
+                    ++State.SkipCount;
+                    const FString ExistingDumpDir = AssetDumpWriter::ResolveDumpDir(
+                        Entry.PackageName, State.OutRoot);
+                    const bool bHasPriorDump =
+                        IFileManager::Get().DirectoryExists(*ExistingDumpDir);
+                    const FString TimeoutMessage = FString::Printf(
+                        TEXT("The package did not finish loading after %.0f seconds of loading (%.0f seconds since it started), so nothing was dumped for it; %s. The load continues in the background; a later dump retries the asset."),
+                        Load->PumpedSeconds,
+                        LoadWallSeconds,
+                        bHasPriorDump ? TEXT("prior dump preserved") : TEXT("no dump exists for this asset"));
+                    State.AssetSkips.Add({
+                        Entry.ObjectPath,
+                        AssetDumpErrorCodes::AssetLoadTimeout,
+                        TimeoutMessage});
+                    UE_LOG(LogPinWrightSubsystem, Warning,
+                        TEXT("asset dump skipped '%s': %s: %s"),
+                        *Entry.ObjectPath,
+                        AssetDumpErrorCodes::AssetLoadTimeout,
+                        *TimeoutMessage);
+
+                    if (State.Kind == EAsyncAssetDumpKind::SingleAsset)
+                    {
+                        State.ErrorCode = AssetDumpErrorCodes::AssetLoadTimeout;
+                        State.ErrorMessage = TimeoutMessage;
+                        State.DumpDir = State.RootDir;
+                        State.PendingAssets.Reset();
+                        break;
+                    }
+                    if (bHasPriorDump)
+                    {
+                        State.LiveDumpDirs.Add(FPaths::ConvertRelativePathToFull(ExistingDumpDir));
+                    }
+                    continue;
+                }
+
+                AssetDumpHandlerLocal::RecordSlowLoad(State, *Load);
+                State.ActiveLoad.Reset();
+                bResumedLoad = true;
+            }
+            else
+            {
+                Entry = State.PendingAssets.Pop(EAllowShrinking::No);
+            }
 
             // A package whose earlier dump never returned would freeze this editor
             // too. Refuse it loudly instead of loading it again.
-            if (State.Kind == EAsyncAssetDumpKind::Folder
+            if (!bResumedLoad
+                && State.Kind == EAsyncAssetDumpKind::Folder
                 && State.StalledPackages.Contains(Entry.PackageName))
             {
                 ++State.SkipCount;
@@ -2007,9 +2238,15 @@ namespace
             // begins, the ticker cannot hard-preempt a slow engine call.
             const bool bRetryingAsyncCompilation =
                 State.CompileWaitStartedSeconds.Contains(Entry.ObjectPath);
+            const bool bResident = FindPackage(nullptr, *Entry.PackageName) != nullptr;
+            // A package not yet in memory loads across ticks instead of inside
+            // DumpSingleAsset's synchronous LoadObject. A resumed entry whose load failed
+            // goes straight to the dump, which reports the failure.
+            const bool bStartAsyncLoad = !bResumedLoad && !bRetryingAsyncCompilation && !bResident;
             if (!bRetryingAsyncCompilation)
             {
-                BeginAsyncDumpPhase(State, TEXT("dumping"), Entry.ObjectPath);
+                BeginAsyncDumpPhase(State,
+                    bStartAsyncLoad ? TEXT("loading") : TEXT("dumping"), Entry.ObjectPath);
                 UpdateAsyncDumpNotification(State);
             }
             if (State.bCancelRequested)
@@ -2025,19 +2262,32 @@ namespace
             // Anything already resident belongs to the editor or the user and is never
             // touched. Recorded before the load, because after it every package looks
             // resident.
-            if (State.Kind == EAsyncAssetDumpKind::Folder
-                && FindPackage(nullptr, *Entry.PackageName) == nullptr)
+            if (State.Kind == EAsyncAssetDumpKind::Folder && !bResident)
             {
                 State.SweepLoadedPackages.Add(FName(*Entry.PackageName));
             }
 
-            // ponytail: journals a freeze for the next sweep; a real per-asset bound
-            // needs yieldable load/build/write phases (see the board ticket).
-            const FString InFlightMarkerPath =
-                AssetDumpHandler::GetInFlightDumpMarkerPath(State.OutRoot);
-            FFileHelper::SaveStringToFile(Entry.ObjectPath, *InFlightMarkerPath,
-                FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
+            if (bStartAsyncLoad)
+            {
+                const TSharedPtr<FAsyncDumpLoad> Load = MakeShared<FAsyncDumpLoad>();
+                Load->ObjectPath = Entry.ObjectPath;
+                Load->StartedSeconds = FPlatformTime::Seconds();
+                State.ActiveLoad = Load;
+                State.LoadingEntry = Entry;
+                // The delegate runs on the game thread from inside the loader; it holds
+                // its own reference, so it stays valid if the sweep ends first.
+                LoadPackageAsync(Entry.PackageName,
+                    FLoadPackageAsyncDelegate::CreateLambda(
+                        [Load](const FName&, UPackage*, EAsyncLoadingResult::Type)
+                        {
+                            Load->bDone = true;
+                        }));
+                continue;
+            }
 
+            // The dump itself is still one synchronous call: it is journaled so a freeze
+            // inside it is skipped by later sweeps, and timed for slowAssets[].
+            AssetDumpHandlerLocal::WriteInFlightMarker(State.OutRoot, Entry.ObjectPath);
             const double AssetStartedSeconds = FPlatformTime::Seconds();
             AssetDumpHandler::FDumpSingleResult R =
                 AssetDumpHandler::DumpSingleAsset(Entry.ObjectPath, State.OutRoot,
@@ -2045,15 +2295,18 @@ namespace
                     State.bIncludeWidgetScreenshot,
                     State.BaselineDirty,
                     /*bDeferAsyncCompilation=*/true);
-            if (!IFileManager::Get().Delete(*InFlightMarkerPath,
-                    /*RequireExists=*/false, /*EvenReadOnly=*/true, /*Quiet=*/true))
-            {
-                UE_LOG(LogPinWrightSubsystem, Warning,
-                    TEXT("asset dump: could not delete %s; the next folder sweep will list '%s' as stalled."),
-                    *InFlightMarkerPath, *Entry.ObjectPath);
-            }
+            AssetDumpHandlerLocal::ClearInFlightMarker(State.OutRoot, Entry.ObjectPath);
             State.LastAssetElapsedSeconds = FMath::Max(
                 0.0, FPlatformTime::Seconds() - AssetStartedSeconds);
+            if (State.LastAssetElapsedSeconds >= AssetDumpHandlerLocal::GetSlowAssetThresholdSeconds())
+            {
+                State.SlowAssets.Add({Entry.ObjectPath, State.LastAssetElapsedSeconds,
+                    R.SlowestPhase, R.SlowestPhaseSeconds});
+                UE_LOG(LogPinWrightSubsystem, Warning,
+                    TEXT("asset dump: '%s' held the editor for %.1f s (slowest phase '%s', %.1f s)."),
+                    *Entry.ObjectPath, State.LastAssetElapsedSeconds,
+                    *R.SlowestPhase, R.SlowestPhaseSeconds);
+            }
 
             if (R.bDeferredForCompilation)
             {
@@ -2333,8 +2586,20 @@ namespace
             return false;
         }
 
-        if (!bReleaseConsumedTick && !State.bPreflightPending && State.PendingAssets.Num() == 0)
+        if (!bReleaseConsumedTick && !State.bPreflightPending && State.PendingAssets.Num() == 0
+            && !State.ActiveLoad.IsValid())
         {
+            // Give the Final release step the next tick before finalizing, or the sweep's
+            // last loads stay resident. Skipped while a load is in flight: the release step
+            // waits for it, and a load that never finishes must not hold the sweep open.
+            if (State.Kind == EAsyncAssetDumpKind::Folder
+                && !State.bFinalReleaseDone
+                && State.SweepLoadedPackages.Num() > 0
+                && !AssetDumpHandlerLocal::HasInFlightLoads(State))
+            {
+                State.bTickActive = false;
+                return true;
+            }
             State.bTickActive = false;
             FinalizeAsyncDump();
             return false;
@@ -2735,7 +3000,21 @@ namespace AssetDumpHandler
             return Result;
         }
 
+        double PhaseStartedSeconds = FPlatformTime::Seconds();
+        auto EndPhase = [&Result, &PhaseStartedSeconds](const TCHAR* Phase)
+        {
+            const double NowSeconds = FPlatformTime::Seconds();
+            const double PhaseSeconds = NowSeconds - PhaseStartedSeconds;
+            if (Result.SlowestPhase.IsEmpty() || PhaseSeconds > Result.SlowestPhaseSeconds)
+            {
+                Result.SlowestPhase = Phase;
+                Result.SlowestPhaseSeconds = PhaseSeconds;
+            }
+            PhaseStartedSeconds = NowSeconds;
+        };
+
         UObject* Asset = LoadObject<UObject>(nullptr, *NormalizedPath);
+        EndPhase(TEXT("loading"));
         if (!Asset)
         {
             Result.ErrorCode    = AssetDumpErrorCodes::AssetLoadFailed;
@@ -2805,6 +3084,7 @@ namespace AssetDumpHandler
             FAssetDumpWidgetPreviewAlphaFacts DiffPreviewAlpha;
             TArray<AssetDumpWriter::FDumpFile> Built = BuildAllFilesForAsset(
                 Asset, &BuildErrors, bIncludeWidgetScreenshot, &BuildBinaries, &DiffPreviewAlpha);
+            EndPhase(TEXT("building"));
             Result.FileErrors.Append(BuildErrors);
             Result.bWidgetPreviewCaptured = DiffPreviewAlpha.bCaptured;
             Result.bWidgetPreviewOpaqueStamped = DiffPreviewAlpha.bOpaqueStamped;
@@ -2884,6 +3164,7 @@ namespace AssetDumpHandler
                 Result.ErrorCode    = AssetDumpErrorCodes::DumpWriteFailed;
                 Result.ErrorMessage = WriteErr;
             }
+            EndPhase(TEXT("writing"));
             Result.Mode = TEXT("diff");
             return Result;
         }
@@ -2892,6 +3173,7 @@ namespace AssetDumpHandler
         FAssetDumpWidgetPreviewAlphaFacts PreviewAlpha;
         TArray<AssetDumpWriter::FDumpFile> Files = BuildAllFilesForAsset(
             Asset, &Result.FileErrors, bIncludeWidgetScreenshot, &BinaryFiles, &PreviewAlpha);
+        EndPhase(TEXT("building"));
         Result.bWidgetPreviewCaptured = PreviewAlpha.bCaptured;
         Result.bWidgetPreviewOpaqueStamped = PreviewAlpha.bOpaqueStamped;
         Result.WidgetPreviewAlphaZeroFraction = PreviewAlpha.AlphaZeroFraction;
@@ -2930,6 +3212,7 @@ namespace AssetDumpHandler
             IFileManager::Get().DeleteDirectory(
                 *AssetDumpWriter::ResolveDiffDir(DumpPath), /*RequireExists=*/false, /*Tree=*/true);
         }
+        EndPhase(TEXT("writing"));
         Result.Mode = TEXT("dump");
 
         return Result;
@@ -3122,7 +3405,14 @@ namespace AssetDumpHandler
         }
 
         // Promote a leftover marker before this dump's own marker overwrites it.
-        LoadStalledDumpPackages(OutRoot);
+        if (LoadStalledDumpPackages(OutRoot).Contains(
+                FPackageName::ObjectPathToPackageName(NormalizedPath)))
+        {
+            Result.ErrorCode = AssetDumpErrorCodes::AssetDumpStalled;
+            Result.ErrorMessage = AssetDumpHandlerLocal::MakeStalledDumpMessage(
+                OutRoot, TEXT("asset.dump refuses it"));
+            return Result;
+        }
 
         State.Kind = EAsyncAssetDumpKind::SingleAsset;
         State.RootDir = Result.DumpDir;
@@ -3620,6 +3910,16 @@ REGISTER_RPC_HANDLER("asset.dump", "asset",
         }
     }
 
+    // This dump is one synchronous call, so it gets the same freeze journal as the async
+    // ticker: promote a leftover marker, refuse a listed package, and journal this call.
+    if (AssetDumpHandler::LoadStalledDumpPackages(OutRoot).Contains(
+            FPackageName::ObjectPathToPackageName(ObjectPathToLoad)))
+    {
+        Ctx.SendError(AssetDumpErrorCodes::AssetDumpStalled,
+            AssetDumpHandlerLocal::MakeStalledDumpMessage(OutRoot, TEXT("asset.dump refuses it")));
+        return true;
+    }
+    AssetDumpHandlerLocal::WriteInFlightMarker(OutRoot, ObjectPathToLoad);
     AssetDumpHandler::FDumpSingleResult SingleResult =
         AssetDumpHandler::DumpSingleAsset(
             ObjectPathToLoad,
@@ -3628,6 +3928,7 @@ REGISTER_RPC_HANDLER("asset.dump", "asset",
             bIncludeWidgetScreenshot,
             DirtyGuard.Baseline,
             /*bDeferAsyncCompilation=*/true);
+    AssetDumpHandlerLocal::ClearInFlightMarker(OutRoot, ObjectPathToLoad);
 
     if (SingleResult.bDeferredForCompilation)
     {

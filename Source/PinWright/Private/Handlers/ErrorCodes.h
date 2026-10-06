@@ -110,6 +110,9 @@ namespace ErrorCodes
     inline constexpr TCHAR ERR_ASSET_COMPILING[]                            = TEXT("ASSET_COMPILING");
     inline constexpr TCHAR ERR_ASSET_CREATION_FAILED[]                      = TEXT("ASSET_CREATION_FAILED");
     inline constexpr TCHAR ERR_ASSET_DATA_INVALID[]                         = TEXT("ASSET_DATA_INVALID");
+    // asset.dump / asset.dump_folder: an earlier dump of the package never returned (listed in
+    // <dump root>/dump-stalled.txt).
+    inline constexpr TCHAR ERR_ASSET_DUMP_STALLED[]                         = TEXT("ASSET_DUMP_STALLED");
     inline constexpr TCHAR ERR_ASSET_EXISTS[]                               = TEXT("ASSET_EXISTS");
     // overwrite:true refused because the existing asset still has referencers.
     // Two axes, both always present in the error data: referencers[] +
@@ -121,6 +124,8 @@ namespace ErrorCodes
     // before (AssetTools.cpp CanCreateAsset). See Utils/AssetCreatePolicy.h.
     inline constexpr TCHAR ERR_ASSET_IN_USE[]                               = TEXT("ASSET_IN_USE");
     inline constexpr TCHAR ERR_ASSET_LOAD_FAILED[]                          = TEXT("ASSET_LOAD_FAILED");
+    // asset.dump_folder skip / world asset.dump job: the async package load outlived its timeout.
+    inline constexpr TCHAR ERR_ASSET_LOAD_TIMEOUT[]                         = TEXT("ASSET_LOAD_TIMEOUT");
     inline constexpr TCHAR ERR_ASSET_NOT_FOUND[]                            = TEXT("ASSET_NOT_FOUND");
     inline constexpr TCHAR ERR_ASSET_WRONG_TYPE[]                           = TEXT("ASSET_WRONG_TYPE");
     inline constexpr TCHAR ERR_ASSET_PLAYER_BASE_UNAVAILABLE[]              = TEXT("ASSET_PLAYER_BASE_UNAVAILABLE");
