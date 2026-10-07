@@ -44,7 +44,7 @@
 #include "Tests/TestUtils.h"
 
 // Prefixed and file-static: Unity merges this TU with its neighbours, so an unprefixed helper
-// collides (see CLAUDE.md > Building).
+// collides (see AGENTS.md > Building).
 static FString PieSaveBlockTest_UniquePackagePath()
 {
     return FString::Printf(TEXT("/Game/PinWrightTests/AssetSavePieBlock/M_PieBlock_%s"),
@@ -224,7 +224,7 @@ bool FAssetSaveSizeReportLabelsStaleBytesTest::RunTest(const FString& /*Paramete
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssetSaveAlwaysReportsSaveStateTest,
     // NOT "PinWright.asset.save.<...>": that id is a complete leaf (TestAssetSaveHandler.cpp),
     // and a dotted suffix under it would adopt it as a branch node and silently drop it from
-    // the queue (CLAUDE.md > Testing, PinWright.infra.automation_registry.NoPrefixCollisions).
+    // the queue (AGENTS.md > Testing, PinWright.infra.automation_registry.NoPrefixCollisions).
     "PinWright.assets.AssetSaveHandler.ResponseAlwaysCarriesSaveState",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 

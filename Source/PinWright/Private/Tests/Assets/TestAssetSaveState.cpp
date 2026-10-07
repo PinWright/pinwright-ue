@@ -35,7 +35,7 @@
 #include "Tests/TestUtils.h"
 
 // Prefixed and file-static: Unity merges this TU with its neighbours, so an unprefixed helper
-// collides (see CLAUDE.md > Building).
+// collides (see AGENTS.md > Building).
 static FString AssetSaveStateTest_UniquePackagePath()
 {
     return FString::Printf(TEXT("/Game/PinWrightTests/AssetSaveState/M_SaveState_%s"),

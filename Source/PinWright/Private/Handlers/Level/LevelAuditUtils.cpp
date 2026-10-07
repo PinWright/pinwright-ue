@@ -66,7 +66,7 @@
 // still holds to 1/16 cm). The engine's own value is echoed in the report beside it.
 //
 // Everything file-local lives in one anonymous namespace with an Audit* prefix, per the
-// Unity-build rule in CLAUDE.md.
+// Unity-build rule in AGENTS.md.
 
 #include "Handlers/Level/LevelAuditUtils.h"
 
@@ -105,7 +105,7 @@
 // `using namespace LevelAudit;`, which under this plugin's Unity build (bUseUnity = true) would
 // leak into every other translation unit merged into the same blob - and `FConfig` / `FReport`
 // are exactly the kind of names that would then collide. Same reasoning as the named-namespace
-// helper consolidation described in CLAUDE.md.
+// helper consolidation described in AGENTS.md.
 namespace LevelAudit
 {
 namespace

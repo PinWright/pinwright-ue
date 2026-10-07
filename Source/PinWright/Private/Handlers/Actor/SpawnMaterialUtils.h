@@ -66,7 +66,7 @@ namespace SpawnMaterialUtils
 
     // Single-slot material path, canonical first. `materialPath` matches
     // blueprint.scs.add_component exactly; the snake_case alias follows the plugin-wide
-    // camelCase/snake_case param convention (Conventions section of CLAUDE.md).
+    // camelCase/snake_case param convention (Conventions section of AGENTS.md).
     inline const TArray<FString>& MaterialPathKeys()
     {
         static const TArray<FString> Keys = { TEXT("materialPath"), TEXT("material_path") };

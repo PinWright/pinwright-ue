@@ -19,7 +19,7 @@ The only reasons to stop early in either mode: (a) `pw_issues.py list` returns n
 
 ## Issue tracker
 
-Issues live in GitHub Issues on `PinWright/pinwright-ue`. Every read and write goes through the shared helper `scripts/pw_issues.py`, run from the plugin directory (`<host project>/Plugins/PinWright`) as `uv run scripts/pw_issues.py <command>`; `--help` lists the commands and exit codes. Labels, the hidden metadata block, the lease and the severity rubric are described in the plugin `CLAUDE.md` -> **Issue tracker**.
+Issues live in GitHub Issues on `PinWright/pinwright-ue`. Every read and write goes through the shared helper `scripts/pw_issues.py`, run from the plugin directory (`<host project>/Plugins/PinWright`) as `uv run scripts/pw_issues.py <command>`; `--help` lists the commands and exit codes. Labels, the hidden metadata block, the lease and the severity rubric are described in the plugin `AGENTS.md` -> **Issue tracker**.
 
 Two rules, no exceptions:
 - **Pick work only via `pw_issues.py list`.** It returns only open issues labelled `status/accepted`, ranked for you. Never pick from the web UI, raw `gh issue list` or a search result.
@@ -33,7 +33,7 @@ You implement **and** verify. There is no review stage: an issue goes from open 
 
 ## Phase 1: List and Claim Tasks
 
-Run `uv run scripts/pw_issues.py list --json`. It is already in work order (`RICE priority` highest first with unscored issues last, then severity, `costly`, `encounters`, number) and already excludes blocked, harness and live-claimed issues. Select 4–6 tasks from the top, following the priority rules in the plugin `CLAUDE.md` -> **Issue tracker** -> **Priority (RICE)** (batch by area, split an E=3 issue instead of starting it as filed), read each with `pw_issues.py show N`, then claim each one with `pw_issues.py claim N --host <host id>` (a stable id for this checkout, such as the machine name). Exit 3 (`LOST`) means another host holds it: drop it and take the next one. In plan mode, nothing is written before approval: select from `list` now and claim right after `ExitPlanMode`, before Phase 4, dropping any task you lose.
+Run `uv run scripts/pw_issues.py list --json`. It is already in work order (`RICE priority` highest first with unscored issues last, then severity, `costly`, `encounters`, number) and already excludes blocked, harness and live-claimed issues. Select 4–6 tasks from the top, following the priority rules in the plugin `AGENTS.md` -> **Issue tracker** -> **Priority (RICE)** (batch by area, split an E=3 issue instead of starting it as filed), read each with `pw_issues.py show N`, then claim each one with `pw_issues.py claim N --host <host id>` (a stable id for this checkout, such as the machine name). Exit 3 (`LOST`) means another host holds it: drop it and take the next one. In plan mode, nothing is written before approval: select from `list` now and claim right after `ExitPlanMode`, before Phase 4, dropping any task you lose.
 
 **Closed issues are off-limits.** Closed as completed (DONE) and closed as not planned (WONTFIX) are both terminal: never re-analyze, never re-investigate, never reopen from inside this skill. If an issue was closed as not planned, the user already decided it isn't worth fixing; we respect that decision. The only path back to open is via `mcp-audit` (or an `mcp-review` re-test) when the problem is re-encountered. Sprint never reasons about why something was closed or whether the decision should be revisited.
 
@@ -164,7 +164,7 @@ Hacky-pattern sweep, same axes as `/simplify`'s quality pass, adapted to this co
 4. **Stringly-typed code** — raw strings where the plugin already has an enum, constant, or `FName` pool (handler method names, error codes, etc).
 5. **Leaky abstractions** — exposing internal plugin state (e.g., `FPluginState` internals) where a narrower surface exists.
 6. **Nested conditionals** — ternary chains or if/else trees 3+ deep that should flatten to early returns or a lookup.
-7. **Unnecessary comments** — comments narrating what well-named code already says, or referencing the ticket/session (rots fast). Keep only non-obvious **why**: hidden constraints, subtle invariants, engine-bug workarounds. The plugin's CLAUDE.md is explicit: no "WHAT" comments.
+7. **Unnecessary comments** — comments narrating what well-named code already says, or referencing the ticket/session (rots fast). Keep only non-obvious **why**: hidden constraints, subtle invariants, engine-bug workarounds. The plugin's AGENTS.md is explicit: no "WHAT" comments.
 8. **UE-idiom misuse** — missing `FScopedTransaction` on mutating paths, raw pointers where `TWeakObjectPtr` is the convention, manual string manipulation where `FPaths`/`FPackageName` already has a helper, ad-hoc JSON construction where `FJsonObject` shortcuts exist.
 
 ### Sprint-wide: Efficiency Reviewer (single agent, whole sprint diff)
@@ -193,7 +193,7 @@ Reviewers do not compile or run anything. They reason about whether tests **woul
 
 After Phase 4.5 is clean, build once and verify every task before any issue closes:
 
-1. Build the plugin with `editor_build` (see `CLAUDE.md` -> **Building**). Route compile errors back to the implementing task's agent, then re-run the build.
+1. Build the plugin with `editor_build` (see `AGENTS.md` -> **Building**). Route compile errors back to the implementing task's agent, then re-run the build.
 2. Run each task's regression test by name, not the full suite: `editor_run_tests` with the test's `filter`, a `reason` and `mode: "offscreen"`, then poll `editor_test_status` until it reports the `check_suite_log` verdict. Tasks with no test (an `E-*` without one, or a genuine `"no test"`) verify by the live observation the plan named, such as a wiki page or an error message read back over MCP.
 3. For each task that verified, close it: `pw_issues.py close N --reason completed --host <host id> --body-file <comment>` with the comment format below. For each task that did not, `pw_issues.py release N --host <host id> --note "<what failed, with the log path>"`; it stays open.
 

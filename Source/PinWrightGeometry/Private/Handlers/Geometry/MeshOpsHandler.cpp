@@ -236,7 +236,7 @@ namespace
     // Handlers/Geometry/GeometryOpCounts.h. It was duplicated here and in
     // GeometryTransformHandler.cpp, the second copy prefixed with its file name because two
     // anonymous-namespace functions of the same name collide once Unity merges the TUs; the
-    // named-namespace header is the fix CLAUDE.md prescribes for that, and it removes the
+    // named-namespace header is the fix AGENTS.md prescribes for that, and it removes the
     // second body's freedom to drift.
 
     // The change-detection fields shared by every face op: post-op counts, the number of

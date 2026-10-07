@@ -21,7 +21,7 @@
 #include "UObject/UnrealType.h"
 
 // Named (not anonymous) namespace: the main module builds with Unity on, and two
-// anonymous namespaces merged into one TU collide by name. See CLAUDE.md > Building.
+// anonymous namespaces merged into one TU collide by name. See AGENTS.md > Building.
 namespace PwAudioExportInternal
 {
     // Deinterleaved stereo float -> interleaved float of NumChannels (1 or 2), clamped to

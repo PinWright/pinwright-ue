@@ -35,7 +35,7 @@
 #if PW_MUSIC_GRAPH_SUPPORTED
 
 // Named (not anonymous) namespace: the main module builds with Unity on and two anonymous
-// namespaces merged into one TU collide by name. See CLAUDE.md > Building.
+// namespaces merged into one TU collide by name. See AGENTS.md > Building.
 namespace PwMusicGraphInternal
 {
     // ---------------------------------------------------------------------------------

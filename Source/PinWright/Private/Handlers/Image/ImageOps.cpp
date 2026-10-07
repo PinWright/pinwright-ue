@@ -21,7 +21,7 @@ namespace PinWrightImage
 
     namespace
     {
-        // Named-namespace-free file locals are unsafe under Unity (CLAUDE.md), so everything here
+        // Named-namespace-free file locals are unsafe under Unity (AGENTS.md), so everything here
         // is either static-local or carries the PwImage prefix inside this anonymous namespace,
         // which is itself nested inside the named PinWrightImage namespace.
 

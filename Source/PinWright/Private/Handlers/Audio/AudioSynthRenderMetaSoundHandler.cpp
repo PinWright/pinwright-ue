@@ -73,7 +73,7 @@
 #endif
 
 // Named (not anonymous) namespace: the main module builds with Unity on, and two anonymous
-// namespaces merged into one TU collide by name. See CLAUDE.md > Building.
+// namespaces merged into one TU collide by name. See AGENTS.md > Building.
 namespace PwRenderMetaSoundInternal
 {
     /** Longest per-name list carried in the inputs report, so a caller that sent fifty

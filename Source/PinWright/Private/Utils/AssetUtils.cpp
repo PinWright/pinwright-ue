@@ -872,7 +872,7 @@ bool VerifyLevelSavedToDisk(
 // it and exists so a log line reads as a fact instead of "outcome=4".
 //
 // Prefixed rather than placed in an anonymous namespace because Unity merges this TU with its
-// neighbours (see CLAUDE.md, Build notes).
+// neighbours (see AGENTS.md, Build notes).
 static const TCHAR* AssetUtils_SaveOutcomeName(ESaveLoadedAssetOutcome Outcome)
 {
     switch (Outcome)

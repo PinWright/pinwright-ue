@@ -168,7 +168,7 @@ namespace
     //    The indirect form. The code is stored, carried out of the function, and handed to
     //    SendError as a variable somewhere else entirely, so no SendError-anchored regex can see
     //    it. The literal is restricted to SCREAMING_SNAKE because that is the documented shape of
-    //    an error code (CLAUDE.md, Conventions); the identifier suffix is what carries the intent.
+    //    an error code (AGENTS.md, Conventions); the identifier suffix is what carries the intent.
     //    Known imprecision, accepted deliberately: a non-error field literally named `...Code`
     //    holding an uppercase string (`Code = TEXT("PNG")`) would be picked up. There is no such
     //    site in the tree today, and the failure direction is loud rather than silent.

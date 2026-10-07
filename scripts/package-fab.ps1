@@ -408,7 +408,7 @@ function Assert-StagedTextIsPublic {
         # local rules file IS the table, which is why it is untracked.
         # No product code, test, example, format reference, wiki page or ordinary plan is exempt.
         $fileExemptions['scripts\package-fab.local.ps1'] = $allHostPatterns
-        $fileExemptions['CLAUDE.md'] = $allHostPatterns
+        $fileExemptions['AGENTS.md'] = $allHostPatterns
         $fileExemptions['ci\README.md'] = $allHostPatterns
         $fileExemptions['scripts\package-fab.ps1'] = $allHostPatterns
     }

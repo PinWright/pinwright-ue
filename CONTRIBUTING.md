@@ -67,7 +67,7 @@ BelowNormal priority, one `PINWRIGHT_SUITE_RESULT` line. `filter`, `reason` and 
 Build first with `editor_build {"reason": ...}` and poll `editor_build_status`; it refuses while an
 editor of this checkout runs.
 
-The exact flags and the reason for each are in `CLAUDE.md` -> **Testing**. The full suite
+The exact flags and the reason for each are in `AGENTS.md` -> **Testing**. The full suite
 (`filter: "PinWright"`) is large (5000+ tests); scope to the affected groups unless the change
 touches dispatch, a shared helper, a response shape, an error table, or a `Build.cs`.
 
@@ -135,13 +135,13 @@ you are not one of them, a maintainer restates your report in a comment before a
 outside reports, so put the repro steps and log excerpts in the issue text itself.
 
 Maintainers and their agents read and write issues through `scripts/pw_issues.py`
-(`uv run scripts/pw_issues.py --help`), which enforces both gates and the lease. `CLAUDE.md` ->
+(`uv run scripts/pw_issues.py --help`), which enforces both gates and the lease. `AGENTS.md` ->
 **Issue tracker** has the full contract.
 
 ## Maintainer tooling
 
-`CLAUDE.md` and `.polyskill/` are instructions for AI coding agents working on the plugin. A human
-contributor does not need them, though `CLAUDE.md` is the most detailed build/test reference.
+`AGENTS.md` and `.polyskill/` are instructions for AI coding agents working on the plugin. A human
+contributor does not need them, though `AGENTS.md` is the most detailed build/test reference.
 
 ## Licensing of contributions
 

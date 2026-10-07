@@ -242,7 +242,7 @@ namespace PinWrightRenderSubject
     //
     // Cross-module classes are reached by REFLECTION, not by link: USkeletalMesh and
     // UAnimationAsset are Engine and UNiagaraSystem is the Niagara module, and a FindObject on the
-    // /Script path is this repo's standing pattern for exactly that (CLAUDE.md, UE version compat).
+    // /Script path is this repo's standing pattern for exactly that (AGENTS.md, UE version compat).
     // It also keeps this file free of a NiagaraSystem.h include for a single IsA test.
     inline bool AssetClassIsServed(UObject* Asset)
     {

@@ -707,7 +707,7 @@ int32 GetAspectVersion(const FString& RelativeFile)
     // Bump an aspect here when its generator's serialized output changes.
     // Stale caches with a lower number get invalidated automatically on the
     // next dump pass; aspects not listed stay at AssetDumpDefaultAspectVersion.
-    // See plugin CLAUDE.md "Aspect Version Bumping" for the discipline.
+    // See plugin AGENTS.md "Aspect Version Bumping" for the discipline.
     static const TMap<FString, int32> Versions = {
         { TEXT("tree.xml"),                 3 },
         // 3: an open section/playback range side is written as startBounded/endBounded:false

@@ -38,7 +38,7 @@
 #include "Compat/EngineVersionCompat.h"
 
 // Named (not anonymous) namespace: test TUs are Unity-merged, and an anonymous-namespace helper
-// with a plausible name collides across merged files (CLAUDE.md → Build notes).
+// with a plausible name collides across merged files (AGENTS.md → Build notes).
 namespace MetaSoundPresetTestPrivate
 {
     // True when the file's raw bytes contain Needle. Probes BOTH encodings a package name table
@@ -409,7 +409,7 @@ bool FCreateMetaSoundPresetIsGenuinePresetTest::RunTest(const FString& Parameter
 
     // Assertion 4 — the same claim against DISK, not against the object just written. An
     // in-memory read-back returns the handler's own assignment whether or not anything was
-    // serialized; only the .uasset bytes prove the link survived the save (project CLAUDE.md:
+    // serialized; only the .uasset bytes prove the link survived the save (project AGENTS.md:
     // "verify a write against disk, not against the object you just wrote").
     const FString PresetPackageName = FPackageName::ObjectPathToPackageName(PresetAssetPath);
     const FString PresetFilename = FPackageName::LongPackageNameToFilename(

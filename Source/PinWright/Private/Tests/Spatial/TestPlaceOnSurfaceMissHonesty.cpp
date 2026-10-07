@@ -16,7 +16,7 @@
 // geometry (a third column, distinct from TestPlacementHandlers.cpp's and TestGroundPlacement's,
 // so concurrent fixtures cannot answer each other's probes) and destroyed on scope exit. Helper
 // names carry a MissTest prefix and live in one file-scope anonymous namespace, per the
-// Unity-build rule in CLAUDE.md.
+// Unity-build rule in AGENTS.md.
 
 #include "Misc/AutomationTest.h"
 #include "Handlers/HandlerContext.h"

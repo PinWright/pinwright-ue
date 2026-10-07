@@ -59,7 +59,7 @@ namespace
     //
     // Resolved by reflection rather than `NewObject<UGrassInstancedStaticMeshComponent>`: the class
     // is `MinimalAPI` in another module, and the plugin's standing convention for such types is
-    // `FindObject<UClass>` + `NewObject<ExportedBase>` (CLAUDE.md, UE version compat). It is also
+    // `FindObject<UClass>` + `NewObject<ExportedBase>` (AGENTS.md, UE version compat). It is also
     // the more faithful fixture -- the production loop only ever holds the base pointer.
     UHierarchicalInstancedStaticMeshComponent* PinWrightGrassInstancesMakeGrassComponent(
         int32 BuiltRenderInstances)

@@ -65,7 +65,7 @@
 // Uniquely-named namespace (not an anonymous one): TestLevelHandlers.cpp already defines an
 // anonymous-namespace DiscardProbeMapPackage, and Unity merges both TUs into one anonymous
 // namespace — an identically-named helper there would be a redefinition. Same reason the
-// plugin consolidates shared test helpers into named namespaces (see PinWright CLAUDE.md).
+// plugin consolidates shared test helpers into named namespaces (see PinWright AGENTS.md).
 namespace LevelSavePathTargetingTests
 {
     // Unique GUID-suffixed probe package path, so no stale on-disk .umap from an earlier run

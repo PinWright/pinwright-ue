@@ -8,7 +8,7 @@
 // become an ODR redefinition the moment Unity merges those TUs. The copies dodged that by
 // prefixing one of them with its file name, which compiles but leaves two byte-identical bodies
 // free to drift - and this one has exactly one correctness property worth not drifting (see
-// below). CLAUDE.md's build note prescribes the other fix for the same ODR problem: consolidate
+// below). AGENTS.md's build note prescribes the other fix for the same ODR problem: consolidate
 // the helper into a per-cluster NAMED-namespace header, which is what this file is. It sits
 // beside GeometryOpWarnings.h, the sibling header that turns FOpResult::Warnings into response
 // JSON; both exist so an FOpResult reaches the wire the same way from every wrapper.

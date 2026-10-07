@@ -1840,7 +1840,7 @@ REGISTER_RPC_HANDLER("ai.add_mass_spawner", "ai",
     // the verb references no Mass type and is a stub whether or not the MassGameplay
     // plugin is enabled, so every host returns the same NOT_IMPLEMENTED — a gate here
     // would guard nothing, and UNSUPPORTED_VERSION wrongly implied a newer engine
-    // could run it (per CLAUDE.md, UNSUPPORTED_ENGINE_VERSION is reserved for
+    // could run it (per AGENTS.md, UNSUPPORTED_ENGINE_VERSION is reserved for
     // features needing a newer UE).
     Ctx.SendError(TEXT("NOT_IMPLEMENTED"),
         TEXT("ai.add_mass_spawner is a stub and does not modify the blueprint. "

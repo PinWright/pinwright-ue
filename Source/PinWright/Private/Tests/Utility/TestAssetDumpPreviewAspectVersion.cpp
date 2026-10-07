@@ -4,7 +4,7 @@
 //
 // The widget Designer preview is now stamped opaque before encoding
 // (WidgetDesignerCaptureUtil::StampOpaqueAndEncodePng), so the aspect's serialized bytes changed
-// for every widget with an uncovered region. Plugin CLAUDE.md's Aspect Version Bumping rule
+// for every widget with an uncovered region. Plugin AGENTS.md's Aspect Version Bumping rule
 // requires the bump in the same commit, and it is taken: GetAspectVersion now carries
 // { TEXT("preview.png"), 2 }, where the aspect previously had no row and sat at
 // AssetDumpDefaultAspectVersion.

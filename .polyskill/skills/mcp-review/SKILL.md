@@ -19,7 +19,7 @@ This matters because a re-test window can hold dozens of issues. Reading and wri
 
 ## Issue tracker
 
-Issues live in GitHub Issues on `PinWright/pinwright-ue`. Every read and write goes through the shared helper `scripts/pw_issues.py`, run from the plugin directory (`<host project>/Plugins/PinWright`) as `uv run scripts/pw_issues.py <command>`; `--help` lists the commands and exit codes. Labels, the hidden metadata block, the lease and the severity rubric are described in the plugin `CLAUDE.md` -> **Issue tracker**.
+Issues live in GitHub Issues on `PinWright/pinwright-ue`. Every read and write goes through the shared helper `scripts/pw_issues.py`, run from the plugin directory (`<host project>/Plugins/PinWright`) as `uv run scripts/pw_issues.py <command>`; `--help` lists the commands and exit codes. Labels, the hidden metadata block, the lease and the severity rubric are described in the plugin `AGENTS.md` -> **Issue tracker**.
 
 Two rules, no exceptions:
 - **Pick work only via `pw_issues.py list`.** It returns only open issues labelled `status/accepted`, ranked for you. Never pick from the web UI, raw `gh issue list` or a search result.

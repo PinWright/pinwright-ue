@@ -98,7 +98,7 @@ def check_log(path, expected=None, min_ratio=0.5, crash_scan=True, crashes_dir=N
     #
     # It is a warning, not a gate, and it is never hardcoded: the suite total legitimately moves
     # with every test added (3778, 3780 and 3797 were all correct within one day on this tree), so
-    # a compiled-in constant would go stale and start lying -- the exact failure CLAUDE.md warns
+    # a compiled-in constant would go stale and start lying -- the exact failure AGENTS.md warns
     # about. The caller passes today's measured number or gets no absolute check at all.
     if expected is not None:
         performed = log.get("performed")

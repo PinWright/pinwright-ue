@@ -18,7 +18,7 @@
 // Fixtures spawn through the real actor.spawn RPC into the live editor world at an isolated
 // column of their own (away from the one Tests/Spatial/TestGroundPlacement.cpp uses), with
 // GUID-suffixed labels, destroyed on scope exit. Helper names carry an AuditTest prefix and
-// live in one file-scope anonymous namespace, per the Unity-build rule in CLAUDE.md.
+// live in one file-scope anonymous namespace, per the Unity-build rule in AGENTS.md.
 
 #include "Misc/AutomationTest.h"
 #include "Handlers/HandlerContext.h"

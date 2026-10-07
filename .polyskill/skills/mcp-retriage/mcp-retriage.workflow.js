@@ -46,7 +46,7 @@ const RANK = { critical: 4, high: 3, medium: 2, low: 1, none: 0 };
 
 // The canonical rubric — interpolated VERBATIM into every Score prompt so all
 // fan-out agents classify against identical text (no per-agent drift). Mirrors
-// the severity rubric in the plugin CLAUDE.md "Issue tracker" section.
+// the severity rubric in the plugin AGENTS.md "Issue tracker" section.
 const RUBRIC = `SEVERITY RUBRIC (impact class × reach → one of critical | high | medium | low):
 Impact class:
 - Critical: editor crash, or a write that corrupts or loses asset data.

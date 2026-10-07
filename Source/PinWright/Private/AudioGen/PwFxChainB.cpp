@@ -112,7 +112,7 @@
 #include "Math/UnrealMathUtility.h"
 
 // Named namespace, not anonymous: the module builds with bUseUnity = true and
-// Private/AudioGen/ is merged into one TU with its siblings. See CLAUDE.md > Building.
+// Private/AudioGen/ is merged into one TU with its siblings. See AGENTS.md > Building.
 namespace PwFxChainBInternal
 {
     // ---------------------------------------------------------------------

@@ -48,7 +48,7 @@
 //     returning a diagnostic.
 //
 // The pixel test needs a live Slate renderer and a real RHI (the suite runs without
-// -NullRHI, per CLAUDE.md). On a host that cannot render it emits the
+// -NullRHI, per AGENTS.md). On a host that cannot render it emits the
 // PINWRIGHT_ASSERTIONS_SKIPPED marker rather than reporting a hollow success
 // (B-test-skips-assertions-silently). RenderRejectsZeroDrawSize needs neither and runs
 // everywhere.

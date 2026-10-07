@@ -53,7 +53,7 @@ Coordinator rule 6: a named value is acceptable when it names a *binding*, not a
 
 ## 2. Shared core seam
 
-**Module placement is load‑bearing.** `PinWrightGeometry` is `LoadingPhase: None` and only loads when `IPluginManager` reports **GeometryScripting** enabled (`CLAUDE.md` Module Split; `PinWrightGeometry.Build.cs:28-43` hard‑fails without it). A `.pwanim` compiler has no GeometryScripting dependency. **The shared core must live in the main `PinWright` module** at `Source/PinWright/Private/Format/`, exported `PINWRIGHT_API`, or `.pwanim` is unavailable on any host where GeometryScripting is off.
+**Module placement is load‑bearing.** `PinWrightGeometry` is `LoadingPhase: None` and only loads when `IPluginManager` reports **GeometryScripting** enabled (`AGENTS.md` Module Split; `PinWrightGeometry.Build.cs:28-43` hard‑fails without it). A `.pwanim` compiler has no GeometryScripting dependency. **The shared core must live in the main `PinWright` module** at `Source/PinWright/Private/Format/`, exported `PINWRIGHT_API`, or `.pwanim` is unavailable on any host where GeometryScripting is off.
 
 Every candidate file is already engine‑type‑free (`CoreMinimal` + `Misc/Optional` only), so the move is mechanical:
 
@@ -351,7 +351,7 @@ Every entry names what would make it unable to fail. Location: `Source/PinWright
 21. `Model.Compiler.CollisionWithSkinIsRejected` / `…LightmapWithSkinIsRejected` — each paired with a **control** compiling the same document without `skin`.
 22. `Model.Compiler.RecompileReportsWhatTheEngineCleared` — create, attach a PhysicsAsset and a morph target, recompile; assert `ClearedFeatures` names the morph target and that the PhysicsAsset is re‑attached afterwards. *Unable to fail if* the target had no PhysicsAsset to begin with.
 23. `Model.Compiler.SkeletonPackageIsSavedNotJustDirtied` — capture the skeleton `.uasset`'s timestamp and size **before** the compile and assert both moved. *Unable to fail if* it is an existence probe: a previous save satisfies bare existence (`AssetUtils.h:154-168`).
-24. `Model.Compiler.StaticPathIsByteIdenticalWithoutSkin` — every existing M1 compiler test must still pass, plus one explicit assertion that a document with no `use skeleton` produces `UStaticMesh` with the same triangle/vertex/slot counts as before. *Unable to fail if* the suite total is not asserted (`CLAUDE.md` Testing).
+24. `Model.Compiler.StaticPathIsByteIdenticalWithoutSkin` — every existing M1 compiler test must still pass, plus one explicit assertion that a document with no `use skeleton` produces `UStaticMesh` with the same triangle/vertex/slot counts as before. *Unable to fail if* the suite total is not asserted (`AGENTS.md` Testing).
 
 **D — emitter round‑trip**
 25. `Pw.Emitter.SkeletonIdempotence` — `emit(parse(emit(parse(x)))) == emit(parse(x))` over a 4‑deep, 3‑wide skeleton with rotations and scales. *Unable to fail if* the fixture is one bone deep.

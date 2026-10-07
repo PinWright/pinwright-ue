@@ -103,7 +103,7 @@ Maintainer- and development-process docs. They reference the development host pr
 | Document | Summary |
 |---|---|
 | [docs schema](SCHEMA.md) | Documentation conventions for this directory: layout, page types, frontmatter fields, the `wiki-src/` overlay shape and its rendering limits, and the index/tag maintenance steps. |
-| [issues](https://github.com/PinWright/pinwright-ue/issues) (GitHub Issues, outside this directory) | The tracker. Labels, trust gate, lease and the `scripts/pw_issues.py` helper are in the plugin `CLAUDE.md` -> **Issue tracker**; closed pre-migration tickets stay in the archived `PinWright/pinwright-board` repo. |
+| [issues](https://github.com/PinWright/pinwright-ue/issues) (GitHub Issues, outside this directory) | The tracker. Labels, trust gate, lease and the `scripts/pw_issues.py` helper are in the plugin `AGENTS.md` -> **Issue tracker**; closed pre-migration tickets stay in the archived `PinWright/pinwright-board` repo. |
 | [RPC design](rpc-design.md) | Living design rules for new RPC verbs, each earned from a shipped defect: response honesty, structural guarantees, required parameters, independent verification, persistence levels, batching/jobs/cancellation, tick safety, error codes, failure-direction tests, plus a pre-ship checklist. |
 | [lessons](lessons.md) | Append-only operational lessons learned across the plugin (compiler, handlers, tests, engine API quirks). |
 | [multi-checkout setup](multi-checkout-setup.md) | Set up a second local checkout of the host UE project that shares LFS storage and DDC with the primary — for parallel plugin development on the same branch. |

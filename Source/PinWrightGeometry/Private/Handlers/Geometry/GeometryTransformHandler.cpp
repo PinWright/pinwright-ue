@@ -32,7 +32,7 @@ namespace
     // The post-op vertexCount/triangleCount echo used to live here as a file-name-prefixed copy
     // of MeshOpsHandler.cpp's identical helper, because two anonymous-namespace functions of the
     // same name collide once Unity merges the TUs. It is now the one shared definition in
-    // Handlers/Geometry/GeometryOpCounts.h - the named-namespace header CLAUDE.md prescribes for
+    // Handlers/Geometry/GeometryOpCounts.h - the named-namespace header AGENTS.md prescribes for
     // exactly that ODR problem - so the two bodies can no longer drift apart.
 }
 

@@ -18,6 +18,7 @@
   "excludePaths": [
     ".claude",
     "CLAUDE.md",
+    "AGENTS.md",
     ".git",
     "Binaries",
     "Intermediate",
@@ -36,6 +37,7 @@
   "blockedPaths": [
     ".claude",
     "CLAUDE.md",
+    "AGENTS.md",
     ".git",
     "Binaries",
     "Intermediate",

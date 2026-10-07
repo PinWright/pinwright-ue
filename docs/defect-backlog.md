@@ -1231,7 +1231,7 @@ lengthened every block. Find them by constant name: `EDITOR_TEST_TIMEOUT_MINUTES
 - **Why they are unreachable** Every path is under the **host project's** `Saved/`, which is outside
   this repo entirely and gitignored in the host (`.gitignore:5`, `Saved/`). All of them exist on this
   dev host today and none of them can exist for anyone who clones the plugin. The plugin's own
-  `CLAUDE.md` already states the rule for the suite figures — "every citation here is a host-project
+  `AGENTS.md` already states the rule for the suite figures — "every citation here is a host-project
   or gitignored path, so a fresh clone has none of these logs" — and these comments do not carry it.
 - **Symptom** The 12-minute watchdog and 90-minute ceiling belonged to the retired proxy-owned editor
   test runner. They are historical context, not a current timeout or supervision contract.

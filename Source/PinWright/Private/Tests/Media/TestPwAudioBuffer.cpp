@@ -19,7 +19,7 @@
 #include "AudioGen/PwSeededRandom.h"
 
 // Named (not anonymous) so unity merges cannot ODR-collide these with a sibling test file's
-// helpers, per the shared-helper convention in the plugin CLAUDE.md.
+// helpers, per the shared-helper convention in the plugin AGENTS.md.
 namespace PwAudioBufferTestHelpers
 {
     // NumFrames frames holding a constant value in each channel.

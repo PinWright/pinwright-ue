@@ -7,7 +7,7 @@
 // copy-pasted into ten .cpp files, with four more copies of the spawn helper and six scans
 // open-coded inside handler bodies, because two anonymous-namespace statics sharing a name
 // become an ODR redefinition once Unity merges the translation units. A per-cluster
-// named-namespace header is the sanctioned fix for exactly that (CLAUDE.md:59) and is what the
+// named-namespace header is the sanctioned fix for exactly that (AGENTS.md > Building) and is what the
 // rest of the plugin already does for its shared helper clusters.
 //
 // Error codes and message text are per-call-site DATA here, carried in FResolveOptions, not

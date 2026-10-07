@@ -64,7 +64,7 @@
 
 // File-scope helper names carry the BulkDeleteScopeTest_ prefix: bUseUnity merges
 // translation units, so an unprefixed helper collides with a same-named static in a
-// neighbouring test file (see CLAUDE.md > Building).
+// neighbouring test file (see AGENTS.md > Building).
 
 namespace BulkDeleteScopeTest
 {

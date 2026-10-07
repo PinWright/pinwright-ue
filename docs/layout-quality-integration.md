@@ -84,7 +84,7 @@ actually touched a graph, integrated through the existing single issue writer.
 4. **File a `layout-quality` finding** through the existing Judge/Audit issue
    writer (single-writer invariant: do not file issues from a parallel step).
    File with `pw_issues.py file --type ergonomic --tags layout,layout-quality`, severity per
-   the rubric in `CLAUDE.md` -> **Issue tracker** (a graph that stays poor after auto_layout is Medium
+   the rubric in `AGENTS.md` -> **Issue tracker** (a graph that stays poor after auto_layout is Medium
    friction at most — it still functions). Body: the asset + graph, the
    `layout_report` score + the specific flagged overlaps/edges, and whether
    auto_layout was tried. `file` dedupes first (a recurring poor-layout pattern bumps

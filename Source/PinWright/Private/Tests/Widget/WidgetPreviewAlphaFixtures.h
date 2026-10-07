@@ -7,7 +7,7 @@
 // and Tests/Utility/TestAssetDumpWidgetPreviewAlpha.cpp (asset.dump's widget aspect). Named
 // namespace with inline functions rather than a per-file anonymous namespace: both files can
 // land in the same Unity blob, where duplicate anonymous-namespace helpers are an ODR
-// collision (plugin CLAUDE.md, Build rules).
+// collision (plugin AGENTS.md, Build rules).
 //
 // The fixture exists to make one number falsifiable. A capture of a uniformly transparent
 // widget reports alphaZeroFraction ~1.0 and a uniformly opaque one reports ~0.0 -- both of

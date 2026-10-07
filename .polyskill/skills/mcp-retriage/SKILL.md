@@ -6,7 +6,7 @@ description: Re-score the severity of every open, accepted PinWright GitHub issu
 # MCP Retriage
 
 Re-score the `Severity` issue field of every **open, accepted** PinWright GitHub issue
-against the fixed impact×reach rubric (the plugin `CLAUDE.md` -> **Issue tracker**
+against the fixed impact×reach rubric (the plugin `AGENTS.md` -> **Issue tracker**
 severity paragraph), as a background Workflow. The `mcp-fix-workflow` picker works
 open issues in `pw_issues.py list` order: `RICE priority` highest first, which a Critical
 or High severity raises to at least 90, with severity breaking ties. So a mis-rated
@@ -19,7 +19,7 @@ only the issues whose severity actually changed (the new `Severity` field plus o
 
 ## Issue tracker
 
-Issues live in GitHub Issues on `PinWright/pinwright-ue`. Every read and write goes through the shared helper `scripts/pw_issues.py`, run from the plugin directory (`<host project>/Plugins/PinWright`) as `uv run scripts/pw_issues.py <command>`; `--help` lists the commands and exit codes. Labels, the hidden metadata block, the lease and the severity rubric are described in the plugin `CLAUDE.md` -> **Issue tracker**.
+Issues live in GitHub Issues on `PinWright/pinwright-ue`. Every read and write goes through the shared helper `scripts/pw_issues.py`, run from the plugin directory (`<host project>/Plugins/PinWright`) as `uv run scripts/pw_issues.py <command>`; `--help` lists the commands and exit codes. Labels, the hidden metadata block, the lease and the severity rubric are described in the plugin `AGENTS.md` -> **Issue tracker**.
 
 Two rules, no exceptions:
 - **Pick work only via `pw_issues.py list`.** It returns only open issues labelled `status/accepted`, ranked for you. Never pick from the web UI, raw `gh issue list` or a search result.

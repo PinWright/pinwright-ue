@@ -163,7 +163,7 @@ static void DescribeDerivedSplineScale(
     }
 
     // Resolved by reflection rather than by linking the Water plugin into this file: the
-    // spline namespace deliberately carries no Water dependency (see CLAUDE.md, Module
+    // spline namespace deliberately carries no Water dependency (see AGENTS.md, Module
     // Split), and the check has to keep working on a host where Water is disabled — there
     // FindObject returns null and the branch simply never fires.
     if (const UClass* WaterSplineClass =

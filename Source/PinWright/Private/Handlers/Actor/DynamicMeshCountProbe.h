@@ -21,7 +21,7 @@
 // catches both triggers and stays correct if Epic changes the defaults.
 //
 // WHY REFLECTION: the main PinWright module deliberately does not link GeometryFramework
-// or DynamicMesh (CLAUDE.md, "Module Split & Integration Gating") so that
+// or DynamicMesh (AGENTS.md, "Module Split & Integration Gating") so that
 // UnrealEditor-PinWright.dll never hard-imports an engine plugin a consumer disabled.
 // Never #include a GeometryFramework header from this module.
 #pragma once

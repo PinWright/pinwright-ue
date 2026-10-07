@@ -7,7 +7,7 @@
 // UMetaSoundBuilderSubsystem: a Mono, non-one-shot Source whose UE.Sine oscillator is wired
 // to the audio output and whose Frequency pin is fed from a Float graph input. Nothing is
 // written to disk and no project content is referenced, so the tests are host-independent
-// (CLAUDE.md > "This plugin is the deliverable, and it is general-purpose").
+// (AGENTS.md > "This plugin is the deliverable, and it is general-purpose").
 //
 // Non-one-shot is deliberate: a one-shot Source built this way carries an OnFinished output
 // with nothing driving it usefully, and any early finish would make "did it produce audio"
@@ -53,7 +53,7 @@
 #include "Tests/TestUtils.h"
 
 // Named (not anonymous) namespace: the main module builds with Unity on, and two anonymous
-// namespaces merged into one TU collide by name. See CLAUDE.md > Building.
+// namespaces merged into one TU collide by name. See AGENTS.md > Building.
 namespace PwMetaSoundRenderTestFixture
 {
     /** Default the fixture's graph input carries when nothing overrides it. */

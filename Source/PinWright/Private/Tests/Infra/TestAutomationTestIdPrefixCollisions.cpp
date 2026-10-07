@@ -32,7 +32,7 @@
 // Nothing on that path logs, warns or ensures. "A.B" produces no result of any kind - not a
 // pass, not a fail, not a skip. Because it never enters the queue it is ABSENT from the
 // "<N> tests performed" count (AutomationCommandline.cpp:411 counts filtered leaf names)
-// rather than inflating it, which is exactly why the suite-count reconciliation in CLAUDE.md
+// rather than inflating it, which is exactly why the suite-count reconciliation in AGENTS.md
 // cannot see the loss. Note FAutomationTestFramework::StartTestByName is NOT affected - its
 // AutomationTestClassNameToInstanceMap is flat and keyed on the C++ class name - so the defect
 // lives entirely in the AutomationController report tree.

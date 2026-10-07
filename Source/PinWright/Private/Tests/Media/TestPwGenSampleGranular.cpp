@@ -39,7 +39,7 @@
 
 // Named namespace, not anonymous: Tests/Media/ already carries anonymous-namespace helpers
 // (TestSoundWaveAuthoringHandler.cpp's MakeTransientWave) and the module builds with
-// bUseUnity = true, which would merge the TUs. See CLAUDE.md > Building.
+// bUseUnity = true, which would merge the TUs. See AGENTS.md > Building.
 namespace PwGenSourceTest
 {
     constexpr int32 RenderRate = 48000;

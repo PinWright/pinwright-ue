@@ -19,7 +19,7 @@
 // something, so "nothing is excluded any more" cannot pass the suite either.
 //
 // Helper names carry an EffectFilterTest prefix and live in one file-scope anonymous namespace,
-// per the Unity-build rule in CLAUDE.md.
+// per the Unity-build rule in AGENTS.md.
 
 #include "Misc/AutomationTest.h"
 #include "Handlers/HandlerContext.h"
@@ -181,7 +181,7 @@ bool FEffectComponentActorIsExcludedTest::RunTest(const FString& Parameters)
 
     // Resolved by reflection rather than StaticClass() so this test needs no link-time reference
     // to the component type, matching how the production predicate recognises it (by class-name
-    // ancestry) and the reflection idiom in CLAUDE.md.
+    // ancestry) and the reflection idiom in AGENTS.md.
     UClass* BillboardClass =
         FindObject<UClass>(nullptr, TEXT("/Script/Engine.BillboardComponent"));
     if (!BillboardClass)

@@ -8,7 +8,7 @@
 // with `bUseUnity = true` the copy that sat in an ANONYMOUS namespace became visible at global scope
 // once Unity merged those TUs, so an unqualified call inside a `using namespace <FileHelpers>;` block
 // resolved to two candidates and failed with C2668. Named-namespace header, same fix already applied
-// to AssetDumpTestHelpers / WidgetXmlTestHelpers / BpirGraphTestHelpers (see CLAUDE.md > Building).
+// to AssetDumpTestHelpers / WidgetXmlTestHelpers / BpirGraphTestHelpers (see AGENTS.md > Building).
 
 #include "CoreMinimal.h"
 #include "AssetRegistry/AssetRegistryModule.h"

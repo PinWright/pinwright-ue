@@ -658,7 +658,7 @@ REGISTER_RPC_HANDLER("audio.create_ambient_sound", "audio", "Spawn an AAmbientSo
     // result is selectable/movable/deletable through the actor namespace.
     // AAmbientSound is a MinimalAPI engine UCLASS, so its StaticClass() is not
     // exported for cross-module linkage; resolve the class by reflection and
-    // spawn via the AActor base (see UE version compat note in CLAUDE.md).
+    // spawn via the AActor base (see UE version compat note in AGENTS.md).
     UClass* AmbientSoundClass = FindObject<UClass>(nullptr, TEXT("/Script/Engine.AmbientSound"));
     if (!AmbientSoundClass)
     {

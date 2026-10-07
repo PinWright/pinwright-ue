@@ -117,7 +117,7 @@ namespace
     // report IsSeated() - the failure paths need no discipline of their own.
     //
     // File-scope anonymous namespace with a Ground* prefix, per the Unity-build rule in
-    // CLAUDE.md: everything file-local in this TU lives in this one block.
+    // AGENTS.md: everything file-local in this TU lives in this one block.
     void GroundFailResult(GroundPlacement::FGroundSeatResult& Result,
                           GroundPlacement::EGroundSeatStatus Status,
                           const TCHAR* Code, const FString& Reason)

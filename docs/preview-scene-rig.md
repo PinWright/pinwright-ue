@@ -583,7 +583,7 @@ run **after** the wave lands and **not** by inference.
 3. **Does an asset-preview viewport client always have an `FSceneViewState`?** The §4.2 residual.
 4. **Which show-flag families actually take on `Component->ShowFlags` from a game-set base?** The R3
    `GAP` row in §4.3.
-5. **Re-establish the suite baseline.** `CLAUDE.md:116` records 4051/4051/0 at `39a3eb2b`; three
+5. **Re-establish the suite baseline.** `AGENTS.md` § Testing records 4051/4051/0 at `39a3eb2b`; three
    commits have landed since (`bcc334e8`, `c04375fc`, `bc951ea1`). Do not carry 4051 forward. §8.
 
 ### 4.6 `property.set` as an escape hatch — documented as unsupported, not gated
@@ -909,7 +909,7 @@ screenshot filename carries a one-second timestamp while a capture takes ~60 ms)
 propagate it. §5.2's P2–P9 are filed to `defect-backlog.md`.
 
 Two house rules this chunk lives or dies by:
-**rendering stops at the first `###` line** (`CLAUDE.md:215`), so every `##` editorial section must sit
+**rendering stops at the first `###` line** (`AGENTS.md` § Wiki Authoring Constraints), so every `##` editorial section must sit
 above the first `###` — audited 2026-08-14, this had swallowed ~26.5 KB of shipped content across five
 pages; and a **new** topic file needs an editor restart before `FWikiOverlay` picks it up
 (`wiki-src/README.md:69`), while edits to existing pages are mtime-cached and need none.
@@ -990,16 +990,16 @@ R3, R4, R6 and R7 have no blocker at all. R6 can be written from this document.
 
 **This wave starts only after a green full suite with reconciling counts.** Not a filtered run.
 
-1. **The recorded baseline is stale and must not be carried forward.** `CLAUDE.md:116` records
+1. **The recorded baseline is stale and must not be carried forward.** `AGENTS.md` § Testing records
    4051/4051/0 at `39a3eb2b`; `bcc334e8`, `c04375fc` and `bc951ea1` have landed since. Re-run and
    record the new figure, then derive this wave's expectation from it —
-   `<UE_ROOT>/Engine/Binaries/ThirdParty/Python3/Win64/python.exe -m check_suite_log <log> --expected N` from `Content/Python/` (never `uv`), per `CLAUDE.md` § Testing.
-   Whoever changes that figure moves the citation with it (`:122`).
-2. **A count can be green and still prove nothing.** `CLAUDE.md:122` and board ticket
+   `<UE_ROOT>/Engine/Binaries/ThirdParty/Python3/Win64/python.exe -m check_suite_log <log> --expected N` from `Content/Python/` (never `uv`), per `AGENTS.md` § Testing.
+   Whoever changes that figure moves the citation with it (§ Testing).
+2. **A count can be green and still prove nothing.** `AGENTS.md` § Testing and board ticket
    `B-test-skips-assertions-silently`: a conditional-skip path prints
    `PINWRIGHT_ASSERTIONS_SKIPPED` and reports success having asserted nothing. Every acceptance
    criterion above is written against that failure mode; check the log for skips, not only for fails.
-3. **Announce the build.** `CLAUDE.md:44`. Pass `-NoHotReloadFromIDE` (`:33`) — the blocker is another
+3. **Announce the build.** `AGENTS.md` § Building. Pass `-NoHotReloadFromIDE` (same section) — the blocker is another
    project's Live Coding console and waiting never clears it; never kill it. R1's `.Build.cs` edit
    forces a full module rebuild, so compile-checking with `-SingleFile` (`:46`) will not cover it.
 4. **A suite run is in progress at the time of writing.** Nothing in this plan may be built, run or

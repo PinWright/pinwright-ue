@@ -67,7 +67,7 @@
 #include "UObject/UObjectGlobals.h"
 
 // Named (not anonymous) namespace: the module builds with bUseUnity = true and the sibling audio
-// test TUs already own several anonymous helpers of similar name. See CLAUDE.md > Building.
+// test TUs already own several anonymous helpers of similar name. See AGENTS.md > Building.
 namespace PwAudioAnalysisHandlerTestHelpers
 {
     const TCHAR* const AnalyzeMethod     = TEXT("audio.analysis.analyze");

@@ -6,7 +6,7 @@
 #include "Sound/SoundWave.h"
 
 // Named (not anonymous) namespace: the main module builds with Unity on, and two
-// anonymous namespaces merged into one TU collide by name. See CLAUDE.md > Building.
+// anonymous namespaces merged into one TU collide by name. See AGENTS.md > Building.
 namespace PwAudioDecodeInternal
 {
     // int16 full-scale is -32768..32767; dividing by 32768 keeps the negative rail

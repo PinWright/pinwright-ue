@@ -15,7 +15,7 @@ docs/
   *.md                           Maintainer-facing docs and references.
 ```
 
-Issues are not part of this directory. They live in GitHub Issues on `PinWright/pinwright-ue`; labels, the metadata block and the `scripts/pw_issues.py` helper are described in the plugin `CLAUDE.md` -> **Issue tracker**. The old markdown board, `PinWright/pinwright-board`, is archived.
+Issues are not part of this directory. They live in GitHub Issues on `PinWright/pinwright-ue`; labels, the metadata block and the `scripts/pw_issues.py` helper are described in the plugin `AGENTS.md` -> **Issue tracker**. The old markdown board, `PinWright/pinwright-board`, is archived.
 
 ## Page Types
 

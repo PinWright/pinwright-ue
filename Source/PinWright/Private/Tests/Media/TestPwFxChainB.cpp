@@ -43,7 +43,7 @@
 
 // Named (not anonymous) namespace: the module builds with bUseUnity = true and
 // Tests/Media/ already carries anonymous-namespace helpers with colliding names.
-// See CLAUDE.md > Building.
+// See AGENTS.md > Building.
 namespace PwFxChainBTest
 {
     constexpr int32 TestSampleRate = 48000;

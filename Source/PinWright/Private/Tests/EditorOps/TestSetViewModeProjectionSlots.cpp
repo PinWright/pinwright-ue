@@ -17,7 +17,7 @@
 // not perform cannot pass.
 //
 // Helper names carry a ViewSlotTest prefix and live in one file-scope anonymous namespace, per
-// the Unity-build rule in CLAUDE.md.
+// the Unity-build rule in AGENTS.md.
 
 #include "Misc/AutomationTest.h"
 #include "Dom/JsonObject.h"

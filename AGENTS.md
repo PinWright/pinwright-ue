@@ -1,8 +1,8 @@
 Maintainer agent instructions; humans start at CONTRIBUTING.md.
 
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to AI coding agents (Claude Code, Codex and others) working on this repository. Notes that apply to one agent only are in the labelled section at the end.
 
 ## Project Overview
 
@@ -42,7 +42,7 @@ Documentation whose only worked example is a host asset fails this test even whe
 clean: a user cannot tell what the feature is *for*. Referencing the host as the environment the
 plugin is *developed and tested in* — as this file does throughout — is legitimate and stays.
 
-Operational rule: agents must use their MCP client surface, e.g. `mcp__pinwright__call` in this project. Do not probe or invoke the gateway with raw HTTP, `curl`, `Invoke-RestMethod`, `/health`, or legacy `/rpc` calls.
+Operational rule: agents must use their MCP client's `call` tool (Claude Code: see **Claude Code** at the end). Do not probe or invoke the gateway with raw HTTP, `curl`, `Invoke-RestMethod`, `/health`, or legacy `/rpc` calls.
 
 **See `docs/arch.md` for the full architecture reference** — layer diagram, request flow, auto-registration pipeline, FHandlerContext API, state management, testing architecture, and key files index.
 
@@ -496,3 +496,10 @@ Two settings classes:
   - HTTP: per-project derived port `19880`–`30119` by default (`bAutoDerivePort` defaults on; disable it to bind the fixed `HttpPort`, which defaults to 19880), bound port published to `Saved/PinWright/gateway-port` (stdio proxy follows it per call), timeouts 120s/300s, 1MB max request body
   - Security: loopback-only; bearer-token auth required by default (token at `Saved/PinWright/gateway-token`; `bRequireAuthToken` kill switch)
 - `UPinWrightProjectSettings` (team-shared, `Config=Editor, defaultconfig` → persists to the host project's committed `Config/DefaultEditor.ini`) in Edit → Project Settings → Plugins → PinWright (Project): `AssetDumpRootDirectory`, `WikiOutputDirectory`
+
+## Claude Code
+
+Applies only to Claude Code; other agents skip this section.
+
+- The PinWright `call` tool is `mcp__pinwright__call` when the server is registered as `pinwright`. Every RPC goes through it; never raw HTTP, `curl` or `/health` (the operational rule above).
+- The bundled stdio proxy's lifecycle tools appear under the same prefix: `mcp__pinwright__editor_build` / `mcp__pinwright__editor_build_status` (see **Building**), `mcp__pinwright__editor_run_tests` / `mcp__pinwright__editor_test_status` (see **Testing**), and `mcp__pinwright__editor_start`, `mcp__pinwright__editor_restart`, `mcp__pinwright__editor_list`. This file names them without the prefix.

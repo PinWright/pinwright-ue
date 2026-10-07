@@ -28,7 +28,7 @@
 
 // Named namespace, not anonymous: TestSoundWaveAuthoringHandler.cpp already has an
 // anonymous-namespace MakeTransientWave in this same directory, and Unity would
-// merge the two into one TU. See CLAUDE.md > Building.
+// merge the two into one TU. See AGENTS.md > Building.
 namespace PwAudioDecodeTest
 {
     // Bare transient wave with no imported payload at all.

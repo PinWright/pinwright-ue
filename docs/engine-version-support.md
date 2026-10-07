@@ -24,7 +24,7 @@ an engine bump can retire one without re-deriving the survey.
 and add its row here in the same change.
 
 Guard macros, reflection escapes for unexported types, the existing compat shims, and
-`Ctx.SendUnsupportedEngineVersion` are in `CLAUDE.md` → Conventions → *UE version compat*. The
+`Ctx.SendUnsupportedEngineVersion` are in `AGENTS.md` → Conventions → *UE version compat*. The
 design rule that produced this file is `rpc-design.md` §14.
 
 ## Known blockers
@@ -441,10 +441,10 @@ either direction:
 
 | Surface | Says | Note |
 |---|---|---|
-| `CLAUDE.md` (overview, *UE version compat*) | 5.3-5.8 | Links here. |
+| `AGENTS.md` (overview, *UE version compat*) | 5.3-5.8 | Links here. |
 | `README.md` (Requirements) | 5.3-5.8, Windows or Linux | Links here. The end-user-facing statement. |
 | `.polyskill/skills/mcp-version-matrix/` | candidates `5.3`…`5.8` | The local verification loop; the version to test is an argument, so a narrowed claim means narrowing the candidate list. |
 | `product-facts.json` (`ueRange`, `ueVersions`) | `5.3-5.8` | **Generated** by `scripts/gen_product_facts.py` from the `ue_versions` list in that script — editing the JSON alone is discarded. Changing the advertised range therefore means changing that list. |
 | `PinWright.uplugin` | — | Carries **no** `EngineVersion` key, so it advertises nothing and needs no edit. |
 | `docs/arch.md:146,586` | "UE 5.3-5.8 compat" | Describes what `Misc/EngineVersionComparison.h` is for, not a support claim. |
-| `CLAUDE.md` (Architecture → transport) | `SocketHttpServer` is "uniform across UE 5.3-5.8" | True of that file — it needs no guards on any of the six. A claim about one implementation, not about the plugin; left alone. |
+| `AGENTS.md` (Architecture → transport) | `SocketHttpServer` is "uniform across UE 5.3-5.8" | True of that file — it needs no guards on any of the six. A claim about one implementation, not about the plugin; left alone. |

@@ -27,7 +27,7 @@
 // while silently moving every actor anyone had already seated on a scatter.
 //
 // Helper names carry an InstancedFilterTest prefix and live in one file-scope anonymous
-// namespace, per the Unity-build rule in CLAUDE.md.
+// namespace, per the Unity-build rule in AGENTS.md.
 
 #include "Misc/AutomationTest.h"
 #include "Handlers/Spatial/GroundPlacementUtils.h"

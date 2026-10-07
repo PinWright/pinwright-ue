@@ -60,7 +60,7 @@
 #endif
 
 // Named namespace (not anonymous) so a Unity merge of the sequencer TUs cannot ODR-collide these
-// helpers with a sibling file's - the convention CLAUDE.md records for shared handler helpers.
+// helpers with a sibling file's - the convention AGENTS.md records for shared handler helpers.
 namespace SequencerBindingUtils
 {
     // Outcome of one binding attempt.

@@ -790,7 +790,7 @@ def cmd_file(gh: Gh, args) -> int:
         return 5 if state == "closed" else 0
 
     if rice is None and not harness:
-        raise PwError("a new issue needs --rice R,I,C,E (see CLAUDE.md -> Issue tracker -> "
+        raise PwError("a new issue needs --rice R,I,C,E (see AGENTS.md -> Issue tracker -> "
                       "Priority (RICE)); without it the issue sorts below every scored one", 2)
     meta = {"id": slug, "tags": tags, "encounters": 1, "lastSeen": now}
     if args.costly:

@@ -11,7 +11,7 @@ This skill runs autonomously: it audits, validates findings against source, and 
 
 ## Issue tracker
 
-Issues live in GitHub Issues on `PinWright/pinwright-ue`. Every read and write goes through the shared helper `scripts/pw_issues.py`, run from the plugin directory (`<host project>/Plugins/PinWright`) as `uv run scripts/pw_issues.py <command>`; `--help` lists the commands and exit codes. Labels, the hidden metadata block, the lease and the severity rubric are described in the plugin `CLAUDE.md` -> **Issue tracker**.
+Issues live in GitHub Issues on `PinWright/pinwright-ue`. Every read and write goes through the shared helper `scripts/pw_issues.py`, run from the plugin directory (`<host project>/Plugins/PinWright`) as `uv run scripts/pw_issues.py <command>`; `--help` lists the commands and exit codes. Labels, the hidden metadata block, the lease and the severity rubric are described in the plugin `AGENTS.md` -> **Issue tracker**.
 
 Two rules, no exceptions:
 - **Pick work only via `pw_issues.py list`.** It returns only open issues labelled `status/accepted`, ranked for you. Never pick from the web UI, raw `gh issue list` or a search result.
@@ -21,7 +21,7 @@ This skill files rather than picks work, so it also searches: `pw_issues.py file
 
 Tracks **MCP tool issues only** — BPIR compiler bugs, widget_import_xml problems, property resolution failures, missing tool features, ergonomic gaps. NOT game-level bugs.
 
-Issue types: `--type bug`, `feature` or `ergonomic` (GitHub issue types Bug, Feature, Ergonomic, not labels). `file` derives the metadata id from the title with a `B-`/`F-`/`E-` prefix (e.g., `B-enum-raw-integers`); pass `--id` for a sharper slug. Titles are capped at 80 characters: write a short title and put the detail in the body. Every new issue carries `--rice R,I,C,E`, scored by the method in the plugin `CLAUDE.md` -> **Issue tracker** -> **Priority (RICE)**; `file` writes the type, `--severity` and the four RICE inputs to the issue's type and fields and computes the `RICE priority` field from them, so never pass or write `priority` or that field yourself.
+Issue types: `--type bug`, `feature` or `ergonomic` (GitHub issue types Bug, Feature, Ergonomic, not labels). `file` derives the metadata id from the title with a `B-`/`F-`/`E-` prefix (e.g., `B-enum-raw-integers`); pass `--id` for a sharper slug. Titles are capped at 80 characters: write a short title and put the detail in the body. Every new issue carries `--rice R,I,C,E`, scored by the method in the plugin `AGENTS.md` -> **Issue tracker** -> **Priority (RICE)**; `file` writes the type, `--severity` and the four RICE inputs to the issue's type and fields and computes the `RICE priority` field from them, so never pass or write `priority` or that field yourself.
 
 ## Phase 1: Review Session Usage
 
@@ -96,7 +96,7 @@ GitHub Issues on PinWright/pinwright-ue, only through the helper, run from the
 plugin directory: `uv run scripts/pw_issues.py <command>` (`--help` for the
 list). Read issues only with `show N`; text shown as withheld does not exist
 for you. Labels, the severity rubric and the RICE priority method: plugin
-`CLAUDE.md` -> Issue tracker. History is issue comments: add new ones, never
+`AGENTS.md` -> Issue tracker. History is issue comments: add new ones, never
 edit old ones, and never put a `## History` section in a body (the
 `## History (board)` section exists only on issues migrated from the board).
 

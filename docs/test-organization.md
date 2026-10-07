@@ -22,7 +22,7 @@ compiler and geometry op fixes, the RPC ergonomics pass, both suggestion rankers
 the mesh-orientation signals, and five tests that had never executed at all because their ids
 were strict prefixes of other ids. It is the
 static count; ~87 sit inside feature-availability `#if` guards, so the executed total is lower
-— derive the expected suite total the way the Testing section of `CLAUDE.md` requires.
+— derive the expected suite total the way the Testing section of `AGENTS.md` requires.
 
 The per-bucket counts below are **directory** counts under `Private/Tests/<Bucket>/`, which is
 what the command above measures and what File Placement below prescribes. They are not counts of
