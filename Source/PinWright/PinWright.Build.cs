@@ -128,7 +128,9 @@ public class PinWright : ModuleRules
         // FreeType2: texture.create_text_texture rasterises real font glyphs (UFont / UFontFace bytes)
         // on the CPU (Handlers/Material/TextureAuthorHandler.cpp). The same static dependency
         // SlateCore and the engine's Text3D plugin take; present on every editor target 5.3-5.8.
-        AddEngineThirdPartyPrivateStaticDependencies(Target, "FreeType2");
+        // zlib + UElibPNG are freetype.lib's own deps: on an installed engine FreeType2 is precompiled,
+        // so its Build.cs skips adding them and this DLL fails to link (png_*, inflate*) without them.
+        AddEngineThirdPartyPrivateStaticDependencies(Target, "FreeType2", "zlib", "UElibPNG");
 
         // FInstancedStruct / FStructView live in the standalone StructUtils plugin module
         // in UE 5.4 (STRUCTUTILS_API). From UE 5.5 on they were folded into CoreUObject, so
