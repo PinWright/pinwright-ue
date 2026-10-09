@@ -30,10 +30,16 @@
 
 // The MapGet/MapSet pin helpers are the only exported way to add a typed parameter pin to those
 // private, unexported node classes. Their public header exists from UE 5.5; 5.3/5.4 refuse.
+// The header itself is not included: it defines a NIAGARAEDITOR_API template inline, which is
+// C2491 (dllimport definition) outside NiagaraEditor, so the two exported symbols are redeclared.
 #if UE_VERSION_NEWER_THAN_OR_EQUAL(5, 5, 0) && __has_include("Widgets/Wizard/SNiagaraModuleWizard.h")
 class UNiagaraNodeParameterMapGet;
 class UNiagaraNodeParameterMapSet;
-#include "Widgets/Wizard/SNiagaraModuleWizard.h"
+namespace UE::Niagara::Wizard::Utilities
+{
+    NIAGARAEDITOR_API UEdGraphPin* AddReadParameterPin(const FNiagaraTypeDefinition& Type, const FName& Name, UNiagaraNodeParameterMapGet* MapGetNode);
+    NIAGARAEDITOR_API UEdGraphPin* AddWriteParameterPin(const FNiagaraTypeDefinition& Type, const FName& Name, UNiagaraNodeParameterMapSet* MapSetNode);
+}
 #define PINWRIGHT_HAS_NIAGARA_MAP_PIN_HELPERS 1
 #else
 #define PINWRIGHT_HAS_NIAGARA_MAP_PIN_HELPERS 0
