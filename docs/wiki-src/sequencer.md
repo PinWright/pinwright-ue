@@ -1,6 +1,6 @@
 # sequencer
 
-Author and play back `ULevelSequence` assets — UE's track-based timeline for cinematics, gameplay-driven animations, and cutscenes (52 methods covering create/save, actor and spawnable binding, typed and generic track addition, keyframes, display rate / playback speed, editor-preview playback, deterministic playhead scrubbing, and actor-binding repointing). Use this namespace for the full level-sequence lifecycle; reach for `call("animation.authoring")` for raw `UAnimSequence` creation outside Sequencer and `call("mrq")` for offline render queueing.
+Author and play back `ULevelSequence` assets — UE's track-based timeline for cinematics, gameplay-driven animations, and cutscenes (57 methods covering create/save, actor and spawnable binding, typed and generic track addition, keyframes, display rate / playback speed, editor-preview playback, deterministic playhead scrubbing, and actor-binding repointing). Use this namespace for the full level-sequence lifecycle; reach for `call("animation.authoring")` for raw `UAnimSequence` creation outside Sequencer and `call("mrq")` for offline render queueing.
 
 ## Namespace consolidation
 
@@ -16,7 +16,7 @@ The live read APIs share the asset-dump MovieScene JSON helpers where they overl
 
 - `sequencer.list_tracks` enumerates root/master tracks (`MovieScene->GetTracks()`) and per-binding tracks, **plus** the camera-cut track — the camera-cut entry carries `isCameraCutTrack: true` and `isMasterTrack: true` (it lives on the dedicated `GetCameraCutTrack()` slot, not in `GetTracks()`). For the full dump-shaped camera-cut object (sections, channels) use `sequencer.get_camera_cut_track`; for just its sections use `sequencer.list_sections`.
 - `sequencer.get_properties` includes `tickResolution`, `bindingCount`, `spawnableCount`, and `possessableCount` alongside the existing playback range and frame-rate fields.
-- `sequencer.list_sections` emits sections from master tracks, binding tracks, and the camera-cut track. Its optional `trackName` filter takes the same identifier `list_tracks` / `add_track` report (matched as a substring against object name or display name). Each row carries track identity (`trackName`, `trackClass`, `bindingGuid`) plus section details (`range`, `blendType`, `rowIndex`, `channels`) and, when applicable, the referenced animation/audio/camera asset fields described in [`asset.dump` sidecars](asset.dump-sidecars.md). Each channel entry is `{type, keyCount}` by default; pass `includeKeys=true` to also get `keys: [{frame, value?}, ...]` per channel (per-key frame numbers always, plus the scalar `value` for double/float/bool/integer channels), so an `add_keyframe` write can be verified against the exact frames and values read back. Curve channels (double/float) additionally carry `interp`, `tangentMode`, and the two solved tangent numbers `arriveTangent` / `leaveTangent` — the last two matter because a cubic/auto key whose tangents were never computed reads back identically to a correct one on every other field while evaluating flat-in/flat-out (the subject stops dead at the key). The flag is off by default to keep the default payload compact. An unassigned section asset is represented by JSON `null` rather than an omitted key.
+- `sequencer.list_sections` emits sections from master tracks, binding tracks, and the camera-cut track. Its optional `trackName` filter takes the same identifier `list_tracks` / `add_track` report (matched as a substring against object name or display name). Each row carries track identity (`trackName`, `trackClass`, `bindingGuid`) plus section details (`range`, `blendType`, `rowIndex`, `channels`) and, when applicable, the referenced animation/audio/camera asset fields described in [`asset.dump` sidecars](asset.dump-sidecars.md). Each channel entry is `{type, keyCount}` by default; pass `includeKeys=true` to also get `keys: [{frame, value?}, ...]` per channel (per-key frame numbers always, plus the scalar `value` for double/float/bool/integer channels), so an `add_keyframe` write can be verified against the exact frames and values read back. Curve channels (double/float) additionally carry `interp`, `tangentMode`, and the two solved tangent numbers `arriveTangent` / `leaveTangent` — the last two matter because a cubic/auto key whose tangents were never computed reads back identically to a correct one on every other field while evaluating flat-in/flat-out (the subject stops dead at the key). The flag is off by default to keep the default payload compact. An unassigned section asset is represented by JSON `null` rather than an omitted key. A 3D transform section also carries `transformMask`, `channelDefaults` and `evaluatedChannels` (see **Transform tracks drive only the channels you key** below).
 - `sequencer.get_camera_cut_track` returns a dump-shaped `cameraCutTrack` object when present, or JSON `null` when the sequence has no camera-cut track.
 
 ## FBX import and export outcomes
@@ -51,6 +51,14 @@ Channel order is fixed at `volume=0`, `pitch=1` (established in `Engine/Source/R
 **`INDEFINITELY_LOOPING_DURATION` is the engine sentinel for unknown sound length.** When authoring an audio section and falling back to a `USoundBase`'s duration, `SoundBase->GetDuration()` returns `INDEFINITELY_LOOPING_DURATION` (`10000.0f`, defined at `Runtime/AudioMixerCore/Public/AudioDefines.h:16`) for looping or streaming sounds. Always guard `if (Duration != INDEFINITELY_LOOPING_DURATION) { … }` before using the value; fall back to a sensible default (engine code uses `1.0s` — see `Editor/MovieSceneTools/Private/TrackEditors/AudioTrackEditor.cpp:245`) when the sentinel fires.
 
 **Use `UMovieSceneSection::GetSignature()` as a stable section key for sub-sequence handlers.** `GetSignature()` returns an `FGuid` that survives the editor session and lets a mutation handler look up the same section across multiple RPC calls. This is the right key for sub-section round-trip identity (better than indices, which shift when other sections are inserted/removed).
+
+## Transform tracks drive only the channels you key
+
+A `UMovieScene3DTransformSection` has nine channels (`Location.X|Y|Z`, `Rotation.X|Y|Z` = roll / pitch / yaw, `Scale.X|Y|Z`). The engine evaluates a channel when the section's transform mask enables it **and** it holds keys or a default. A channel it does not evaluate leaves that axis at the bound object's own value. The engine's section constructor gives every channel a default (location 0, rotation 0, scale 1), so a section that keeps them pins every unkeyed axis: a binding keyed on rotation only snaps its object to the world origin at scale 1 on playback.
+
+Every verb here that creates a transform section (`add_transform_track`, `sequence.add_keyframe`, `add_keyframes`, `add_section` on a Transform track, `add_camera_rig_rail` / `add_camera_rig_crane`) clears those defaults, so a new section drives exactly the channels that get keys. A rotation-only track is therefore just rotation keys. Existing sections are left as they are. To repair one, or to stop keyed channels from evaluating, use `sequencer.set_transform_mask`.
+
+Each 3D transform section in `list_sections`, `list_tracks`, `add_transform_track` and the `level_sequence.json` dump carries the state that decides this. `transformMask` lists the enabled channels. `channelDefaults` maps each channel that holds a default to its value; a channel with no default is absent. `evaluatedChannels` lists the channels playback drives. An unkeyed channel that appears in `evaluatedChannels` is pinned to its `channelDefaults` value.
 
 ## Driving the editor viewport without PIE
 
@@ -141,6 +149,26 @@ For non-skeletal animation (transforms, materials, visibility) use the correspon
 | any other name | a number keys a float track, a boolean keys a bool track | `{property:"MyFloat", frame:0, value:0.5}` |
 
 All four transform properties write the same `MovieScene3DTransformTrack` on the binding; an axis you omit keeps its current curve. A value that addresses no channel of the selected shape writes no key and fails with `UNSUPPORTED_PROPERTY`, so a nested `{location:{...}}` sent with `property:"Location"` is refused, not half-applied. The same refusal covers any part of the value the shape does not read: an unknown key (a misspelt `rotaton` group, a `w` component), a non-number component, or an array that is not exactly three numbers. The error names the bad key and the expected shape, and the refused call creates no track. `sequencer.add_keyframes` applies the same rules per key and rejects the whole batch with `INVALID_ARGUMENT`. Read the written keys back with `sequencer.list_sections` and `includeKeys:true`.
+
+A Transform track these verbs create drives only the channels that get keys; the bound object keeps its own value on every other axis. A track that already existed keeps whatever defaults and mask it had. See **Transform tracks drive only the channels you key** on the namespace page.
+
+### sequencer.add_transform_track
+
+Adds a new `MovieScene3DTransformTrack` with one empty section to the binding. The section carries no keys and no channel defaults, so it moves nothing until keys are written; each channel you key then drives that axis alone. The response's `transformMask`, `channelDefaults` (empty) and `evaluatedChannels` (empty) are read off the new section. The verb always adds a track: on a binding that already has one, key the existing track with `sequencer.add_keyframes` instead.
+
+### sequencer.set_transform_mask
+
+Sets the transform mask of every 3D transform section on the binding's Transform track: the channels named in `channels` evaluate, every other channel stops evaluating and leaves that axis to the bound object, keys and defaults included. Groups (`Location`, `Rotation`, `Scale`) and single channels (`Location.X` ... `Scale.Z`; `Rotation.X` = roll, `Rotation.Y` = pitch, `Rotation.Z` = yaw) mix freely. A `Weight` bit already on a section is kept.
+
+```json
+{"path": "/Game/Seq/LS_Turntable", "bindingId": "<guid from sequencer.get_bindings>", "channels": ["Rotation.Z"]}
+```
+
+Use it to repair a section that pins unkeyed channels to stale defaults (check `evaluatedChannels` in `list_sections`), or to keep only some keyed channels evaluating. The call is one undo step. Each `sections[]` row carries `sectionIndex`, `previousMask` and the section's readback (`transformMask`, `channelDefaults`, `evaluatedChannels`). Failures change nothing: an empty or unknown `channels` entry is `INVALID_ARGUMENT`, a binding without a Transform track is `NO_TRANSFORM_TRACK`, a track without a transform section is `NO_TRANSFORM_SECTION`. The mask also hides masked-out channels in the Sequencer editor.
+
+### sequencer.get_binding_transform
+
+`unanimatedChannels` lists the channels no transform section on the track drives (masked out, or holding neither keys nor a default). Their values in `location` / `rotation` / `scale` are placeholders (0): the interrogation runs without the bound object, and at playback the object keeps its own value on those axes. A track that drives no channel at all fails with `NO_TRANSFORM_SECTION`.
 
 ### sequencer.set_playhead
 

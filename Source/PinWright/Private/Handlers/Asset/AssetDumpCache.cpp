@@ -791,7 +791,9 @@ int32 GetAspectVersion(const FString& RelativeFile)
         // 4: nanite {enabled, trianglePercent, fallbackPercent, positionPrecision(Auto)}.
         { TEXT("static_mesh.json"),         4 },
         { TEXT("static_mesh.txt"),          3 },
-        { TEXT("level_sequence.json"),      3 },
+        // 4: every 3D transform section carries transformMask, channelDefaults and
+        //    evaluatedChannels (an unkeyed channel with a default pins the bound object).
+        { TEXT("level_sequence.json"),      4 },
         // 4: curves[] reads the data model instead of the runtime RawCurveData copy, which strips
         //    redundant keys on load (different keyCount) and can lag the model.
         { TEXT("anim_sequence.json"),       4 },

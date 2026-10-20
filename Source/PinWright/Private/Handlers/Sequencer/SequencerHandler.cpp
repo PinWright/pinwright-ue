@@ -37,6 +37,8 @@
 #include "AudioDefines.h"
 #include "Utils/MovieSceneJsonUtils.h"
 #include "UObject/SoftObjectPath.h"
+// FScopedTransaction: sequencer.set_transform_mask lands as one undo step.
+#include "ScopedTransaction.h"
 
 namespace SequencerSectionHelpers
 {
@@ -521,6 +523,8 @@ namespace
             UMovieScene3DTransformSection* TransformSection = Cast<UMovieScene3DTransformSection>(TransformTrack->CreateNewSection());
             if (TransformSection)
             {
+                // Constructor defaults would pin the rig to the origin at scale 1 on playback.
+                MovieSceneTransformChannels::ClearDefaults(TransformSection);
                 TransformTrack->AddSection(*TransformSection);
                 TransformSection->SetRange(MovieScene->GetPlaybackRange());
             }
@@ -814,6 +818,9 @@ REGISTER_RPC_HANDLER("sequencer.add_transform_track", "sequencer", "Add a UMovie
     UMovieScene3DTransformSection* TransformSection = Cast<UMovieScene3DTransformSection>(TransformTrack->CreateNewSection());
     if (TransformSection)
     {
+        // Constructor defaults (location 0, rotation 0, scale 1) would pin every channel the
+        // caller never keys, snapping the bound object to the origin on playback.
+        MovieSceneTransformChannels::ClearDefaults(TransformSection);
         TransformTrack->AddSection(*TransformSection);
         MovieScene->Modify();
     }
@@ -832,6 +839,104 @@ REGISTER_RPC_HANDLER("sequencer.add_transform_track", "sequencer", "Add a UMovie
     Resp->SetStringField(TEXT("bindingGuid"), BindingGuidStr);
     Resp->SetNumberField(TEXT("keyCount"), KeyCount);
     Resp->SetBoolField(TEXT("hasDefaultKeyframes"), KeyCount > 0);
+    if (TransformSection)
+    {
+        MovieSceneTransformChannels::AppendSectionState(*TransformSection, Resp);
+    }
+    Ctx.SendSuccess(Resp);
+    return true;
+}
+
+// ---- sequencer.set_transform_mask ----
+// Repair and partial-track authoring for 3D transform sections. The mask is the engine's own
+// switch for which channels a section drives: a channel outside it never evaluates, so the bound
+// object keeps its own value on that axis even when the channel holds a key or a default (a
+// section made before transform verbs stopped seeding defaults pins every unkeyed axis).
+REGISTER_RPC_HANDLER("sequencer.set_transform_mask", "sequencer", "Set which channels the 3D transform sections of a binding's Transform track drive. Channels left out stop evaluating, so the bound object keeps its own value on those axes; use it to make a rotation-only (or any partial) transform track, or to unpin unkeyed channels that still carry defaults. Applies to every transform section on the track in one undo step and returns each section's previous and new mask.",
+    RPC_PARAMS(
+        RPC_PARAM_REQ("path", "path", "Level sequence asset path"),
+        RPC_PARAM_REQ("bindingId", "string", "Object binding GUID (from add_actor/get_bindings)"),
+        RPC_PARAM_REQ("channels", "array", "Channels to keep evaluating: groups Location | Rotation | Scale and/or single channels Location.X|Y|Z, Rotation.X|Y|Z (X = roll, Y = pitch, Z = yaw), Scale.X|Y|Z, case-insensitive. Every channel not named is masked out. An empty list or an unknown name changes nothing and fails with INVALID_ARGUMENT. A Weight bit already on a section is kept.")
+    ))
+{
+    const FString SequencePath = Ctx.GetString(TEXT("path"));
+    const FString BindingIdStr = Ctx.GetString(TEXT("bindingId"));
+
+    // Validate the mask before loading anything, so a typo costs nothing.
+    const TArray<TSharedPtr<FJsonValue>>* ChannelEntries = Ctx.GetArray(TEXT("channels"));
+    EMovieSceneTransformChannel RequestedMask = EMovieSceneTransformChannel::None;
+    FString MaskError;
+    if (!ChannelEntries || !MovieSceneTransformChannels::ParseChannelList(*ChannelEntries, RequestedMask, MaskError))
+    {
+        Ctx.SendError(TEXT("INVALID_ARGUMENT"), ChannelEntries ? MaskError : FString(TEXT("channels must be an array")));
+        return true;
+    }
+
+    FGuid BindingGuid;
+    if (!FGuid::Parse(BindingIdStr, BindingGuid))
+    {
+        Ctx.SendError(TEXT("INVALID_ARGUMENT"), FString::Printf(TEXT("bindingId is not a valid GUID: '%s'"), *BindingIdStr));
+        return true;
+    }
+
+    ULevelSequence* LevelSequence = LoadObject<ULevelSequence>(nullptr, *SequencePath);
+    if (!LevelSequence)
+    {
+        Ctx.SendError(TEXT("LOAD_FAILED"), TEXT("Failed to load LevelSequence"));
+        return true;
+    }
+    UMovieScene* MovieScene = LevelSequence->GetMovieScene();
+    if (!MovieScene)
+    {
+        Ctx.SendError(TEXT("INVALID_SEQUENCE"), TEXT("Sequence has no MovieScene"));
+        return true;
+    }
+
+    // Find, never add: masking a track that does not exist would create one that drives nothing.
+    UMovieScene3DTransformTrack* TransformTrack =
+        MovieScene->FindTrack<UMovieScene3DTransformTrack>(BindingGuid, FName("Transform"));
+    if (!TransformTrack)
+    {
+        Ctx.SendError(TEXT("NO_TRANSFORM_TRACK"), FString::Printf(TEXT("Binding '%s' has no Transform track. "
+            "Create one with sequencer.add_transform_track or by keying it with sequencer.add_keyframes."), *BindingIdStr));
+        return true;
+    }
+    TArray<UMovieScene3DTransformSection*> Sections;
+    for (UMovieSceneSection* Section : TransformTrack->GetAllSections())
+    {
+        if (UMovieScene3DTransformSection* TransformSection = Cast<UMovieScene3DTransformSection>(Section))
+        {
+            Sections.Add(TransformSection);
+        }
+    }
+    if (Sections.Num() == 0)
+    {
+        Ctx.SendError(TEXT("NO_TRANSFORM_SECTION"), FString::Printf(TEXT("Transform track of binding '%s' has no section to mask"), *BindingIdStr));
+        return true;
+    }
+
+    const FScopedTransaction Transaction(NSLOCTEXT("PinWright", "SequencerSetTransformMask", "Set Transform Mask"));
+    TArray<TSharedPtr<FJsonValue>> SectionRows;
+    for (int32 SectionIndex = 0; SectionIndex < Sections.Num(); ++SectionIndex)
+    {
+        UMovieScene3DTransformSection* Section = Sections[SectionIndex];
+        const EMovieSceneTransformChannel PreviousMask = Section->GetMask().GetChannels();
+        Section->Modify();
+        Section->SetMask(RequestedMask | (PreviousMask & EMovieSceneTransformChannel::Weight));
+
+        // Read back off the section rather than echoing the request.
+        TSharedPtr<FJsonObject> Row = MakeShared<FJsonObject>();
+        Row->SetNumberField(TEXT("sectionIndex"), SectionIndex);
+        Row->SetArrayField(TEXT("previousMask"), MovieSceneTransformChannels::MaskToJson(PreviousMask));
+        MovieSceneTransformChannels::AppendSectionState(*Section, Row);
+        SectionRows.Add(MakeShared<FJsonValueObject>(Row));
+    }
+    MovieScene->Modify();
+
+    TSharedPtr<FJsonObject> Resp = MakeShared<FJsonObject>();
+    AddAssetVerification(Resp, LevelSequence);
+    Resp->SetStringField(TEXT("bindingId"), BindingGuid.ToString());
+    Resp->SetArrayField(TEXT("sections"), SectionRows);
     Ctx.SendSuccess(Resp);
     return true;
 }

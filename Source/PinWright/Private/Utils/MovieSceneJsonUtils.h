@@ -34,6 +34,7 @@
 #include "Channels/MovieSceneIntegerChannel.h"
 #include "Curves/RichCurve.h"
 #include "Compat/EngineVersionCompat.h"
+#include "Utils/MovieSceneTransformChannels.h"
 #include "UObject/SoftObjectPath.h"
 #include "UObject/UnrealType.h"
 // UE 5.5+ models sub-section play rate as a time-warp variant; the header is absent in 5.4.
@@ -527,6 +528,11 @@ namespace MovieSceneJsonUtils
         // Read-back of the lock flag written by sequencer.set_track_locked (Section->SetIsLocked).
         Obj->SetBoolField(TEXT("isLocked"), Section->IsLocked());
         Obj->SetArrayField(TEXT("channels"), BuildChannelEntriesJson(Section->GetChannelProxy(), bIncludeKeys));
+
+        if (const UMovieScene3DTransformSection* TransformSection = Cast<UMovieScene3DTransformSection>(Section))
+        {
+            MovieSceneTransformChannels::AppendSectionState(*TransformSection, Obj);
+        }
 
         if (const UMovieSceneSkeletalAnimationSection* AnimationSection =
             Cast<UMovieSceneSkeletalAnimationSection>(Section))

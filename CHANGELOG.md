@@ -2,6 +2,25 @@
 
 ## 1.0.0
 
+- Fixed: transform sections created by `sequencer.add_transform_track`, `sequence.add_keyframe`,
+  `sequencer.add_keyframes`, `sequencer.add_section` and `sequencer.add_camera_rig_rail` /
+  `add_camera_rig_crane` no longer keep the engine's constructor channel defaults (location 0,
+  rotation 0, scale 1). Those defaults made every unkeyed channel evaluate, so a binding keyed
+  on rotation only snapped its object to the world origin at scale 1 on playback. A new section
+  now drives only the channels that get keys; the bound object keeps its own value on the rest.
+  Sections that already exist are not changed. Behaviour change: a track keyed on some channels
+  no longer forces the others to 0 / 1.
+- Added: `sequencer.set_transform_mask` sets which channels the transform sections of a binding's
+  Transform track drive (`channels`: `Location` / `Rotation` / `Scale` groups or single channels
+  such as `Rotation.Z`), in one undo step, returning each section's previous and new mask. Use it
+  to author a partial (e.g. rotation-only) track or to unpin unkeyed channels of an existing
+  section that still carry defaults.
+- Added: every 3D transform section in `sequencer.list_sections`, `sequencer.list_tracks`,
+  `sequencer.add_transform_track` and the `level_sequence.json` dump (aspect version 4) carries
+  `transformMask`, `channelDefaults` (only channels that hold a default) and `evaluatedChannels`
+  (the channels playback drives). `sequencer.get_binding_transform` reports
+  `unanimatedChannels`, whose values in the result are placeholders (0), and refuses with
+  `NO_TRANSFORM_SECTION` when the track drives no channel.
 - Changed: `asset.dump_folder` and level `asset.dump` jobs no longer load a package that is not
   in memory inside one synchronous call. They load it with `LoadPackageAsync`, pump the loader for
   about 50 ms per tick (one load step cannot be split, so a single heavy step can run longer), and

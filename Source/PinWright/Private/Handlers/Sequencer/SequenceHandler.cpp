@@ -336,6 +336,11 @@ namespace SequenceHelpers
         {
             return TArrayView<FMovieSceneDoubleChannel*>();
         }
+        // A new section's constructor defaults would pin every channel the caller does not key.
+        if (bSectionAdded)
+        {
+            MovieSceneTransformChannels::ClearDefaults(Section);
+        }
 
         if (OutSection)
         {
@@ -3153,6 +3158,33 @@ REGISTER_RPC_HANDLER("sequencer.get_binding_transform", "Sequencer",
         return true;
     }
 
+    // Channels no transform section on the track drives (masked out, or neither keyed nor
+    // defaulted). The interrogation has no bound object, so their slots read 0 in the result;
+    // at playback the bound object keeps its own value there.
+    TArray<TSharedPtr<FJsonValue>> Unanimated;
+    for (int32 Index = 0; Index < MovieSceneTransformChannels::Count; ++Index)
+    {
+        bool bDriven = false;
+        for (UMovieSceneSection* S : Track->GetAllSections())
+        {
+            const UMovieScene3DTransformSection* TransformSection = Cast<UMovieScene3DTransformSection>(S);
+            bDriven = bDriven || (TransformSection &&
+                MovieSceneTransformChannels::IsChannelEvaluated(*TransformSection, Index));
+        }
+        if (!bDriven)
+        {
+            Unanimated.Add(MakeShared<FJsonValueString>(MovieSceneTransformChannels::Name(Index)));
+        }
+    }
+    if (Unanimated.Num() == MovieSceneTransformChannels::Count)
+    {
+        Ctx.SendError(ErrorCodes::ERR_NO_TRANSFORM_SECTION,
+            FString::Printf(TEXT("Transform track for '%s' drives no channel: no section has a key or "
+                                 "default on a channel its transformMask enables, so playback leaves the "
+                                 "bound object's transform alone. Author keys first."), *BindingIdStr));
+        return true;
+    }
+
     // Evaluate the whole track through the MovieScene interrogation pipeline so the
     // result is the COMPOSITED transform (section easing weights + cross-section
     // blending applied), not a raw per-channel curve read. Import the track onto the
@@ -3238,6 +3270,7 @@ REGISTER_RPC_HANDLER("sequencer.get_binding_transform", "Sequencer",
     ScaleObj->SetNumberField(TEXT("y"), EvalScale.Y);
     ScaleObj->SetNumberField(TEXT("z"), EvalScale.Z);
     Result->SetObjectField(TEXT("scale"), ScaleObj);
+    Result->SetArrayField(TEXT("unanimatedChannels"), Unanimated);
 
     Ctx.SendSuccess(Result);
     return true;
@@ -3338,6 +3371,8 @@ REGISTER_RPC_HANDLER("sequencer.add_section", "Sequencer", "Add a section to a t
         const FFrameNumber Start = SequenceHelpers::DisplayFrameToTick(MovieScene, StartFrame);
         const FFrameNumber End = SequenceHelpers::DisplayFrameToTick(MovieScene, EndFrame);
         NewSection->SetRange(TRange<FFrameNumber>(Start, End));
+        // A transform section's constructor defaults would pin every channel nobody keys.
+        MovieSceneTransformChannels::ClearDefaults(Cast<UMovieScene3DTransformSection>(NewSection));
         Track->AddSection(*NewSection);
         MovieScene->Modify();
 
