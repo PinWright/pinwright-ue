@@ -2,6 +2,14 @@
 
 ## 1.0.0
 
+- Added: an `os_input` `POINTER_GRABBED` refusal (`drive.click`, `hover`, `drag`, `os_gesture`)
+  whose grab this editor's SDL does not hold now names the holder: payload `holder_pid` and
+  `holder_cmdline` (`null` when unreadable), read from the Xorg log after PinWright presses
+  `XF86LogGrabInfo`, and a hint in the message (a `gnome-shell` holder is a system-modal
+  keyring/polkit prompt, the overview or a shell menu: dismiss it; a peer `UnrealEditor` is
+  released by its owner with Shift+F1 or by stopping PIE), or why it could not be named. A dump
+  can add up to 1 s and appends the X server's grab list to its log, so one is taken at most
+  every 30 s; refusals inside that window reuse its result, and `holder_dump_age_s` gives its age.
 - Changed: a game, editor-chrome or web `drive.*` action (`drive.click`, `type`, `key`, `scroll`,
   `drag`, `hover`) whose UI changed but was still moving when `settle_budget_ms` ran out now
   reports the new outcome `changed_unsettled` (`changed:true`, `settled:false`, with a `hint`)

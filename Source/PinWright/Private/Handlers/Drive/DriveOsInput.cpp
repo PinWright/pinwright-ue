@@ -7,6 +7,7 @@
 
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
+#include "HAL/FileManager.h"
 #include "HAL/PlatformMisc.h"
 #include "HAL/PlatformProcess.h"
 #include "HAL/PlatformTime.h"
@@ -81,6 +82,12 @@ namespace DriveOsInputLocal
         int (*UngrabPointer)(XDisplay, unsigned long) = nullptr;
         int (*GrabKeyboard)(XDisplay, XWindow, int, int, int, unsigned long) = nullptr;
         int (*UngrabKeyboard)(XDisplay, unsigned long) = nullptr;
+        int (*Sync)(XDisplay, int) = nullptr;
+        unsigned char (*KeysymToKeycode)(XDisplay, unsigned long) = nullptr;
+        int (*DisplayKeycodes)(XDisplay, int*, int*) = nullptr;
+        unsigned long* (*GetKeyboardMapping)(XDisplay, unsigned int, int, int*) = nullptr;
+        int (*ChangeKeyboardMapping)(XDisplay, int, int, unsigned long*, int) = nullptr;
+        int (*FakeKeyEvent)(XDisplay, unsigned int, int, unsigned long) = nullptr;
         XAtom NetWmPid = 0;
 
         // Caller-facing reason the API is unusable; empty once Display is open.
@@ -115,12 +122,20 @@ namespace DriveOsInputLocal
         Api.UngrabPointer = reinterpret_cast<decltype(Api.UngrabPointer)>(dlsym(Xlib, "XUngrabPointer"));
         Api.GrabKeyboard = reinterpret_cast<decltype(Api.GrabKeyboard)>(dlsym(Xlib, "XGrabKeyboard"));
         Api.UngrabKeyboard = reinterpret_cast<decltype(Api.UngrabKeyboard)>(dlsym(Xlib, "XUngrabKeyboard"));
+        Api.Sync = reinterpret_cast<decltype(Api.Sync)>(dlsym(Xlib, "XSync"));
+        Api.KeysymToKeycode = reinterpret_cast<decltype(Api.KeysymToKeycode)>(dlsym(Xlib, "XKeysymToKeycode"));
+        Api.DisplayKeycodes = reinterpret_cast<decltype(Api.DisplayKeycodes)>(dlsym(Xlib, "XDisplayKeycodes"));
+        Api.GetKeyboardMapping = reinterpret_cast<decltype(Api.GetKeyboardMapping)>(dlsym(Xlib, "XGetKeyboardMapping"));
+        Api.ChangeKeyboardMapping = reinterpret_cast<decltype(Api.ChangeKeyboardMapping)>(dlsym(Xlib, "XChangeKeyboardMapping"));
+        Api.FakeKeyEvent = reinterpret_cast<decltype(Api.FakeKeyEvent)>(dlsym(Xtst, "XTestFakeKeyEvent"));
         XAtom (*InternAtom)(XDisplay, const char*, int) = reinterpret_cast<XAtom (*)(XDisplay, const char*, int)>(dlsym(Xlib, "XInternAtom"));
 
         if (!OpenDisplay || !Api.Flush || !Api.DefaultRootWindow || !Api.QueryPointer
             || !Api.FakeMotionEvent || !Api.FakeButtonEvent || !Api.TranslateCoordinates
             || !Api.GetWindowProperty || !Api.FetchName || !Api.Free || !Api.SetErrorHandler || !InternAtom
-            || !Api.GrabPointer || !Api.UngrabPointer || !Api.GrabKeyboard || !Api.UngrabKeyboard)
+            || !Api.GrabPointer || !Api.UngrabPointer || !Api.GrabKeyboard || !Api.UngrabKeyboard
+            || !Api.Sync || !Api.KeysymToKeycode || !Api.DisplayKeycodes || !Api.GetKeyboardMapping
+            || !Api.ChangeKeyboardMapping || !Api.FakeKeyEvent)
         {
             Api.Error = TEXT("libX11 / libXtst loaded but an expected symbol is missing; OS input is unavailable.");
             return;
@@ -257,6 +272,163 @@ namespace DriveOsInputLocal
         return GetGrabbedWindow() != nullptr || (Focus && GetRelative(Focus));
     }
 
+    // The bytes a file gained past Offset, or empty when it could not be read.
+    FString ReadFileFrom(const FString& Path, int64 Offset)
+    {
+        FILE* File = fopen(TCHAR_TO_UTF8(*Path), "rb");
+        if (!File)
+        {
+            return FString();
+        }
+        TArray<ANSICHAR> Bytes;
+        if (fseeko(File, Offset, SEEK_SET) == 0)
+        {
+            ANSICHAR Chunk[65536];
+            size_t Read = 0;
+            while ((Read = fread(Chunk, 1, sizeof(Chunk), File)) > 0)
+            {
+                Bytes.Append(Chunk, static_cast<int32>(Read));
+            }
+        }
+        fclose(File);
+        Bytes.Add('\0');
+        return UTF8_TO_TCHAR(Bytes.GetData());
+    }
+
+    // The pointer-grab holder an Xorg grab dump named, or why none was named.
+    struct FGrabHolder
+    {
+        bool bNamed = false;
+        uint32 Pid = 0;
+        FString Cmdline;
+        FString LogPath;
+        FString Reason;     // when !bNamed: what stopped the dump from naming one
+        bool bAttempted = false;   // XF86LogGrabInfo was pressed (the costly part ran)
+    };
+
+    // X has no request that names a grab's owner, but XKB's XF86LogGrabInfo action makes an
+    // Xorg server print every active grab, with each holder's pid and command line, to its log.
+    // Press that keysym through XTEST, bound to a spare keycode for the press when the keymap
+    // has none (as `xdotool key` does), and parse the dump from the log that grew. On a GNOME
+    // desktop the dump stalls the X server ~0.4 s and appends ~600 KB to its log (most of it
+    // the passive-grab list), and the bind and unbind make every X client reload its keymap,
+    // so the caller rate-limits it.
+    FGrabHolder DumpGrabHolder(FX11Api& Api)
+    {
+        FGrabHolder Out;
+        if (FDriveOsInput::SessionType() == TEXT("wayland"))
+        {
+            Out.Reason = TEXT("this is a Wayland session, and XWayland writes no grab dump");
+            return Out;
+        }
+        const TArray<FString> Logs = FDriveOsInput::XorgLogCandidates(
+            FPlatformMisc::GetEnvironmentVariable(TEXT("DISPLAY")),
+            FPlatformMisc::GetEnvironmentVariable(TEXT("XDG_DATA_HOME")),
+            FPlatformMisc::GetEnvironmentVariable(TEXT("HOME")));
+        TArray<int64> Sizes;
+        for (const FString& Log : Logs)
+        {
+            Sizes.Add(IFileManager::Get().FileSize(*Log));
+        }
+        if (!Sizes.ContainsByPredicate([](int64 Size) { return Size >= 0; }))
+        {
+            Out.Reason = FString::Printf(TEXT("no Xorg log of this display exists (%s; an Xvfb or Xephyr server writes none)"),
+                *FString::Join(Logs, TEXT(", ")));
+            return Out;
+        }
+
+        // A server error must not reach Xlib's default handler, which exits the process.
+        const XErrorHandler Previous = Api.SetErrorHandler(&IgnoreXError);
+        constexpr unsigned long LogGrabInfoKeysym = 0x1008FE25;   // XF86XK_LogGrabInfo
+        unsigned int Keycode = Api.KeysymToKeycode(Api.Display, LogGrabInfoKeysym);
+        const bool bScratch = Keycode == 0;
+        if (bScratch)
+        {
+            int Min = 0;
+            int Max = 0;
+            int PerKeycode = 0;
+            Api.DisplayKeycodes(Api.Display, &Min, &Max);
+            unsigned long* Map = Api.GetKeyboardMapping(Api.Display, static_cast<unsigned int>(Min), Max - Min + 1, &PerKeycode);
+            for (int Code = Max; Map && Code >= Min && Keycode == 0; --Code)
+            {
+                bool bUnbound = true;
+                for (int Index = 0; Index < PerKeycode; ++Index)
+                {
+                    bUnbound &= Map[(Code - Min) * PerKeycode + Index] == 0;
+                }
+                Keycode = bUnbound ? static_cast<unsigned int>(Code) : 0;
+            }
+            if (Map)
+            {
+                Api.Free(Map);
+            }
+            if (Keycode == 0)
+            {
+                Api.SetErrorHandler(Previous);
+                Out.Reason = TEXT("the keymap has no spare keycode to bind XF86LogGrabInfo to");
+                return Out;
+            }
+            unsigned long Bound[2] = { LogGrabInfoKeysym, LogGrabInfoKeysym };
+            Api.ChangeKeyboardMapping(Api.Display, static_cast<int>(Keycode), 2, Bound, 1);
+            Api.Sync(Api.Display, 0);
+        }
+        Out.bAttempted = true;
+        Api.FakeKeyEvent(Api.Display, Keycode, /*is_press*/ 1, 0);
+        Api.FakeKeyEvent(Api.Display, Keycode, /*is_press*/ 0, 0);
+        Api.Sync(Api.Display, 0);
+
+        // The server runs the key's action when it processes its input queue, not by the time
+        // XSync returns, so poll. Only the active-grab section is needed, and it ends long
+        // before the passive-grab list does.
+        FString Dump;
+        const double Deadline = FPlatformTime::Seconds() + 1.0;
+        while (Dump.IsEmpty() && FPlatformTime::Seconds() < Deadline)
+        {
+            FPlatformProcess::Sleep(0.02f);
+            for (int32 Index = 0; Index < Logs.Num() && Dump.IsEmpty(); ++Index)
+            {
+                const int64 From = FMath::Max<int64>(Sizes[Index], 0);
+                if (IFileManager::Get().FileSize(*Logs[Index]) > From)
+                {
+                    const FString Grown = ReadFileFrom(Logs[Index], From);
+                    if (Grown.Contains(TEXT("End list of active device grabs")))
+                    {
+                        Dump = Grown;
+                        Out.LogPath = Logs[Index];
+                    }
+                }
+            }
+        }
+
+        // Unbind only now: an unbind processed before the queued press would leave it no action.
+        if (bScratch)
+        {
+            unsigned long Unbound[2] = { 0, 0 };
+            Api.ChangeKeyboardMapping(Api.Display, static_cast<int>(Keycode), 2, Unbound, 1);
+            Api.Sync(Api.Display, 0);
+        }
+        Api.SetErrorHandler(Previous);
+
+        if (Dump.IsEmpty())
+        {
+            Out.Reason = FString::Printf(TEXT("no Xorg log of this display (%s) took the XF86LogGrabInfo dump within 1 s"),
+                *FString::Join(Logs, TEXT(", ")));
+        }
+        else if (FDriveOsInput::ParseGrabHolder(Dump, Out.Pid, Out.Cmdline))
+        {
+            Out.bNamed = true;
+        }
+        else
+        {
+            Out.Reason = FString::Printf(TEXT("the X server's grab dump (%s) lists no client holding the core pointer"), *Out.LogPath);
+        }
+        return Out;
+    }
+
+    // Retries must not repeat the dump's stall, log growth and keymap reloads: a refusal
+    // within this window of the last dump reuses its result, a failed one included.
+    constexpr double GrabDumpCooldownSeconds = 30.0;
+
     // Under a pointer grab every real event goes to the grabber: motion is clamped to its
     // confine window and a press never reaches the target, with no error anywhere. True,
     // filling OutFailure with POINTER_GRABBED, when another client holds one.
@@ -276,14 +448,57 @@ namespace DriveOsInputLocal
         {
             Details->SetField(TEXT("held_by_this_editor"), MakeShared<FJsonValueNull>());
         }
+        FString Advice = TEXT("Release the game's mouse capture (Shift+F1 with X focus on the editor, or stop PIE), or use the Slate path (omit os_input).");
+        if (!bOurs.Get(false))
+        {
+            // Callers hold the display lock, which serializes this cache within the process too.
+            // Only a pressed dump is cached: the failures before the press cost nothing to redo.
+            static FGrabHolder Cached;
+            static double DumpedAt = 0.0;
+            static bool bCached = false;
+            FGrabHolder Holder;
+            double Age = 0.0;
+            if (bCached && FPlatformTime::Seconds() - DumpedAt < GrabDumpCooldownSeconds)
+            {
+                Holder = Cached;
+                Age = FPlatformTime::Seconds() - DumpedAt;
+            }
+            else
+            {
+                Holder = DumpGrabHolder(Api);
+                if (Holder.bAttempted)
+                {
+                    Cached = Holder;
+                    DumpedAt = FPlatformTime::Seconds();
+                    bCached = true;
+                }
+            }
+            Details->SetNumberField(TEXT("holder_dump_age_s"), Age);
+            const FString Ago = Age < 1.0 ? FString()
+                : FString::Printf(TEXT(" This comes from a grab dump taken %.0f s ago, reused for up to %.0f s; the holder may have changed since."),
+                    Age, GrabDumpCooldownSeconds);
+            if (Holder.bNamed)
+            {
+                Details->SetNumberField(TEXT("holder_pid"), Holder.Pid);
+                Details->SetStringField(TEXT("holder_cmdline"), Holder.Cmdline);
+                Advice = FString::Printf(TEXT("The X server's grab dump (%s) names the holder: pid %u '%s'.%s %s"),
+                    *Holder.LogPath, Holder.Pid, *Holder.Cmdline, *Ago,
+                    *FDriveOsInput::GrabHolderHint(Holder.Pid, Holder.Cmdline, FPlatformProcess::GetCurrentProcessId()));
+            }
+            else
+            {
+                Details->SetField(TEXT("holder_pid"), MakeShared<FJsonValueNull>());
+                Details->SetField(TEXT("holder_cmdline"), MakeShared<FJsonValueNull>());
+                Advice = FString::Printf(TEXT("Its holder could not be named: %s.%s Find it on a screenshot of the display, or with `xdotool key XF86LogGrabInfo` and the X server's log, and release it there."),
+                    *Holder.Reason, *Ago);
+            }
+        }
         Fail(OutFailure, ErrorCodes::ERR_POINTER_GRABBED,
             FString::Printf(TEXT("Another X client holds an active pointer grab on this display (%s), so real input would go to the grabber, not the target. Nothing was moved or pressed. %s"),
                 !bOurs.IsSet() ? TEXT("this editor's SDL state is unreadable")
                     : bOurs.GetValue() ? TEXT("this editor's SDL holds it: a captured game viewport in relative mouse mode")
                     : TEXT("not this editor's SDL"),
-                bOurs.Get(false)
-                    ? TEXT("Release the game's mouse capture (Shift+F1 with X focus on the editor, or stop PIE), or use the Slate path (omit os_input).")
-                    : TEXT("Find the holder with `xdotool key XF86LogGrabInfo` (written to the Xorg log) and release it there.")),
+                *Advice),
             Details);
         return true;
     }
@@ -424,6 +639,97 @@ int32 FDriveOsInput::NormalizeVirtualDeskCoord(int32 Pixel, int32 Origin, int32 
     // 65535 / Extent rounds down and lands one pixel short across most of the desktop.
     const int64 Offset = FMath::Clamp<int64>(static_cast<int64>(Pixel) - Origin, 0, Extent - 1);
     return static_cast<int32>(FMath::Min<int64>((Offset * 65536 + Extent - 1) / Extent, 65535));
+}
+
+TArray<FString> FDriveOsInput::XorgLogCandidates(const FString& Display, const FString& XdgDataHome, const FString& Home)
+{
+    // "host:display.screen" -> "display".
+    int32 Colon = INDEX_NONE;
+    if (!Display.FindLastChar(TEXT(':'), Colon))
+    {
+        return {};
+    }
+    FString Number = Display.Mid(Colon + 1);
+    int32 Dot = INDEX_NONE;
+    if (Number.FindChar(TEXT('.'), Dot))
+    {
+        Number.LeftInline(Dot);
+    }
+    if (Number.IsEmpty() || !Number.IsNumeric())
+    {
+        return {};
+    }
+    // A rootless Xorg (the GNOME default) logs under $XDG_DATA_HOME/xorg, falling back to
+    // ~/.local/share/xorg; a root one under /var/log.
+    const FString File = FString::Printf(TEXT("Xorg.%s.log"), *Number);
+    TArray<FString> Logs;
+    if (!XdgDataHome.IsEmpty())
+    {
+        Logs.Add(XdgDataHome / TEXT("xorg") / File);
+    }
+    else if (!Home.IsEmpty())
+    {
+        Logs.Add(Home / TEXT(".local/share/xorg") / File);
+    }
+    Logs.Add(FString(TEXT("/var/log")) / File);
+    return Logs;
+}
+
+bool FDriveOsInput::ParseGrabHolder(const FString& Dump, uint32& OutPid, FString& OutCmdline)
+{
+    // "Active grab 0x200000 (xi2) on device 'Virtual core pointer' (2):", then
+    // "      client pid 2134 /usr/bin/gnome-shell ". The passive grabs listed after the
+    // "End list of active device grabs" line name clients too and must not match.
+    TArray<FString> Lines;
+    Dump.ParseIntoArrayLines(Lines);
+    const FString ClientPid = TEXT("client pid ");
+    for (int32 Index = 0; Index + 1 < Lines.Num(); ++Index)
+    {
+        if (Lines[Index].Contains(TEXT("End list of active device grabs")))
+        {
+            return false;
+        }
+        if (!Lines[Index].Contains(TEXT("Active grab ")) || !Lines[Index].Contains(TEXT("on device 'Virtual core pointer'")))
+        {
+            continue;
+        }
+        const int32 At = Lines[Index + 1].Find(ClientPid);
+        if (At == INDEX_NONE)
+        {
+            return false;
+        }
+        const FString Rest = Lines[Index + 1].Mid(At + ClientPid.Len());
+        int32 Digits = 0;
+        while (Digits < Rest.Len() && FChar::IsDigit(Rest[Digits]))
+        {
+            ++Digits;
+        }
+        if (Digits == 0)
+        {
+            return false;
+        }
+        OutPid = static_cast<uint32>(FCString::Strtoui64(*Rest.Left(Digits), nullptr, 10));
+        OutCmdline = Rest.Mid(Digits).TrimStartAndEnd();
+        return true;
+    }
+    return false;
+}
+
+FString FDriveOsInput::GrabHolderHint(uint32 Pid, const FString& Cmdline, uint32 SelfPid)
+{
+    if (Pid == SelfPid)
+    {
+        return TEXT("That is this editor process, on an X connection other than SDL's: code inside the editor (a plugin or tool) grabbed the pointer. End that grab or restart the editor.");
+    }
+    if (Cmdline.Contains(TEXT("UnrealEditor")))
+    {
+        return TEXT("Another Unreal editor holds it: a captured game viewport in relative mouse mode. Its owner releases it with Shift+F1 or by stopping PIE; do not kill that editor.");
+    }
+    if (Cmdline.Contains(TEXT("gnome-shell")))
+    {
+        return TEXT("GNOME Shell grabs the pointer for a system-modal dialog (an 'Authentication required' keyring or polkit prompt), the Activities overview, or an open shell menu. Dismiss it (Escape, or answer the prompt) and retry.");
+    }
+    return TEXT("Release it in that application (close its menu, dialog or drag) and retry.");
 }
 
 const TCHAR* FDriveOsInput::InputPathLabel()

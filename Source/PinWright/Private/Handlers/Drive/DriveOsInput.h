@@ -183,4 +183,18 @@ public:
 
     // SessionTypeFor this editor's own environment.
     static FString SessionType();
+
+    // The Xorg logs an XF86LogGrabInfo grab dump for Display (":0", "host:1.0") can land in:
+    // $XDG_DATA_HOME/xorg (else $HOME/.local/share/xorg) for a rootless server, then /var/log.
+    // Empty when Display names no display number.
+    static TArray<FString> XorgLogCandidates(const FString& Display, const FString& XdgDataHome, const FString& Home);
+
+    // The client holding the active grab on 'Virtual core pointer' in an Xorg grab dump (the
+    // "Active grab ... on device 'Virtual core pointer'" line and the "client pid N cmdline"
+    // line after it). False when the dump lists no such grab or names no client.
+    static bool ParseGrabHolder(const FString& Dump, uint32& OutPid, FString& OutCmdline);
+
+    // What to do about a pointer-grab holder: this editor (Pid == SelfPid), GNOME Shell
+    // (a system-modal prompt, the overview or a shell menu), or any other application.
+    static FString GrabHolderHint(uint32 Pid, const FString& Cmdline, uint32 SelfPid);
 };
