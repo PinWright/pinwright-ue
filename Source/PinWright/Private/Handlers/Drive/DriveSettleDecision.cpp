@@ -16,7 +16,12 @@ EDriveSettleOutcome StepSettle(
 
     // Latch change tracking in both modes so OutResult.bChanged is always
     // meaningful once the UI has diverged from the baseline.
+    const bool bChangedBefore = State.bHasChanged;
     State.bHasChanged |= bChangedSinceBaseline;
+    if (bChangedBefore)
+    {
+        ++State.TicksSinceChange;
+    }
 
     // Local-only result filler. A lambda (not a free/anonymous-namespace helper)
     // keeps it ODR-safe under Unity builds.
@@ -69,12 +74,18 @@ EDriveSettleOutcome StepSettle(
             return Finish(/*bChanged=*/true, /*bSettled=*/true,
                 /*bConditionMet=*/false, EDriveSettleOutcome::SettledChanged);
         }
-        // Stabilization wins over the budget on the same tick: only time out
-        // once we are sure we did not just settle.
-        if (ElapsedMs >= Config.SettleBudgetMs)
+        // Stabilization wins over the budget on the same tick: only give up
+        // once we are sure we did not just settle. The budget also waits until
+        // StableTicks ticks have run after the change, so a frame hitch that shows
+        // the change only as the budget runs out still gets the chance to see the
+        // UI hold still. That wait ends at twice the budget, so a large
+        // stable_ticks or a run of slow frames cannot hold the response open.
+        const bool bStableWindowRan = State.TicksSinceChange >= Config.StableTicks;
+        const bool bPastCeiling = static_cast<int64>(ElapsedMs) >= 2 * static_cast<int64>(Config.SettleBudgetMs);
+        if (ElapsedMs >= Config.SettleBudgetMs && (bStableWindowRan || bPastCeiling))
         {
             return Finish(/*bChanged=*/true, /*bSettled=*/false,
-                /*bConditionMet=*/false, EDriveSettleOutcome::Timeout);
+                /*bConditionMet=*/false, EDriveSettleOutcome::ChangedUnsettled);
         }
         return Finish(/*bChanged=*/true, /*bSettled=*/false,
             /*bConditionMet=*/false, EDriveSettleOutcome::Continue);

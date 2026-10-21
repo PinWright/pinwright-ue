@@ -277,3 +277,110 @@ bool FDriveSettleDriverRowChurnAgreesWithDiffTest::RunTest(const FString& Parame
 
     return true;
 }
+
+// ============================================================================
+// Low frame rate (#427): a click that swaps the HUD at ~1 tick per 0.75 s. The
+// budget runs out on tick 2 with one stable tick seen; the driver must still take
+// the StableTicks-th stable tick and report settled_changed, not give up. A UI that
+// keeps moving past the budget reports changed_unsettled (with a hint), never the
+// failure-looking "timeout".
+// ============================================================================
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveSettleDriverLowFpsClickNotTimeoutTest,
+    "PinWright.drive.settledriver.LowFpsClickNotTimeout",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FDriveSettleDriverLowFpsClickNotTimeoutTest::RunTest(const FString& Parameters)
+{
+    FDriveSettleConfig Config;
+    Config.StableTicks = 2;
+    Config.SettleBudgetMs = 1500;
+
+    {
+        int32 Sample = 0;
+        auto GetElements = [&]() -> TArray<FDriveElement> { return Sample++ == 0 ? MakeSetA() : MakeSetB(); };
+        FDriveSettleResult Result;
+        TSharedRef<FDriveSettleDriver> Driver = FDriveSettleDriver::CreateForStep(
+            Config, GetElements, nullptr,
+            [&](const FDriveSettleResult& Res, const TArray<FDriveElement>&) { Result = Res; }, 0.0);
+        TestTrue(TEXT("tick1 (changed) continues"), Driver->Tick(0.75));
+        TestTrue(TEXT("tick2 (1 stable, budget spent) still continues"), Driver->Tick(1.5));
+        TestFalse(TEXT("tick3 (2 stable) completes"), Driver->Tick(2.25));
+        TestEqual(TEXT("low fps settles"),
+            SettleDriverOutcomeInt(Result.Outcome), SettleDriverOutcomeInt(EDriveSettleOutcome::SettledChanged));
+        TestTrue(TEXT("settled"), Result.bSettled);
+    }
+
+    {
+        // Still animating: the shape differs from the previous tick every tick.
+        int32 Sample = 0;
+        auto GetElements = [&]() -> TArray<FDriveElement>
+        {
+            const int32 N = Sample++;
+            if (N == 0)
+            {
+                return MakeSetA();
+            }
+            TArray<FDriveElement> Moving = MakeSetB();
+            Moving[1].AbsolutePosition.X += 10.0f * N;
+            return Moving;
+        };
+        FDriveSettleResult Result;
+        TSharedRef<FDriveSettleDriver> Driver = FDriveSettleDriver::CreateForStep(
+            Config, GetElements, nullptr,
+            [&](const FDriveSettleResult& Res, const TArray<FDriveElement>&) { Result = Res; }, 0.0);
+        Driver->Tick(0.75);
+        Driver->Tick(1.5);
+        Driver->Tick(2.25);
+        TestTrue(TEXT("moving UI completes after the tick floor"), Driver->IsComplete());
+        TestEqual(TEXT("moving UI is changed_unsettled"),
+            SettleDriverOutcomeInt(Result.Outcome), SettleDriverOutcomeInt(EDriveSettleOutcome::ChangedUnsettled));
+
+        FDriveDiff Diff;
+        Diff.Appeared.Add(TEXT("B"));
+        const TSharedPtr<FJsonObject> Resp = FDriveActionCommon::WriteSettleResult(Result, Diff, false);
+        TestEqual(TEXT("wire outcome"), Resp->GetStringField(TEXT("outcome")), FString(TEXT("changed_unsettled")));
+        TestTrue(TEXT("changed"), Resp->GetBoolField(TEXT("changed")));
+        TestFalse(TEXT("not settled"), Resp->GetBoolField(TEXT("settled")));
+        FString Hint;
+        TestTrue(TEXT("changed_unsettled carries a hint"), Resp->TryGetStringField(TEXT("hint"), Hint));
+        TestTrue(TEXT("hint does not claim the input caused the change"),
+            Hint.Contains(TEXT("does not prove the input caused it")));
+        TestFalse(TEXT("hint makes no success claim"), Hint.Contains(TEXT("took effect")));
+    }
+
+    return true;
+}
+
+// ============================================================================
+// Frame hitch (#427 review): tick 1 is fast and unchanged, tick 2 is a ~1.4 s
+// hitch that first shows the HUD swap with the budget already spent. The settle
+// must still count StableTicks stable ticks after the change and settle, not give
+// up on the tick count since the start.
+// ============================================================================
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveSettleDriverHitchChangeSettlesTest,
+    "PinWright.drive.settledriver.HitchChangeSettles",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FDriveSettleDriverHitchChangeSettlesTest::RunTest(const FString& Parameters)
+{
+    FDriveSettleConfig Config;
+    Config.StableTicks = 2;
+    Config.SettleBudgetMs = 1500;
+
+    // Samples: baseline A, tick1 A, then B from the hitch tick on.
+    int32 Sample = 0;
+    auto GetElements = [&]() -> TArray<FDriveElement> { return Sample++ < 2 ? MakeSetA() : MakeSetB(); };
+    FDriveSettleResult Result;
+    TSharedRef<FDriveSettleDriver> Driver = FDriveSettleDriver::CreateForStep(
+        Config, GetElements, nullptr,
+        [&](const FDriveSettleResult& Res, const TArray<FDriveElement>&) { Result = Res; }, 0.0);
+    TestTrue(TEXT("tick1 (unchanged) continues"), Driver->Tick(0.05));
+    TestTrue(TEXT("tick2 (hitch, change first seen, budget spent) continues"), Driver->Tick(1.5));
+    TestTrue(TEXT("tick3 (1 stable) continues"), Driver->Tick(1.55));
+    TestFalse(TEXT("tick4 (2 stable) completes"), Driver->Tick(1.6));
+    TestEqual(TEXT("hitch change settles"),
+        SettleDriverOutcomeInt(Result.Outcome), SettleDriverOutcomeInt(EDriveSettleOutcome::SettledChanged));
+    TestEqual(TEXT("ticks"), Result.Ticks, 4);
+
+    return true;
+}

@@ -22,6 +22,8 @@ struct FDriveSettleState
     bool bHasChanged = false;
     // Consecutive ticks the UI has been stable since the last observed change.
     int32 ConsecutiveStableTicks = 0;
+    // Ticks since the change was first seen (the change tick itself is 0).
+    int32 TicksSinceChange = 0;
     // Number of StepSettle calls (ticks) so far; surfaced as OutResult.Ticks.
     int32 Ticks = 0;
 };

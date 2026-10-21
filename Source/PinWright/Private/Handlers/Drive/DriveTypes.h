@@ -228,8 +228,13 @@ enum class EDriveSettleOutcome : uint8
     NoChangeWithinBudget,
     // The explicit wait_for condition was met.
     WaitForMet,
-    // A budget elapsed before any terminal condition was reached.
-    Timeout
+    // The wait_for condition was not met within its timeout.
+    Timeout,
+    // The UI changed after the input but did not hold stable for StableTicks
+    // within the settle budget, e.g. a HUD swap still animating, or a frame hitch.
+    // An observed fact, not a verdict: background churn also counts as a change,
+    // so this does not prove the input caused it.
+    ChangedUnsettled
 };
 
 // Tuning for a settle/wait operation. Budgets are in milliseconds.

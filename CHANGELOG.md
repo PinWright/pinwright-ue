@@ -2,6 +2,15 @@
 
 ## 1.0.0
 
+- Changed: a game, editor-chrome or web `drive.*` action (`drive.click`, `type`, `key`, `scroll`,
+  `drag`, `hover`) whose UI changed but was still moving when `settle_budget_ms` ran out now
+  reports the new outcome `changed_unsettled` (`changed:true`, `settled:false`, with a `hint`)
+  instead of `timeout`. It states only that the UI changed after the input: background churn
+  counts too, so confirm the expected end state with `drive.wait_for`/`drive.expect` before
+  repeating the action. `timeout` now only means a `wait_for` condition was not met within
+  `timeout_ms`. A change first seen as the budget runs out also gets `stable_ticks` more ticks to
+  hold still, so a frame hitch (a HUD swap in a multi-instance PIE) no longer cuts the settle
+  short; that wait gives up at the first frame at or after twice `settle_budget_ms`.
 - Fixed: transform sections created by `sequencer.add_transform_track`, `sequence.add_keyframe`,
   `sequencer.add_keyframes`, `sequencer.add_section` and `sequencer.add_camera_rig_rail` /
   `add_camera_rig_crane` no longer keep the engine's constructor channel defaults (location 0,

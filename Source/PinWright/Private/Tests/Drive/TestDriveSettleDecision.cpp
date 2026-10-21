@@ -66,8 +66,8 @@ bool FDriveSettleSettledChangedTest::RunTest(const FString& Parameters)
 }
 
 // ============================================================================
-// No wait_for: a change that never stabilizes within SettleBudget -> Timeout
-// (bChanged=true, bSettled=false).
+// No wait_for: a change that never stabilizes within SettleBudget ->
+// ChangedUnsettled (bChanged=true, bSettled=false), not a Timeout: the UI did change.
 // ============================================================================
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveSettleChangeNeverStabilizesTest,
@@ -93,14 +93,14 @@ bool FDriveSettleChangeNeverStabilizesTest::RunTest(const FString& Parameters)
     EDriveSettleOutcome O3 = StepSettle(State, true, false, false, 200, Config, R);
     TestEqual(TEXT("tick3 Continue"), SettleDecisionOutcomeInt(O3), SettleDecisionOutcomeInt(EDriveSettleOutcome::Continue));
 
-    // @300ms: budget reached, still not stabilized -> Timeout.
+    // @300ms: budget reached, still not stabilized -> ChangedUnsettled.
     EDriveSettleOutcome O4 = StepSettle(State, true, false, false, 300, Config, R);
-    TestEqual(TEXT("tick4 Timeout"), SettleDecisionOutcomeInt(O4), SettleDecisionOutcomeInt(EDriveSettleOutcome::Timeout));
-    TestTrue(TEXT("timeout reports bChanged"), R.bChanged);
-    TestFalse(TEXT("timeout not settled"), R.bSettled);
-    TestFalse(TEXT("timeout bConditionMet false"), R.bConditionMet);
-    TestEqual(TEXT("timeout ElapsedMs"), R.ElapsedMs, 300);
-    TestEqual(TEXT("timeout Ticks"), R.Ticks, 4);
+    TestEqual(TEXT("tick4 ChangedUnsettled"), SettleDecisionOutcomeInt(O4), SettleDecisionOutcomeInt(EDriveSettleOutcome::ChangedUnsettled));
+    TestTrue(TEXT("changed_unsettled reports bChanged"), R.bChanged);
+    TestFalse(TEXT("changed_unsettled not settled"), R.bSettled);
+    TestFalse(TEXT("changed_unsettled bConditionMet false"), R.bConditionMet);
+    TestEqual(TEXT("changed_unsettled ElapsedMs"), R.ElapsedMs, 300);
+    TestEqual(TEXT("changed_unsettled Ticks"), R.Ticks, 4);
 
     return true;
 }
@@ -257,6 +257,39 @@ bool FDriveSettleStableCountResetsOnChangeTest::RunTest(const FString& Parameter
     TestTrue(TEXT("final bSettled"), R.bSettled);
     TestTrue(TEXT("final bChanged"), R.bChanged);
     TestEqual(TEXT("final Ticks"), R.Ticks, 5);
+
+    return true;
+}
+
+// ============================================================================
+// No wait_for: the post-change tick wait ends at twice SettleBudgetMs, so a huge
+// StableTicks on a UI that keeps moving cannot hold the response open.
+// ============================================================================
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveSettleUnsettledCeilingTest,
+    "PinWright.drive.settle.UnsettledCeiling",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FDriveSettleUnsettledCeilingTest::RunTest(const FString& Parameters)
+{
+    FDriveSettleConfig Config;
+    Config.StableTicks = 1000;
+    Config.SettleBudgetMs = 1500;
+
+    FDriveSettleState State;
+    FDriveSettleResult R;
+
+    // Every tick still moving. Past the budget but below 2x: the floor holds.
+    TestEqual(TEXT("@0 Continue"), SettleDecisionOutcomeInt(StepSettle(State, true, false, false, 0, Config, R)),
+        SettleDecisionOutcomeInt(EDriveSettleOutcome::Continue));
+    TestEqual(TEXT("@1500 Continue"), SettleDecisionOutcomeInt(StepSettle(State, true, false, false, 1500, Config, R)),
+        SettleDecisionOutcomeInt(EDriveSettleOutcome::Continue));
+    TestEqual(TEXT("@2999 Continue"), SettleDecisionOutcomeInt(StepSettle(State, true, false, false, 2999, Config, R)),
+        SettleDecisionOutcomeInt(EDriveSettleOutcome::Continue));
+    // At 2x the budget the ceiling ends it.
+    TestEqual(TEXT("@3000 ChangedUnsettled"), SettleDecisionOutcomeInt(StepSettle(State, true, false, false, 3000, Config, R)),
+        SettleDecisionOutcomeInt(EDriveSettleOutcome::ChangedUnsettled));
+    TestFalse(TEXT("ceiling not settled"), R.bSettled);
+    TestEqual(TEXT("ceiling Ticks"), R.Ticks, 4);
 
     return true;
 }

@@ -139,6 +139,7 @@ FString FDriveActionCommon::SettleOutcomeToString(EDriveSettleOutcome Outcome)
     case EDriveSettleOutcome::NoChangeWithinBudget:  return TEXT("no_change_within_budget");
     case EDriveSettleOutcome::WaitForMet:            return TEXT("wait_for_met");
     case EDriveSettleOutcome::Timeout:               return TEXT("timeout");
+    case EDriveSettleOutcome::ChangedUnsettled:      return TEXT("changed_unsettled");
     case EDriveSettleOutcome::Continue:
     default:                                         return TEXT("continue");
     }
@@ -172,6 +173,11 @@ TSharedPtr<FJsonObject> FDriveActionCommon::WriteSettleResult(FDriveSettleResult
     {
         Resp->SetStringField(TEXT("hint"),
             TEXT("The input was injected, but the UI did not change before quiet_budget_ms ran out. A transition that starts later (screen navigation, menu animation, level load) is not seen, so this does not prove the action was ignored. To check, call drive.wait_for on the expected result (e.g. widget_present) instead of repeating the action; next time pass wait_for to the action or raise quiet_budget_ms."));
+    }
+    else if (Result.Outcome == EDriveSettleOutcome::ChangedUnsettled)
+    {
+        Resp->SetStringField(TEXT("hint"),
+            TEXT("The UI changed after the input but was still moving (or too few frames ran) when settle_budget_ms ran out. A change does not prove the input caused it; confirm the expected end state with drive.wait_for or drive.expect before repeating the action, or raise settle_budget_ms."));
     }
     return Resp;
 }

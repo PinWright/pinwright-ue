@@ -51,7 +51,7 @@
     DRIVE_WINDOW_SELECTOR_PARAMS, \
     RPC_PARAM_DEF("stable_ticks", "number", "Consecutive stable ticks required before the UI is considered settled (default 2).", "2"), \
     RPC_PARAM_DEF("quiet_budget_ms", "number", "Budget for the no-change phase before reporting a clean quiet, in ms (default 500).", "500"), \
-    RPC_PARAM_DEF("settle_budget_ms", "number", "Budget for the overall settle phase, in ms (default 1500).", "1500"), \
+    RPC_PARAM_DEF("settle_budget_ms", "number", "Budget for the overall settle phase, in ms (default 1500). A change seen late still gets stable_ticks more ticks, up to twice this budget.", "1500"), \
     RPC_PARAM_DEF("timeout_ms", "number", "Timeout for an explicit wait_for condition, in ms (default 5000).", "5000"), \
     RPC_PARAM_OPT("wait_for", "object", "Optional condition to wait for after the action instead of settle-on-change (same closed key set as drive.wait_for's condition)."), \
     RPC_PARAM_DEF("observe", "string", "Observation detail in the response: none | list | list+screenshot (default none -> compact result with no full element list/screenshot).", "none"), \

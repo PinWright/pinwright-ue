@@ -105,7 +105,9 @@ public:
     // Diff therefore forces changed=true, and a quiet no_change_within_budget becomes
     // settled_changed (the shape held still the whole budget), so outcome, changed and diff
     // never contradict. A no_change_within_budget result also carries a `hint`: the quiet budget
-    // cannot tell a late-onset transition from an ignored action. Pure, like IsActionable.
+    // cannot tell a late-onset transition from an ignored action. A changed_unsettled result
+    // carries one too: the UI changed but had not held still, and a change does not prove the
+    // input caused it. Pure, like IsActionable.
     static TSharedPtr<FJsonObject> WriteSettleResult(FDriveSettleResult Result, const FDriveDiff& Diff, bool bFullDiff);
 
     // A GetElements sampler bound to one surface/root; returns an empty list on
