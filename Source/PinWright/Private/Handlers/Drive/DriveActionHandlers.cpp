@@ -73,7 +73,9 @@
         "elsewhere, when no X display can be opened, or in an offscreen / nullrhi / commandlet " \
         "editor with no visible window. " \
         "TARGET_OCCLUDED, with nothing injected, when another window of this editor is on top " \
-        "at the target by Slate's window order (occluding_window / occluding_window_type), or " \
+        "at the target by Slate's window order or, on X11, by X's stacking (occluding_window / " \
+        "occluding_window_type; a PIE game-viewport window there is raised over instead, " \
+        "pressing once X stacks the target's X window on top, ~1s at most, else raise_attempted), or " \
         "the top X window there belongs to another process (occluding_window / occluding_pid). " \
         "Serialized per X display across editors: OS_INPUT_BUSY (holder_pid) when another " \
         "injection holds the display for >5s; drive.click / drive.drag refuse with POINTER_MOVED, unpressed, " \
@@ -82,6 +84,13 @@
         "grab dump, null when unreadable; holder_dump_age_s, as one dump is reused for 30s), " \
         "with nothing injected, while any X client " \
         "holds a pointer grab (drive.input_state os_grab shows it). " \
+        "A press (click, drag) of a target with an X window first waits, ~1s, until it is the " \
+        "active window (a menu: its parent) with SDL keyboard focus, activating it only while " \
+        "this editor is the focused application: INPUT_FAILED (target_window_id, " \
+        "active_window_id, sdl_focus, recovery), nothing pressed, when it does not become " \
+        "active; then moves the pointer in and waits ~1s for the editor to report it inside: " \
+        "INPUT_FAILED, nothing pressed, when it does not; drive.click also refuses INPUT_FAILED " \
+        "when the active window changes during the motion. Hover skips the active wait. " \
         "Mouse only; drive.key has no os_input. Blocks the editor for ~0.5s while the motion " \
         "path and button hold are paced. The response's input_path reports which path ran; " \
         "os_input results carry session (x11 | wayland), and on wayland (XWayland, delivery " \
@@ -215,7 +224,7 @@ REGISTER_RPC_HANDLER("drive.hover", "drive",
             }
             return FDriveInput::HoverAt(Center);
         },
-        bOsInput ? FDriveOsInput::InputPathLabel() : TEXT("slate"));
+        bOsInput ? FDriveOsInput::InputPathLabel() : TEXT("slate"), nullptr, /*bPress=*/false);
     return true;
 }
 

@@ -2,6 +2,56 @@
 
 ## 1.0.0
 
+- Fixed: an `os_input` press (`drive.click`, `drag`; Linux/X11) on a target whose window was not
+  the active one, or had only just become it, reported success while the button got a press and
+  a release but no click. Before a press of a target with an X window the call now:
+  1. refuses with `POINTER_GRABBED` at once while another X client holds the pointer;
+  2. waits (up to about 1 s, and at least 5 frames) until X has the target on top at the point and
+     it is active: SDL holds keyboard focus on it and, when a window manager reports an active
+     window, that is the target's window or, for a menu, dropdown or toast (never active
+     itself), its parent. Without a window manager (a bare Xvfb / Xephyr) SDL focus alone decides,
+     and the press gives that window the X input focus itself (`XSetInputFocus`, as SDL does
+     there) when the focus is None, PointerRoot or already this editor's. While this
+     editor is the focused application it activates that window itself (pager-style
+     `_NET_ACTIVE_WINDOW`); otherwise it fails with `INPUT_FAILED` (`target_window_id`,
+     `active_window_id`, `sdl_focus`, `recovery`), nothing pressed;
+  3. moves the real pointer onto the target and waits (up to about 1 s more) until the editor
+     reports the pointer inside the target's window, then 3 more frames; else `INPUT_FAILED`
+     ("did not report it inside"), nothing pressed;
+  4. presses. `drive.click` also refuses with `INPUT_FAILED`, unpressed, when the active window
+     changed during the motion.
+  Behaviour change: a click into another window of this editor moves focus there before the
+  press, and a press costs a few frames (about 2 s at worst before a refusal). `drive.hover`
+  with `os_input` gets steps 1 and 3 only: hovering needs no focus and activates nothing.
+- Changed: a game or editor-chrome pointer action (`drive.click`, `hover`, `scroll`, `drag`,
+  `type`/`key` with a handle) whose target is covered by a PIE game-viewport window of this
+  editor (multi-instance PIE overlaps its client windows by default; during in-viewport PIE the
+  level editor window counts too) now raises the target's own window first and proceeds, instead
+  of refusing with `TARGET_OCCLUDED`. Behaviour change: the window stacking changes, and on the
+  Slate path the target's window is also activated in Slate, as a user's click into it would: the
+  previous PIE client loses focus (audio focus dropped, pressed keys flushed where the input settings ask for it), pointer capture is
+  released and open menus close. That native raise does not activate, so where the window manager
+  declines raises from an unfocused editor the Slate path still refuses with `TARGET_OCCLUDED`,
+  after a 1 s route wait (0.3 s without a raise) and with `raise_attempted: true`. With `os_input:true` (`drive.click`, `hover`, `drag`; Linux/X11)
+  the raise is an `XRaiseWindow`, plus a pager-style activation of the target only while this
+  editor is already the focused application, and the press waits until X has the target on top
+  and active and then 3 more frames (a press into a raised but inactive window, or one pumped
+  with the focus change, clicked nothing; `INPUT_FAILED` when it never becomes active). Every press of a target with an X
+  window now also needs X to route the target point through that window: a window of this
+  editor that X stacks over it is found by X window id even when Slate's order disagrees. A PIE
+  one is raised over (the plain raise repeated every 0.25 s, since the editor itself can put the
+  level editor window back, and refused at once with `TARGET_OCCLUDED` naming it if another
+  process's window comes up there) and the press waits up to about 1 s for X to restack; any other is refused
+  by name. When X does not restack in time, the `TARGET_OCCLUDED` refusal carries
+  `raise_attempted: true` and `target_window_id`, and says to focus the editor once (click it,
+  or `xdotool windowactivate <target_window_id>`; no PinWright verb focuses a window) or move the
+  PIE windows apart. Both waits
+  now answer `TARGET_CHANGED` when the target widget goes away (a PIE stopped mid-wait). An
+  `os_input` click is also refused with `INPUT_FAILED`, unpressed, when the top-level X window at
+  the target changed during the motion (a window of this editor mapped or raised over it). Still
+  refused as before: other occluders (a Message Log, a toast), and a PIE-window occluder for
+  `os_input` where the target has no X window (Windows, Wayland, an offscreen editor) and in
+  `drive.os_gesture`.
 - Added: an `os_input` `POINTER_GRABBED` refusal (`drive.click`, `hover`, `drag`, `os_gesture`)
   whose grab this editor's SDL does not hold now names the holder: payload `holder_pid` and
   `holder_cmdline` (`null` when unreadable), read from the Xorg log after PinWright presses

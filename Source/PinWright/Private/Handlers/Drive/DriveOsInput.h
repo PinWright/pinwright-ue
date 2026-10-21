@@ -108,6 +108,51 @@ public:
     // point, and when X is unavailable (IsAvailable already refused os_input then).
     static bool FindForeignWindowAt(const FVector2D& ScreenPos, FForeignWindow& Out);
 
+    // The X11 window id behind a native window (Linux, SDL on X11), 0 when there is none: other
+    // platforms, Wayland, the dummy video driver of an offscreen editor.
+    static uint64 XWindowIdOf(const TSharedPtr<class FGenericWindow>& Native);
+
+    // True when X window WindowId is on the route a real press at ScreenPos takes, i.e. no other
+    // window, of this editor or another process, is stacked over it there. False on other
+    // platforms and when X is unavailable.
+    static bool IsXWindowOnTopAt(const FVector2D& ScreenPos, uint64 WindowId);
+
+    // The X windows a real press at ScreenPos is routed through, from the root's child down
+    // (top of the stacking order at each level). Empty off Linux and when X is unavailable.
+    static TArray<uint64> XWindowPathAt(const FVector2D& ScreenPos);
+
+    // Asks X to raise WindowId from PinWright's own connection, without activating it (no
+    // _NET_ACTIVE_WINDOW). The window manager restacks asynchronously and may decline. False when
+    // the request could not be sent (other platforms, no X).
+    static bool RaiseXWindow(uint64 WindowId);
+
+    // The window the window manager reports as active (_NET_ACTIVE_WINDOW on the root), 0 when
+    // it reports none or off Linux. bOutWmReports, when given, is false when the root has no
+    // such property at all (no EWMH window manager, e.g. a bare Xvfb).
+    static uint64 XActiveWindow(bool* bOutWmReports = nullptr);
+
+    // Takes the display lock and refuses with POINTER_GRABBED (holder named as MoveTo does) while
+    // another X client holds the pointer. True when the pointer is free; true off Linux.
+    static bool CheckPointerFree(FDriveInjectFailure& OutFailure);
+
+    // Whether SDL's keyboard focus is Native's window (Linux), i.e. the editor has pumped that
+    // window's FocusIn. False off Linux.
+    static bool HasSdlKeyboardFocus(const TSharedPtr<class FGenericWindow>& Native);
+
+    // Asks the window manager to activate (raise and focus) WindowId the way a pager does:
+    // _NET_ACTIVE_WINDOW, source 2, CurrentTime. It moves keyboard focus, so callers use it only
+    // while this editor is already the focused application. False when it could not be sent.
+    static bool ActivateXWindow(uint64 WindowId);
+
+    // Gives WindowId the X input focus directly (XSetInputFocus). Only for a display with no
+    // window manager (a private Xvfb / Xephyr), where nothing else would move focus and no other
+    // application can lose it. False when it could not be sent.
+    static bool FocusXWindow(uint64 WindowId);
+
+    // The X input focus window (XGetInputFocus): 0 for None, 1 for PointerRoot, else a window id.
+    // 0 off Linux and when X is unavailable.
+    static uint64 XInputFocus();
+
     // Active X grabs on this display. X does not say who holds a grab, so each flag is a
     // probe: PinWright's own X connection (a separate client from SDL's) tries XGrabPointer /
     // XGrabKeyboard on the root and releases at once; AlreadyGrabbed or GrabFrozen means
@@ -175,6 +220,17 @@ public:
     // a pid) and returns whether it is SelfPid; an unnamed point is never ours, because
     // SDL stamps _NET_WM_PID on every window it creates.
     static bool IsPointOwnedBy(const TArray<uint32>& PathPids, uint32 SelfPid, int32& OutOwnerIndex);
+
+    // Whether the top-level X window at a point (the root's child, Path[0] of XWindowPathAt)
+    // differs between two walks: a window was mapped or raised over the point in between. An
+    // empty walk on either side counts as a change.
+    static bool TopChanged(const TArray<uint64>& Before, const TArray<uint64>& After);
+
+    // Whether a real press may go to the target now: SDL holds keyboard focus there (the editor
+    // pumped the FocusIn) and, when a window manager reports an active window at all, that is the
+    // target's activation window (its nearest non-menu ancestor; menus are override-redirect and
+    // never active). Without a window manager (bWmReportsActive false) SDL focus alone decides.
+    static bool IsActiveEnough(bool bWmReportsActive, uint64 Active, uint64 ActivationXWindow, bool bSdlFocus);
 
     // "wayland" when WAYLAND_DISPLAY is set or XDG_SESSION_TYPE is "wayland", else "x11". On a
     // Wayland desktop the editor's X display is XWayland, which passes IsAvailable, but whether

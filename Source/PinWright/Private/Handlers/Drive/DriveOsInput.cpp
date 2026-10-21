@@ -7,6 +7,7 @@
 
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
+#include "GenericPlatform/GenericWindow.h"
 #include "HAL/FileManager.h"
 #include "HAL/PlatformMisc.h"
 #include "HAL/PlatformProcess.h"
@@ -549,6 +550,31 @@ namespace DriveOsInputLocal
         return Title;
     }
 
+    // The mapped windows containing the point, from the root's child down, top of the stacking
+    // order first at each level: the windows the X server routes a real press through. The
+    // caller installs IgnoreXError, since a window can vanish between the round trips.
+    TArray<XWindow> WindowPathAt(FX11Api& Api, const FVector2D& ScreenPos)
+    {
+        const XWindow Root = Api.DefaultRootWindow(Api.Display);
+        const int X = FMath::RoundToInt(ScreenPos.X);
+        const int Y = FMath::RoundToInt(ScreenPos.Y);
+        TArray<XWindow> Path;
+        XWindow Parent = Root;
+        for (int32 Depth = 0; Depth < MaxDescent; ++Depth)
+        {
+            int ChildX = 0;
+            int ChildY = 0;
+            XWindow Child = 0;
+            if (!Api.TranslateCoordinates(Api.Display, Root, Parent, X, Y, &ChildX, &ChildY, &Child) || Child == 0)
+            {
+                break;
+            }
+            Path.Add(Child);
+            Parent = Child;
+        }
+        return Path;
+    }
+
 #endif // PLATFORM_LINUX
 }
 
@@ -577,6 +603,11 @@ bool FDriveOsInput::IsPointOwnedBy(const TArray<uint32>& PathPids, uint32 SelfPi
 {
     OutOwnerIndex = PathPids.FindLastByPredicate([](uint32 Pid) { return Pid != 0; });
     return OutOwnerIndex != INDEX_NONE && PathPids[OutOwnerIndex] == SelfPid;
+}
+
+bool FDriveOsInput::TopChanged(const TArray<uint64>& Before, const TArray<uint64>& After)
+{
+    return Before.IsEmpty() || After.IsEmpty() || Before[0] != After[0];
 }
 
 FString FDriveOsInput::SessionTypeFor(const FString& WaylandDisplay, const FString& XdgSessionType)
@@ -768,28 +799,15 @@ bool FDriveOsInput::FindForeignWindowAt(const FVector2D& ScreenPos, FForeignWind
         return false;
     }
 
-    // Walk down the window tree through every mapped window containing the point, top of
-    // the stacking order first at each level: the same windows the X server would route a
-    // real press through, found BEFORE anything is injected.
+    // The windows a real press at the point would be routed through, found BEFORE anything is
+    // injected.
     const XWindow Root = Api.DefaultRootWindow(Api.Display);
-    const int X = FMath::RoundToInt(ScreenPos.X);
-    const int Y = FMath::RoundToInt(ScreenPos.Y);
-    TArray<XWindow> Path;
-    TArray<uint32> Pids;
     const XErrorHandler Previous = Api.SetErrorHandler(&IgnoreXError);
-    XWindow Parent = Root;
-    for (int32 Depth = 0; Depth < MaxDescent; ++Depth)
+    const TArray<XWindow> Path = WindowPathAt(Api, ScreenPos);
+    TArray<uint32> Pids;
+    for (const XWindow Window : Path)
     {
-        int ChildX = 0;
-        int ChildY = 0;
-        XWindow Child = 0;
-        if (!Api.TranslateCoordinates(Api.Display, Root, Parent, X, Y, &ChildX, &ChildY, &Child) || Child == 0)
-        {
-            break;
-        }
-        Path.Add(Child);
-        Pids.Add(ReadPid(Api, Child));
-        Parent = Child;
+        Pids.Add(ReadPid(Api, Window));
     }
 
     int32 OwnerIndex = INDEX_NONE;
@@ -808,6 +826,221 @@ bool FDriveOsInput::FindForeignWindowAt(const FVector2D& ScreenPos, FForeignWind
 #else
     (void)ScreenPos;
     (void)Out;
+    return false;
+#endif
+}
+
+uint64 FDriveOsInput::XWindowIdOf(const TSharedPtr<FGenericWindow>& Native)
+{
+#if PLATFORM_LINUX
+    // Linux's OS handle is the SDL_Window; SDL3 publishes its X11 window as a window property
+    // (SDL_video.h, SDL_PROP_WINDOW_X11_WINDOW_NUMBER), unset under Wayland or the dummy driver.
+    // Resolved from the global scope, where ApplicationCore exports SDL, as SdlHoldsGrab does.
+    using FGetProps = uint32 (*)(void*);
+    using FGetNumber = int64 (*)(uint32, const char*, int64);
+    static const FGetProps GetProps = reinterpret_cast<FGetProps>(dlsym(RTLD_DEFAULT, "SDL_GetWindowProperties"));
+    static const FGetNumber GetNumber = reinterpret_cast<FGetNumber>(dlsym(RTLD_DEFAULT, "SDL_GetNumberProperty"));
+    void* Sdl = Native.IsValid() ? Native->GetOSWindowHandle() : nullptr;
+    if (!Sdl || !GetProps || !GetNumber)
+    {
+        return 0;
+    }
+    const uint32 Props = GetProps(Sdl);
+    return Props ? static_cast<uint64>(GetNumber(Props, "SDL.window.x11.window", 0)) : 0;
+#else
+    (void)Native;
+    return 0;
+#endif
+}
+
+TArray<uint64> FDriveOsInput::XWindowPathAt(const FVector2D& ScreenPos)
+{
+    TArray<uint64> Out;
+#if PLATFORM_LINUX
+    FX11Api& Api = GetApi();
+    if (Api.IsValid())
+    {
+        const XErrorHandler Previous = Api.SetErrorHandler(&IgnoreXError);
+        for (const XWindow Window : WindowPathAt(Api, ScreenPos))
+        {
+            Out.Add(static_cast<uint64>(Window));
+        }
+        Api.SetErrorHandler(Previous);
+    }
+#else
+    (void)ScreenPos;
+#endif
+    return Out;
+}
+
+bool FDriveOsInput::IsXWindowOnTopAt(const FVector2D& ScreenPos, uint64 WindowId)
+{
+    return WindowId != 0 && XWindowPathAt(ScreenPos).Contains(WindowId);
+}
+
+uint64 FDriveOsInput::XInputFocus()
+{
+#if PLATFORM_LINUX
+    FX11Api& Api = GetApi();
+    using FGetFocus = int (*)(XDisplay, XWindow*, int*);
+    static void* const Xlib = dlopen("libX11.so.6", RTLD_LAZY | RTLD_LOCAL);
+    static const FGetFocus GetFocus = Xlib ? reinterpret_cast<FGetFocus>(dlsym(Xlib, "XGetInputFocus")) : nullptr;
+    if (!Api.IsValid() || !GetFocus)
+    {
+        return 0;
+    }
+    XWindow Focus = 0;
+    int Revert = 0;
+    GetFocus(Api.Display, &Focus, &Revert);
+    return static_cast<uint64>(Focus);
+#else
+    return 0;
+#endif
+}
+
+bool FDriveOsInput::FocusXWindow(uint64 WindowId)
+{
+#if PLATFORM_LINUX
+    FX11Api& Api = GetApi();
+    using FSetFocus = int (*)(XDisplay, XWindow, int, unsigned long);
+    static void* const Xlib = dlopen("libX11.so.6", RTLD_LAZY | RTLD_LOCAL);
+    static const FSetFocus SetFocus = Xlib ? reinterpret_cast<FSetFocus>(dlsym(Xlib, "XSetInputFocus")) : nullptr;
+    if (!Api.IsValid() || !SetFocus || WindowId == 0)
+    {
+        return false;
+    }
+    // RevertToParent = 2, CurrentTime = 0. What SDL itself does to a shown window when no window
+    // manager runs (SDL_x11window.c, X11_ShowWindow).
+    const XErrorHandler Previous = Api.SetErrorHandler(&IgnoreXError);
+    SetFocus(Api.Display, static_cast<XWindow>(WindowId), 2, 0);
+    Api.Flush(Api.Display);
+    Api.SetErrorHandler(Previous);
+    return true;
+#else
+    (void)WindowId;
+    return false;
+#endif
+}
+
+bool FDriveOsInput::ActivateXWindow(uint64 WindowId)
+{
+#if PLATFORM_LINUX
+    FX11Api& Api = GetApi();
+    using FIntern = XAtom (*)(XDisplay, const char*, int);
+    using FSend = int (*)(XDisplay, XWindow, int, long, void*);
+    static void* const Xlib = dlopen("libX11.so.6", RTLD_LAZY | RTLD_LOCAL);
+    static const FIntern Intern = Xlib ? reinterpret_cast<FIntern>(dlsym(Xlib, "XInternAtom")) : nullptr;
+    static const FSend Send = Xlib ? reinterpret_cast<FSend>(dlsym(Xlib, "XSendEvent")) : nullptr;
+    if (!Api.IsValid() || !Intern || !Send || WindowId == 0)
+    {
+        return false;
+    }
+    // XClientMessageEvent on LP64: type@0, send_event@16, window@32, message_type@40, format@48,
+    // data.l[5]@56; the XEvent union is 192 bytes. Source 2 (pager) with CurrentTime: mutter
+    // honours it, where it declines SDL's application-source request from a background editor.
+    alignas(8) uint8 Event[192] = {};
+    const auto Put = [&Event](int32 Offset, auto Value) { FMemory::Memcpy(Event + Offset, &Value, sizeof(Value)); };
+    Put(0, int32(33));                                       // ClientMessage
+    Put(16, int32(1));                                       // send_event
+    Put(32, static_cast<XWindow>(WindowId));
+    Put(40, Intern(Api.Display, "_NET_ACTIVE_WINDOW", /*only_if_exists*/ 0));
+    Put(48, int32(32));                                      // format
+    Put(56, long(2));                                        // source indication: pager
+    Put(64, long(0));                                        // CurrentTime
+    const XErrorHandler Previous = Api.SetErrorHandler(&IgnoreXError);
+    Send(Api.Display, Api.DefaultRootWindow(Api.Display), /*propagate*/ 0,
+        (1L << 20) | (1L << 19), Event);                     // SubstructureRedirect | SubstructureNotify
+    Api.Flush(Api.Display);
+    Api.SetErrorHandler(Previous);
+    return true;
+#else
+    (void)WindowId;
+    return false;
+#endif
+}
+
+bool FDriveOsInput::HasSdlKeyboardFocus(const TSharedPtr<FGenericWindow>& Native)
+{
+#if PLATFORM_LINUX
+    // SDL moves its keyboard focus when it pumps the X FocusIn, in the same pump the editor
+    // handles it, so this says the editor has seen the focus change, not just the window manager.
+    using FGetWindow = void* (*)();
+    static const FGetWindow GetKeyboardFocus = reinterpret_cast<FGetWindow>(dlsym(RTLD_DEFAULT, "SDL_GetKeyboardFocus"));
+    return GetKeyboardFocus && Native.IsValid() && GetKeyboardFocus() == Native->GetOSWindowHandle();
+#else
+    (void)Native;
+    return false;
+#endif
+}
+
+uint64 FDriveOsInput::XActiveWindow(bool* bOutWmReports)
+{
+    if (bOutWmReports)
+    {
+        *bOutWmReports = false;
+    }
+#if PLATFORM_LINUX
+    FX11Api& Api = GetApi();
+    using FIntern = XAtom (*)(XDisplay, const char*, int);
+    static void* const Xlib = dlopen("libX11.so.6", RTLD_LAZY | RTLD_LOCAL);
+    static const FIntern Intern = Xlib ? reinterpret_cast<FIntern>(dlsym(Xlib, "XInternAtom")) : nullptr;
+    if (!Api.IsValid() || !Intern)
+    {
+        return 0;
+    }
+    static const XAtom NetActiveWindow = Intern(Api.Display, "_NET_ACTIVE_WINDOW", /*only_if_exists*/ 0);
+    XAtom Type = 0;
+    int Format = 0;
+    unsigned long Count = 0;
+    unsigned long After = 0;
+    unsigned char* Data = nullptr;
+    uint64 Active = 0;
+    // 33 = XA_WINDOW, 0 = Success. Format-32 items come back as C longs.
+    if (Api.GetWindowProperty(Api.Display, Api.DefaultRootWindow(Api.Display), NetActiveWindow, 0, 1, /*delete*/ 0, 33,
+            &Type, &Format, &Count, &After, &Data) == 0 && Data)
+    {
+        if (Format == 32 && Count == 1)
+        {
+            Active = static_cast<uint64>(*reinterpret_cast<unsigned long*>(Data));
+        }
+        Api.Free(Data);
+    }
+    // Type None: the root has no _NET_ACTIVE_WINDOW at all, i.e. no EWMH window manager runs
+    // (a bare Xvfb / Xephyr from editor_start), as opposed to one reporting no active window.
+    if (bOutWmReports)
+    {
+        *bOutWmReports = Type != 0;
+    }
+    return Active;
+#else
+    return 0;
+#endif
+}
+
+bool FDriveOsInput::RaiseXWindow(uint64 WindowId)
+{
+#if PLATFORM_LINUX
+    // From PinWright's own connection, so nothing sends _NET_ACTIVE_WINDOW: SDL_RaiseWindow does
+    // (SDL_x11window.c X11_RaiseWindow, hint SDL_HINT_WINDOW_ACTIVATE_WHEN_RAISED), which can take
+    // keyboard focus or, on GNOME, show an "is ready" notification (LinuxApplication.cpp, the engine
+    // clears that hint around its own raise for this reason). A reparenting window manager receives
+    // this restack as a ConfigureRequest and may decline it; whether it then still flags the window
+    // as demanding attention is up to the window manager (not verified for mutter).
+    FX11Api& Api = GetApi();
+    using FRaise = int (*)(XDisplay, XWindow);
+    static void* const Xlib = dlopen("libX11.so.6", RTLD_LAZY | RTLD_LOCAL);
+    static const FRaise Raise = Xlib ? reinterpret_cast<FRaise>(dlsym(Xlib, "XRaiseWindow")) : nullptr;
+    if (!Api.IsValid() || !Raise || WindowId == 0)
+    {
+        return false;
+    }
+    const XErrorHandler Previous = Api.SetErrorHandler(&IgnoreXError);
+    Raise(Api.Display, static_cast<XWindow>(WindowId));
+    Api.Flush(Api.Display);
+    Api.SetErrorHandler(Previous);
+    return true;
+#else
+    (void)WindowId;
     return false;
 #endif
 }
@@ -924,6 +1157,33 @@ bool FDriveOsInput::IsPointerAt(const FIntPoint& Target, FIntPoint& OutPointer)
 #endif
 }
 
+bool FDriveOsInput::CheckPointerFree(FDriveInjectFailure& OutFailure)
+{
+#if PLATFORM_LINUX
+    const FString LockPath = DisplayLockPath();
+    const FDisplayLock Lock(LockPath, LockTimeoutSeconds);
+    if (!LockHeldOrFail(Lock, LockPath, OutFailure))
+    {
+        return false;
+    }
+    FX11Api& Api = GetApi();
+    if (!Api.IsValid())
+    {
+        Fail(OutFailure, ErrorCodes::ERR_INPUT_FAILED, Api.Error);
+        return false;
+    }
+    return !RefuseIfPointerGrabbed(Api, OutFailure);
+#else
+    (void)OutFailure;
+    return true;
+#endif
+}
+
+bool FDriveOsInput::IsActiveEnough(bool bWmReportsActive, uint64 Active, uint64 ActivationXWindow, bool bSdlFocus)
+{
+    return bSdlFocus && (!bWmReportsActive || Active == ActivationXWindow);
+}
+
 bool FDriveOsInput::MoveTo(const FVector2D& ScreenPos, FDriveInjectFailure& OutFailure)
 {
     // A Slate-path hover hold forces the inactive-input flag; real input must not run under it.
@@ -952,13 +1212,37 @@ bool FDriveOsInput::ClickAt(const FVector2D& ScreenPos, EDriveMouseButton Button
     // shared pointer between our motion and our press, or during the hold.
     const FString LockPath = DisplayLockPath();
     const FDisplayLock Lock(LockPath, LockTimeoutSeconds);
-    if (!LockHeldOrFail(Lock, LockPath, OutFailure) || !MoveUnlocked(ScreenPos, OutFailure))
+    if (!LockHeldOrFail(Lock, LockPath, OutFailure))
+    {
+        return false;
+    }
+    // The caller checked, this frame, that the target's X window is on this path; an unchanged
+    // top-level window after the motion means it still is, whichever process a new window has.
+    const TArray<uint64> PathBefore = XWindowPathAt(ScreenPos);
+    // Likewise the active window: the caller waited for the target to be it (#432), and a press
+    // into a window that lost it during the motion would only focus that window again.
+    const uint64 ActiveBefore = XActiveWindow();
+    if (!MoveUnlocked(ScreenPos, OutFailure))
     {
         return false;
     }
 
     if (!CheckPress(FIntPoint(FMath::RoundToInt(ScreenPos.X), FMath::RoundToInt(ScreenPos.Y)), OutFailure))
     {
+        return false;
+    }
+    if (TopChanged(PathBefore, XWindowPathAt(ScreenPos)))
+    {
+        Fail(OutFailure, ErrorCodes::ERR_INPUT_FAILED,
+            TEXT("A window was stacked over the target during the motion; the button was not pressed."));
+        return false;
+    }
+    const uint64 ActiveAfter = XActiveWindow();
+    if (ActiveAfter != ActiveBefore)
+    {
+        Fail(OutFailure, ErrorCodes::ERR_INPUT_FAILED,
+            FString::Printf(TEXT("The active window changed during the motion (0x%llx to 0x%llx); a press now would only focus a window, so the button was not pressed. Retry."),
+                ActiveBefore, ActiveAfter));
         return false;
     }
 

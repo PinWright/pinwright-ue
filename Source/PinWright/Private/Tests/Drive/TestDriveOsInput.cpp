@@ -463,3 +463,42 @@ bool FDriveOsInputGrabHolderFromXorgDumpTest::RunTest(const FString& Parameters)
     TestEqual(TEXT("a DISPLAY with no number has no log"), FDriveOsInput::XorgLogCandidates(TEXT("wayland-0"), TEXT(""), TEXT("/home/u")).Num(), 0);
     return true;
 }
+
+// ClickAt's own-window guard for the motion (#426): the press is refused when the top-level X
+// window at the target changed between the walk before the motion and the one after it.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveOsInputTopChangedTest,
+    "PinWright.drive.os_input.TopChangedDuringMotion",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FDriveOsInputTopChangedTest::RunTest(const FString& Parameters)
+{
+    TestFalse(TEXT("the same top-level window is no change"), FDriveOsInput::TopChanged({ 0x10, 0x11 }, { 0x10, 0x11 }));
+    TestFalse(TEXT("a change below the top-level window (the client inside the same frame) is no change"),
+        FDriveOsInput::TopChanged({ 0x10, 0x11 }, { 0x10, 0x12 }));
+    TestTrue(TEXT("another top-level window over the point is a change"), FDriveOsInput::TopChanged({ 0x10, 0x11 }, { 0x20, 0x21 }));
+    TestTrue(TEXT("an empty walk after the motion is a change"), FDriveOsInput::TopChanged({ 0x10 }, {}));
+    TestTrue(TEXT("an empty walk before the motion is a change"), FDriveOsInput::TopChanged({}, { 0x10 }));
+    return true;
+}
+
+// The os_input gate's "active enough" decision (#432 review B1/B2): SDL keyboard focus is always
+// required; the window manager's active window must be the target's activation window (its
+// nearest non-menu ancestor) only when a window manager reports one at all.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveOsInputActiveEnoughTest,
+    "PinWright.drive.os_input.ActiveEnoughDecision",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FDriveOsInputActiveEnoughTest::RunTest(const FString& Parameters)
+{
+    TestTrue(TEXT("window manager names the activation window, SDL focus there: active"),
+        FDriveOsInput::IsActiveEnough(/*bWmReportsActive=*/true, 0x10, 0x10, /*bSdlFocus=*/true));
+    TestFalse(TEXT("window manager names another window: not active"),
+        FDriveOsInput::IsActiveEnough(true, 0x20, 0x10, true));
+    TestFalse(TEXT("window manager agrees but SDL has not pumped the focus change: not active"),
+        FDriveOsInput::IsActiveEnough(true, 0x10, 0x10, false));
+    TestTrue(TEXT("no window manager (bare Xvfb, no _NET_ACTIVE_WINDOW): SDL focus alone decides"),
+        FDriveOsInput::IsActiveEnough(false, 0, 0x10, true));
+    TestFalse(TEXT("no window manager and no SDL focus: not active"),
+        FDriveOsInput::IsActiveEnough(false, 0, 0x10, false));
+    return true;
+}

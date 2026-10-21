@@ -69,10 +69,12 @@ public:
     // InjectFields, when set, is an object the Inject callback fills with what only the
     // injection can know (drive.key: whether the platform held the modifiers); its fields are
     // copied into the success response.
+    // bPress false (drive.hover) skips os_input's wait for the target to be the active window and
+    // its activation: X delivers motion to an inactive window, and only a press needs focus.
     static void RunAction(FHandlerContext& Ctx, const FString& Handle, const FInject& Inject,
-        const TCHAR* InputPath = nullptr, const TSharedPtr<FJsonObject>& InjectFields = nullptr);
+        const TCHAR* InputPath = nullptr, const TSharedPtr<FJsonObject>& InjectFields = nullptr, bool bPress = true);
     static void RunAction(FHandlerContext& Ctx, const FString& Handle, const FInjectOnTarget& Inject,
-        const TCHAR* InputPath = nullptr, const TSharedPtr<FJsonObject>& InjectFields = nullptr);
+        const TCHAR* InputPath = nullptr, const TSharedPtr<FJsonObject>& InjectFields = nullptr, bool bPress = true);
 
     // Whether a freshly re-resolved element may still be acted on: it must be drawn, enabled,
     // and carry a rect Slate measured this frame. The geometry term matters on its own - a
