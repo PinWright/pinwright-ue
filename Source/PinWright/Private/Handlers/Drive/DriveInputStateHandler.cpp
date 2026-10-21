@@ -19,6 +19,7 @@
 #include "GameFramework/PlayerController.h"
 #include "Types/ReflectionMetadata.h"
 #include "Widgets/SViewport.h"
+#include "Widgets/SWindow.h"
 #include "Widgets/SWidget.h"
 
 // File-local helpers live in a uniquely-named namespace (not an anonymous one): the
@@ -145,6 +146,35 @@ REGISTER_RPC_HANDLER("drive.input_state", "drive",
         Result->SetField(TEXT("show_mouse_cursor"), MakeShared<FJsonValueNull>());
     }
 
+    // The fields above read GEngine->GameViewport, one viewport; in multi-instance PIE each
+    // instance has its own capture state and window.
+    TArray<TSharedPtr<FJsonValue>> PieViewports;
+    if (GEngine)
+    {
+        for (const FWorldContext& Context : GEngine->GetWorldContexts())
+        {
+            UGameViewportClient* Client = Context.WorldType == EWorldType::PIE ? Context.GameViewport.Get() : nullptr;
+            if (!Client)
+            {
+                continue;
+            }
+            TSharedPtr<FJsonObject> Entry = MakeShared<FJsonObject>();
+            Entry->SetStringField(TEXT("world"), FString::Printf(TEXT("pie:%d"), Context.PIEInstance));
+            const TSharedPtr<SWindow> Window = Client->GetWindow();
+            Entry->SetStringField(TEXT("window_title"), Window.IsValid() ? Window->GetTitle().ToString() : FString());
+            Entry->SetNumberField(TEXT("window_id"), Window.IsValid() ? static_cast<double>(FDriveOsInput::XWindowIdOf(Window->GetNativeWindow())) : 0.0);
+            const TSharedPtr<SViewport> Widget = Client->GetGameViewportWidget();
+            Entry->SetBoolField(TEXT("has_mouse_capture"), Widget.IsValid() && Widget->HasMouseCapture());
+            Entry->SetBoolField(TEXT("has_focus"), Widget.IsValid() && Widget->HasAnyUserFocus().IsSet());
+            Entry->SetStringField(TEXT("mouse_capture_mode"),
+                EnumMemberName(StaticEnum<EMouseCaptureMode>(), static_cast<int64>(Client->GetMouseCaptureMode())));
+            Entry->SetStringField(TEXT("mouse_lock_mode"),
+                EnumMemberName(StaticEnum<EMouseLockMode>(), static_cast<int64>(Client->GetMouseLockMode())));
+            PieViewports.Add(MakeShared<FJsonValueObject>(Entry));
+        }
+    }
+    Result->SetArrayField(TEXT("pie_viewports"), PieViewports);
+
     // Absolute desktop pixels — the same space an element's geometry.absolute reports and
     // the space os_input aims at, so a caller can verify where the pointer actually landed.
     const FVector2D CursorPos(SlateApp.GetCursorPos());
@@ -169,6 +199,14 @@ REGISTER_RPC_HANDLER("drive.input_state", "drive",
         else
         {
             OsGrab->SetField(TEXT("held_by_this_editor"), MakeShared<FJsonValueNull>());
+        }
+        if (Grab.GrabWindow.IsValid())
+        {
+            OsGrab->SetObjectField(TEXT("grab_window"), Grab.GrabWindow);
+        }
+        else
+        {
+            OsGrab->SetField(TEXT("grab_window"), MakeShared<FJsonValueNull>());
         }
         Result->SetObjectField(TEXT("os_grab"), OsGrab);
     }

@@ -135,6 +135,14 @@ public:
     // another X client holds the pointer. True when the pointer is free; true off Linux.
     static bool CheckPointerFree(FDriveInjectFailure& OutFailure);
 
+    // The window whose stale SDL relative mouse mode an os_input grab check cleared (#436) since the
+    // last call, as {title, window_id}, and forgets it. Null when none was cleared.
+    static TSharedPtr<class FJsonObject> TakeClearedStaleRelativeMode();
+
+    // Whether SDL has relative mouse mode set on Native's window (Linux). SDL3 keeps it per window
+    // and grabs the pointer while that window has keyboard focus. False off Linux.
+    static bool HasSdlRelativeMouseMode(const TSharedPtr<class FGenericWindow>& Native);
+
     // Whether SDL's keyboard focus is Native's window (Linux), i.e. the editor has pumped that
     // window's FocusIn. False off Linux.
     static bool HasSdlKeyboardFocus(const TSharedPtr<class FGenericWindow>& Native);
@@ -166,6 +174,9 @@ public:
         // input-focus window, which SDL implements as a confining XGrabPointer). Unset when
         // this engine's SDL lacks the entry points to tell.
         TOptional<bool> bHeldByThisEditor;
+        // The window behind SDL's grab: {title, window_id, world ("pie:N" or null),
+        // sdl_relative_mode, engine_high_precision}. Null when SDL holds none.
+        TSharedPtr<class FJsonObject> GrabWindow;
     };
 
     // False when X is unavailable (non-Linux, no display); Out is then left untouched.

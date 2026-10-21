@@ -7,11 +7,18 @@
 
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
+#include "Engine/Engine.h"
+#include "Engine/GameViewportClient.h"
+#include "Framework/Application/SlateApplication.h"
+#include "GenericPlatform/GenericApplication.h"
 #include "GenericPlatform/GenericWindow.h"
 #include "HAL/FileManager.h"
 #include "HAL/PlatformMisc.h"
 #include "HAL/PlatformProcess.h"
 #include "HAL/PlatformTime.h"
+#include "Widgets/SWindow.h"
+
+DEFINE_LOG_CATEGORY_STATIC(LogPinWrightDriveOsInput, Log, All);
 
 #if PLATFORM_LINUX
 #include <dlfcn.h>
@@ -258,19 +265,134 @@ namespace DriveOsInputLocal
     // SDL's own view: a window grab, or relative mouse mode on the input-focus window (SDL
     // implements that as a confining XGrabPointer). Resolved from the process's global scope,
     // where ApplicationCore exports SDL; unset when an entry point is missing (an older SDL).
+    using FSdlGetWindow = void* (*)();
+    using FSdlGetRelative = bool (*)(void*);
+    using FSdlSetRelative = bool (*)(void*, bool);
+
+    FSdlGetRelative SdlGetRelative()
+    {
+        static const FSdlGetRelative GetRelative = reinterpret_cast<FSdlGetRelative>(dlsym(RTLD_DEFAULT, "SDL_GetWindowRelativeMouseMode"));
+        return GetRelative;
+    }
+
+    // The SDL window behind this process's grab, null when SDL holds none. False when an entry
+    // point is missing (an older SDL).
+    bool SdlGrabWindow(void*& OutWindow)
+    {
+        static const FSdlGetWindow GetGrabbedWindow = reinterpret_cast<FSdlGetWindow>(dlsym(RTLD_DEFAULT, "SDL_GetGrabbedWindow"));
+        static const FSdlGetWindow GetKeyboardFocus = reinterpret_cast<FSdlGetWindow>(dlsym(RTLD_DEFAULT, "SDL_GetKeyboardFocus"));
+        const FSdlGetRelative GetRelative = SdlGetRelative();
+        if (!GetGrabbedWindow || !GetKeyboardFocus || !GetRelative)
+        {
+            return false;
+        }
+        void* Focus = GetKeyboardFocus();
+        OutWindow = GetGrabbedWindow();
+        if (!OutWindow && Focus && GetRelative(Focus))
+        {
+            OutWindow = Focus;
+        }
+        return true;
+    }
+
     TOptional<bool> SdlHoldsGrab()
     {
-        using FGetWindow = void* (*)();
-        using FGetRelative = bool (*)(void*);
-        static const FGetWindow GetGrabbedWindow = reinterpret_cast<FGetWindow>(dlsym(RTLD_DEFAULT, "SDL_GetGrabbedWindow"));
-        static const FGetWindow GetKeyboardFocus = reinterpret_cast<FGetWindow>(dlsym(RTLD_DEFAULT, "SDL_GetKeyboardFocus"));
-        static const FGetRelative GetRelative = reinterpret_cast<FGetRelative>(dlsym(RTLD_DEFAULT, "SDL_GetWindowRelativeMouseMode"));
-        if (!GetGrabbedWindow || !GetKeyboardFocus || !GetRelative)
+        void* Window = nullptr;
+        if (!SdlGrabWindow(Window))
         {
             return {};
         }
-        void* Focus = GetKeyboardFocus();
-        return GetGrabbedWindow() != nullptr || (Focus && GetRelative(Focus));
+        return Window != nullptr;
+    }
+
+    // Whether the engine itself has the mouse in high-precision (SDL relative) mode.
+    bool EngineHighPrecisionMouse()
+    {
+        return FSlateApplication::IsInitialized() && FSlateApplication::Get().GetPlatformApplication().IsValid()
+            && FSlateApplication::Get().GetPlatformApplication()->IsUsingHighPrecisionMouseMode();
+    }
+
+    // This editor's visible Slate window whose native window is SDL window Sdl.
+    TSharedPtr<SWindow> SlateWindowOfSdl(void* Sdl)
+    {
+        if (!Sdl || !FSlateApplication::IsInitialized())
+        {
+            return nullptr;
+        }
+        TArray<TSharedRef<SWindow>> Windows;
+        FSlateApplication::Get().GetAllVisibleWindowsOrdered(Windows);
+        for (const TSharedRef<SWindow>& Window : Windows)
+        {
+            if (Window->GetNativeWindow().IsValid() && Window->GetNativeWindow()->GetOSWindowHandle() == Sdl)
+            {
+                return Window;
+            }
+        }
+        return nullptr;
+    }
+
+    // SDL3 keeps relative mouse mode per window and re-applies it, with a confining pointer grab,
+    // whenever that window takes keyboard focus. The engine tracks it as one global flag, and
+    // FLinuxApplication::SetHighPrecisionMouseMode(false, nullptr) clears that flag without
+    // touching SDL (LinuxApplication.cpp:1575-1582; Slate calls it so when a modal window opens,
+    // SlateApplication.cpp:2215). The window keeps relative mode nobody asked for: focusing it
+    // grabs the pointer, no Slate widget holds capture, and Shift+F1 or pointer motion release
+    // nothing (#436). True, after clearing that mode, when the focused window had it while the
+    // engine reports no high-precision mouse.
+    // The window ClearStaleRelativeMode last cleared, until TakeClearedStaleRelativeMode reads it.
+    TSharedPtr<FJsonObject> GClearedStaleRelativeMode;
+
+    bool ClearStaleRelativeMode()
+    {
+        static const FSdlGetWindow GetKeyboardFocus = reinterpret_cast<FSdlGetWindow>(dlsym(RTLD_DEFAULT, "SDL_GetKeyboardFocus"));
+        static const FSdlSetRelative SetRelative = reinterpret_cast<FSdlSetRelative>(dlsym(RTLD_DEFAULT, "SDL_SetWindowRelativeMouseMode"));
+        const FSdlGetRelative GetRelative = SdlGetRelative();
+        void* Focus = GetKeyboardFocus ? GetKeyboardFocus() : nullptr;
+        if (!Focus || !GetRelative || !SetRelative || !GetRelative(Focus) || EngineHighPrecisionMouse())
+        {
+            return false;
+        }
+        if (!SetRelative(Focus, false))   // SDL ungrabs and XSyncs its own connection
+        {
+            return false;
+        }
+        const TSharedPtr<SWindow> Window = SlateWindowOfSdl(Focus);
+        const FString Title = Window.IsValid() ? Window->GetTitle().ToString() : FString();
+        UE_LOG(LogPinWrightDriveOsInput, Warning,
+            TEXT("Cleared SDL relative mouse mode on window '%s': the engine reports no high-precision mouse, so the pointer grab it made was stale (#436)."),
+            *Title);
+        GClearedStaleRelativeMode = MakeShared<FJsonObject>();
+        GClearedStaleRelativeMode->SetStringField(TEXT("title"), Title);
+        GClearedStaleRelativeMode->SetNumberField(TEXT("window_id"),
+            Window.IsValid() ? static_cast<double>(FDriveOsInput::XWindowIdOf(Window->GetNativeWindow())) : 0.0);
+        return true;
+    }
+
+    // {title, window_id, world, sdl_relative_mode, engine_high_precision} for the window behind this
+    // editor's SDL grab; null when SDL holds none or names no visible window.
+    TSharedPtr<FJsonObject> DescribeOwnGrabWindow()
+    {
+        void* Sdl = nullptr;
+        const TSharedPtr<SWindow> Window = SdlGrabWindow(Sdl) ? SlateWindowOfSdl(Sdl) : nullptr;
+        if (!Window.IsValid() || !GEngine)
+        {
+            return nullptr;
+        }
+        TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+        Out->SetStringField(TEXT("title"), Window->GetTitle().ToString());
+        Out->SetNumberField(TEXT("window_id"), static_cast<double>(FDriveOsInput::XWindowIdOf(Window->GetNativeWindow())));
+        Out->SetField(TEXT("world"), MakeShared<FJsonValueNull>());
+        for (const FWorldContext& Context : GEngine->GetWorldContexts())
+        {
+            if (Context.WorldType == EWorldType::PIE && Context.GameViewport && Context.GameViewport->GetWindow() == Window)
+            {
+                Out->SetStringField(TEXT("world"), FString::Printf(TEXT("pie:%d"), Context.PIEInstance));
+                break;
+            }
+        }
+        Out->SetBoolField(TEXT("sdl_relative_mode"), SdlGetRelative()(Sdl));
+        Out->SetBoolField(TEXT("engine_high_precision"), EngineHighPrecisionMouse());
+        return Out;
     }
 
     // The bytes a file gained past Offset, or empty when it could not be read.
@@ -439,6 +561,12 @@ namespace DriveOsInputLocal
         {
             return false;
         }
+        // A grab from relative mode the engine no longer wants is released, not refused: the
+        // activation of the target's own window re-applies it (#436).
+        if (ClearStaleRelativeMode() && !IsGrabbedByAnother(Api, /*bPointer*/ true))
+        {
+            return false;
+        }
         const TOptional<bool> bOurs = SdlHoldsGrab();
         TSharedPtr<FJsonObject> Details = MakeShared<FJsonObject>();
         if (bOurs.IsSet())
@@ -450,6 +578,19 @@ namespace DriveOsInputLocal
             Details->SetField(TEXT("held_by_this_editor"), MakeShared<FJsonValueNull>());
         }
         FString Advice = TEXT("Release the game's mouse capture (Shift+F1 with X focus on the editor, or stop PIE), or use the Slate path (omit os_input).");
+        if (const TSharedPtr<FJsonObject> GrabWindow = bOurs.Get(false) ? DescribeOwnGrabWindow() : nullptr)
+        {
+            const uint64 WindowId = static_cast<uint64>(GrabWindow->GetNumberField(TEXT("window_id")));
+            FString World;
+            GrabWindow->TryGetStringField(TEXT("world"), World);
+            Details->SetObjectField(TEXT("grab_window"), GrabWindow);
+            const FString Where = FString::Printf(TEXT("The grab is SDL's on window 0x%llx '%s'%s"),
+                WindowId, *GrabWindow->GetStringField(TEXT("title")), World.IsEmpty() ? TEXT("") : *FString::Printf(TEXT(" (PIE %s)"), *World));
+            // SDL grabs only for its keyboard-focus window, so that window is focused already.
+            Advice = GrabWindow->GetBoolField(TEXT("engine_high_precision"))
+                ? Where + TEXT(", a game viewport that captured the mouse. Release it with a held Shift+F1 (it has the editor's keyboard focus already) or stop PIE; or use the Slate path (omit os_input).")
+                : Where + TEXT(", which the engine does not track as a capture (its high-precision mouse is off), so Shift+F1 does not release it. Stop PIE, or use the Slate path (omit os_input).");
+        }
         if (!bOurs.Get(false))
         {
             // Callers hold the display lock, which serializes this cache within the process too.
@@ -959,6 +1100,27 @@ bool FDriveOsInput::ActivateXWindow(uint64 WindowId)
 #endif
 }
 
+TSharedPtr<FJsonObject> FDriveOsInput::TakeClearedStaleRelativeMode()
+{
+#if PLATFORM_LINUX
+    return MoveTemp(GClearedStaleRelativeMode);
+#else
+    return nullptr;
+#endif
+}
+
+bool FDriveOsInput::HasSdlRelativeMouseMode(const TSharedPtr<FGenericWindow>& Native)
+{
+#if PLATFORM_LINUX
+    const FSdlGetRelative GetRelative = SdlGetRelative();
+    void* Sdl = Native.IsValid() ? Native->GetOSWindowHandle() : nullptr;
+    return GetRelative && Sdl && GetRelative(Sdl);
+#else
+    (void)Native;
+    return false;
+#endif
+}
+
 bool FDriveOsInput::HasSdlKeyboardFocus(const TSharedPtr<FGenericWindow>& Native)
 {
 #if PLATFORM_LINUX
@@ -1056,6 +1218,7 @@ bool FDriveOsInput::ProbeGrabs(FGrabState& Out)
     Out.bPointerGrabbed = IsGrabbedByAnother(Api, /*bPointer*/ true);
     Out.bKeyboardGrabbed = IsGrabbedByAnother(Api, /*bPointer*/ false);
     Out.bHeldByThisEditor = SdlHoldsGrab();
+    Out.GrabWindow = DescribeOwnGrabWindow();
     return true;
 #else
     (void)Out;

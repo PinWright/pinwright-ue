@@ -80,10 +80,12 @@
         "Serialized per X display across editors: OS_INPUT_BUSY (holder_pid) when another " \
         "injection holds the display for >5s; drive.click / drive.drag refuse with POINTER_MOVED, unpressed, " \
         "when the real pointer is not on the target right before the press. " \
-        "POINTER_GRABBED (held_by_this_editor; holder_pid / holder_cmdline from the Xorg " \
+        "POINTER_GRABBED (held_by_this_editor; grab_window names this editor's grabbing window; " \
+        "holder_pid / holder_cmdline from the Xorg " \
         "grab dump, null when unreadable; holder_dump_age_s, as one dump is reused for 30s), " \
         "with nothing injected, while any X client " \
-        "holds a pointer grab (drive.input_state os_grab shows it). " \
+        "holds a pointer grab (drive.input_state os_grab shows it); a stale SDL relative mode on " \
+        "this editor's focused window (the engine reports no high-precision mouse) is cleared instead. " \
         "A press (click, drag) of a target with an X window first waits, ~1s, until it is the " \
         "active window (a menu: its parent) with SDL keyboard focus, activating it only while " \
         "this editor is the focused application: INPUT_FAILED (target_window_id, " \

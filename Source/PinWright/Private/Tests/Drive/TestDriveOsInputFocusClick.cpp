@@ -19,6 +19,15 @@
 //    FSlateApplication::PushMenu. Menus are override-redirect X windows that never become the
 //    window manager's active window; their toplevel parent does. Exactly one click; comparing the
 //    active window against the menu itself refused every menu click with INPUT_FAILED.
+//  - StaleRelativeModeIsCleared (failure direction, #436): as InactiveWindowIsActivatedAndClicked,
+//    but the target window first gets the SDL relative mouse mode the engine leaves behind when it
+//    turns high-precision mouse off with no window (FLinuxApplication::SetHighPrecisionMouseMode
+//    (false, nullptr), what Slate does when a modal opens). SDL3 keeps that mode per window, so the
+//    click's own activation of the target grabs the pointer. drive.click must clear that stale mode
+//    and click once; before the fix it refused POINTER_GRABBED {held_by_this_editor:true}.
+//  - HeldGrabIsNamed (#435): the active fixture window turns on high-precision mouse as a captured
+//    game viewport does, so SDL really grabs the pointer for it. The POINTER_GRABBED refusal and
+//    drive.input_state's os_grab must name that window in grab_window (title, X window id).
 //
 // Visible X11 editors only: os_input is unavailable offscreen (counted skip no-x-display), and
 // without X window ids nothing can be measured (no-x11-window). The editor's toasts are closed
@@ -46,7 +55,7 @@
 
 namespace DriveOsInputFocusClickTest
 {
-    enum class EMode { FixtureActivates, ProductActivates, MenuEntry };
+    enum class EMode { FixtureActivates, ProductActivates, MenuEntry, StaleRelativeMode, HeldGrabIsNamed };
 
     struct FState
     {
@@ -77,6 +86,11 @@ namespace DriveOsInputFocusClickTest
             if (Menu.IsValid())
             {
                 Menu->Dismiss();
+            }
+            // A failed run leaves the target focused in relative mode, holding the pointer grab.
+            if ((Mode == EMode::StaleRelativeMode || Mode == EMode::HeldGrabIsNamed) && Target.IsValid() && Target->GetNativeWindow().IsValid())
+            {
+                FSlateApplication::Get().GetPlatformApplication()->SetHighPrecisionMouseMode(false, Target->GetNativeWindow());
             }
             for (const TSharedPtr<SWindow>& Window : { Target, Decoy })
             {
@@ -170,6 +184,48 @@ namespace DriveOsInputFocusClickTest
         return State.Mode == EMode::MenuEntry && State.Menu.IsValid() ? State.Menu->GetOwnedWindow() : State.Target;
     }
 
+    // The target is active: make SDL grab the pointer for it as a captured viewport does, read the
+    // refusal and drive.input_state, and release the grab again.
+    bool CheckGrabIsNamed(FAutomationTestBase& Test, const FState& State, uint64 TargetX)
+    {
+        const TSharedRef<GenericApplication> Platform = FSlateApplication::Get().GetPlatformApplication().ToSharedRef();
+        Platform->SetHighPrecisionMouseMode(true, State.Target->GetNativeWindow());
+        FDriveInjectFailure Failure;
+        const bool bFree = FDriveOsInput::CheckPointerFree(Failure);
+        FTestResponseCapture InputState;
+        InvokeHandlerWithCapture(TEXT("drive.input_state"), MakeShared<FJsonObject>(), InputState);
+        Platform->SetHighPrecisionMouseMode(false, State.Target->GetNativeWindow());
+
+        if (!Test.TestFalse(TEXT("fixture: SDL grabbed the pointer for the active window in relative mode"), bFree))
+        {
+            return true;
+        }
+        Test.TestEqual(TEXT("the refusal is POINTER_GRABBED"), Failure.Code, FString(TEXT("POINTER_GRABBED")));
+        const TSharedPtr<FJsonObject>* GrabWindow = nullptr;
+        if (Test.TestTrue(TEXT("the refusal carries grab_window"),
+                Failure.Details.IsValid() && Failure.Details->TryGetObjectField(TEXT("grab_window"), GrabWindow)))
+        {
+            Test.TestEqual(TEXT("... naming the window by title"), (*GrabWindow)->GetStringField(TEXT("title")), State.TargetTitle);
+            Test.TestEqual(TEXT("... and by X window id"), static_cast<uint64>((*GrabWindow)->GetNumberField(TEXT("window_id"))), TargetX);
+            Test.TestTrue(TEXT("... and the message names it"), Failure.Message.Contains(FString::Printf(TEXT("0x%llx"), TargetX)));
+            Test.TestTrue(TEXT("... in SDL relative mode"), (*GrabWindow)->GetBoolField(TEXT("sdl_relative_mode")));
+            Test.TestTrue(TEXT("... with the engine's high-precision mouse on"), (*GrabWindow)->GetBoolField(TEXT("engine_high_precision")));
+            Test.TestTrue(TEXT("... and world null (no PIE viewport in it)"), (*GrabWindow)->HasTypedField<EJson::Null>(TEXT("world")));
+            Test.TestFalse(TEXT("... and no stale mode was cleared"), Failure.Details->HasField(TEXT("cleared_stale_relative_mode")));
+        }
+        const TSharedPtr<FJsonObject>* OsGrab = nullptr;
+        const TSharedPtr<FJsonObject>* StateWindow = nullptr;
+        if (Test.TestTrue(TEXT("drive.input_state reports os_grab.grab_window"),
+                InputState.bSuccess && InputState.Result.IsValid() && InputState.Result->TryGetObjectField(TEXT("os_grab"), OsGrab)
+                && (*OsGrab)->TryGetObjectField(TEXT("grab_window"), StateWindow)))
+        {
+            Test.TestEqual(TEXT("... naming the window"), (*StateWindow)->GetStringField(TEXT("title")), State.TargetTitle);
+        }
+        Test.TestTrue(TEXT("drive.input_state lists pie_viewports"),
+            InputState.Result.IsValid() && InputState.Result->HasTypedField<EJson::Array>(TEXT("pie_viewports")));
+        return true;
+    }
+
     // One step per frame; returns true when the test is over.
     bool Tick(FAutomationTestBase& Test, FState& State)
     {
@@ -256,7 +312,8 @@ namespace DriveOsInputFocusClickTest
             // active (as when an agent opened the menu); otherwise the decoy is. Without a window
             // manager (a private Xvfb / Xephyr) there is nothing to ask: set the X input focus.
             FDriveOsInput::XActiveWindow(&State.bWm);
-            Focus(State, State.Mode == EMode::MenuEntry ? TargetX : DecoyX);
+            const bool bFocusTarget = State.Mode == EMode::MenuEntry || State.Mode == EMode::HeldGrabIsNamed;
+            Focus(State, bFocusTarget ? TargetX : DecoyX);
             State.Deadline = FPlatformTime::Seconds() + 10.0;
             State.Step = 4;
             return false;
@@ -264,7 +321,7 @@ namespace DriveOsInputFocusClickTest
         case 4:
         {
             const uint64 TargetX = FDriveOsInput::XWindowIdOf(State.Target->GetNativeWindow());
-            const TSharedPtr<SWindow> Focused = State.Mode == EMode::MenuEntry ? State.Target : State.Decoy;
+            const TSharedPtr<SWindow> Focused = State.Mode == EMode::MenuEntry || State.Mode == EMode::HeldGrabIsNamed ? State.Target : State.Decoy;
             if (State.bWm ? FDriveOsInput::XActiveWindow() != XWindowOf(Focused) : !FDriveOsInput::HasSdlKeyboardFocus(Focused->GetNativeWindow()))
             {
                 if (!State.bWm)
@@ -274,6 +331,16 @@ namespace DriveOsInputFocusClickTest
                     FDriveOsInput::FocusXWindow(XWindowOf(Focused));
                 }
                 return bTimedOut && Skip(TEXT("x-activation-not-observed"), TEXT("The window manager never made the fixture window active."));
+            }
+            if (State.Mode == EMode::HeldGrabIsNamed)
+            {
+                // SDL grabs only for its keyboard-focus window, which follows the window manager's
+                // activation once the editor pumps the FocusIn.
+                if (!FDriveOsInput::HasSdlKeyboardFocus(State.Target->GetNativeWindow()))
+                {
+                    return bTimedOut && Skip(TEXT("sdl-focus-not-observed"), TEXT("SDL never gave the active fixture window keyboard focus."));
+                }
+                return CheckGrabIsNamed(Test, State, TargetX);
             }
             if (State.Mode == EMode::MenuEntry && !State.Menu.IsValid())
             {
@@ -301,6 +368,23 @@ namespace DriveOsInputFocusClickTest
             if (!FDriveOsInput::IsXWindowOnTopAt(State.Center, ClickX))
             {
                 return bTimedOut && Skip(TEXT("x-fixture-not-on-top"), TEXT("X never showed the fixture's button window on top at the button."));
+            }
+            if (State.Mode == EMode::StaleRelativeMode)
+            {
+                // The engine's own sequence: high-precision on for the target, then off with no
+                // window. The target is not focused, so SDL grabs nothing yet.
+                const TSharedRef<GenericApplication> Platform = FSlateApplication::Get().GetPlatformApplication().ToSharedRef();
+                Platform->SetHighPrecisionMouseMode(true, State.Target->GetNativeWindow());
+                Platform->SetHighPrecisionMouseMode(false, nullptr);
+                FDriveOsInput::FGrabState Grab;
+                if (!Test.TestTrue(TEXT("fixture: the target keeps SDL relative mode the engine no longer reports"),
+                        FDriveOsInput::HasSdlRelativeMouseMode(State.Target->GetNativeWindow())
+                        && !Platform->IsUsingHighPrecisionMouseMode())
+                    || !Test.TestTrue(TEXT("fixture: the pointer is not grabbed before the click"),
+                        FDriveOsInput::ProbeGrabs(Grab) && !Grab.bPointerGrabbed))
+                {
+                    return true;
+                }
             }
             if (State.Mode == EMode::FixtureActivates)
             {
@@ -332,6 +416,19 @@ namespace DriveOsInputFocusClickTest
             Test.TestTrue(FString::Printf(TEXT("the os_input click succeeds (error: %s %s)"), *State.Capture->ErrorCode, *State.Capture->Message),
                 State.Capture->bSuccess);
             Test.TestEqual(TEXT("the button received exactly one click"), *State.Clicks, 1);
+            if (State.Mode == EMode::StaleRelativeMode)
+            {
+                Test.TestFalse(TEXT("the stale SDL relative mode was cleared"),
+                    FDriveOsInput::HasSdlRelativeMouseMode(State.Target->GetNativeWindow()));
+                const TSharedPtr<FJsonObject>* Cleared = nullptr;
+                if (Test.TestTrue(TEXT("the response reports cleared_stale_relative_mode"),
+                        State.Capture->Result.IsValid() && State.Capture->Result->TryGetObjectField(TEXT("cleared_stale_relative_mode"), Cleared)))
+                {
+                    Test.TestEqual(TEXT("... naming the target by title"), (*Cleared)->GetStringField(TEXT("title")), State.TargetTitle);
+                    Test.TestEqual(TEXT("... and by X window id"), static_cast<uint64>((*Cleared)->GetNumberField(TEXT("window_id"))),
+                        FDriveOsInput::XWindowIdOf(State.Target->GetNativeWindow()));
+                }
+            }
             return true;
         }
     }
@@ -394,5 +491,25 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveOsInputFocusMenuEntryTest,
 bool FDriveOsInputFocusMenuEntryTest::RunTest(const FString& Parameters)
 {
     DriveOsInputFocusClickTest::Run(*this, DriveOsInputFocusClickTest::EMode::MenuEntry);
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveOsInputFocusStaleRelativeModeTest,
+    "PinWright.drive.os_input_focus.StaleRelativeModeIsCleared",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FDriveOsInputFocusStaleRelativeModeTest::RunTest(const FString& Parameters)
+{
+    DriveOsInputFocusClickTest::Run(*this, DriveOsInputFocusClickTest::EMode::StaleRelativeMode);
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDriveOsInputFocusHeldGrabNamedTest,
+    "PinWright.drive.os_input_focus.HeldGrabIsNamed",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FDriveOsInputFocusHeldGrabNamedTest::RunTest(const FString& Parameters)
+{
+    DriveOsInputFocusClickTest::Run(*this, DriveOsInputFocusClickTest::EMode::HeldGrabIsNamed);
     return true;
 }

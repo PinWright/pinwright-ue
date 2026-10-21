@@ -35,6 +35,22 @@ namespace DriveActionCommonLocal
         return Raw > 0 ? static_cast<uint64>(Raw) : 0;
     }
 
+    // An os_input grab check that cleared a stale SDL relative mouse mode changed editor state, so
+    // the response says so (#436): Details plus cleared_stale_relative_mode {title, window_id} when
+    // a clear happened during this call, else Details unchanged.
+    TSharedPtr<FJsonObject> WithClearedStaleMode(TSharedPtr<FJsonObject> Details)
+    {
+        if (const TSharedPtr<FJsonObject> Cleared = FDriveOsInput::TakeClearedStaleRelativeMode())
+        {
+            if (!Details.IsValid())
+            {
+                Details = MakeShared<FJsonObject>();
+            }
+            Details->SetObjectField(TEXT("cleared_stale_relative_mode"), Cleared);
+        }
+        return Details;
+    }
+
     // How long a pointer action waits for Slate to route the target's center to the target's own
     // window before refusing. On Linux the platform's window-under-cursor follows a warp only once
     // SDL's enter/leave event is pumped, one or two frames later; a window still owning the point
@@ -196,7 +212,7 @@ namespace DriveActionCommonLocal
                 : FString::Printf(
                     TEXT("No window accepts pointer input at element '%s''s center (%.0f, %.0f), so the input would land nowhere."),
                     *Handle, Point.X, Point.Y),
-            Details);
+            WithClearedStaleMode(Details));
     }
 
     // os_input's TARGET_OCCLUDED: the same contract as SendOccluded, for an X window of
@@ -215,7 +231,7 @@ namespace DriveActionCommonLocal
             FString::Printf(
                 TEXT("Element '%s' is covered at (%.0f, %.0f) by OS window 0x%llx '%s' (pid %u), which is not this editor's and would receive the real input. Nothing was injected. Raise this editor's window or move that one, then retry."),
                 *Handle, Point.X, Point.Y, Foreign.WindowId, *Foreign.Title, Foreign.Pid),
-            Details);
+            WithClearedStaleMode(Details));
     }
 
     // The window whose activation a press into Window depends on: the nearest ancestor that is
@@ -274,7 +290,7 @@ namespace DriveActionCommonLocal
                 if (!Target.IsValid() || !ActivationWindow.IsValid() || !WeakTargetWidget.IsValid())
                 {
                     Token->SendError(ErrorCodes::ERR_TARGET_CHANGED,
-                        FString::Printf(TEXT("Element '%s' or its window went away before the input could be delivered."), *Handle));
+                        FString::Printf(TEXT("Element '%s' or its window went away before the input could be delivered."), *Handle), WithClearedStaleMode(nullptr));
                     return false;
                 }
                 const bool bGateExpired = FPlatformTime::Seconds() >= Deadline && GFrameCounter >= MinFrame;
@@ -336,7 +352,7 @@ namespace DriveActionCommonLocal
                         Token->SendError(ErrorCodes::ERR_INPUT_FAILED,
                             FString::Printf(TEXT("Element '%s''s window 0x%llx did not become the active window within %.1f s (active: 0x%llx, editor keyboard focus there: %s), so a real press would only focus it and click nothing. Nothing was pressed. This editor activates the target itself only while it is the focused application; focus the editor once (click it, or run 'xdotool windowactivate 0x%llx' on its X display; no PinWright verb focuses a window), then retry."),
                                 *Handle, ActivationXWindow, RaiseWaitSeconds, Active, bSdlFocus ? TEXT("yes") : TEXT("no"), ActivationXWindow),
-                            Details);
+                            WithClearedStaleMode(Details));
                         return false;
                     }
                 }
@@ -345,7 +361,7 @@ namespace DriveActionCommonLocal
                     FDriveInjectFailure MoveFailure{ ErrorCodes::ERR_INPUT_FAILED, InjectFailedMessage };
                     if (!FDriveOsInput::MoveTo(TargetCenter, MoveFailure))
                     {
-                        Token->SendError(MoveFailure.Code, MoveFailure.Message, MoveFailure.Details);
+                        Token->SendError(MoveFailure.Code, MoveFailure.Message, WithClearedStaleMode(MoveFailure.Details));
                         return false;
                     }
                     *ReadyFrame = GFrameCounter + FocusSettleFrames;
@@ -360,7 +376,7 @@ namespace DriveActionCommonLocal
                     }
                     Token->SendError(ErrorCodes::ERR_INPUT_FAILED,
                         FString::Printf(TEXT("The pointer was moved onto element '%s' but the editor did not report it inside the element's window within %.1f s, so nothing was pressed. Retry."),
-                            *Handle, RaiseWaitSeconds));
+                            *Handle, RaiseWaitSeconds), WithClearedStaleMode(nullptr));
                     return false;
                 }
                 FDriveInjectFailure Failure{ ErrorCodes::ERR_INPUT_FAILED, InjectFailedMessage };
@@ -370,7 +386,7 @@ namespace DriveActionCommonLocal
                 }
                 else
                 {
-                    Token->SendError(Failure.Code, Failure.Message, Failure.Details);
+                    Token->SendError(Failure.Code, Failure.Message, WithClearedStaleMode(Failure.Details));
                 }
                 return false;
             }));
@@ -559,6 +575,8 @@ void FDriveActionCommon::RunAction(FHandlerContext& Ctx, const FString& Handle, 
     const TCHAR* InputPath, const TSharedPtr<FJsonObject>& InjectFields, bool bPress)
 {
     const FString InputPathLabel = InputPath ? FString(InputPath) : FString();
+    // Forget a clear made by an earlier caller that does not report it (drive.os_gesture).
+    FDriveOsInput::TakeClearedStaleRelativeMode();
 
     const EDriveSurface Surface = FDriveHandlerCommon::ResolveSurface(Ctx);
     const FDriveRootSelector Selector = FDriveHandlerCommon::ParseRootSelector(Ctx);
@@ -694,6 +712,8 @@ void FDriveActionCommon::RunAction(FHandlerContext& Ctx, const FString& Handle, 
         [Config, Surface, Selector, WindowSelector, PreElements, ObserveMode, MarkCap, bIncludeJournal, JournalSince, bFullDiff, InputPathLabel, InjectFields]
         (const TSharedRef<FAsyncResponseToken>& Token)
     {
+        // Taken now, right after the injection: the settle loop runs other requests' code.
+        const TSharedPtr<FJsonObject> ClearedStaleMode = FDriveOsInput::TakeClearedStaleRelativeMode();
         FDriveSettleDriver::FIsWaitForMet IsWaitForMet = nullptr;
         if (Config.WaitFor.IsSet())
         {
@@ -701,7 +721,7 @@ void FDriveActionCommon::RunAction(FHandlerContext& Ctx, const FString& Handle, 
         }
 
         FDriveSettleDriver::FOnComplete OnComplete =
-            [Token, Surface, Selector, WindowSelector, PreElements, ObserveMode, MarkCap, bIncludeJournal, JournalSince, bFullDiff, InputPathLabel, InjectFields]
+            [Token, Surface, Selector, WindowSelector, PreElements, ObserveMode, MarkCap, bIncludeJournal, JournalSince, bFullDiff, InputPathLabel, InjectFields, ClearedStaleMode]
             (const FDriveSettleResult& Result, const TArray<FDriveElement>& FinalElements)
             {
                 TSharedPtr<FJsonObject> Resp = WriteSettleResult(
@@ -709,6 +729,10 @@ void FDriveActionCommon::RunAction(FHandlerContext& Ctx, const FString& Handle, 
                 if (!InputPathLabel.IsEmpty())
                 {
                     Resp->SetStringField(TEXT("input_path"), InputPathLabel);
+                }
+                if (ClearedStaleMode.IsValid())
+                {
+                    Resp->SetObjectField(TEXT("cleared_stale_relative_mode"), ClearedStaleMode);
                 }
                 if (InjectFields.IsValid())
                 {
@@ -784,7 +808,7 @@ void FDriveActionCommon::RunAction(FHandlerContext& Ctx, const FString& Handle, 
         FDriveInjectFailure GrabFailure{ ErrorCodes::ERR_INPUT_FAILED, FString() };
         if (!FDriveOsInput::CheckPointerFree(GrabFailure))
         {
-            Ctx.SendError(GrabFailure.Code, GrabFailure.Message, GrabFailure.Details);
+            Ctx.SendError(GrabFailure.Code, GrabFailure.Message, WithClearedStaleMode(GrabFailure.Details));
             return;
         }
         const uint64 TargetXWindow = FDriveOsInput::XWindowIdOf(TargetWindow->GetNativeWindow());
@@ -798,8 +822,10 @@ void FDriveActionCommon::RunAction(FHandlerContext& Ctx, const FString& Handle, 
         // would ever move focus to the target, so a press gives it the X input focus directly, as
         // SDL does on such a display.
         const bool bMayActivate = bPress && bWmReportsActive && IsOwnXWindow(ActiveXWindow);
-        // Called only once the occlusion refusals below have passed, so a refused call changes
-        // nothing; and only while the X input focus is None, PointerRoot or already this editor's.
+        // Called only once the occlusion refusals below have passed, so a refused call has not moved
+        // the X input focus; and only while that focus is None, PointerRoot or already this
+        // editor's. (The grab check above can already have cleared a stale SDL relative mouse mode,
+        // #436; the refusal then reports it as cleared_stale_relative_mode.)
         const auto FocusWithoutWm = [bPress, bWmReportsActive, ActivationXWindow]()
         {
             const uint64 Focus = FDriveOsInput::XInputFocus();
@@ -829,7 +855,7 @@ void FDriveActionCommon::RunAction(FHandlerContext& Ctx, const FString& Handle, 
                     Ctx.SendError(ErrorCodes::ERR_TARGET_OCCLUDED,
                         FString::Printf(TEXT("Element '%s' is covered at (%.0f, %.0f) by an X window of this editor that is not the target's and that no visible Slate window owns. Nothing was injected."),
                             *Handle, TargetCenter.X, TargetCenter.Y),
-                        Details);
+                        WithClearedStaleMode(Details));
                     return;
                 }
             }
@@ -902,7 +928,7 @@ void FDriveActionCommon::RunAction(FHandlerContext& Ctx, const FString& Handle, 
         FDriveInjectFailure Failure{ ErrorCodes::ERR_INPUT_FAILED, InjectFailedMessage };
         if (!Inject(TargetCenter, TargetWidget, Failure))
         {
-            Ctx.SendError(Failure.Code, Failure.Message, Failure.Details);
+            Ctx.SendError(Failure.Code, Failure.Message, WithClearedStaleMode(Failure.Details));
             return;
         }
         // From here the request resolves asynchronously: open it now so the transport

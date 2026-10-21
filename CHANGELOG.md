@@ -2,6 +2,22 @@
 
 ## 1.0.0
 
+- Fixed: an `os_input` action (`drive.click`, `hover`, `drag`; Linux/X11) into a window that SDL
+  had left in relative mouse mode refused with `POINTER_GRABBED {held_by_this_editor:true}`, even
+  when the pointer was free before the call. SDL3 keeps relative mode per window and grabs the
+  pointer whenever that window is focused, and the engine can turn its high-precision mouse off
+  without telling SDL (`FLinuxApplication::SetHighPrecisionMouseMode(false, nullptr)`), so the
+  click's own activation of the target (for example the level editor window during in-viewport
+  PIE) made the grab, and Shift+F1 did not release it. When the focused window has SDL relative
+  mode while the engine reports no high-precision mouse, the grab check now clears that mode and
+  goes on. Behaviour change: such a window stops grabbing the pointer (SDL may warp the pointer
+  back to its tracked position as it leaves relative mode). The clear is reported as
+  `cleared_stale_relative_mode {title, window_id}`, next to `input_path` on success and in the
+  error details when the call is refused afterwards; the field is absent when nothing was cleared.
+- Added: `POINTER_GRABBED` held by this editor carries `grab_window` (`title`, `window_id`, `world`
+  `pie:N` or null, `sdl_relative_mode`, `engine_high_precision`) and names that window in the
+  message and recovery. `drive.input_state` adds `os_grab.grab_window` and `pie_viewports`, the
+  capture state of every PIE instance's viewport with its window title and X window id.
 - Fixed: on Linux a capped supervisor run (`editor_start`/`editor_restart` offscreen or headless,
   `editor_run_tests`, `editor_build`) now runs at nice 10 for `BelowNormal` (19 for `Idle`) as an
   absolute level. It added that to the caller's nice before, so an MCP client already at nice 5
