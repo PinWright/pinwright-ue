@@ -20,6 +20,9 @@
 //  - StackedSameRectByIndexIsRefused (failure direction): the target is addressed by window_index
 //    and the cover sits at the target's exact rect, as floating tabs restored at one position are;
 //    the press must not land on the cover while the settle loop watches the addressed window.
+//
+// On a visible X desktop each covered test first moves the windows after they map, activates the
+// cover pager-style and waits until X shows it on top (PrepareCover, #433).
 //  - OsInputOwnWindowIsRefused: os_input skips the routing wait, but another window of this
 //    editor stacked over the target would still take the real X click, so the same covered
 //    fixture is refused by Slate's window order, naming the cover, before any X event is sent.
@@ -56,6 +59,11 @@ namespace DriveClickOcclusionTest
         FString ButtonHandle;
         TSharedRef<FTestResponseCapture> Capture = MakeShared<FTestResponseCapture>();
         double Deadline = 0.0;
+        FVector2D TargetPosition = FVector2D::ZeroVector;
+        FVector2D CoverPosition = FVector2D::ZeroVector;
+        int32 PrepStep = 0;
+        uint64 PrepFrame = 0;
+        bool bClickStarted = false;
 
         ~FFixture()
         {
@@ -123,6 +131,8 @@ namespace DriveClickOcclusionTest
             ClearX = FMath::Max(ClearX, FVector2D(Other->GetPositionInScreen()).X + FVector2D(Other->GetSizeInScreen()).X + 80.0);
         }
         const FVector2D TargetPosition(ClearX, 320.0);
+        Fixture->TargetPosition = TargetPosition;
+        Fixture->CoverPosition = bCoverSameRect ? TargetPosition : TargetPosition - FVector2D(40.0, 40.0);
 
         const TSharedRef<int32> Clicks = Fixture->Clicks;
         Fixture->TargetWindow = MakeWindow(Fixture->TargetTitle, TargetPosition, FVector2D(360.0f, 200.0f),
@@ -176,6 +186,83 @@ namespace DriveClickOcclusionTest
             return nullptr;
         }
         return Fixture;
+    }
+
+    enum class EPrep { Waiting, Ready, Skipped };
+
+    // On a visible X desktop the window manager decides placement and stacking: mutter centered
+    // both fixture windows and stacked the later, unfocused cover BELOW the focused target, so X
+    // (whose window-under-cursor Slate routes by) had the target on top and the "covered" click
+    // landed (#433). Move both windows once they are mapped (a move mutter honours), activate the
+    // cover pager-style, and wait until X shows it on top and active at the button. With no X
+    // window ids (offscreen) Slate's own order is all there is, and it already has the cover on top.
+    EPrep PrepareCover(FAutomationTestBase& Test, FFixture& Fixture)
+    {
+        if (!Fixture.CoverWindow.IsValid())
+        {
+            return EPrep::Ready;
+        }
+        switch (Fixture.PrepStep)
+        {
+        case 0:
+            Fixture.TargetWindow->MoveWindowTo(Fixture.TargetPosition);
+            Fixture.CoverWindow->MoveWindowTo(Fixture.CoverPosition);
+            Fixture.PrepFrame = GFrameCounter + 10;
+            Fixture.PrepStep = 1;
+            return EPrep::Waiting;
+        case 1:
+        {
+            if (GFrameCounter < Fixture.PrepFrame)
+            {
+                return EPrep::Waiting;
+            }
+            const uint64 CoverX = FDriveOsInput::XWindowIdOf(Fixture.CoverWindow->GetNativeWindow());
+            if (CoverX == 0 || FDriveOsInput::XWindowIdOf(Fixture.TargetWindow->GetNativeWindow()) == 0)
+            {
+                return EPrep::Ready;
+            }
+            FDriveOsInput::ActivateXWindow(CoverX);
+            FDriveOsInput::RaiseXWindow(CoverX);
+            Fixture.Deadline = FPlatformTime::Seconds() + 5.0;
+            Fixture.PrepStep = 2;
+            return EPrep::Waiting;
+        }
+        default:
+        {
+            const uint64 CoverX = FDriveOsInput::XWindowIdOf(Fixture.CoverWindow->GetNativeWindow());
+            const FVector2D Center = FVector2D(Fixture.TargetWindow->GetPositionInScreen()) + FVector2D(Fixture.TargetWindow->GetSizeInScreen()) * 0.5;
+            if (Fixture.PrepStep == 3)
+            {
+                return GFrameCounter < Fixture.PrepFrame ? EPrep::Waiting : EPrep::Ready;
+            }
+            if (FDriveOsInput::XActiveWindow() == CoverX && FDriveOsInput::IsXWindowOnTopAt(Center, CoverX))
+            {
+                // The editor's window-under-cursor cache did not follow a restack under a resting
+                // pointer: after the same-rect cover was raised over it, the cache still named the
+                // target (on a window leave LinuxApplication.cpp re-points it at SDL's mouse-focus
+                // window, which had not moved), so Slate routed the click to the target.
+                // Park the real pointer off both windows; the click's own warp then enters the
+                // window X has on top, as a user's pointer arriving there would.
+                FDriveInjectFailure MoveFailure;
+                if (!FDriveOsInput::MoveTo(Fixture.TargetPosition - FVector2D(60.0, -100.0), MoveFailure))
+                {
+                    PinWrightTestSkip::SkipAssertions(Test, TEXT("pointer-not-parked"),
+                        FString::Printf(TEXT("The real pointer could not be parked off the fixture: %s %s"), *MoveFailure.Code, *MoveFailure.Message));
+                    return EPrep::Skipped;
+                }
+                Fixture.PrepFrame = GFrameCounter + 5;
+                Fixture.PrepStep = 3;
+                return EPrep::Waiting;
+            }
+            if (FPlatformTime::Seconds() > Fixture.Deadline)
+            {
+                PinWrightTestSkip::SkipAssertions(Test, TEXT("x-cover-not-observed"),
+                    TEXT("The window manager never stacked the cover window over the target in X."));
+                return EPrep::Skipped;
+            }
+            return EPrep::Waiting;
+        }
+        }
     }
 
     // Starts drive.click on the fixture's button; the response arrives on a later frame.
@@ -243,9 +330,18 @@ bool FDriveClickOccludedTargetIsRefusedTest::RunTest(const FString& Parameters)
         return true;
     }
 
-    StartClick(*this, *Fixture);
     ADD_LATENT_AUTOMATION_COMMAND(FDriveClickOcclusionPoll([this, Fixture]() -> bool
     {
+        if (!Fixture->bClickStarted)
+        {
+            const EPrep Prep = PrepareCover(*this, *Fixture);
+            if (Prep == EPrep::Ready)
+            {
+                StartClick(*this, *Fixture);
+                Fixture->bClickStarted = true;
+            }
+            return Prep == EPrep::Skipped;
+        }
         if (!ResponseArrived(*this, *Fixture))
         {
             return false;
@@ -294,24 +390,33 @@ bool FDriveClickStackedSameRectByIndexIsRefusedTest::RunTest(const FString& Para
     {
         return true;
     }
-    // Resolved by title in the same frame as the click, which resolves window_index synchronously,
-    // so a host toast opening later cannot shift the index under it.
-    int32 TargetIndex = INDEX_NONE;
-    for (const FDriveWindowInfo& Info : FDriveEditorChrome::ListWindows())
-    {
-        if (Info.Title == Fixture->TargetTitle)
-        {
-            TargetIndex = Info.Index;
-        }
-    }
-    if (!TestNotEqual(TEXT("drive.list_windows lists the target window"), TargetIndex, int32(INDEX_NONE)))
-    {
-        return true;
-    }
-
-    StartClick(*this, *Fixture, /*bOsInput=*/false, TargetIndex);
     ADD_LATENT_AUTOMATION_COMMAND(FDriveClickOcclusionPoll([this, Fixture]() -> bool
     {
+        if (!Fixture->bClickStarted)
+        {
+            const EPrep Prep = PrepareCover(*this, *Fixture);
+            if (Prep != EPrep::Ready)
+            {
+                return Prep == EPrep::Skipped;
+            }
+            // Resolved by title in the same frame as the click, which resolves window_index
+            // synchronously, so a host toast opening later cannot shift the index under it.
+            int32 TargetIndex = INDEX_NONE;
+            for (const FDriveWindowInfo& Info : FDriveEditorChrome::ListWindows())
+            {
+                if (Info.Title == Fixture->TargetTitle)
+                {
+                    TargetIndex = Info.Index;
+                }
+            }
+            if (!TestNotEqual(TEXT("drive.list_windows lists the target window"), TargetIndex, int32(INDEX_NONE)))
+            {
+                return true;
+            }
+            StartClick(*this, *Fixture, /*bOsInput=*/false, TargetIndex);
+            Fixture->bClickStarted = true;
+            return false;
+        }
         if (!ResponseArrived(*this, *Fixture))
         {
             return false;
@@ -403,9 +508,18 @@ bool FDriveClickOsInputOwnWindowIsRefusedTest::RunTest(const FString& Parameters
         return true;
     }
 
-    StartClick(*this, *Fixture, /*bOsInput=*/true);
     ADD_LATENT_AUTOMATION_COMMAND(FDriveClickOcclusionPoll([this, Fixture]() -> bool
     {
+        if (!Fixture->bClickStarted)
+        {
+            const EPrep Prep = PrepareCover(*this, *Fixture);
+            if (Prep == EPrep::Ready)
+            {
+                StartClick(*this, *Fixture, /*bOsInput=*/true);
+                Fixture->bClickStarted = true;
+            }
+            return Prep == EPrep::Skipped;
+        }
         if (!ResponseArrived(*this, *Fixture))
         {
             return false;
