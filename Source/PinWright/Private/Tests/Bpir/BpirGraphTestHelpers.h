@@ -147,6 +147,25 @@ namespace BpirGraphTestHelpers
         return Node;
     }
 
+    // Returns the node of Graph whose NodeGuid matches, or nullptr. Shared here so test
+    // files never re-define it file-locally: anonymous-namespace copies collide when UBT
+    // puts two of them in one unity translation unit.
+    inline UEdGraphNode* FindNodeByGuid(UEdGraph* Graph, const FGuid& NodeGuid)
+    {
+        if (!Graph)
+        {
+            return nullptr;
+        }
+        for (UEdGraphNode* Node : Graph->Nodes)
+        {
+            if (Node && Node->NodeGuid == NodeGuid)
+            {
+                return Node;
+            }
+        }
+        return nullptr;
+    }
+
     // Returns the first node of type T found across UbergraphPages, FunctionGraphs,
     // and MacroGraphs of the Blueprint. Superset of CompilerTestUtils::FindNodeOfType
     // (which only walks Ubergraph + FunctionGraphs).

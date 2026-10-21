@@ -61,24 +61,6 @@ namespace
             Src->MakeLinkTo(Dst);
         }
     }
-
-    UEdGraphNode* FindNodeByGuid(UEdGraph* Graph, const FGuid& NodeGuid)
-    {
-        if (!Graph)
-        {
-            return nullptr;
-        }
-
-        for (UEdGraphNode* Node : Graph->Nodes)
-        {
-            if (Node && Node->NodeGuid == NodeGuid)
-            {
-                return Node;
-            }
-        }
-
-        return nullptr;
-    }
 } // namespace
 
 // ============================================================================
@@ -704,9 +686,9 @@ bool FDeleteNodeCleansNewOrphanDeltaTest::RunTest(const FString& Parameters)
     }
 
     TestTrue(TEXT("Newly orphaned VariableGet is removed"),
-        FindNodeByGuid(EventGraph, NewlyOrphanedGuid) == nullptr);
+        BpirGraphTestHelpers::FindNodeByGuid(EventGraph, NewlyOrphanedGuid) == nullptr);
     TestTrue(TEXT("Pre-existing orphan VariableGet remains"),
-        FindNodeByGuid(EventGraph, PreExistingOrphanGuid) != nullptr);
+        BpirGraphTestHelpers::FindNodeByGuid(EventGraph, PreExistingOrphanGuid) != nullptr);
     return true;
 }
 
@@ -1087,12 +1069,12 @@ bool FDeleteOrphanedNodesMathExpressionBoundaryTest::RunTest(const FString& Para
     TestTrue(TEXT("delete_orphaned_nodes handler succeeded"), Capture.bSuccess);
 
     TestTrue(TEXT("plain orphan was still deleted"),
-        FindNodeByGuid(EventGraph, OrphanedBranchGuid) == nullptr);
+        BpirGraphTestHelpers::FindNodeByGuid(EventGraph, OrphanedBranchGuid) == nullptr);
 
     // Acceptance from the ticket: the MathExpression is either fully gone or fully intact.
     // Read the back-pointers directly -- UK2Node_Composite::GetExitNode() is check()-guarded,
     // so calling it on the broken state would assert instead of failing the test.
-    if (UEdGraphNode* SurvivingNode = FindNodeByGuid(EventGraph, MathNodeGuid))
+    if (UEdGraphNode* SurvivingNode = BpirGraphTestHelpers::FindNodeByGuid(EventGraph, MathNodeGuid))
     {
         UK2Node_MathExpression* Surviving = Cast<UK2Node_MathExpression>(SurvivingNode);
         if (!Surviving)

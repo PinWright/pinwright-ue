@@ -3,6 +3,7 @@
 #include "Misc/AutomationTest.h"
 #include "Misc/EngineVersionComparison.h"
 #include "CompilerTestUtils.h"
+#include "BpirGraphTestHelpers.h"
 
 // TestSamePtr was added to FAutomationTestBase in UE 5.6.
 // On 5.4/5.5 use a TestEqual on void* which is semantically identical.
@@ -28,23 +29,6 @@ using namespace CompilerTestUtils;
 
 namespace
 {
-    UEdGraphNode* FindNodeByGuid(UEdGraph* Graph, const FGuid& Guid)
-    {
-        if (!Graph)
-        {
-            return nullptr;
-        }
-
-        for (UEdGraphNode* Node : Graph->Nodes)
-        {
-            if (Node && Node->NodeGuid == Guid)
-            {
-                return Node;
-            }
-        }
-        return nullptr;
-    }
-
     UK2Node_MacroInstance* SpawnMacroCaller(UEdGraph* Graph, UEdGraph* MacroGraph)
     {
         if (!Graph || !MacroGraph)
@@ -250,7 +234,7 @@ bool FBpirMacroRecompilePreservesCallerInstancesTest::RunTest(const FString& Par
     TestEqual(TEXT("Macro graph pointer was preserved"), RecompiledMacroGraph, MacroGraph);
 
     UK2Node_MacroInstance* ReconstructedCaller = Cast<UK2Node_MacroInstance>(
-        FindNodeByGuid(EventGraph, CallerMacroGuid));
+        BpirGraphTestHelpers::FindNodeByGuid(EventGraph, CallerMacroGuid));
     TestNotNull(TEXT("Original caller node GUID still resolves"), ReconstructedCaller);
     if (!ReconstructedCaller)
     {
@@ -339,7 +323,7 @@ bool FBpirMacroRecompilePreservesCallerInstancesTest::RunTest(const FString& Par
     }
 
     UK2Node_MacroInstance* CallerAfterFailedRecompile = Cast<UK2Node_MacroInstance>(
-        FindNodeByGuid(EventGraph, CallerMacroGuid));
+        BpirGraphTestHelpers::FindNodeByGuid(EventGraph, CallerMacroGuid));
     TestNotNull(TEXT("Caller node still exists after failed signature recompile"),
         CallerAfterFailedRecompile);
     if (!CallerAfterFailedRecompile)

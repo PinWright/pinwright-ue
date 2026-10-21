@@ -36,24 +36,6 @@ namespace
         bool bChainWired = false;
     };
 
-    UEdGraphNode* FindNodeByGuid(UEdGraph* Graph, const FGuid& NodeGuid)
-    {
-        if (!Graph)
-        {
-            return nullptr;
-        }
-
-        for (UEdGraphNode* Node : Graph->Nodes)
-        {
-            if (Node && Node->NodeGuid == NodeGuid)
-            {
-                return Node;
-            }
-        }
-
-        return nullptr;
-    }
-
     FCompositeQualifiedOrphanFixture BuildCompositeQualifiedOrphanFixture()
     {
         FCompositeQualifiedOrphanFixture Fixture;
@@ -573,7 +555,7 @@ bool FBlueprintGraphDeleteNamedNestedScopeTest::RunTest(const FString& Parameter
         AddError(TEXT("No result JSON returned from default named delete"));
     }
     TestTrue(TEXT("nested orphan survives default named delete"),
-        FindNodeByGuid(Fixture.BoundGraph, InnerOrphanGuid) != nullptr);
+        BpirGraphTestHelpers::FindNodeByGuid(Fixture.BoundGraph, InnerOrphanGuid) != nullptr);
 
     Payload->SetBoolField(TEXT("includeNestedGraphs"), true);
     FTestResponseCapture NestedCapture;
@@ -598,7 +580,7 @@ bool FBlueprintGraphDeleteNamedNestedScopeTest::RunTest(const FString& Parameter
         AddError(TEXT("No result JSON returned from opt-in named delete"));
     }
     TestTrue(TEXT("opt-in named delete removes the nested orphan"),
-        FindNodeByGuid(Fixture.BoundGraph, InnerOrphanGuid) == nullptr);
+        BpirGraphTestHelpers::FindNodeByGuid(Fixture.BoundGraph, InnerOrphanGuid) == nullptr);
 
     return true;
 }
