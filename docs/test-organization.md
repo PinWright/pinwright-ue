@@ -360,7 +360,7 @@ the scope's `memory.max` reads back. It is per scope, so the whole process tree 
 (unlike Windows), and a hit invokes the cgroup OOM killer (`memory.events oom_kill`) rather than
 failing allocations. Where it is unavailable the run is uncapped and says why (`UNCAPPED:` line,
 `uncappedReason`). Never `RLIMIT_AS`: UE reserves huge virtual ranges. Priority is nice 10 for
-`BelowNormal`, inherited; kill-on-exit is `PR_SET_PDEATHSIG(SIGKILL)` plus the child's own process
+`BelowNormal`, absolute (a caller already niced past it keeps its level), inherited; kill-on-exit is `PR_SET_PDEATHSIG(SIGKILL)` plus the child's own process
 group.
 
 The priority half covers the children too: on Windows the job's priority class applies to every

@@ -279,20 +279,28 @@ class LinuxContainmentTest(TempDirTest):
         with mock.patch.object(pl, "_libc", return_value=libc), \
                 mock.patch.object(pl.os, "setpgid", create=True) as setpgid, \
                 mock.patch.object(pl.os, "nice", create=True) as nice, \
+                mock.patch.object(pl.os, "PRIO_PROCESS", 0, create=True), \
+                mock.patch.object(pl.os, "getpriority", create=True, return_value=5) as getprio, \
+                mock.patch.object(pl.os, "setpriority", create=True) as setprio, \
                 mock.patch.object(pl.os, "getppid", return_value=100), \
                 mock.patch.object(pl.os, "_exit") as exit_:
+            # Caller already at nice 5: the child lands at 10 absolute, not 5 + 10.
             pl.linux_preexec(10, True, 100)()
             setpgid.assert_called_once_with(0, 0)
-            nice.assert_called_once_with(10)
+            nice.assert_not_called()
+            setprio.assert_called_once_with(pl.os.PRIO_PROCESS, 0, 10)
             libc.prctl.assert_called_once_with(1, 9, 0, 0, 0)
             exit_.assert_not_called()
             pl.linux_preexec(10, True, 999)()  # parent already gone before prctl took effect
             exit_.assert_called_once_with(1)
             libc.reset_mock()
-            nice.reset_mock()
+            setprio.reset_mock()
             pl.linux_preexec(0, False, 100)()
-            nice.assert_not_called()
+            setprio.assert_not_called()
             libc.prctl.assert_not_called()
+            getprio.return_value = 15  # caller niced past the target: never lowered
+            pl.linux_preexec(10, False, 100)()
+            setprio.assert_not_called()
 
     def test_nice_table(self):
         self.assertEqual(pl.NICE, {"Normal": 0, "BelowNormal": 10, "Idle": 19})
@@ -486,7 +494,8 @@ class LinuxRealScopeTest(TempDirTest):
         started = int(self.supervisor_log.split("started pid ")[1].split(":")[0])
         self.assertEqual(child["pid"], started)  # systemd-run --scope execs: the Popen pid is the child
         self.assertTrue(child["cgroup"].endswith(".scope"), child["cgroup"])
-        self.assertEqual((child["nice"], child["pgid"]), (pl.NICE["BelowNormal"], child["pid"]))
+        expected_nice = max(pl.NICE["BelowNormal"], os.getpriority(os.PRIO_PROCESS, 0))  # floor, never lowered
+        self.assertEqual((child["nice"], child["pgid"]), (expected_nice, child["pid"]))
         self.assertIn("verdict=COMMAND_EXITED ", result)
         self.assertIn(" cap_gb=0.25 ", result)  # memory.max read back as the cap
         stat = "/proc/%d/stat" % child["grandchild"]

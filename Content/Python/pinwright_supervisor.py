@@ -86,7 +86,8 @@ PLATFORM MECHANISMS (capped=True; capped=False = Normal priority, no cap, no kil
                           with uncappedReason in the handoff and supervisor.log.
     priority     Windows: JOB_OBJECT_LIMIT_PRIORITY_CLASS (Normal 0x20, BelowNormal 0x4000,
                           Idle 0x40), job-wide, a job process cannot raise itself above it.
-                 Linux:   nice (Normal 0, BelowNormal 10, Idle 19) set in preexec, inherited.
+                 Linux:   nice (Normal 0, BelowNormal 10, Idle 19) set in preexec as an absolute
+                          floor (a caller niced further keeps its level), inherited.
                  BelowNormal is the default, not Idle: an Idle run starves whenever anything else
                  wants CPU and its wall time stops meaning anything.
     kill-on-exit Windows: JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE; timeout -> TerminateJobObject.
@@ -562,8 +563,11 @@ def linux_preexec(nice_value, pdeathsig, parent_pid):
 
     def preexec():
         os.setpgid(0, 0)
-        if nice_value:
-            os.nice(nice_value)
+        # Absolute level, like the Windows priority classes: os.nice() is relative and would
+        # put an already-niced caller's child below BelowNormal. Never lower it: an unprivileged
+        # process cannot, and a caller niced further down keeps its level.
+        if nice_value and os.getpriority(os.PRIO_PROCESS, 0) < nice_value:
+            os.setpriority(os.PRIO_PROCESS, 0, nice_value)
         if prctl is not None:
             prctl(PR_SET_PDEATHSIG, SIGKILL, 0, 0, 0)
             if os.getppid() != parent_pid:  # supervisor died before prctl took effect

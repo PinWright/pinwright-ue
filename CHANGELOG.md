@@ -2,6 +2,10 @@
 
 ## 1.0.0
 
+- Fixed: on Linux a capped supervisor run (`editor_start`/`editor_restart` offscreen or headless,
+  `editor_run_tests`, `editor_build`) now runs at nice 10 for `BelowNormal` (19 for `Idle`) as an
+  absolute level. It added that to the caller's nice before, so an MCP client already at nice 5
+  ran the editor at 15. A caller niced past the target keeps its own level.
 - Fixed: an `os_input` press (`drive.click`, `drag`; Linux/X11) on a target whose window was not
   the active one, or had only just become it, reported success while the button got a press and
   a release but no click. Before a press of a target with an X window the call now:
