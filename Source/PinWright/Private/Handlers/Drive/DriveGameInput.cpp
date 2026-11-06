@@ -149,8 +149,12 @@ namespace DriveGameInputLocal
             SelfKeepAlive = AsShared();
             Deadline = FPlatformTime::Seconds() + 2.0;
             StartFrame = GFrameCounter;
+            TickStartHandle = FWorldDelegates::OnWorldTickStart.AddSP(
+                AsShared(), &FPendingGameKeyRequest::OnWorldTickStart);
             PostTickHandle = FWorldDelegates::OnWorldPostActorTick.AddSP(
                 AsShared(), &FPendingGameKeyRequest::OnWorldPostActorTick);
+            TickEndHandle = FWorldDelegates::OnWorldTickEnd.AddSP(
+                AsShared(), &FPendingGameKeyRequest::OnWorldTickEnd);
             WorldCleanupHandle = FWorldDelegates::OnWorldCleanup.AddSP(
                 AsShared(), &FPendingGameKeyRequest::OnWorldCleanup);
             EndPieHandle = FEditorDelegates::EndPIE.AddSP(
@@ -178,9 +182,42 @@ namespace DriveGameInputLocal
                 && PlayerInput && PlayerController->PlayerInput == PlayerInput;
         }
 
+        // UWorld::Tick broadcasts OnWorldPostActorTick only when it ran actor ticks, which a
+        // paused world does not; its player controllers tick in RunPauseFrame instead
+        // (bTickEvenWhenPaused) and still process input. OnWorldTickStart / OnWorldTickEnd fire
+        // on every world tick, so a paused tick takes its step at tick end, after the pause frame.
+        // bIsPaused is read right after OnWorldTickStart, with nothing in between that pauses.
+        void OnWorldTickStart(UWorld* World, ELevelTick TickType, float DeltaSeconds)
+        {
+            if (World == Observation.World.Get())
+            {
+                bTickPaused = World->IsPaused();
+                bSteppedThisTick = false;
+            }
+        }
+
         void OnWorldPostActorTick(UWorld* World, ELevelTick TickType, float DeltaSeconds)
         {
-            if (bTerminal || World != Observation.World.Get())
+            if (World == Observation.World.Get())
+            {
+                bSteppedThisTick = true;
+                Step();
+            }
+        }
+
+        void OnWorldTickEnd(UWorld* World, ELevelTick TickType, float DeltaSeconds)
+        {
+            if (World == Observation.World.Get() && bTickPaused && !bSteppedThisTick)
+            {
+                bTickPaused = false;
+                Step();
+            }
+        }
+
+        // Runs once per world tick, after the selected player controller had its chance to tick.
+        void Step()
+        {
+            if (bTerminal)
             {
                 return;
             }
@@ -297,7 +334,9 @@ namespace DriveGameInputLocal
             const TSharedPtr<FPendingGameKeyRequest> KeepAliveUntilReturn = SelfKeepAlive;
             SelfKeepAlive.Reset();
             Observation.ConsumingRoute = Route;
+            FWorldDelegates::OnWorldTickStart.Remove(TickStartHandle);
             FWorldDelegates::OnWorldPostActorTick.Remove(PostTickHandle);
+            FWorldDelegates::OnWorldTickEnd.Remove(TickEndHandle);
             FWorldDelegates::OnWorldCleanup.Remove(WorldCleanupHandle);
             FEditorDelegates::EndPIE.Remove(EndPieHandle);
             if (DeadlineHandle.IsValid())
@@ -318,9 +357,14 @@ namespace DriveGameInputLocal
         double Deadline = 0.0;
         uint64 StartFrame = 0;
         bool bTerminal = false;
+        // Defaults false so a request started mid-tick never steps at that tick's end.
+        bool bTickPaused = false;
+        bool bSteppedThisTick = false;
         FDriveGameKeyObservation Observation;
         TFunction<void(const FDriveGameKeyObservation&)> Completion;
+        FDelegateHandle TickStartHandle;
         FDelegateHandle PostTickHandle;
+        FDelegateHandle TickEndHandle;
         FDelegateHandle WorldCleanupHandle;
         FDelegateHandle EndPieHandle;
         FTSTicker::FDelegateHandle DeadlineHandle;

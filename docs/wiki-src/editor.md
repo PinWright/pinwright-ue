@@ -242,6 +242,15 @@ While a session is active the response also carries a top-level `networkEmulatio
 route calls that world's `UGameViewportClient::InputKey` after the current world tick and answers
 only after the selected `UPlayerInput` has had its following input tick.
 
+**A paused game receives keys too** (`APlayerController::SetPause`, `editor.pause`, the toolbar Pause).
+A paused world runs no actor ticks, but its player controllers still tick in the pause frame and
+process input, so the key is injected at the end of the paused world tick and observed at the end
+of the next one; the success rule below is unchanged. `UPlayerInput` key state updates while paused,
+but only bindings marked `bExecuteWhenPaused` (legacy input), Enhanced Input actions with
+`bTriggerWhenPaused`, or the game's own paused-input handling act on it, so `deliveredToGame: true` on a paused game does not mean gameplay reacted. A world that
+ticks neither actors nor a pause frame (a client still connecting) is not stepped and ends in
+`player_input_not_processed` after the 2 s deadline.
+
 - `target` — `auto` (default: the game when PIE is running, else the editor), `game`, or `editor`.
   `game`, and any call that names a `world`, refuses with `PIE_NOT_ACTIVE` rather than quietly
   degrading into an editor keystroke.

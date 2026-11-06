@@ -123,7 +123,9 @@ public:
         FString& OutErrorCode, FString& OutErrorMessage);
 
     // Injects after the selected world's current actor tick and completes after its next actor
-    // tick. Success is based only on the exact UPlayerInput event id reaching EventCounts.
+    // tick; a paused world tick (no actor ticks, controllers tick in the pause frame) takes the
+    // same step at OnWorldTickEnd instead. Success is based only on the exact UPlayerInput event
+    // id reaching EventCounts.
     static TSharedPtr<FDriveGameInputRequest> BeginDeliverKey(
         const FDriveGameInputTarget& Target, const FKey& Key, EDriveKeyAction Action,
         TFunction<void(const FDriveGameKeyObservation&)> Completion);

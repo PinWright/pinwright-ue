@@ -15,6 +15,7 @@
 //
 // PiePlayerInputDelivery owns a real PIE session and proves the registered handler reaches
 // that session's viewport and UPlayerInput on the following game tick.
+// PausedPiePlayerInputDelivery does the same with the world paused (APlayerController::SetPause).
 
 #include "Misc/AutomationTest.h"
 
@@ -241,6 +242,8 @@ namespace DriveGameInputTestHelpers
         double Deadline = 0.0;
         int32 Phase = 0;
         bool bConsumerRegistered = false;
+        // Pauses the PIE world (APlayerController::SetPause) before the key_down is sent.
+        bool bPauseWorld = false;
         double CleanupDeadline = 0.0;
     };
 
@@ -298,6 +301,14 @@ bool FRunOwnedPieInputDelivery::Update()
 
     if (State->Phase == 0)
     {
+        if (State->bPauseWorld)
+        {
+            Target.PlayerController->SetPause(true);
+            if (!Test->TestTrue(TEXT("the owned PIE world is paused"), Target.World->IsPaused()))
+            {
+                return true;
+            }
+        }
         State->DownCapture = MakeShared<FTestResponseCapture>();
         TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
         Payload->SetStringField(TEXT("type"), TEXT("key_down"));
@@ -336,6 +347,10 @@ bool FRunOwnedPieInputDelivery::Update()
         Test->TestTrue(TEXT("selected UPlayerInput observes the F10 press"),
             Target.PlayerController->PlayerInput->WasJustPressed(EKeys::F10)
             && Target.PlayerController->PlayerInput->IsPressed(EKeys::F10));
+        if (State->bPauseWorld)
+        {
+            Test->TestTrue(TEXT("the world stayed paused across the key_down"), Target.World->IsPaused());
+        }
 
         State->UpCapture = MakeShared<FTestResponseCapture>();
         TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
@@ -373,6 +388,10 @@ bool FRunOwnedPieInputDelivery::Update()
     Test->TestTrue(TEXT("selected UPlayerInput observes the F10 release"),
         Target.PlayerController->PlayerInput->WasJustReleased(EKeys::F10)
         && !Target.PlayerController->PlayerInput->IsPressed(EKeys::F10));
+    if (State->bPauseWorld)
+    {
+        Test->TestTrue(TEXT("the world stayed paused across the key_up"), Target.World->IsPaused());
+    }
     return true;
 }
 
@@ -404,44 +423,41 @@ bool FCleanupOwnedPieInputDelivery::Update()
     return false;
 }
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEditorSimulateInputPiePlayerInputDeliveryTest,
-    "PinWright.editor.simulate_input.PiePlayerInputDelivery",
-    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
-
-bool FEditorSimulateInputPiePlayerInputDeliveryTest::RunTest(const FString& Parameters)
+// Shared body of the unpaused and paused owned-PIE delivery tests.
+static bool RunOwnedPieInputDeliveryTest(FAutomationTestBase& Test, bool bPauseWorld)
 {
     using namespace DriveGameInputTestHelpers;
     if (!GEditor)
     {
-        PinWrightTestSkip::SkipAssertions(*this, TEXT("editor_unavailable"), TEXT("Owned PIE requires GEditor."));
+        PinWrightTestSkip::SkipAssertions(Test, TEXT("editor_unavailable"), TEXT("Owned PIE requires GEditor."));
         return true;
     }
     if (!FSlateApplication::IsInitialized())
     {
-        PinWrightTestSkip::SkipAssertions(*this, TEXT("slate_unavailable"), TEXT("Owned PIE requires Slate."));
+        PinWrightTestSkip::SkipAssertions(Test, TEXT("slate_unavailable"), TEXT("Owned PIE requires Slate."));
         return true;
     }
     if (GEditor->PlayWorld || GEditor->IsPlaySessionInProgress())
     {
-        PinWrightTestSkip::SkipAssertions(*this, TEXT("preexisting_pie_session"),
+        PinWrightTestSkip::SkipAssertions(Test, TEXT("preexisting_pie_session"),
             TEXT("The test never borrows or stops ambient PIE."));
         return true;
     }
     if (!GEditor->GetActiveViewport())
     {
-        PinWrightTestSkip::SkipAssertions(*this, TEXT("level_viewport_unavailable"),
+        PinWrightTestSkip::SkipAssertions(Test, TEXT("level_viewport_unavailable"),
             TEXT("Standalone PIE requires an active level viewport."));
         return true;
     }
     FString SchemaLessStateTreePath;
     if (FindSchemaLessStateTree(SchemaLessStateTreePath))
     {
-        PinWrightTestSkip::SkipAssertions(*this, TEXT("pie-start-triggers-engine-ensure"),
+        PinWrightTestSkip::SkipAssertions(Test, TEXT("pie-start-triggers-engine-ensure"),
             FString::Printf(TEXT("pie-start-triggers-engine-ensure: StateTree '%s' has no editor data/schema."),
                 *SchemaLessStateTreePath));
         return true;
     }
-    TestTrue(TEXT("production editor.simulate_input handler is registered"), FindSimulateInputHandler() != nullptr);
+    Test.TestTrue(TEXT("production editor.simulate_input handler is registered"), FindSimulateInputHandler() != nullptr);
     if (!FindSimulateInputHandler())
     {
         return false;
@@ -450,17 +466,39 @@ bool FEditorSimulateInputPiePlayerInputDeliveryTest::RunTest(const FString& Para
     const TSharedRef<FPieDeliveryState> State = MakeShared<FPieDeliveryState>();
     State->Consumer = MakeShared<FConsumeF10InputProcessor>();
     State->bConsumerRegistered = FSlateApplication::Get().RegisterInputPreProcessor(State->Consumer, 0);
-    TestTrue(TEXT("negative Slate preprocessor fixture is registered"), State->bConsumerRegistered);
+    Test.TestTrue(TEXT("negative Slate preprocessor fixture is registered"), State->bConsumerRegistered);
     if (!State->bConsumerRegistered)
     {
         return false;
     }
+    State->bPauseWorld = bPauseWorld;
     State->Deadline = FPlatformTime::Seconds() + 15.0;
-    ADD_LATENT_AUTOMATION_COMMAND(FStartHostNeutralPieCommand(this));
-    ADD_LATENT_AUTOMATION_COMMAND(FRunOwnedPieInputDelivery(this, State));
+    ADD_LATENT_AUTOMATION_COMMAND(FStartHostNeutralPieCommand(&Test));
+    ADD_LATENT_AUTOMATION_COMMAND(FRunOwnedPieInputDelivery(&Test, State));
     ADD_LATENT_AUTOMATION_COMMAND(FEndPlayMapCommand());
-    ADD_LATENT_AUTOMATION_COMMAND(FCleanupOwnedPieInputDelivery(this, State));
+    ADD_LATENT_AUTOMATION_COMMAND(FCleanupOwnedPieInputDelivery(&Test, State));
     return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEditorSimulateInputPiePlayerInputDeliveryTest,
+    "PinWright.editor.simulate_input.PiePlayerInputDelivery",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FEditorSimulateInputPiePlayerInputDeliveryTest::RunTest(const FString& Parameters)
+{
+    return RunOwnedPieInputDeliveryTest(*this, /*bPauseWorld=*/false);
+}
+
+// OnWorldPostActorTick does not fire while the world is paused, so a key was never injected into
+// a paused game (consumingRoute player_input_not_processed, injectionFrame 0). A paused world's
+// controllers still tick in the pause frame and process input; the key must be delivered there.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEditorSimulateInputPausedPiePlayerInputDeliveryTest,
+    "PinWright.editor.simulate_input.PausedPiePlayerInputDelivery",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FEditorSimulateInputPausedPiePlayerInputDeliveryTest::RunTest(const FString& Parameters)
+{
+    return RunOwnedPieInputDeliveryTest(*this, /*bPauseWorld=*/true);
 }
 
 // ============================================================================
