@@ -10,7 +10,7 @@
 // - Rendering Volumes (cull_distance, precomputed_visibility, lightmass_importance, post_process)
 // - Navigation Volumes (nav_mesh_bounds, nav_modifier, camera_blocking)
 // - Volume Configuration (set_volume_extent, set_volume_properties, set_volume_bounds)
-// - Volume Info (get_volumes_info)
+// - Volume Info (get_volumes_info) lives in PinWrightRuntime's Handlers/Volume/VolumeHandler.cpp
 // - Add Volume To Actor (add_trigger_volume, add_blocking_volume, add_kill_z_volume,
 //   add_physics_volume, add_cull_distance_volume, add_post_process_volume)
 
@@ -1526,116 +1526,6 @@ REGISTER_RPC_HANDLER("volume.set_volume_bounds", "volume",
     {
         Result->SetObjectField(TEXT("clearedScale"), MakeVolumeVectorJson(ClearedScale));
     }
-
-    Ctx.SendSuccess(Result);
-    return true;
-}
-
-// ============================================================================
-// Utility Handlers
-// ============================================================================
-
-REGISTER_RPC_HANDLER("volume.get_volumes_info", "volume", "Get information about all volumes in the level",
-    RPC_PARAMS(
-        RPC_PARAM_OPT("filter", "string", "Name filter"),
-        RPC_PARAM_OPT("volumeType", "string", "Volume type filter")
-    ))
-{
-    using namespace VolumeHelpers;
-    auto Payload = Ctx.GetRawPayload();
-
-    FString Filter = Ctx.GetString(TEXT("filter"), TEXT(""));
-    FString VolumeType = Ctx.GetString(TEXT("volumeType"), TEXT(""));
-
-    UWorld* World = GetEditorWorld();
-    if (!World) { Ctx.SendError(TEXT("NO_WORLD"), TEXT("Editor world not available")); return true; }
-
-    TArray<TSharedPtr<FJsonValue>> VolumesArray;
-    int32 TotalCount = 0;
-
-    for (TActorIterator<AVolume> It(World); It; ++It)
-    {
-        AVolume* Volume = *It;
-        if (!Volume) continue;
-
-        if (!VolumeType.IsEmpty())
-        {
-            FString ClassName = Volume->GetClass()->GetName();
-            if (!ClassName.Contains(VolumeType)) continue;
-        }
-        if (!Filter.IsEmpty())
-        {
-            FString ActorLabel = Volume->GetActorLabel();
-            if (!ActorLabel.Contains(Filter)) continue;
-        }
-
-        TSharedPtr<FJsonObject> VolumeInfo = MakeShareable(new FJsonObject());
-        VolumeInfo->SetStringField(TEXT("name"), Volume->GetActorLabel());
-        VolumeInfo->SetStringField(TEXT("class"), Volume->GetClass()->GetName());
-
-        FVector Location = Volume->GetActorLocation();
-        TSharedPtr<FJsonObject> LocationJson = MakeShareable(new FJsonObject());
-        LocationJson->SetNumberField(TEXT("x"), Location.X);
-        LocationJson->SetNumberField(TEXT("y"), Location.Y);
-        LocationJson->SetNumberField(TEXT("z"), Location.Z);
-        VolumeInfo->SetObjectField(TEXT("location"), LocationJson);
-
-        FVector Origin, BoxExtent;
-        Volume->GetActorBounds(false, Origin, BoxExtent);
-        TSharedPtr<FJsonObject> ExtentJson = MakeShareable(new FJsonObject());
-        ExtentJson->SetNumberField(TEXT("x"), BoxExtent.X);
-        ExtentJson->SetNumberField(TEXT("y"), BoxExtent.Y);
-        ExtentJson->SetNumberField(TEXT("z"), BoxExtent.Z);
-        VolumeInfo->SetObjectField(TEXT("extent"), ExtentJson);
-
-        VolumesArray.Add(MakeShareable(new FJsonValueObject(VolumeInfo)));
-        TotalCount++;
-    }
-
-    for (TActorIterator<ATriggerBase> It(World); It; ++It)
-    {
-        ATriggerBase* Trigger = *It;
-        if (!Trigger) continue;
-
-        if (!VolumeType.IsEmpty())
-        {
-            FString ClassName = Trigger->GetClass()->GetName();
-            if (!ClassName.Contains(VolumeType) && !VolumeType.Equals(TEXT("Trigger"), ESearchCase::IgnoreCase)) continue;
-        }
-        if (!Filter.IsEmpty())
-        {
-            FString ActorLabel = Trigger->GetActorLabel();
-            if (!ActorLabel.Contains(Filter)) continue;
-        }
-
-        TSharedPtr<FJsonObject> VolumeInfo = MakeShareable(new FJsonObject());
-        VolumeInfo->SetStringField(TEXT("name"), Trigger->GetActorLabel());
-        VolumeInfo->SetStringField(TEXT("class"), Trigger->GetClass()->GetName());
-
-        FVector Location = Trigger->GetActorLocation();
-        TSharedPtr<FJsonObject> LocationJson = MakeShareable(new FJsonObject());
-        LocationJson->SetNumberField(TEXT("x"), Location.X);
-        LocationJson->SetNumberField(TEXT("y"), Location.Y);
-        LocationJson->SetNumberField(TEXT("z"), Location.Z);
-        VolumeInfo->SetObjectField(TEXT("location"), LocationJson);
-
-        FVector Origin, BoxExtent;
-        Trigger->GetActorBounds(false, Origin, BoxExtent);
-        TSharedPtr<FJsonObject> ExtentJson = MakeShareable(new FJsonObject());
-        ExtentJson->SetNumberField(TEXT("x"), BoxExtent.X);
-        ExtentJson->SetNumberField(TEXT("y"), BoxExtent.Y);
-        ExtentJson->SetNumberField(TEXT("z"), BoxExtent.Z);
-        VolumeInfo->SetObjectField(TEXT("extent"), ExtentJson);
-
-        VolumesArray.Add(MakeShareable(new FJsonValueObject(VolumeInfo)));
-        TotalCount++;
-    }
-
-    TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject());
-    TSharedPtr<FJsonObject> VolumesInfo = MakeShareable(new FJsonObject());
-    VolumesInfo->SetNumberField(TEXT("totalCount"), TotalCount);
-    VolumesInfo->SetArrayField(TEXT("volumes"), VolumesArray);
-    Result->SetObjectField(TEXT("volumesInfo"), VolumesInfo);
 
     Ctx.SendSuccess(Result);
     return true;

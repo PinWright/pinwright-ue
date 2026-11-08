@@ -38,6 +38,10 @@ Auto-content (signatures, parameter types, summaries) comes from C++ `REGISTER_R
 
 Pruning is fail-closed. It runs only in the canonical `Saved/PinWright/wiki/` root, and only stale top-level generated filenames from a valid previous manifest may be deleted. A configured `WikiOutputDirectory` override still receives generated output but is never pruned. Missing, unreadable, malformed, oversized, over-entry, wrong-owner, wrong-schema, unsorted, duplicate, absolute, nested, or traversal-bearing manifests authorize no pruning; neither a `*.md` suffix nor a generated header is ownership proof. A staging failure leaves the complete prior output tree unchanged and does not create an absent final root. Any desired-output publication failure stops before pruning. A stale file whose deletion fails remains in the final manifest so a later launch can retry it; successfully deleted names are omitted. See `Plugins/PinWright/docs/wiki-src/README.md` for the overlay format.
 
+## Runtime marking
+
+Every method page carries `Runtime: true` (registered by the `PinWrightRuntime` module, so it answers in `-game` processes and packaged Development builds too) or `Runtime: false` (editor only; `UNKNOWN_ACTION` in a game), and `registry.json` publishes the same `runtime` boolean per method. The flag comes from which module registered the handler, not from hand-written text. Only the editor generates the wiki; a game process writes none. See `call("game-mode")`.
+
 ## Why one tool
 
 Per-method tools fan out to 1,169 entries in the client tool list, which makes near-duplicate methods hard to choose correctly. A single `call` with a wiki-shaped surface forces a navigation step before execution, and lets editorial overlays steer toward canonical methods when near-duplicates exist.

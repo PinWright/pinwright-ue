@@ -491,7 +491,7 @@ REGISTER_RPC_HANDLER("python.execute", "python", "Execute Python code or a .py f
     // unreal.PinWrightProgressLibrary.report_progress while it runs. Everyone else takes
     // the original synchronous path unchanged: turning this verb into a ticket for
     // plain-JSON callers would replace their result with a ticket id they never asked for.
-    UPinWrightSubsystem* Subsystem = Ctx.GetSubsystem();
+    UPinWrightRuntimeSubsystem* Subsystem = Ctx.GetSubsystem();
     const bool bStreaming =
         Subsystem && Subsystem->IsStreamingRequest(Ctx.GetRequestId());
 

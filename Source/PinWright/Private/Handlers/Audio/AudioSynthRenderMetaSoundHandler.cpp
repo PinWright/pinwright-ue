@@ -436,7 +436,7 @@ REGISTER_RPC_HANDLER("audio.synth.render_metasound", "audio.synth",
         return true;
     }
 
-    FPwCandidateRegistry& Registry = FPluginState::Get().GetCandidateRegistry();
+    FPwCandidateRegistry& Registry = PinWrightGetCandidateRegistry();
 
     // Registered with a default (empty) recipe, the same way audio.music's stems are: this
     // buffer did not come from a synth recipe, and fabricating one would make

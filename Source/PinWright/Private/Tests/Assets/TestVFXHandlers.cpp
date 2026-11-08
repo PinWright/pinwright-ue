@@ -1,7 +1,8 @@
 // Copyright (c) 2026 Alexander Penkin. MIT License.
 
 // Unit tests for VFX domain handlers
-// Covers: EffectHandler.cpp
+// Covers: EffectHandler.cpp (PinWrightRuntime: debug shapes, activate/deactivate/advance, cleanup;
+//         PinWright: set_niagara_parameter, step_and_capture, spawn_niagara)
 //   - Debug shapes: list_debug_shapes, clear_debug_shapes, draw_debug_shape
 //   - Niagara runtime: set_niagara_parameter, activate_niagara, deactivate_niagara,
 //                      advance_simulation, spawn_niagara
@@ -515,18 +516,19 @@ bool FVFXAdvanceSimulationRejectsOutOfRangeParamsTest::RunTest(const FString& Pa
 
     FString EffectSource;
     if (TestTrue(TEXT("EffectHandler.cpp is readable"), PinWrightVFXHandlerTests::ReadSource(
-            TEXT("Source/PinWright/Private/Handlers/VFX/EffectHandler.cpp"), EffectSource)))
+            TEXT("Source/PinWrightRuntime/Private/Handlers/VFX/EffectHandler.cpp"), EffectSource)))
     {
         const int32 AdvanceStart = EffectSource.Find(
             TEXT("REGISTER_RPC_HANDLER(\"effect.advance_simulation\""));
-        const int32 StepAndCaptureStart = EffectSource.Find(
-            TEXT("REGISTER_RPC_HANDLER(\"effect.step_and_capture\""),
+        // effect.cleanup follows advance_simulation in the runtime module's EffectHandler.cpp.
+        const int32 NextVerbStart = EffectSource.Find(
+            TEXT("REGISTER_RPC_HANDLER(\"effect.cleanup\""),
             ESearchCase::CaseSensitive, ESearchDir::FromStart, AdvanceStart);
         if (TestTrue(TEXT("advance_simulation registration source found"),
-                AdvanceStart != INDEX_NONE && StepAndCaptureStart > AdvanceStart))
+                AdvanceStart != INDEX_NONE && NextVerbStart > AdvanceStart))
         {
             const FString AdvanceSource = EffectSource.Mid(
-                AdvanceStart, StepAndCaptureStart - AdvanceStart);
+                AdvanceStart, NextVerbStart - AdvanceStart);
             TestTrue(TEXT("advance_simulation success reports requestedSeconds"),
                 AdvanceSource.Contains(
                     TEXT("Resp->SetNumberField(TEXT(\"requestedSeconds\")")));
@@ -541,7 +543,7 @@ bool FVFXAdvanceSimulationRejectsOutOfRangeParamsTest::RunTest(const FString& Pa
 
     FString RuntimeSource;
     if (TestTrue(TEXT("EffectRuntimeUtils.cpp is readable"), PinWrightVFXHandlerTests::ReadSource(
-            TEXT("Source/PinWright/Private/Handlers/VFX/EffectRuntimeUtils.cpp"), RuntimeSource)))
+            TEXT("Source/PinWrightRuntime/Private/Handlers/VFX/EffectRuntimeUtils.cpp"), RuntimeSource)))
     {
         TestTrue(TEXT("advance measures simulation age before and after Niagara ticks"),
             RuntimeSource.Contains(TEXT("Controller->GetAge()")));

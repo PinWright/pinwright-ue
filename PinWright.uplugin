@@ -18,9 +18,17 @@
   "SupportsUEBuildSystem": true,
   "Modules": [
     {
-      "Name": "PinWrightRecorder",
-      "Type": "Editor",
+      "Name": "PinWrightRuntime",
+      "Type": "Runtime",
       "LoadingPhase": "Default",
+      "TargetConfigurationDenyList": ["Shipping", "Test"],
+      "PlatformAllowList": ["Win64", "Linux"]
+    },
+    {
+      "Name": "PinWrightRecorder",
+      "Type": "Runtime",
+      "LoadingPhase": "Default",
+      "TargetConfigurationDenyList": ["Shipping", "Test"],
       "PlatformAllowList": ["Win64", "Linux"]
     },
     {
@@ -84,7 +92,7 @@
     {
       "Name": "Niagara",
       "Enabled": true,
-      "TargetAllowList": ["Editor"]
+      "TargetAllowList": ["Editor", "Game", "Client", "Server"]
     },
     {
       "Name": "Chooser",

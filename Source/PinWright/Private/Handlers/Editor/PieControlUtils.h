@@ -8,8 +8,8 @@
 // state, force-disabled by default — see the persistence-constraint comment on
 // RequestPlayInEditorSession), and target the level editor's first active viewport when
 // one exists. Also hosts the engine-touching emulation companions: profile enumeration
-// (GetAvailableEmulationProfiles) and the active-session read-back editor.pie_status uses
-// (TryGetActiveSessionEmulation); the pure parse/validate side is PieNetworkEmulation.h.
+// (GetAvailableEmulationProfiles); the active-session read-back editor.pie_status uses is
+// in the runtime module's PIEHandler.cpp; the pure parse/validate side is PieNetworkEmulation.h.
 // Consolidating it here means the call sites cannot drift, and the optional LevelEditor / play-settings
 // headers plus their __has_include feature gates are declared exactly once — no duplicated
 // MCP_* macro family, and no Unity-merge ODR clash to dodge (the gate macros are #undef'd
@@ -180,48 +180,8 @@ inline void RequestDefaultPlayInEditorSession()
     RequestPlayInEditorSession();
 }
 
-// Reads the network-emulation state actually in effect for the RUNNING PIE session
-// into OutSpec, from the engine's own session-scoped settings duplicate
-// (PlayInEditorSessionInfo->OriginalRequestParams.EditorPlaySettings — the exact
-// object every PIE instance login consumes, see the persistence-constraint comment
-// above). Because it reads the session copy rather than anything this plugin
-// recorded, it reports the truth for sessions started from the editor toolbar too.
-// Returns false when no PIE session is active (or the settings class is gated out).
-// Note: a toolbar-started session with hand-edited packet values reports the
-// details panel's "Custom" pseudo-profile name in OutSpec.Profile.
-inline bool TryGetActiveSessionEmulation(PieNetworkEmulation::FEmulationSpec& OutSpec)
-{
-#if MCP_PIE_CONTROL_HAS_LEVEL_EDITOR_PLAY_SETTINGS
-    if (!GEditor)
-    {
-        return false;
-    }
-    const TOptional<FPlayInEditorSessionInfo> SessionInfo = GEditor->GetPlayInEditorSessionInfo();
-    if (!SessionInfo.IsSet() || !SessionInfo->OriginalRequestParams.EditorPlaySettings)
-    {
-        return false;
-    }
-    const FLevelEditorPlayNetworkEmulationSettings& EmulationSettings =
-        SessionInfo->OriginalRequestParams.EditorPlaySettings->NetworkEmulationSettings;
-    OutSpec.bEnabled = EmulationSettings.bIsNetworkEmulationEnabled;
-    switch (EmulationSettings.EmulationTarget)
-    {
-    case NetworkEmulationTarget::Client:
-        OutSpec.Target = PieNetworkEmulation::EEmulationTarget::ClientsOnly;
-        break;
-    case NetworkEmulationTarget::Any:
-        OutSpec.Target = PieNetworkEmulation::EEmulationTarget::Everyone;
-        break;
-    default:
-        OutSpec.Target = PieNetworkEmulation::EEmulationTarget::ServerOnly;
-        break;
-    }
-    OutSpec.Profile = EmulationSettings.CurrentProfile;
-    return true;
-#else
-    return false;
-#endif
-}
+// The active-session read-back (editor.pie_status) lives in the PinWrightRuntime module's
+// Handlers/Editor/PIEHandler.cpp.
 
 } // namespace PieControlUtils
 

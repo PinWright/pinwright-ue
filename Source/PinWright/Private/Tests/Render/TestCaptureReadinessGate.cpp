@@ -33,6 +33,7 @@
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "RHI.h" // GIsRHIInitialized, the preamble's own precondition
+#include "Tests/TestSourcePaths.h"
 
 namespace
 {
@@ -40,13 +41,11 @@ namespace
     // name a sibling test also uses is a latent ODR clash.
     bool PwReadinessReadSource(const FString& RelativePath, FString& OutSource)
     {
-        const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("PinWright"));
-        if (!Plugin.IsValid())
+        if (!IPluginManager::Get().FindPlugin(TEXT("PinWright")).IsValid())
         {
             return false;
         }
-        return FFileHelper::LoadFileToString(
-            OutSource, *FPaths::Combine(Plugin->GetBaseDir(), RelativePath));
+        return FFileHelper::LoadFileToString(OutSource, *ResolvePluginSourcePath(RelativePath));
     }
 
     // A budget short enough to time out inside a test but long enough to run several pump rounds,
@@ -277,24 +276,33 @@ bool FCaptureReadinessWiringTest::RunTest(const FString& Parameters)
             RenderSource.Contains(RefusalCheck));
     }
 
+    // editor.screenshot is in the runtime module; its level-editor branch stays in the editor
+    // module's ViewportHandler.cpp (Handlers/Editor/ScreenshotLevelFallback.h).
     FString ViewportSource;
-    if (TestTrue(TEXT("ViewportHandler.cpp is readable"), PwReadinessReadSource(
-            TEXT("Source/PinWright/Private/Handlers/Editor/ViewportHandler.cpp"), ViewportSource)))
+    if (TestTrue(TEXT("runtime ViewportHandler.cpp is readable"), PwReadinessReadSource(
+            TEXT("Source/PinWrightRuntime/Private/Handlers/Editor/ViewportHandler.cpp"), ViewportSource)))
     {
         const int32 GateAt = ViewportSource.Find(GateCall);
         const int32 ReadbackAt = ViewportSource.Find(
             TEXT("PinWrightScreenshotUtils::CaptureGameViewportToPngFile("));
         TestTrue(TEXT("editor.screenshot gates before the game/PIE readback"),
             GateAt != INDEX_NONE && ReadbackAt != INDEX_NONE && GateAt < ReadbackAt);
-        TestTrue(TEXT("editor.screenshot's level branch gates from the BeforeFinalFrame hook"),
-            ViewportSource.Contains(TEXT("GatedHooks.BeforeFinalFrame")));
         TestTrue(TEXT("editor.screenshot refuses on the shader case"),
             ViewportSource.Contains(RefusalCheck));
+    }
+    FString LevelFallbackSource;
+    if (TestTrue(TEXT("editor ViewportHandler.cpp is readable"), PwReadinessReadSource(
+            TEXT("Source/PinWright/Private/Handlers/Editor/ViewportHandler.cpp"), LevelFallbackSource)))
+    {
+        TestTrue(TEXT("editor.screenshot's level branch gates from the BeforeFinalFrame hook"),
+            LevelFallbackSource.Contains(TEXT("GatedHooks.BeforeFinalFrame")));
+        TestTrue(TEXT("editor.screenshot's level branch refuses on the shader case"),
+            LevelFallbackSource.Contains(RefusalCheck));
     }
 
     FString UiSource;
     if (TestTrue(TEXT("UiHandler.cpp is readable"), PwReadinessReadSource(
-            TEXT("Source/PinWright/Private/Handlers/UI/UiHandler.cpp"), UiSource)))
+            TEXT("Source/PinWrightRuntime/Private/Handlers/UI/UiHandler.cpp"), UiSource)))
     {
         const int32 GateAt = UiSource.Find(GateCall);
         const int32 ReadbackAt = UiSource.Find(

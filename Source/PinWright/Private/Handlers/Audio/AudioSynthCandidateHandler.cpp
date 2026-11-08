@@ -35,7 +35,7 @@ namespace
                                        FString& OutError,
                                        TSharedPtr<FJsonObject>& OutErrorData)
     {
-        FPwCandidateRegistry& Registry = FPluginState::Get().GetCandidateRegistry();
+        FPwCandidateRegistry& Registry = PinWrightGetCandidateRegistry();
         const FPwCandidateLookupResult Result = Registry.Get(CandidateId);
         if (!Result.IsHit())
         {
@@ -133,7 +133,7 @@ REGISTER_RPC_HANDLER("audio.synth.list_candidates", "audio.synth",
             "Shorthand for fields=[id, createdAt, recipeDigest] - the columns needed to pick a candidate.", "names_only")
     ))
 {
-    FPwCandidateRegistry& Registry = FPluginState::Get().GetCandidateRegistry();
+    FPwCandidateRegistry& Registry = PinWrightGetCandidateRegistry();
 
     const int32 Limit = FMath::Clamp(Ctx.GetInt(TEXT("limit"), 20), 1, 200);
     const int32 Offset = FMath::Max(0, Ctx.GetInt(TEXT("offset"), 0));
@@ -260,7 +260,7 @@ REGISTER_RPC_HANDLER("audio.synth.get_recipe", "audio.synth",
         return true;
     }
 
-    FPwCandidateRegistry& Registry = FPluginState::Get().GetCandidateRegistry();
+    FPwCandidateRegistry& Registry = PinWrightGetCandidateRegistry();
     const FPwCandidateLookupResult Lookup = Registry.Get(CandidateId);
     if (!Lookup.IsHit())
     {
@@ -313,7 +313,7 @@ REGISTER_RPC_HANDLER("audio.synth.discard", "audio.synth",
             "Discard every resident candidate. Required to be explicit - there is no implicit discard-all.")
     ))
 {
-    FPwCandidateRegistry& Registry = FPluginState::Get().GetCandidateRegistry();
+    FPwCandidateRegistry& Registry = PinWrightGetCandidateRegistry();
 
     const bool bAll = Ctx.GetBool(TEXT("all"), false);
 

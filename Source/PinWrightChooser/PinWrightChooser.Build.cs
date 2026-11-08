@@ -14,6 +14,7 @@ public class PinWrightChooser : ModuleRules
         // #include "Handlers/..." / "Utils/..." / "Tests/..." paths; resolve them
         // against the main module's Private dir.
         PrivateIncludePaths.Add(Path.Combine(ModuleDirectory, "..", "PinWright", "Private"));
+        PrivateIncludePaths.Add(Path.Combine(ModuleDirectory, "..", "PinWrightRuntime", "Private"));
 
         string EngineDir = Path.GetFullPath(Target.RelativeEnginePath);
 
@@ -56,7 +57,7 @@ public class PinWrightChooser : ModuleRules
         {
             "Core", "CoreUObject", "Engine", "UnrealEd", "Json", "JsonUtilities",
             // Main plugin module: exported handler registration/context and Utils helpers.
-            "PinWright",
+            "PinWright", "PinWrightRuntime",
             // Chooser is hard-linked on purpose: this module uses LoadingPhase None and is only
             // loaded by the main module (LoadModulePtr) when the Chooser plugin is enabled, so the
             // main PinWright DLL no longer hard-imports the optional Chooser plugin DLL.

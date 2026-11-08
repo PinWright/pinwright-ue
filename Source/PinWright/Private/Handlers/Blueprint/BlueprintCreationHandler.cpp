@@ -204,7 +204,7 @@ REGISTER_RPC_MUTATING_HANDLER("blueprint.create", "blueprint", "Create a new UBl
         RPC_PARAM_DEF("overwrite", "boolean", "Delete and recreate an existing Blueprint (discarding its graphs and components) instead of returning it. Rejected with ASSET_IN_USE when any package still references it.", "false")
     ))
 {
-    UPinWrightSubsystem* Self = Ctx.GetSubsystem();
+    UPinWrightRuntimeSubsystem* Self = Ctx.GetSubsystem();
     TSharedPtr<FJsonObject> LocalPayload = Ctx.GetRawPayload();
 
     FString Name;

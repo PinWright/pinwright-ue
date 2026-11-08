@@ -15,6 +15,11 @@
 #include "IPackageAutoSaver.h"
 #include "PinWrightSettings.h"
 #include "PinWrightSubsystem.h"
+#include "PinWrightEditorHooks.h"
+#include "IntegrationGates.h"
+#include "Catalog/WikiDiskGenerator.h"
+#include "Catalog/WikiHandler.h"
+#include "Selection.h"
 #include "Transport/ModalStateProbe.h"
 #include "UnrealEdGlobals.h"
 #include "Setup/AgentMcpConfigurator.h"
@@ -54,12 +59,64 @@
 
 DEFINE_LOG_CATEGORY_STATIC(LogPinWright, Log, All);
 
+// The editor's side of the runtime host (docs/runtime-module.md): what UPinWrightSubsystem did
+// in-line before the transport moved to PinWrightRuntime.
+class FPinWrightEditorHooks final : public IPinWrightEditorHooks
+{
+public:
+    virtual void BeforeDrainRegistrations() override
+    {
+        IntegrationGates::LoadEnabledIntegrations();
+    }
+
+    virtual void AfterCatalogInit() override
+    {
+        WikiDiskGenerator::Generate();
+    }
+
+    // Startup readiness is latched at FEditorDelegates::OnEditorInitialized and stays false
+    // until package loading is idle and the editor element selection set exists.
+    virtual void GetReadiness(bool& bOutInitialized, bool& bOutLoadingPackage, bool& bOutSelectionSet) override
+    {
+        bOutInitialized = UPinWrightSubsystem::HasObservedEditorInitialized();
+        const bool bEditorAvailable = GEditor != nullptr;
+        bOutLoadingPackage = !bEditorAvailable || MCP_IS_EDITOR_LOADING_PACKAGE;
+        USelection* SelectedActors = bEditorAvailable ? GEditor->GetSelectedActors() : nullptr;
+        bOutSelectionSet = SelectedActors != nullptr && SelectedActors->GetElementSelectionSet() != nullptr;
+    }
+
+    virtual FString FindSkippedPluginForMethod(const FString& Method) override
+    {
+        return IntegrationGates::FindSkippedByMethod(Method);
+    }
+
+    virtual FString WikiOutputDirectory() override
+    {
+        return WikiDiskGenerator::OutputDirectory();
+    }
+
+    virtual FString WikiPagePath(const FString& MethodOrNamespace) override
+    {
+        return WikiDiskGenerator::PagePath(MethodOrNamespace.IsEmpty()
+            ? WikiDiskGenerator::RootIndexSlug()
+            : WikiHandler::NormalizeSlug(MethodOrNamespace));
+    }
+
+    virtual bool RenderWikiPage(const FString& MethodOrNamespace, FString& OutMarkdown) override
+    {
+        return WikiHandler::RenderPage(MethodOrNamespace, OutMarkdown);
+    }
+};
+
 class FPinWrightModule final : public IModuleInterface
 {
 public:
     virtual void StartupModule() override
     {
         UE_LOG(LogPinWright, Log, TEXT("PinWright module initialized."));
+
+        // Before engine subsystems initialize: the runtime host calls these from its Initialize.
+        PinWright::SetEditorHooks(&EditorHooks);
 
 #if PW_HAS_SUITE_MAINTENANCE
         PinWrightSuiteMaintenance::Register();
@@ -83,6 +140,8 @@ public:
     virtual void ShutdownModule() override
     {
         UE_LOG(LogPinWright, Log, TEXT("PinWright module shut down."));
+
+        PinWright::SetEditorHooks(nullptr);
 
 #if PW_HAS_SUITE_MAINTENANCE
         PinWrightSuiteMaintenance::Unregister();
@@ -137,6 +196,7 @@ public:
     }
 
 private:
+    FPinWrightEditorHooks EditorHooks;
     FDelegateHandle EditorInitializedHandle;
 
     // Auto-decline the boot-time "Restore Packages" prompt, and start watching for

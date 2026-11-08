@@ -178,7 +178,7 @@ namespace
     // InvokeHandlerWithCapture cannot serve; MakeContextWithCapture carries the real subsystem AND
     // captures the response. Returns true iff the handler was found.
     bool InvokeCompBindHandler(const FString& MethodName, const TSharedPtr<FJsonObject>& Payload,
-        UPinWrightSubsystem* Subsystem, FTestResponseCapture& Capture)
+        UPinWrightRuntimeSubsystem* Subsystem, FTestResponseCapture& Capture)
     {
         Capture.Reset();
         for (const FHandlerRegistration& Reg : FAutoRegisterHandler::GetPendingRegistrations())
@@ -261,7 +261,7 @@ namespace
 
     // Shared preamble: editor + subsystem + world, all hard failures. Returns false when the test
     // cannot run, having already logged the reason as an ERROR (never a skip).
-    bool GetCompBindEnvironment(FAutomationTestBase& Test, UPinWrightSubsystem*& OutSubsystem,
+    bool GetCompBindEnvironment(FAutomationTestBase& Test, UPinWrightRuntimeSubsystem*& OutSubsystem,
         UWorld*& OutWorld)
     {
         OutSubsystem = nullptr;
@@ -271,7 +271,7 @@ namespace
             Test.AddError(TEXT("GEditor unavailable - cannot exercise the sequencer binding verbs."));
             return false;
         }
-        OutSubsystem = GEditor->GetEditorSubsystem<UPinWrightSubsystem>();
+        OutSubsystem = UPinWrightRuntimeSubsystem::Get();
         if (!OutSubsystem)
         {
             Test.AddError(TEXT("PinWright subsystem unavailable - sequencer.add_actor resolves its "
@@ -298,7 +298,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSequencerComponentBindingParentedTest,
 
 bool FSequencerComponentBindingParentedTest::RunTest(const FString& Parameters)
 {
-    UPinWrightSubsystem* Subsystem = nullptr;
+    UPinWrightRuntimeSubsystem* Subsystem = nullptr;
     UWorld* World = nullptr;
     if (!GetCompBindEnvironment(*this, Subsystem, World))
     {
@@ -419,7 +419,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSequencerComponentBindingGetBindingsParentTest
 
 bool FSequencerComponentBindingGetBindingsParentTest::RunTest(const FString& Parameters)
 {
-    UPinWrightSubsystem* Subsystem = nullptr;
+    UPinWrightRuntimeSubsystem* Subsystem = nullptr;
     UWorld* World = nullptr;
     if (!GetCompBindEnvironment(*this, Subsystem, World))
     {
@@ -545,7 +545,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSequencerComponentBindingOmittedIsUnchangedTes
 
 bool FSequencerComponentBindingOmittedIsUnchangedTest::RunTest(const FString& Parameters)
 {
-    UPinWrightSubsystem* Subsystem = nullptr;
+    UPinWrightRuntimeSubsystem* Subsystem = nullptr;
     UWorld* World = nullptr;
     if (!GetCompBindEnvironment(*this, Subsystem, World))
     {
@@ -637,7 +637,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSequencerComponentBindingMissingComponentTest,
 
 bool FSequencerComponentBindingMissingComponentTest::RunTest(const FString& Parameters)
 {
-    UPinWrightSubsystem* Subsystem = nullptr;
+    UPinWrightRuntimeSubsystem* Subsystem = nullptr;
     UWorld* World = nullptr;
     if (!GetCompBindEnvironment(*this, Subsystem, World))
     {
@@ -716,7 +716,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSequencerComponentBindingAnimatesComponentTest
 
 bool FSequencerComponentBindingAnimatesComponentTest::RunTest(const FString& Parameters)
 {
-    UPinWrightSubsystem* Subsystem = nullptr;
+    UPinWrightRuntimeSubsystem* Subsystem = nullptr;
     UWorld* World = nullptr;
     if (!GetCompBindEnvironment(*this, Subsystem, World))
     {
@@ -851,7 +851,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSequencerComponentBindingEvaluatesOntoComponen
 
 bool FSequencerComponentBindingEvaluatesOntoComponentTest::RunTest(const FString& Parameters)
 {
-    UPinWrightSubsystem* Subsystem = nullptr;
+    UPinWrightRuntimeSubsystem* Subsystem = nullptr;
     UWorld* World = nullptr;
     if (!GetCompBindEnvironment(*this, Subsystem, World))
     {

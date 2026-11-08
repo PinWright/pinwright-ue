@@ -101,6 +101,7 @@ Tags for maintainer- and development-process docs listed in the Internal section
 |---|---|
 | audit | [RPC hard-removal rejected candidates](rpc-hard-removal-rejected-candidates.md), [floating geometry audit](floating-geometry-audit.md), [geometry audit component winding](geometry-audit-component-winding.md), [geometry audit z-fighting](geometry-audit-z-fighting.md), [z-fighting fixer plan](geometry-audit-z-fighting-fixer.md), [z-fighting audit completion review](geometry-audit-z-fighting-review.md) |
 | backlog | [defect backlog](defect-backlog.md) |
+| runtime-module | [runtime module](runtime-module.md) |
 | cleanup | [RPC hard-removal rejected candidates](rpc-hard-removal-rejected-candidates.md) |
 | compiler-internals | [BPIR compiler internals](bpir-compiler-internals.md) |
 | coverage | [BPIR test matrix](bpir-test-matrix.md), [test organization](test-organization.md) |

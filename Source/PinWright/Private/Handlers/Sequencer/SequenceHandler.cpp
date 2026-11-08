@@ -1405,7 +1405,7 @@ REGISTER_RPC_HANDLER("sequencer.repoint_actor", "Sequencer",
             TEXT("sequencer.repoint_actor does not support parented or component possessables"));
     }
 
-    UPinWrightSubsystem* Subsystem = Ctx.GetSubsystem();
+    UPinWrightRuntimeSubsystem* Subsystem = Ctx.GetSubsystem();
     AActor* OldActor = Subsystem ? Subsystem->FindActorByName(OldActorName) : nullptr;
     if (!OldActor)
     {
@@ -1588,7 +1588,7 @@ REGISTER_RPC_HANDLER("sequencer.remove_actors", "Sequencer", "Remove actor bindi
             // bindings that resolve to no live actor — spawnables, or possessables whose actor was
             // since deleted — which remain removable by the exact name get_bindings reports.
             FString ResolvedLabel;
-            if (UPinWrightSubsystem* Sub = Ctx.GetSubsystem())
+            if (UPinWrightRuntimeSubsystem* Sub = Ctx.GetSubsystem())
             {
                 if (AActor* ResolvedActor = Sub->FindActorByName(Name))
                 {

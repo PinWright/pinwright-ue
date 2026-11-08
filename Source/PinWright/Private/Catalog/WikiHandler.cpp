@@ -7,7 +7,7 @@
 #include "Dispatch/RpcDispatcher.h"
 #include "Editor.h"
 #include "IntegrationGates.h"
-#include "PinWrightSubsystem.h"
+#include "PinWrightRuntimeSubsystem.h"
 #include "Handlers/HandlerRegistration.h"
 
 #include "Algo/Sort.h"
@@ -724,6 +724,10 @@ namespace WikiHandler
         {
             FString Out = FString::Printf(TEXT("# `%s`\n\n"), *Reg.MethodName);
             Out += FString::Printf(TEXT("Namespace: `%s`\n\n"), *Reg.Category.ToLower());
+            Out += FString::Printf(TEXT("Runtime: `%s` (%s)\n\n"),
+                Reg.bRuntime ? TEXT("true") : TEXT("false"),
+                Reg.bRuntime ? TEXT("also served by -game and packaged Development processes")
+                             : TEXT("editor only"));
             Out += MarkdownHelpers::EscapeMarkdownText(Reg.Summary);
             Out += TEXT("\n\n");
             Out += MarkdownHelpers::RenderParamList(Reg.Params);
@@ -806,8 +810,7 @@ namespace WikiHandler
         // subsystem->dispatcher hop the parameterless public overloads share.
         TSharedPtr<FRpcDispatcher> GetLiveDispatcher()
         {
-            UPinWrightSubsystem* Subsystem =
-                GEditor ? GEditor->GetEditorSubsystem<UPinWrightSubsystem>() : nullptr;
+            UPinWrightRuntimeSubsystem* Subsystem = UPinWrightRuntimeSubsystem::Get();
             return Subsystem ? Subsystem->GetDispatcher() : nullptr;
         }
     } // anonymous namespace

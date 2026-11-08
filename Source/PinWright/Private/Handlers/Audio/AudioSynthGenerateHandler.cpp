@@ -1304,7 +1304,7 @@ REGISTER_RPC_HANDLER("audio.synth.generate", "audio.synth",
         return true;
     }
 
-    FPwCandidateRegistry& Registry = FPluginState::Get().GetCandidateRegistry();
+    FPwCandidateRegistry& Registry = PinWrightGetCandidateRegistry();
 
     FRenderedCandidate Rendered;
     FString Code;
@@ -1396,7 +1396,7 @@ REGISTER_RPC_HANDLER("audio.synth.patch", "audio.synth",
 
     const bool bAnalyze = Ctx.GetBool(TEXT("analyze"), true);
 
-    FPwCandidateRegistry& Registry = FPluginState::Get().GetCandidateRegistry();
+    FPwCandidateRegistry& Registry = PinWrightGetCandidateRegistry();
 
     FPwCandidateLookupResult Source;
     if (!ResolveCandidate(Ctx, Registry, CandidateId, Source)) return true;
@@ -1681,7 +1681,7 @@ REGISTER_RPC_HANDLER("audio.synth.variations", "audio.synth",
         return true;
     }
 
-    FPwCandidateRegistry& Registry = FPluginState::Get().GetCandidateRegistry();
+    FPwCandidateRegistry& Registry = PinWrightGetCandidateRegistry();
 
     FPwCandidateLookupResult Source;
     if (!ResolveCandidate(Ctx, Registry, CandidateId, Source)) return true;
@@ -1734,7 +1734,7 @@ REGISTER_RPC_HANDLER("audio.synth.variations", "audio.synth",
         [BaseJson, SourceRecipe, CandidateId, Count, RootSeed, bVarySeed, Mutations]
         (FJobOnComplete OnComplete)
     {
-        FPwCandidateRegistry& Registry = FPluginState::Get().GetCandidateRegistry();
+        FPwCandidateRegistry& Registry = PinWrightGetCandidateRegistry();
 
         TArray<TSharedPtr<FJsonValue>> Rows;
         int32 NumRendered = 0;
@@ -2040,7 +2040,7 @@ REGISTER_RPC_HANDLER("audio.synth.export", "audio.synth",
         return true;
     }
 
-    FPwCandidateRegistry& Registry = FPluginState::Get().GetCandidateRegistry();
+    FPwCandidateRegistry& Registry = PinWrightGetCandidateRegistry();
 
     FPwCandidateLookupResult Lookup;
     if (!ResolveCandidate(Ctx, Registry, CandidateId, Lookup)) return true;

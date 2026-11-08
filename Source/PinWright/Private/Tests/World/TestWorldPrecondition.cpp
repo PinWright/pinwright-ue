@@ -295,7 +295,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FWorldPreconditionResponsePolicyTest,
 
 bool FWorldPreconditionResponsePolicyTest::RunTest(const FString& Parameters)
 {
-    UPinWrightSubsystem* Subsystem = NewObject<UPinWrightSubsystem>();
+    UPinWrightRuntimeSubsystem* Subsystem = NewObject<UPinWrightRuntimeSubsystem>();
     if (!TestNotNull(TEXT("response-policy subsystem fixture"), Subsystem))
     {
         return false;

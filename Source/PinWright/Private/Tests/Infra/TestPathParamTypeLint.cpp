@@ -115,11 +115,14 @@ namespace
 
         for (const FString& ModuleDirName : ModuleDirNames)
         {
-            const FString HandlersDir =
-                SourceDir / ModuleDirName / TEXT("Private") / TEXT("Handlers");
-            if (IFileManager::Get().DirectoryExists(*HandlersDir))
+            // Public too: PinWrightRuntime keeps handler headers other modules include there.
+            for (const TCHAR* Visibility : { TEXT("Private"), TEXT("Public") })
             {
-                Roots.Add(HandlersDir);
+                const FString HandlersDir = SourceDir / ModuleDirName / Visibility / TEXT("Handlers");
+                if (IFileManager::Get().DirectoryExists(*HandlersDir))
+                {
+                    Roots.Add(HandlersDir);
+                }
             }
         }
         return Roots;
@@ -363,13 +366,13 @@ namespace
         TEXT("PinWright/Private/Handlers/AI/StateTreeAuthoringHandler.cpp|sourcePath|1"),
         TEXT("PinWright/Private/Handlers/AI/StateTreeAuthoringHandler.cpp|targetPath|1"),
         TEXT("PinWright/Private/Handlers/Actor/ActorFolderHandler.cpp|folderPath|1"),
-        TEXT("PinWright/Private/Handlers/Actor/SpawnMaterialUtils.h|materialPaths|1"),
+        TEXT("PinWrightRuntime/Public/Handlers/Actor/SpawnMaterialUtils.h|materialPaths|1"),
         TEXT("PinWright/Private/Handlers/Asset/AssetQueryHandler.cpp|packagePaths|1"),
         TEXT("PinWright/Private/Handlers/Asset/AssetWorkflowHandler.cpp|assetPaths|5"),
-        TEXT("PinWright/Private/Handlers/Audio/AudioHandler.cpp|soundPath|1"),
+        TEXT("PinWrightRuntime/Private/Handlers/Audio/AudioHandler.cpp|soundPath|1"),
         TEXT("PinWright/Private/Handlers/ControlRig/CRIRDecompileHandler.cpp|assetPath|1"),
-        TEXT("PinWright/Private/Handlers/Debug/PerformanceHandler.cpp|outputPath|1"),
-        TEXT("PinWright/Private/Handlers/Debug/TraceAnalysisHandler.cpp|tracePath|1"),
+        TEXT("PinWrightRuntime/Private/Handlers/Debug/PerformanceHandler.cpp|outputPath|1"),
+        TEXT("PinWrightRuntime/Private/Handlers/Debug/TraceAnalysisHandler.cpp|tracePath|1"),
         TEXT("PinWright/Private/Handlers/Environment/LandscapeHandler.cpp|path|1"),
         TEXT("PinWright/Private/Handlers/Geometry/SplineHandler.cpp|materialPath|1"),
         TEXT("PinWright/Private/Handlers/Geometry/SplineHandler.cpp|meshPath|3"),

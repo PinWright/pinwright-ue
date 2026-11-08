@@ -65,7 +65,7 @@ namespace PinWrightRepointTests
         ULevelSequence* Sequence = nullptr;
         FString SequencePath;
         UWorld* World = nullptr;
-        UPinWrightSubsystem* Subsystem = nullptr;
+        UPinWrightRuntimeSubsystem* Subsystem = nullptr;
         AActor* SourceActor = nullptr;
         AActor* TargetActor = nullptr;
         FString SourceLabel;
@@ -105,7 +105,7 @@ namespace PinWrightRepointTests
     };
 
     static bool InvokeRepointHandler(const TSharedPtr<FJsonObject>& Payload,
-        UPinWrightSubsystem* Subsystem, FTestResponseCapture& Capture)
+        UPinWrightRuntimeSubsystem* Subsystem, FTestResponseCapture& Capture)
     {
         Capture.Reset();
         for (const FHandlerRegistration& Registration : FAutoRegisterHandler::GetPendingRegistrations())
@@ -439,7 +439,7 @@ namespace PinWrightRepointTests
         }
 
         OutFixture.World = GEditor->GetEditorWorldContext().World();
-        OutFixture.Subsystem = GEditor->GetEditorSubsystem<UPinWrightSubsystem>();
+        OutFixture.Subsystem = UPinWrightRuntimeSubsystem::Get();
         if (!Test.TestNotNull(TEXT("editor world exists for repoint fixture"), OutFixture.World)
             || !Test.TestNotNull(TEXT("PinWright subsystem exists for repoint fixture"), OutFixture.Subsystem))
         {

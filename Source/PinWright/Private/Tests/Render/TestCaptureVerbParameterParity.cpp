@@ -399,6 +399,15 @@ namespace CaptureVerbParameterParityTest
         TArray<FString> Files;
         IFileManager::Get().FindFilesRecursive(Files, *Dir, TEXT("*.h"), true, false, false);
         IFileManager::Get().FindFilesRecursive(Files, *Dir, TEXT("*.cpp"), true, false, false);
+        // Helpers shared with runtime capture verbs (CaptureExposure.*) live in PinWrightRuntime.
+        const FString PluginDir = ResolvePluginDir();
+        for (const TCHAR* Sub : { TEXT("Public"), TEXT("Private") })
+        {
+            const FString RuntimeDir = PluginDir / TEXT("Source") / TEXT("PinWrightRuntime") / Sub
+                / TEXT("Handlers") / TEXT("Render");
+            IFileManager::Get().FindFilesRecursive(Files, *RuntimeDir, TEXT("*.h"), true, false, false);
+            IFileManager::Get().FindFilesRecursive(Files, *RuntimeDir, TEXT("*.cpp"), true, false, false);
+        }
 
         const FRegexPattern Pattern(FString(Helper.DefinitionPattern));
         for (const FString& File : Files)

@@ -12,6 +12,7 @@
 #include "Interfaces/IPluginManager.h"
 #include "Misc/FileHelper.h"
 #include "Misc/ScopeExit.h"
+#include "Tests/TestSourcePaths.h"
 #include "Tests/TestUtils.h"
 #include "Utils/PieState.h"
 
@@ -36,7 +37,7 @@ namespace EditorPieLifecycleTests
         }
 
         FString Source;
-        const FString Path = Plugin->GetBaseDir() / RelativePath;
+        const FString Path = ResolvePluginSourcePath(RelativePath);
         Test.TestTrue(*FString::Printf(TEXT("Handler source loads: %s"), RelativePath),
             FFileHelper::LoadFileToString(Source, *Path));
         // The markers below span line breaks. A Windows checkout with core.autocrlf on stores the
@@ -443,7 +444,7 @@ bool FEditorPieLifecycleHandlersUseBoundedWaitTest::RunTest(const FString& Param
     const FString Play = HandlerBlock(
         Source, TEXT("// ---- editor.play ----"), TEXT("// ---- editor.stop ----"));
     const FString Stop = HandlerBlock(
-        Source, TEXT("// ---- editor.stop ----"), TEXT("// ---- editor.pause ----"));
+        Source, TEXT("// ---- editor.stop ----"), TEXT("// ---- editor.eject ----"));
     const FString CleanupProbe = HandlerBlock(
         Source, TEXT("PinWrightPieState::FPieLifecycleState CaptureAndApplyPieStopState"),
         TEXT("void StartPieTimeoutCleanupWatcher"));
@@ -451,7 +452,7 @@ bool FEditorPieLifecycleHandlersUseBoundedWaitTest::RunTest(const FString& Param
         Source, TEXT("void StartPieTimeoutCleanupWatcher"),
         TEXT("// ---- editor.play ----"));
     const FString SubsystemSource = ReadHandlerSource(*this,
-        TEXT("Source/PinWright/Private/PinWrightSubsystem.cpp"));
+        TEXT("Source/PinWrightRuntime/Private/PinWrightRuntimeSubsystem.cpp"));
     const FString TransportSource = ReadHandlerSource(*this,
         TEXT("Source/PinWright/Private/Transport/SocketHttpServer.cpp"));
     const FString AcceptLoop = HandlerBlock(TransportSource,
@@ -585,14 +586,19 @@ bool FEditorPieLifecycleHandlersUseBoundedWaitTest::RunTest(const FString& Param
         TEXT("StreamingTransport->QuiesceRequestIntake()"));
     const int32 ShutdownDispatcher = SubsystemSource.Find(TEXT("Dispatcher.Reset()"),
         ESearchCase::CaseSensitive, ESearchDir::FromStart, ShutdownQuiesce);
-    const int32 ShutdownFailPending = SubsystemSource.Find(
-        TEXT("StreamingTransport->FailAllCompletions"), ESearchCase::CaseSensitive,
-        ESearchDir::FromStart, ShutdownDispatcher);
-    const int32 ShutdownStop = SubsystemSource.Find(TEXT("StreamingTransport->Stop()"),
+    // Deinitialize hands the transport drain to StopServing(), which a game process also runs alone.
+    const int32 ShutdownServing = SubsystemSource.Find(TEXT("StopServing();"),
+        ESearchCase::CaseSensitive, ESearchDir::FromStart, ShutdownDispatcher);
+    const FString StopServing = HandlerBlock(SubsystemSource,
+        TEXT("void UPinWrightRuntimeSubsystem::StopServing()"),
+        TEXT("void UPinWrightRuntimeSubsystem::Deinitialize()"));
+    const int32 ShutdownFailPending = StopServing.Find(TEXT("StreamingTransport->FailAllCompletions"));
+    const int32 ShutdownStop = StopServing.Find(TEXT("StreamingTransport->Stop()"),
         ESearchCase::CaseSensitive, ESearchDir::FromStart, ShutdownFailPending);
     TestTrue(TEXT("subsystem quiesces intake before typed dispatcher abandonment and transport drain"),
         ShutdownQuiesce != INDEX_NONE && ShutdownDispatcher > ShutdownQuiesce &&
-        ShutdownFailPending > ShutdownDispatcher && ShutdownStop > ShutdownFailPending);
+        ShutdownServing > ShutdownDispatcher && ShutdownFailPending != INDEX_NONE &&
+        ShutdownStop > ShutdownFailPending);
 
     const int32 TransportStop = TransportSource.Find(TEXT("void FSocketHttpServer::Stop()"));
     const int32 StopQuiesce = TransportSource.Find(TEXT("QuiesceRequestIntake();"),

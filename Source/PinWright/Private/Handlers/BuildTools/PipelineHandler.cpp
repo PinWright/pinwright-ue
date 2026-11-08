@@ -47,7 +47,7 @@ REGISTER_RPC_HANDLER("pipeline.get_status", "pipeline", "Return automation bridg
     // 1069 / 35 constants that drifted from the real registry.
     int32 TotalActions = 0;
     TSet<FString> Categories;
-    if (UPinWrightSubsystem* Subsystem = Ctx.GetSubsystem())
+    if (UPinWrightRuntimeSubsystem* Subsystem = Ctx.GetSubsystem())
     {
         if (const TSharedPtr<FRpcDispatcher> Dispatcher = Subsystem->GetDispatcher())
         {

@@ -6,9 +6,9 @@ This file provides guidance to AI coding agents (Claude Code, Codex and others) 
 
 ## Project Overview
 
-Unreal Engine C++ editor plugin ("PinWright") that enables AI assistants to remotely control Unreal Editor via an in-process MCP (Model Context Protocol) server. Includes portions derived from [ChiR24/Unreal_mcp](https://github.com/ChiR24/Unreal_mcp); see `THIRD_PARTY_NOTICES.md`.
+Unreal Engine C++ plugin ("PinWright") that enables AI assistants to remotely control the Unreal Editor, and `-game` processes or packaged Development builds of the same project, via an in-process MCP (Model Context Protocol) server. Includes portions derived from [ChiR24/Unreal_mcp](https://github.com/ChiR24/Unreal_mcp); see `THIRD_PARTY_NOTICES.md`.
 
-- **Engine support: UE 5.3 through 5.8, all six green end to end in the version matrix (2026-09-10..12).** A new verb may **not** land on a 5.8-only API unguarded: guard it at the call site and add its row (symbol, call site, first engine version, substitute, guard location) to [docs/engine-version-support.md](docs/engine-version-support.md) in the same change. Win64 and Linux (every module carries `"PlatformAllowList": ["Win64", "Linux"]`; the Linux port landed with the clang fixes at `aa920932`), Editor-only modules (main module + gated integration sub-modules, see Module Split below)
+- **Engine support: UE 5.3 through 5.8, all six green end to end in the version matrix (2026-09-10..12).** A new verb may **not** land on a 5.8-only API unguarded: guard it at the call site and add its row (symbol, call site, first engine version, substitute, guard location) to [docs/engine-version-support.md](docs/engine-version-support.md) in the same change. Win64 and Linux (every module carries `"PlatformAllowList": ["Win64", "Linux"]`; the Linux port landed with the clang fixes at `aa920932`). Modules: `PinWrightRuntime` (`Runtime`, never Shipping: transport, dispatch, game-safe verbs) + `PinWright` (`Editor`: editor host duties, editor-only verbs) + gated `Editor` integration sub-modules (see Module Split below)
 - Single endpoint: stateless `POST /mcp` HTTP endpoint speaking JSON-RPC 2.0 (Auto-derive toggle / `bAutoDerivePort` is on by default, so the port derives per project as `19880 + hash(projectPath) % 10240` → `19880`–`30119`; disable it to bind the fixed `HttpPort`, which defaults to 19880; the bound port is published to `Saved/PinWright/gateway-port`, which the bundled stdio proxy re-reads per call so proxy configs follow a moved project or changed port); MCP `2025-06-18` revision, no session id, no batch in v1
 - ~240 handler files with **1,191 registered RPC methods across 67 public namespaces**, organized into a dotted namespace tree; all methods are exposed through one MCP tool named `call` — agents pass `method=<dotted.name>` and `args={...}` as tool arguments (omit `args` to fetch the wiki page for the method)
   - **Provenance for those counts:** `operations` and `namespaceCount` in the generated `Saved/PinWright/wiki/registry.json` (host project, written 2026-08-18 14:24 from a tree already carrying the `image` namespace), on a boot whose startup line reads `skipped=[]`. A host with an integration's engine plugin disabled registers fewer, so re-read the registry rather than trusting the number. The file figure is `grep -rl REGISTER_RPC_HANDLER Source --include=*.cpp` = 242. Do **not** substitute a static macro count for the method count: `grep -c REGISTER_RPC_HANDLER(` over `Source` reads 1,180 sites and does not reconcile with what the editor registers.
@@ -42,7 +42,7 @@ Documentation whose only worked example is a host asset fails this test even whe
 clean: a user cannot tell what the feature is *for*. Referencing the host as the environment the
 plugin is *developed and tested in* — as this file does throughout — is legitimate and stays.
 
-Operational rule: agents must use their MCP client's `call` tool (Claude Code: see **Claude Code** at the end). Do not probe or invoke the gateway with raw HTTP, `curl`, `Invoke-RestMethod`, `/health`, or legacy `/rpc` calls.
+Operational rule: agents must use their MCP client's `call` tool (Claude Code: see **Claude Code** at the end) or the bundled CLI `Content/Python/pinwright_cli.py` (run on Unreal's bundled interpreter; the only client for game processes and second instances, which the MCP proxy does not reach; contract on the `cli` wiki page, `docs/wiki-src/cli.md`). Do not probe or invoke the gateway with raw HTTP, `curl`, `Invoke-RestMethod`, `/health`, or legacy `/rpc` calls.
 
 **See `docs/arch.md` for the full architecture reference** — layer diagram, request flow, auto-registration pipeline, FHandlerContext API, state management, testing architecture, and key files index.
 
@@ -141,6 +141,13 @@ Build rules are in `Source/PinWright/PinWright.Build.cs` (C#) plus one `Source/P
 - The main module no longer links `CommonUI`, `Chooser`, `GeometryScripting*`, `GeometryCore`, `GeometryFramework`, or `DynamicMesh`: those live in the gated sub-modules (the activatable-widget handlers moved to `PinWrightCommonUI`). `StructUtils` is linked as a separate module only on UE ≤ 5.4 (gated on `Target.Version` in the main and affected sub-module `Build.cs` files); from 5.5 it lives in CoreUObject. `UIExtension`/`CommonGame` (Lyra-only modules) are not required — UIExtension is referenced by path string, not linked
 
 ## Module Split & Integration Gating (v0.7.0)
+
+**Runtime / editor split (contract: [docs/runtime-module.md](docs/runtime-module.md)).** `PinWrightRuntime` (`Source/PinWrightRuntime`, `"Type": "Runtime"`, `"TargetConfigurationDenyList": ["Shipping"]`, LoadingPhase `Default`) holds the HTTP transport, JSON-RPC, dispatcher, handler registry, formatters, error codes, catalog (no wiki generation), `UPinWrightRuntimeSubsystem` (`UEngineSubsystem`), the world accessor `Dispatch/PinWrightWorld.h`, the instance file, and every handler folder whose verbs run without `UnrealEd`. `PinWright` (`Editor`) depends on it and keeps wiki generation, the modal-state probe, launch policy, the setup screen and editor-only handlers, plugged in through `IPinWrightEditorHooks`. Rules for new code:
+
+- A handler file whose verbs all work in a game process goes in `Source/PinWrightRuntime/Private/Handlers/<Domain>/`; editor-only verbs stay in `Source/PinWright/Private/Handlers/<Domain>/` (a mixed file is split into a same-named file per module). Registration macros are identical in both.
+- Never read `GEditor->PlayWorld` or `GEditor->GetEditorWorldContext()` in runtime code: use `PinWright::GetTargetWorld()` / `GetEditorWorldOrNull()` / `GetTargetGameViewport()` / `IsGameProcess()`, keeping the verb's existing editor semantics (a PIE-only verb stays PIE-only).
+- Include paths do not change across the move: runtime headers keep their module-root-relative path (`"Dispatch/Foo.h"`), exports use `PINWRIGHTRUNTIME_API`; code that must never ship is also inside `#if !UE_BUILD_SHIPPING`.
+- A game process serves only with `-PinWright` or `-PinWrightPort=<N|0>`; every serving process writes `Saved/PinWright/instances/<pid>.json`. Activation and instance-file rules: `docs/arch.md` -> **Runtime Module, Activation and Instances**.
 
 The `.uplugin` ships the main `PinWright` module + `PinWrightRecorder` (both `LoadingPhase: Default`) and five integration sub-modules (`PinWrightGeometry`, `PinWrightPCG`, `PinWrightChooser`, `PinWrightPoseSearch`, `PinWrightCommonUI`), each `"Type": "Editor"`, `"LoadingPhase": "None"`, Win64 + Linux. Why: Fab consumers on launcher engines hit LoadLibrary error 126 because `UnrealEditor-PinWright.dll` hard-imported DLLs of engine plugins the consumer had disabled. Each sub-module hard-links its engine plugin and adds `PrivateIncludePaths` into `Source/PinWright/Private` so moved files keep their original `#include "Handlers/..."` shape (fix follows the UE 5.8 IKRig → IKRigUAF precedent).
 
@@ -285,7 +292,7 @@ Use `Saved/Logs/<HostProject>.log` (the log filename follows the host project na
 
 ## Architecture
 
-### Decomposed Layers (under `Source/PinWright/Private/`)
+### Decomposed Layers (layers 1-5 and game-safe handlers in `Source/PinWrightRuntime/`, editor-only handlers and host duties in `Source/PinWright/`)
 
 1. **Transport** (`Transport/SocketHttpServer.h/.cpp`, `Transport/McpRequestCore.h/.cpp`, `Transport/McpTransportTypes.h`)
    A single custom socket HTTP/1.1 server behind the `POST /mcp` endpoint (`SocketHttpServer`, non-blocking single I/O thread, uniform across UE 5.3–5.8) with a completion-based async model, timeout sweeping, and the SSE streaming path — SSE is always available; whether a request streams or gets a job ticket is gated per request (see Wire Protocol). Request logic — envelope parse, the five supported protocol methods (`initialize`, `notifications/initialized`, `ping`, `tools/list`, `tools/call`), and routing `tools/call` payloads into the dispatcher — lives in `McpRequestCore`. Shared transport types (`FOnRpcRequest`, `FTransportCompletionCallback`) live in `McpTransportTypes.h`.
@@ -299,8 +306,8 @@ Use `Saved/Logs/<HostProject>.log` (the log filename follows the host project na
 4. **Tool Catalog + Wiki** (`Catalog/ToolCatalog.h/.cpp`, `Catalog/WikiHandler.h/.cpp`, `Catalog/WikiOverlay.h/.cpp`, `Catalog/WikiDiskGenerator.h/.cpp`)
    `FToolCatalog` is a stub that only stores a weak dispatcher pointer — it generates no reference doc. The registered handler set is enumerated by `WikiDiskGenerator` at editor launch and written to `Saved/PinWright/wiki/` — pages as markdown, plus a machine-readable `registry.json` (operation count, namespace count, per-namespace method counts + maturity tiers) that is the generated source of truth for every published count. `WikiHandler::RenderPage(path)` walks the namespace tree and renders branch / leaf / method pages — it is the discovery surface, reached through the single `call` MCP tool by passing `method=<path>` with no `args`. `FWikiOverlay` loads hand-authored overlay sources from `docs/wiki-src/<path>.md` and merges prelude + per-method H3 sections into the auto-content. `WikiDiskGenerator` writes the full assembled tree (auto-content + overlays) to `Saved/PinWright/wiki/`, and the primary wiki-discovery response returns an on-disk file path reference to that output rather than inline markdown — inline rendering remains only as the cold-start / not-found fallback. `tools/list` returns a single descriptor for the `call` tool; the dotted RPC method travels as a string value in the `method` argument, never as a tool name.
 
-5. **Subsystem** (`Public/PinWrightSubsystem.h`, `PinWrightSubsystem.cpp`)
-   `UEditorSubsystem` that orchestrates Transport, Dispatcher, and Catalog. Wires delegates, starts HTTP transport, runs a 0.1s ticker for timeout sweeps and deferred processing. Skips init during commandlet execution.
+5. **Subsystem** (`Source/PinWrightRuntime/Public/PinWrightRuntimeSubsystem.h`)
+   `UPinWrightRuntimeSubsystem` (`UEngineSubsystem`, editor and game) orchestrates Transport, Dispatcher, and Catalog: drains registrations, starts HTTP transport behind the activation gate, writes the instance file, runs a 0.1s ticker for timeout sweeps and deferred processing. Editor-only duties (wiki generation, modal probe, launch policy, setup screen) come from the `PinWright` module through `IPinWrightEditorHooks`. Skips init during commandlet execution.
 
 6. **Handlers** (`Handlers/`) — ~90 files organized in domain subdirectories (Actor/, Blueprint/, Material/, UI/, etc.)
 
@@ -347,7 +354,7 @@ REGISTER_RPC_HANDLER("namespace.verb", "namespace", "Summary",
 ```
 
 When adding a new handler:
-1. Create a `.cpp` file in the appropriate `Private/Handlers/<Domain>/` subdirectory
+1. Create a `.cpp` file in the appropriate `Private/Handlers/<Domain>/` subdirectory of `PinWrightRuntime` when every verb in it works in a game process, else of `PinWright` (see Module Split)
 2. Use `REGISTER_RPC_HANDLER` — no header declarations or manual registration needed
 3. The macro auto-registers at static init time; the dispatcher picks it up at subsystem init
 4. Take the interface decisions from `docs/rpc-design.md` (response honesty, required params, verification, batching, job handles, tick-safety gating, error codes) and run its "before you ship a verb" checklist before calling the verb done

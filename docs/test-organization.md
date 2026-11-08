@@ -176,6 +176,8 @@ Source/PinWright/Private/Tests/<TopLevelName>/
 
 Tests for handlers owned by an integration sub-module live in that sub-module's own tree instead, with the same `<TopLevelName>/` layout (e.g. `Source/PinWrightGeometry/Private/Tests/Geometry/`, `Source/PinWrightPCG/Private/Tests/PCG/`, `Source/PinWrightChooser/Private/Tests/Assets/`, `Source/PinWrightPoseSearch/Private/Tests/Gameplay/`, `Source/PinWrightCommonUI/Private/Tests/UI/`): typed tests moved with their handlers in the v0.7.0 module split. The category strings are unchanged; only the file location follows the owning module.
 
+Tests of code in `PinWrightRuntime` (transport, dispatch, game-safe handlers) stay in `Source/PinWright/Private/Tests/` and compile against the runtime module's unchanged include paths ([runtime-module.md](runtime-module.md)); they run in the editor, so the game half of a runtime contract is a documented manual check (`docs/wiki-src/game-mode.md`).
+
 Main-module tests compile into the main `PinWright` module DLL; sub-module tests compile into their sub-module DLL; there is no separate tests module. `WITH_DEV_AUTOMATION_TESTS` self-strips test registration in shipping builds, so no per-file guards are needed. Test-only helpers shared between cpps in the same subfolder follow the named-namespace inline header pattern (see `Tests/Assets/AssetDumpTestHelpers.h`, `Tests/Media/LiveUiSnapshotTestHelpers.h`, `Tests/Bpir/BpirGraphTestHelpers.h`, etc.). Sub-module test cpps still include the shared `Tests/TestUtils.h` through the `PrivateIncludePaths` entry pointing at the main module's `Private/` dir.
 
 Examples:

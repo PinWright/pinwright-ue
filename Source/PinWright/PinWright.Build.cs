@@ -28,6 +28,12 @@ public class PinWright : ModuleRules
             "MaterialEditor"       // UMaterialExpressionRotator and other material expressions
         });
 
+        // Transport, dispatch, registry and game-safe handlers (docs/runtime-module.md). Public so
+        // the integration sub-modules and tests keep including the moved headers by their old paths;
+        // the runtime Private root serves the moved handler folders' internal headers.
+        PublicDependencyModuleNames.Add("PinWrightRuntime");
+        PrivateIncludePaths.Add(Path.Combine(ModuleDirectory, "..", "PinWrightRuntime", "Private"));
+
         // Header-only dependency — no linker dep, just include path for IPythonScriptPlugin.h
         PrivateIncludePathModuleNames.Add("PythonScriptPlugin");
 

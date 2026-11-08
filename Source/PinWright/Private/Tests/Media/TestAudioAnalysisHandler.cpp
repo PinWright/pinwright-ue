@@ -203,7 +203,7 @@ namespace PwAudioAnalysisHandlerTestHelpers
 
     FPwCandidateRegistry& Registry()
     {
-        return FPluginState::Get().GetCandidateRegistry();
+        return PinWrightGetCandidateRegistry();
     }
 
     /** Lands a buffer in the session registry and returns its id. */

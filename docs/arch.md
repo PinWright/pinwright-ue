@@ -1,8 +1,8 @@
 ---
 type: system
-summary: "PinWright architecture: 7-layer in-editor MCP design plus the stdio proxy lifecycle boundary (call, editor_start, editor_restart, editor_run_tests, editor_test_status, editor_list, editor_build, editor_build_status, pinwright_supervisor capped supervisor), gated integration sub-modules (IntegrationGates, LoadingPhase None, v0.7.0 module split), auto-registration pipeline, FHandlerContext, FAsyncResponseToken, retained safe-point response paths, AtomicFileWriter output publication, Find-in-Blueprints task lifetime, recorder query/session invariants, state management, IR sidecar registry, shared JSON builders, and testing categories."
-date: 2026-09-04
-tags: [architecture, mcp, rpc, http, handlers, dispatcher, json-rpc, transport, stdio-proxy, editor-lifecycle, jobs, async, ir-sidecar-registry, json-builders, recorder, pagination, recorder-segments, integration-gates, sub-modules]
+summary: "PinWright architecture: 7-layer in-process MCP design split across PinWrightRuntime (Runtime, never Shipping: transport, dispatch, game-safe verbs, activation gate, instance files) and PinWright (Editor: IPinWrightEditorHooks, editor-only verbs), plus the stdio proxy lifecycle boundary (call, editor_start, editor_restart, editor_run_tests, editor_test_status, editor_list, editor_build, editor_build_status, pinwright_supervisor capped supervisor), gated integration sub-modules (IntegrationGates, LoadingPhase None, v0.7.0 module split), auto-registration pipeline, FHandlerContext, FAsyncResponseToken, retained safe-point response paths, AtomicFileWriter output publication, Find-in-Blueprints task lifetime, recorder query/session invariants, state management, IR sidecar registry, shared JSON builders, and testing categories."
+date: 2026-11-08
+tags: [architecture, runtime-module, game-mode, multi-instance, instance-files, mcp, rpc, http, handlers, dispatcher, json-rpc, transport, stdio-proxy, editor-lifecycle, jobs, async, ir-sidecar-registry, json-builders, recorder, pagination, recorder-segments, integration-gates, sub-modules]
 ---
 
 # Architecture: PinWright
@@ -11,10 +11,12 @@ tags: [architecture, mcp, rpc, http, handlers, dispatcher, json-rpc, transport, 
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  MCP client adapter (direct HTTP or bundled stdio proxy)     │
-│  Direct endpoint: `call`; stdio adds local lifecycle tools   │
+│  Client: direct HTTP, bundled stdio proxy, or pinwright_cli  │
+│  Direct endpoint: `call`; stdio adds local lifecycle tools;  │
+│  the CLI reaches every instance via instances/<pid>.json     │
 └───────────────────────────┬─────────────────────────────────┘
                             │ internal HTTP POST /mcp
+  ══ PinWrightRuntime (Runtime, never Shipping): editor + game ══
 ┌───────────────────────────▼─────────────────────────────────┐
 │  Transport (SocketHttpServer + McpRequestCore)               │
 │  - Custom socket HTTP/1.1 server (single I/O thread)         │
@@ -86,16 +88,28 @@ tags: [architecture, mcp, rpc, http, handlers, dispatcher, json-rpc, transport, 
 │                   │    WikiDiskGenerator.h/.cpp              │
 │                   │                                          │
 ├──────────────┴──────────────────────────────────────────────┤
-│  Subsystem (UPinWrightSubsystem)            │
-│  - UEditorSubsystem that owns Transport, Dispatcher, Catalog │
-│  - Loads gated integration sub-modules (IntegrationGates)    │
-│    before draining handler registrations                     │
-│  - Wires delegates, starts HTTP, runs 0.1s ticker            │
+│  Subsystem (UPinWrightRuntimeSubsystem)                      │
+│  - UEngineSubsystem (editor and game) that owns Transport,   │
+│    Dispatcher, Catalog                                       │
+│  - Activation gate, bind/retry, instance file, 0.1s ticker,  │
+│    job/event bridge                                          │
+│  - Editor duties via IPinWrightEditorHooks (null in game)    │
 │  - Pure orchestrator: no domain state                        │
-│  Files: Public/PinWrightSubsystem.h         │
-│         Private/PinWrightSubsystem.cpp      │
+│  Files: PinWrightRuntime/Public/PinWrightRuntimeSubsystem.h  │
+│         PinWrightRuntime/Public/Dispatch/PinWrightWorld.h    │
 ├─────────────────────────────────────────────────────────────┤
-│  Handlers (~90 files, ~1,170 methods)                        │
+│  Game-safe handlers (PinWrightRuntime/Private/Handlers/)     │
+│  input, drive, capture, world/actor/physics, console, logs,  │
+│  UI inspection, networking, system/perf, live reflection     │
+└─────────────────────────────────────────────────────────────┘
+  ══ PinWright (Editor) + gated integration sub-modules ══
+┌─────────────────────────────────────────────────────────────┐
+│  Editor host (PinWright module, implements                   │
+│  IPinWrightEditorHooks): wiki generation, modal-state probe, │
+│  transport launch policy, setup screen / status UI,          │
+│  IntegrationGates                                            │
+├─────────────────────────────────────────────────────────────┤
+│  Editor-only handlers (~1,170 methods across both modules)   │
 │  - One .cpp per handler (or small group)                     │
 │  - REGISTER_RPC_HANDLER macro → zero-wiring registration    │
 │  - FHandlerContext for typed params, validation, response    │
@@ -154,6 +168,8 @@ tags: [architecture, mcp, rpc, http, handlers, dispatcher, json-rpc, transport, 
 │  Files: Private/Utils/*.h/.cpp                               │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+Jobs, State and Utilities serve both modules: anything the transport or a runtime verb uses lives in `PinWrightRuntime` (an editor module may depend on the runtime one, never the reverse). Module contract: [runtime-module.md](runtime-module.md); activation and instances: **Runtime Module, Activation and Instances** below.
 
 ## Request Flow
 
@@ -279,7 +295,12 @@ REGISTER_RPC_HANDLER("namespace.verb", "namespace", "Summary",
 
 **Registration flags:** `REGISTER_RPC_MUTATING_HANDLER` sets `bMutating`; `REGISTER_RPC_HANDLER_TICK_UNSAFE` sets `bTickUnsafe`, which `PinWrightSafePoint::IsTickUnsafeMethod()` / `GetTickUnsafeMethods()` read straight off `GetPendingRegistrations()` together with the legacy name table in `Dispatch/SafePoint.cpp` (the read API and its callers — `FRpcDispatcher::ProcessRequest`, `PinWrightWorldPrecondition`, `FAutoRegisterHandler`'s constructor — are unchanged). A tick-unsafe registration is also mutating unless it is one of the read-only probes named in `HandlerRegistration.cpp`.
 
-**Subsystem init order:** `IntegrationGates::LoadEnabledIntegrations()` (loads enabled sub-modules so their static-init registrations join the pending array) → `DrainAutoRegistrations()` → `DrainFormatterRegistrations()` → `Catalog->Initialize()` → `WikiDiskGenerator::Generate()` → transport bind/start. The gate must precede the drain: a sub-module loaded later would register handlers into an already-drained array, and its methods would be missing from the catalog, the generated wiki, and the dispatch TMap.
+**Subsystem init order (two modules):**
+
+1. Module load (LoadingPhase `Default`, before `UEngine::Init`): `PinWrightRuntime` first (dependency), its handlers' static-init registrations join the pending array; then `PinWright` (editor targets only), whose handlers join the same array and whose `StartupModule` installs `IPinWrightEditorHooks`.
+2. `UPinWrightRuntimeSubsystem::Initialize` (engine subsystems are created in `UEngine::Init`, so both modules are loaded and the hooks set): editor only, `IntegrationGates::LoadEnabledIntegrations()` loads the enabled sub-modules → `DrainAutoRegistrations()` → `DrainFormatterRegistrations()` → `Catalog->Initialize()` → editor only, the hook runs `WikiDiskGenerator::Generate()` → activation gate → transport bind/start → `gateway-port` (primary editor only) → instance file → job/event bridge.
+
+The gate must precede the drain: a sub-module loaded later would register handlers into an already-drained array, and its methods would be missing from the catalog, the generated wiki, and the dispatch TMap. In a game process the `PinWright` module does not exist and the hooks are null: no editor-only verb is registered and no wiki is written.
 
 **Transport bind and its bounded retry:** `FSocketHttpServer::Start` binds `127.0.0.1:<port>` directly — the bind doubles as the port-conflict probe, and `EStartResult` separates a contested port (retryable) from a missing socket subsystem or a dead I/O thread (not). A lost bind arms `PinWrightBindRetry::FState` (`Public/Transport/BindRetryPolicy.h`), driven from the existing 0.1 s subsystem ticker: 2 s doubling to a 30 s cap, total budget 600 s, then a terminal error re-logged every 300 s. Bounded on purpose — the case it must cover is a previous editor of this project that has not finished releasing the socket; a port owned by another project's editor or sitting in a Windows excluded / Hyper-V range never clears, and retrying forever would hide a configuration problem behind an infinite "still trying". A late bind runs the same activation as the first (`TryStartTransport`), so the `Saved/PinWright/gateway-port` file and the job-event bridge are never skipped.
 
@@ -292,6 +313,32 @@ Proxy side: `_probe_state`'s `not_running` is the only state that licenses start
 **Launch-time wiki generation:** After `DrainAutoRegistrations()` populates the dispatch TMap at subsystem init, `WikiDiskGenerator` walks the namespace tree and assembles every page (auto-content + `docs/wiki-src/` overlays via `FWikiOverlay`), `registry.json`, and a conservative ownership manifest. It byte-verifies that complete set in one unique sibling staging directory before creating an absent final output root or publishing any final file. Changed pages and `registry.json` are then published one at a time through `AtomicFileWriter`; any failure stops before pruning. Stale files are pruned only in the canonical `Saved/PinWright/wiki/` root and only when the previous valid ownership manifest lists them. The generator records failed deletions, rebuilds the final manifest from the desired filenames plus only those failures, validates its limits again, and atomically publishes that manifest last. Per-file publication is deliberate because open Windows readers can block a whole-directory rename; a mid-publication or final-manifest failure can leave earlier successful publications or prunes and does not imply whole-tree rollback. A `WikiOutputDirectory` override still receives generated output but is never pruned. The primary wiki-discovery response returns an on-disk file path reference to the generated output; `WikiHandler`'s inline markdown rendering is used only as the cold-start / not-found fallback. `docs/wiki-src/` holds the hand-authored overlay sources; `Saved/PinWright/wiki/` is the plugin-owned generated output.
 
 **Auto-validation:** Required params declared via `RPC_PARAM_REQ()` are automatically checked by the dispatcher before the handler runs. Missing required params return `MISSING_REQUIRED_PARAM` error without invoking the handler body.
+
+## Runtime Module, Activation and Instances
+
+Contract: [runtime-module.md](runtime-module.md). `PinWrightRuntime` builds for Debug, DebugGame and Development (editor, `-game`, packaged), never Shipping (`TargetConfigurationDenyList`); code that must never ship is additionally inside `#if !UE_BUILD_SHIPPING`.
+
+**Activation gate** (`UPinWrightRuntimeSubsystem`, read once at init from the command line):
+
+| Process | Switch | Serves | Port | `gateway-port` / `gateway-token` |
+|---|---|---|---|---|
+| editor | none | yes, unless the editor launch policy suppresses it (automation `-ExecCmds` without `-PinWrightTransport`, `-PinWrightNoTransport`, commandlets; `docs/wiki-src/mcp-transport.md`) | settings: derived or fixed `HttpPort`, bounded bind retry | written / reconciled, as before |
+| editor | `-PinWrightPort=<N\|0>` | yes | N, or ephemeral for 0 | never written or retracted |
+| game (`-game`, packaged Development) | none | no: the module loads and does nothing | - | - |
+| game | `-PinWright` | yes | ephemeral | never |
+| game | `-PinWrightPort=<N\|0>` | yes | N, or ephemeral for 0 | never |
+
+Every serving process binds `127.0.0.1` only. `gateway-port` stays the primary editor's, so the MCP proxy never follows a second instance.
+
+**Instance file** (`Utils/InstanceFile.h`): every serving process writes `<ProjectSaved>/PinWright/instances/<pid>.json` after a successful bind (never before: an ephemeral port is known only then), user-only permissions (POSIX `0600`; Windows: no ACE for a shared group), and deletes it on clean shutdown. Schema: `pid`, `port`, `token` (64 lowercase hex, per process), `kind` (`editor` | `game`), `project` (absolute `.uproject`), `startTime` (ISO 8601 UTC), `reason` (`-PinWrightLaunchReason`, or empty), `map`, `engine` (`<major>.<minor>`). A crash leaves the file behind; readers (`pinwright_cli.py`) skip a file whose pid is dead or was started after the file was written (pid reuse). Each instance file's `token` authorizes requests to that process; the primary editor also accepts `gateway-token`, the MCP proxy's credential.
+
+**World accessor** (`Dispatch/PinWrightWorld.h`): `GetTargetWorld()` = PIE world while PIE runs, else the editor world (game: the game viewport's world); `GetEditorWorldOrNull()` = editor world, never PIE (game: null, callers return `EDITOR_ONLY` / `NO_EDITOR_WORLD`); `GetTargetGameViewport()` = PIE or game viewport client, null in editor-only state; `IsGameProcess()`. Moved handlers call these instead of `GEditor`.
+
+**`IPinWrightEditorHooks`**: set by the `PinWright` module's `StartupModule`, null in a game process. Carries the editor duties the runtime subsystem must not link: modal-state probe (feeds the readiness snapshot), wiki generation after catalog init, transport launch policy, setup screen / status UI. The runtime code calls a hook only when the pointer is set; nothing in `PinWrightRuntime` includes an editor header.
+
+**Wiki marking:** the editor alone generates the wiki. Each method records which module registered it; the method page carries `Runtime: true` (registered by `PinWrightRuntime`, callable in a game process) or `Runtime: false` (editor only), and `registry.json` publishes the same `runtime` boolean per method. In a game process an editor-only method is not registered, so calling it returns `UNKNOWN_ACTION`.
+
+Tests: `PinWright.transport.runtime_activation.*`, `PinWright.transport.instance_file.*`, `PinWright.transport.instance_token.*` (`Tests/Transport/TestRuntimeActivation.cpp`, through `UPinWrightRuntimeSubsystem::ActivateForTesting` with a canned command line), `PinWright.infra.target_world.*` (`Tests/Infra/TestTargetWorld.cpp`, editor half). The game half of the world accessor is a manual check: `docs/wiki-src/game-mode.md`.
 
 ## Atomic Output Publication
 
@@ -598,7 +645,10 @@ Tests in `Source/PinWright/Private/Tests/` — compiled into the main module DLL
 
 | File | Purpose |
 |---|---|
-| `Public/PinWrightSubsystem.h` | Subsystem (orchestrator) |
+| `Source/PinWrightRuntime/Public/PinWrightRuntimeSubsystem.h` | Subsystem (orchestrator, editor and game): activation gate, bind, instance file |
+| `Source/PinWrightRuntime/Public/Dispatch/PinWrightWorld.h` | Target world / editor world / game viewport accessor for game-safe verbs |
+| `Source/PinWrightRuntime/.../Utils/InstanceFile.h` | `Saved/PinWright/instances/<pid>.json` writer and path |
+| `Content/Python/pinwright_cli.py` | CLI for every instance of a project (editor and game), via instance files |
 | `Private/IntegrationGates.h/.cpp` | Plugin → sub-module → method-prefix gate table; loads enabled integration sub-modules before the registration drain |
 | `Source/PinWright<Integration>/*.Build.cs` | Per-sub-module build rules (hard-link engine plugin + PrivateIncludePaths into main Private/) |
 | `Private/Transport/SocketHttpServer.h/.cpp` | Socket HTTP/1.1 server + async completions + SSE streaming |

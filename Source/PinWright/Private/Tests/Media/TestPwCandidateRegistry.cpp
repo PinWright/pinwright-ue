@@ -46,7 +46,7 @@ namespace
     // handler tests, which must go through FPluginState the way the verbs do.
     FString AddPwCandidateToPluginState()
     {
-        return FPluginState::Get().GetCandidateRegistry().Add(MakePwTestCandidate());
+        return PinWrightGetCandidateRegistry().Add(MakePwTestCandidate());
     }
 }
 
@@ -440,7 +440,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPwCandidateDiscardNoSelectorTest,
 
 bool FPwCandidateDiscardNoSelectorTest::RunTest(const FString& Parameters)
 {
-    FPwCandidateRegistry& Registry = FPluginState::Get().GetCandidateRegistry();
+    FPwCandidateRegistry& Registry = PinWrightGetCandidateRegistry();
     Registry.DiscardAll();
     const FString Id = AddPwCandidateToPluginState();
 
@@ -491,7 +491,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPwCandidateDiscardIdempotentTest,
 
 bool FPwCandidateDiscardIdempotentTest::RunTest(const FString& Parameters)
 {
-    FPwCandidateRegistry& Registry = FPluginState::Get().GetCandidateRegistry();
+    FPwCandidateRegistry& Registry = PinWrightGetCandidateRegistry();
     Registry.DiscardAll();
     const FString Id = AddPwCandidateToPluginState();
 
@@ -568,7 +568,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPwCandidateListTest,
 
 bool FPwCandidateListTest::RunTest(const FString& Parameters)
 {
-    FPwCandidateRegistry& Registry = FPluginState::Get().GetCandidateRegistry();
+    FPwCandidateRegistry& Registry = PinWrightGetCandidateRegistry();
     Registry.DiscardAll();
 
     // Empty registry first: the listing must say so rather than return a bare empty array.
@@ -678,7 +678,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPwCandidateDiscardAllTest,
 
 bool FPwCandidateDiscardAllTest::RunTest(const FString& Parameters)
 {
-    FPwCandidateRegistry& Registry = FPluginState::Get().GetCandidateRegistry();
+    FPwCandidateRegistry& Registry = PinWrightGetCandidateRegistry();
     Registry.DiscardAll();
     const FString Id = AddPwCandidateToPluginState();
     AddPwCandidateToPluginState();
@@ -742,7 +742,7 @@ bool FPwCandidateAuditionSeamTest::RunTest(const FString& Parameters)
         return false;
     }
 
-    FPwCandidateRegistry& Registry = FPluginState::Get().GetCandidateRegistry();
+    FPwCandidateRegistry& Registry = PinWrightGetCandidateRegistry();
     Registry.DiscardAll();
     const FString Id = AddPwCandidateToPluginState();
 
@@ -833,6 +833,6 @@ bool FPwCandidateListRejectsUnknownFieldTest::RunTest(const FString& Parameters)
         TestTrue(FString::Printf(TEXT("known columns project (%s)"), *Capture.Message), Capture.bSuccess);
     }
 
-    FPluginState::Get().GetCandidateRegistry().Discard(Id);
+    PinWrightGetCandidateRegistry().Discard(Id);
     return true;
 }

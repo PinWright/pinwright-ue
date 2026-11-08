@@ -1387,7 +1387,7 @@ REGISTER_RPC_HANDLER("audio.analysis.analyze", "audio.analysis",
     TArray<EPlotView> Views;
     if (!ReadPlotViews(Ctx, Views)) return true;
 
-    FPwCandidateRegistry& Registry = FPluginState::Get().GetCandidateRegistry();
+    FPwCandidateRegistry& Registry = PinWrightGetCandidateRegistry();
 
     FResolvedSource Source;
     if (!ResolveSource(Ctx, Registry, MakeSingleSourceKeys(), Source)) return true;
@@ -1452,7 +1452,7 @@ REGISTER_RPC_HANDLER("audio.analysis.decompose", "audio.analysis",
     bool bFullDetail = false;
     if (!ReadDetail(Ctx, bFullDetail)) return true;
 
-    FPwCandidateRegistry& Registry = FPluginState::Get().GetCandidateRegistry();
+    FPwCandidateRegistry& Registry = PinWrightGetCandidateRegistry();
 
     // Resolved synchronously so a miss comes back as CANDIDATE_EVICTED / NO_CANDIDATES /
     // ASSET_NOT_FOUND / AUDIO_PROCEDURAL_UNSUPPORTED rather than as a job's bare error string.
@@ -1529,7 +1529,7 @@ REGISTER_RPC_HANDLER("audio.analysis.compare", "audio.analysis",
     bool bFullDetail = false;
     if (!ReadDetail(Ctx, bFullDetail)) return true;
 
-    FPwCandidateRegistry& Registry = FPluginState::Get().GetCandidateRegistry();
+    FPwCandidateRegistry& Registry = PinWrightGetCandidateRegistry();
 
     FResolvedSource Reference;
     if (!ResolveSource(Ctx, Registry, MakeReferenceKeys(), Reference)) return true;
@@ -1611,7 +1611,7 @@ REGISTER_RPC_HANDLER("audio.analysis.to_recipe", "audio.analysis",
 {
     using namespace PwAudioAnalysisHandlerInternal;
 
-    FPwCandidateRegistry& Registry = FPluginState::Get().GetCandidateRegistry();
+    FPwCandidateRegistry& Registry = PinWrightGetCandidateRegistry();
 
     FResolvedSource Source;
     if (!ResolveSource(Ctx, Registry, MakeSingleSourceKeys(), Source)) return true;

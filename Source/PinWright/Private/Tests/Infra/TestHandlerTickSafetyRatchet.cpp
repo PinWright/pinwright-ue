@@ -38,20 +38,64 @@ namespace HandlerTickSafetyRatchet
             : FString();
     }
 
+    // Game-safe handler folders and the core moved to PinWrightRuntime (docs/runtime-module.md),
+    // keeping their paths below the module root: a root under Source/PinWright/Private also
+    // covers the same path under PinWrightRuntime's Private and Public roots.
+    TArray<FString> WithRuntimeTwins(const FString& Root)
+    {
+        TArray<FString> Roots = { Root };
+        const FString Marker = TEXT("Source/PinWright/Private");
+        const FString Normalized = Root.Replace(TEXT("\\"), TEXT("/"));
+        const int32 Index = Normalized.Find(Marker);
+        if (Index != INDEX_NONE)
+        {
+            const FString Base = Normalized.Left(Index);
+            const FString Tail = Normalized.Mid(Index + Marker.Len());
+            Roots.Add(Base + TEXT("Source/PinWrightRuntime/Private") + Tail);
+            Roots.Add(Base + TEXT("Source/PinWrightRuntime/Public") + Tail);
+        }
+        return Roots;
+    }
+
     FString MakeRelative(const FString& File, const FString& Root)
     {
-        FString Relative = FPaths::ConvertRelativePathToFull(File);
-        const FString FullRoot = FPaths::ConvertRelativePathToFull(Root) / TEXT("");
-        FPaths::MakePathRelativeTo(Relative, *FullRoot);
+        const FString FullFile = FPaths::ConvertRelativePathToFull(File).Replace(TEXT("\\"), TEXT("/"));
+        for (const FString& Candidate : WithRuntimeTwins(Root))
+        {
+            const FString FullRoot =
+                (FPaths::ConvertRelativePathToFull(Candidate) / TEXT("")).Replace(TEXT("\\"), TEXT("/"));
+            if (FullFile.StartsWith(FullRoot))
+            {
+                return FullFile.Mid(FullRoot.Len());
+            }
+        }
+        FString Relative = FullFile;
+        FPaths::MakePathRelativeTo(Relative, *(FPaths::ConvertRelativePathToFull(Root) / TEXT("")));
         return Relative.Replace(TEXT("\\"), TEXT("/"));
     }
 
     TArray<FString> CollectSourceFiles(const FString& Root)
     {
         TArray<FString> Files;
-        IFileManager::Get().FindFilesRecursive(Files, *Root, TEXT("*.cpp"), true, false, false);
-        IFileManager::Get().FindFilesRecursive(Files, *Root, TEXT("*.h"), true, false, false);
+        for (const FString& Candidate : WithRuntimeTwins(Root))
+        {
+            IFileManager::Get().FindFilesRecursive(Files, *Candidate, TEXT("*.cpp"), true, false, false);
+            IFileManager::Get().FindFilesRecursive(Files, *Candidate, TEXT("*.h"), true, false, false);
+        }
         return Files;
+    }
+
+    // Root/Relative, or the same path under a runtime twin root when the file moved there.
+    FString ResolveSourceFile(const FString& Root, const FString& Relative)
+    {
+        for (const FString& Candidate : WithRuntimeTwins(Root))
+        {
+            if (FPaths::FileExists(Candidate / Relative))
+            {
+                return Candidate / Relative;
+            }
+        }
+        return Root / Relative;
     }
 
     int32 CountMatches(const FString& Contents, const TCHAR* Pattern)
@@ -283,7 +327,8 @@ bool FHandlerHazardsStayGatedTest::RunTest(const FString& Parameters)
                                          NestedGameThreadPattern);
         if (Count > 0)
         {
-            Found.Add(MakeRelative(File, HandlersRoot), Count);
+            // Summed: a split handler's editor and runtime halves share one relative path.
+            Found.FindOrAdd(MakeRelative(File, HandlersRoot)) += Count;
         }
     }
 
@@ -320,7 +365,7 @@ bool FHandlerHazardsStayGatedTest::RunTest(const FString& Parameters)
     for (const FRequiredSafePointSite& Entry : RequiredRunAtSafePointSites)
     {
         FString RawContents;
-        const FString File = HandlersRoot / Entry.File;
+        const FString File = ResolveSourceFile(HandlersRoot, Entry.File);
         if (!TestTrue(*FString::Printf(TEXT("Required safe-point file %s exists"), Entry.File),
                       FFileHelper::LoadFileToString(RawContents, *File)))
         {
@@ -337,7 +382,12 @@ bool FHandlerHazardsStayGatedTest::RunTest(const FString& Parameters)
     for (const FRequiredSafePointSite& Entry : RequiredJobSafePointSites)
     {
         FString RawContents;
-        const FString File = HandlersRoot / Entry.File;
+        FString File = HandlersRoot / Entry.File;
+        if (!FPaths::FileExists(File))
+        {
+            // Game-safe handler folders moved to the runtime module (docs/runtime-module.md).
+            File = HandlersRoot / TEXT("../../../PinWrightRuntime/Private/Handlers") / Entry.File;
+        }
         if (!TestTrue(*FString::Printf(TEXT("Required job safe-point file %s exists"), Entry.File),
                       FFileHelper::LoadFileToString(RawContents, *File)))
         {
@@ -527,6 +577,9 @@ bool FHandlerHazardsStayGatedTest::RunTest(const FString& Parameters)
               static_cast<int32>(UE_ARRAY_COUNT(BlueprintCompileVerbs)), 60);
 
     TMap<FString, FString> HandlerSources;
+    // Every file, unkeyed: a split handler's editor and runtime halves share one relative path,
+    // so the map keeps only one of them and would lose the other half's registrations.
+    TArray<FString> AllHandlerSources;
     for (const FString& File : Files)
     {
         FString RawContents;
@@ -535,7 +588,8 @@ bool FHandlerHazardsStayGatedTest::RunTest(const FString& Parameters)
             AddError(FString::Printf(TEXT("Failed to read reporting source file: %s"), *File));
             continue;
         }
-        HandlerSources.Add(MakeRelative(File, HandlersRoot), NeutralizeSourceText(RawContents));
+        const FString& Neutralized = AllHandlerSources.Add_GetRef(NeutralizeSourceText(RawContents));
+        HandlerSources.Add(MakeRelative(File, HandlersRoot), Neutralized);
     }
 
     for (const TCHAR* Verb : BlueprintCompileVerbs)
@@ -545,10 +599,10 @@ bool FHandlerHazardsStayGatedTest::RunTest(const FString& Parameters)
 
         int32 RegistrationCount = 0;
         bool bReportsCompile = false;
-        for (const TPair<FString, FString>& Pair : HandlerSources)
+        for (const FString& Source : AllHandlerSources)
         {
             FString RegistrationBlock;
-            if (HandlerBlockReportsCompile(Pair.Value, Verb, RegistrationBlock))
+            if (HandlerBlockReportsCompile(Source, Verb, RegistrationBlock))
             {
                 ++RegistrationCount;
                 bReportsCompile = true;
@@ -608,7 +662,7 @@ bool FHandlerHazardsStayGatedTest::RunTest(const FString& Parameters)
     for (const FRequiredConsentSite& Site : RequiredConsentSites)
     {
         FString RawContents;
-        const FString File = HandlersRoot / Site.File;
+        const FString File = ResolveSourceFile(HandlersRoot, Site.File);
         if (!TestTrue(*FString::Printf(TEXT("Consent file %s exists"), Site.File),
                       FFileHelper::LoadFileToString(RawContents, *File)))
         {

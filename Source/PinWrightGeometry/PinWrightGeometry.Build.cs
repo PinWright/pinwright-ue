@@ -14,6 +14,7 @@ public class PinWrightGeometry : ModuleRules
         // #include "Handlers/..." / "Utils/..." / "Tests/..." paths; resolve them
         // against the main module's Private dir.
         PrivateIncludePaths.Add(Path.Combine(ModuleDirectory, "..", "PinWright", "Private"));
+        PrivateIncludePaths.Add(Path.Combine(ModuleDirectory, "..", "PinWrightRuntime", "Private"));
 
         string EngineDir = Path.GetFullPath(Target.RelativeEnginePath);
 
@@ -67,7 +68,7 @@ public class PinWrightGeometry : ModuleRules
         {
             "Core", "CoreUObject", "Engine", "UnrealEd", "Json", "JsonUtilities",
             // Main plugin module: exported handler registration/context and Utils helpers.
-            "PinWright",
+            "PinWright", "PinWrightRuntime",
             // MeshRenderConsumerScan inspects Niagara systems and mesh renderer properties.
             "Niagara",
             // The GeometryScripting cluster is hard-linked on purpose: this module uses

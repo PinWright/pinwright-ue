@@ -46,14 +46,14 @@ bool FDriveEditorChromeCaptureLeavesAlphaForBlankCheckTest::RunTest(const FStrin
     using namespace DriveEditorChromeBlankCaptureTest;
 
     const FString CaptureWindow = FunctionBody(
-        LoadPluginSource(*this, TEXT("Source/PinWright/Private/Handlers/Drive/DriveEditorChrome.cpp")),
+        LoadPluginSource(*this, TEXT("Source/PinWrightRuntime/Private/Handlers/Drive/DriveEditorChrome.cpp")),
         TEXT("bool FDriveEditorChrome::CaptureWindow("));
     TestTrue(TEXT("CaptureWindow body found"), CaptureWindow.Contains(TEXT("TakeSlateScreenshot")));
     TestFalse(TEXT("CaptureWindow returns the readback without stamping alpha"),
         CaptureWindow.Contains(TEXT("ForceOpaqueAlpha")));
 
     const FString Annotate = FunctionBody(
-        LoadPluginSource(*this, TEXT("Source/PinWright/Private/Handlers/Drive/DriveSetOfMarkRenderer.cpp")),
+        LoadPluginSource(*this, TEXT("Source/PinWrightRuntime/Private/Handlers/Drive/DriveSetOfMarkRenderer.cpp")),
         TEXT("bool FDriveSetOfMarkRenderer::CaptureAnnotated("));
     const int32 ChromeCapture = Annotate.Find(TEXT("FDriveEditorChrome::CaptureWindow("));
     const int32 BlankCheck = Annotate.Find(TEXT("IsBlankReadback("));

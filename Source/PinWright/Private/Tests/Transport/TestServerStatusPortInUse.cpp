@@ -61,7 +61,7 @@ bool FServerStatusHeldPortReportsPortInUseTest::RunTest(const FString& Parameter
         return false;
     }
 
-    UPinWrightSubsystem* Subsystem = NewObject<UPinWrightSubsystem>();
+    UPinWrightRuntimeSubsystem* Subsystem = NewObject<UPinWrightRuntimeSubsystem>();
     if (!TestNotNull(TEXT("subsystem fixture"), Subsystem))
     {
         return false;

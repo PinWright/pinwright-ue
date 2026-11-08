@@ -105,9 +105,9 @@ bool FEditorScreenshotFixedSizeContractTest::RunTest(const FString& Parameters)
     }
 
     const FString ViewportHandlerPath = FPaths::Combine(Plugin->GetBaseDir(),
-        TEXT("Source/PinWright/Private/Handlers/Editor/ViewportHandler.cpp"));
+        TEXT("Source/PinWrightRuntime/Private/Handlers/Editor/ViewportHandler.cpp"));
     const FString ScreenshotUtilsPath = FPaths::Combine(Plugin->GetBaseDir(),
-        TEXT("Source/PinWright/Private/Utils/ScreenshotUtils.cpp"));
+        TEXT("Source/PinWrightRuntime/Private/Utils/ScreenshotUtils.cpp"));
     FString ViewportHandlerSource;
     FString ScreenshotUtilsSource;
     TestTrue(TEXT("ViewportHandler.cpp loads"),

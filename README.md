@@ -1958,7 +1958,7 @@ Not listed: internal plumbing namespaces, not intended for direct use - `pipelin
 
 ## Requirements
 
-Unreal Engine 5.3-5.8 editor build with C++ plugin support, on Windows or Linux. Per-version notes and known engine-specific caveats are in [docs/engine-version-support.md](docs/engine-version-support.md). The modules are editor-only and add nothing to your packaged game. PinWright enables the standard Epic engine plugins it integrates with (Niagara, ControlRig, GeometryScripting, PCG, Enhanced Input, GameplayAbilities and others; the full list is in `PinWright.uplugin`).
+Unreal Engine 5.3-5.8 editor build with C++ plugin support, on Windows or Linux. Per-version notes and known engine-specific caveats are in [docs/engine-version-support.md](docs/engine-version-support.md). Shipping builds contain no PinWright code. Debug, DebugGame and Development builds (editor, `-game`, packaged) include the `PinWrightRuntime` module, which stays idle in a game unless the game is launched with `-PinWright` or `-PinWrightPort` (see [Games and several instances](#games-and-several-instances)); everything else is editor-only. PinWright enables the standard Epic engine plugins it integrates with (Niagara, ControlRig, GeometryScripting, PCG, Enhanced Input, GameplayAbilities and others; the full list is in `PinWright.uplugin`).
 
 ## How it works
 
@@ -2043,6 +2043,14 @@ tool_timeout_sec = 300.0
 
 </details>
 
+## Games and several instances
+
+PinWright also drives a `-game` process or a packaged Development build, and several processes of one project at once (parallel playtests), each on its own loopback port. Editor-only methods (assets, Blueprints, level editing, compilers) stay in the editor; every method page says `Runtime: true` or `false`.
+
+- **Start one:** `pinwright_cli.py start --name play1 --game --mode offscreen --reason "<why>"` (bundled CLI in `Content/Python`, run on Unreal's bundled Python) launches `-game -PinWrightPort=0` and waits until it answers. By hand: `UnrealEditor <Project>.uproject -game -PinWright`, or `<Game>.exe -PinWright` for a packaged Development build. `-PinWrightPort=<N>` picks a port, `=0` an ephemeral one; a second editor started with it leaves the primary editor's `gateway-port` alone.
+- **Drive it:** `pinwright_cli.py list`, then `pinwright_cli.py call --name play1 actor.list "{}"`. Every serving process writes `Saved/PinWright/instances/<pid>.json` (port, its own token, kind, map), which is how the CLI finds and authorizes it. Your MCP client's `call` tool keeps talking to the primary editor.
+- Full reference: `call("game-mode")` and `call("cli")` in the wiki ([docs/wiki-src/game-mode.md](docs/wiki-src/game-mode.md), [docs/wiki-src/cli.md](docs/wiki-src/cli.md)).
+
 ## Security
 
 This is editor automation with asset-mutation privileges: a request can create, edit, save, delete and compile project assets. Treat it as a local developer tool.
@@ -2050,6 +2058,7 @@ This is editor automation with asset-mutation privileges: a request can create, 
 - The plugin runs inside your editor, makes no network calls of its own, and the listener binds to `127.0.0.1`. Your assistant sends project content to whatever model it uses, as it already does with your code. Do not expose the port to a LAN, VPN, container bridge or the internet, and do not put a reverse proxy in front of it.
 - A bearer token is required by default: 64 hex characters, generated on editor start at `Saved/PinWright/gateway-token`. It stops browser drive-by requests and other OS users; it is not a defense against code already running as you.
 - Direct-HTTP agent configs embed the literal token, so keep them machine-local and never commit them; the stdio-proxy config carries only the token file path.
+- Games are opt-in: a `-game` process or packaged Development build serves nothing unless launched with `-PinWright` or `-PinWrightPort`, and Shipping builds compile PinWright out. Each serving process has its own random token in a user-only instance file (`Saved/PinWright/instances/<pid>.json`) and binds `127.0.0.1` only. Do not launch a build you hand to others with `-PinWright`.
 - Use trusted clients only, keep the project in source control, and review generated changes before committing.
 
 Threat model, rotation steps and vulnerability reporting: [SECURITY.md](SECURITY.md).

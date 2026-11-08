@@ -68,8 +68,7 @@ namespace
     // Roots and paths
     // ------------------------------------------------------------------------
 
-    // The main module's handler tree. It is one of the scanned roots and also
-    // the home of the single registry header.
+    // The main module's handler tree, one of the scanned roots.
     FString ResolveHandlersSourceDir()
     {
         const TSharedPtr<IPlugin> Plugin =
@@ -109,20 +108,26 @@ namespace
 
         for (const FString& ModuleDirName : ModuleDirNames)
         {
-            const FString HandlersDir =
-                SourceDir / ModuleDirName / TEXT("Private") / TEXT("Handlers");
-            if (IFileManager::Get().DirectoryExists(*HandlersDir))
+            // Public too: PinWrightRuntime keeps handler headers other modules include there.
+            for (const TCHAR* Visibility : { TEXT("Private"), TEXT("Public") })
             {
-                Roots.Add(HandlersDir);
+                const FString HandlersDir = SourceDir / ModuleDirName / Visibility / TEXT("Handlers");
+                if (IFileManager::Get().DirectoryExists(*HandlersDir))
+                {
+                    Roots.Add(HandlersDir);
+                }
             }
         }
         return Roots;
     }
 
+    // The registry moved with the core to PinWrightRuntime (docs/runtime-module.md).
     FString ResolveErrorCodesHeaderPath()
     {
-        const FString HandlersDir = ResolveHandlersSourceDir();
-        return HandlersDir.IsEmpty() ? FString() : (HandlersDir / TEXT("ErrorCodes.h"));
+        const FString SourceDir = ResolveModuleSourceRoot();
+        return SourceDir.IsEmpty()
+            ? FString()
+            : (SourceDir / TEXT("PinWrightRuntime") / TEXT("Public") / TEXT("Handlers") / TEXT("ErrorCodes.h"));
     }
 
     TArray<FString> CollectHandlerSourceFiles(const TArray<FString>& HandlerRoots)
@@ -382,18 +387,16 @@ namespace
     const TCHAR* const PartiallyConvertedHandlerFiles[] = {
         TEXT("PinWright/Private/Handlers/Actor/ActorFolderHandler.cpp"),
         TEXT("PinWright/Private/Handlers/Actor/ActorLabelHandler.cpp"),
-        TEXT("PinWright/Private/Handlers/Actor/ActorNameParamUtils.h"),
-        TEXT("PinWright/Private/Handlers/Actor/LifecycleHandler.cpp"),
         TEXT("PinWright/Private/Handlers/Asset/StaticMeshSetCollisionComplexityHandler.cpp"),
         TEXT("PinWright/Private/Handlers/Audio/MetaSound/MetaSoundPatchPresetHandler.cpp"),
         TEXT("PinWright/Private/Handlers/Audio/MetaSound/MetaSoundVariableHandler.cpp"),
         TEXT("PinWright/Private/Handlers/Blueprint/BlueprintEventHandler.cpp"),
-        TEXT("PinWright/Private/Handlers/Editor/EditorQuitHandler.cpp"),
         TEXT("PinWright/Private/Handlers/Localization/LocalizationHandler.cpp"),
         TEXT("PinWright/Private/Handlers/Spatial/PlacementHandler.cpp"),
         TEXT("PinWright/Private/Handlers/UI/WidgetDesignerScreenshotHandler.cpp"),
         TEXT("PinWrightGeometry/Private/Handlers/Geometry/BooleanHandler.cpp"),
         TEXT("PinWrightGeometry/Private/Handlers/Geometry/MeshIOHandler.cpp"),
+        TEXT("PinWrightRuntime/Private/Handlers/Editor/EditorQuitHandler.cpp"),
     };
 
     // Shared preflight for both tests: resolve roots, prove they are real, list the sources.

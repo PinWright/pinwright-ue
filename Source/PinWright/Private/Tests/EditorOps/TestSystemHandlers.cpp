@@ -13,6 +13,7 @@
 #include "Interfaces/IPluginManager.h"
 #include "Misc/FileHelper.h"
 #include "State/PluginState.h"
+#include "Tests/TestSourcePaths.h"
 #include "Tests/TestUtils.h"
 
 // ============================================================================
@@ -424,10 +425,11 @@ bool FSystemRunTestsIsolatedChildStateBoundaryTest::RunTest(const FString& Param
     FString SubsystemSource;
     FString StateSource;
     FString HandlerSource;
+    // Startup moved to the runtime host (docs/runtime-module.md); wiki generation is its editor hook.
     const FString SubsystemPath = Plugin->GetBaseDir()
-        / TEXT("Source/PinWright/Private/PinWrightSubsystem.cpp");
-    const FString StatePath = Plugin->GetBaseDir()
-        / TEXT("Source/PinWright/Private/State/PluginState.cpp");
+        / TEXT("Source/PinWrightRuntime/Private/PinWrightRuntimeSubsystem.cpp");
+    const FString StatePath =
+        ResolvePluginSourcePath(TEXT("Source/PinWright/Private/State/PluginState.cpp"));
     const FString HandlerPath = Plugin->GetBaseDir()
         / TEXT("Source/PinWright/Private/Handlers/System/SystemControlHandler.cpp");
     if (!TestTrue(TEXT("read subsystem isolation boundary"),
@@ -445,13 +447,15 @@ bool FSystemRunTestsIsolatedChildStateBoundaryTest::RunTest(const FString& Param
     HandlerSource.ReplaceInline(TEXT("\r"), TEXT(""));
     TestTrue(TEXT("isolated child skips shared wiki generation"),
         SubsystemSource.Contains(
-            TEXT("if (!bIsolatedTestChild)\n    {\n        WikiDiskGenerator::Generate();")));
+            TEXT("if (Hooks && !bIsolatedTestChild)\n    {\n        Hooks->AfterCatalogInit();")));
+    // Activate returns for an isolated child before it reaches the primary editor's wipe.
+    const int32 IsolatedReturn = SubsystemSource.Find(
+        TEXT("if (bIsolatedTestChild)\n    {\n        UE_LOG"));
+    const int32 JobsWipe = SubsystemSource.Find(
+        TEXT("const FString JobsPath = FPaths::ProjectDir() / JobMonitorLog::JobsJsonlRelativePath;"));
     TestTrue(TEXT("isolated child skips the shared job-monitor wipe"),
-        SubsystemSource.Contains(
-            TEXT("if (!bIsolatedTestChild && TransportSuppressedBy.IsEmpty())\n    {\n        const FString JobsPath")));
-    TestTrue(TEXT("isolated child disables PinWright HTTP startup"),
-        SubsystemSource.Contains(
-            TEXT("if (bIsolatedTestChild)\n    {\n        UE_LOG")));
+        IsolatedReturn != INDEX_NONE && JobsWipe > IsolatedReturn);
+    TestTrue(TEXT("isolated child disables PinWright HTTP startup"), IsolatedReturn != INDEX_NONE);
     TestTrue(TEXT("isolated child routes jobs to its private monitor path"),
         StateSource.Contains(
             TEXT("bHasPrivateMonitorPath\n            ? IsolatedTestChildMonitorPath")));

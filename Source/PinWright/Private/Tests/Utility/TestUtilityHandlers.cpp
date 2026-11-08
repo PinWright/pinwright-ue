@@ -1,8 +1,8 @@
 // Copyright (c) 2026 Alexander Penkin. MIT License.
 
 // Unit tests for Utility domain handlers
-// Covers MiscHandler.cpp and UtilityPropertyHandler.cpp.
-// system.console_command lives in System/SystemControlHandler.cpp;
+// Covers MiscHandler.cpp and UtilityPropertyHandler.cpp (editor and PinWrightRuntime halves of each).
+// system.console_command lives in PinWrightRuntime System/SystemControlHandler.cpp;
 // its tests remain here for historical grouping.
 #include "Misc/AutomationTest.h"
 #include "Handlers/HandlerContext.h"

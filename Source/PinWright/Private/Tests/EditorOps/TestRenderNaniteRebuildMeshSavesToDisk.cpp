@@ -27,6 +27,7 @@
 #include "Tests/Assets/NaniteRebuildSaveTestUtils.h"
 #include "Tests/Infra/ParamSpecTestHelpers.h"
 #include "Tests/TestSkipReporting.h"
+#include "Tests/TestSourcePaths.h"
 #include "Tests/TestUtils.h"
 #include "Tests/TestWorldUtils.h"
 #include "Utils/AssetCompilePump.h"
@@ -149,9 +150,14 @@ namespace RenderNaniteRebuildMeshSaveTests
         }
 
         const int32 NaniteStart = Source.Find(TEXT("// ---- render.nanite_rebuild_mesh ----"));
-        const int32 NaniteEnd = Source.Find(
-            TEXT("// ---- render.lumen_update_scene ----"), ESearchCase::CaseSensitive,
-            ESearchDir::FromStart, NaniteStart);
+        // Next section marker, else EOF: render.lumen_update_scene, which used to follow, moved
+        // to PinWrightRuntime and left the Nanite verb last in the editor file.
+        int32 NaniteEnd = NaniteStart == INDEX_NONE ? INDEX_NONE : Source.Find(
+            TEXT("\n// ---- "), ESearchCase::CaseSensitive, ESearchDir::FromStart, NaniteStart + 1);
+        if (NaniteStart != INDEX_NONE && NaniteEnd == INDEX_NONE)
+        {
+            NaniteEnd = Source.Len();
+        }
         Test.TestTrue(TEXT("render.nanite_rebuild_mesh source region is bounded"),
             NaniteStart != INDEX_NONE && NaniteEnd > NaniteStart);
         if (NaniteStart == INDEX_NONE || NaniteEnd <= NaniteStart)
@@ -196,8 +202,8 @@ namespace RenderNaniteRebuildMeshSaveTests
             NaniteSource.Contains(TEXT("FinishCompilation("))
                 || NaniteSource.Contains(TEXT("FinishCompilationForObjects(")));
 
-        const FString SafePointPath = Plugin->GetBaseDir()
-            / TEXT("Source/PinWright/Private/Dispatch/SafePoint.cpp");
+        const FString SafePointPath =
+            ResolvePluginSourcePath(TEXT("Source/PinWright/Private/Dispatch/SafePoint.cpp"));
         FString SafePointSource;
         Test.TestTrue(TEXT("SafePoint.cpp loads for source contract checks"),
             FFileHelper::LoadFileToString(SafePointSource, *SafePointPath));

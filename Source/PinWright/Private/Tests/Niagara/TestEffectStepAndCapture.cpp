@@ -267,7 +267,8 @@ bool FEffectStepAndCaptureContractTest::RunTest(const FString& Parameters)
     }
     const int32 VerbStart = EffectSource.Find(
         TEXT("REGISTER_RPC_HANDLER(\"effect.step_and_capture\""));
-    const int32 VerbEnd = EffectSource.Find(TEXT("// effect.cleanup"),
+    // effect.cleanup moved to the runtime module; spawn_niagara now follows step_and_capture.
+    const int32 VerbEnd = EffectSource.Find(TEXT("// effect.spawn_niagara"),
         ESearchCase::CaseSensitive, ESearchDir::FromStart, VerbStart);
     if (!TestTrue(TEXT("the atomic verb body is bounded in source"),
             VerbStart != INDEX_NONE && VerbEnd > VerbStart))

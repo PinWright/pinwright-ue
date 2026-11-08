@@ -86,7 +86,7 @@ namespace
     // (Distinct name from the sibling's InvokeHandlerWithSubsystemCapture to avoid an
     // anonymous-namespace ODR collision when Unity merges these TUs.)
     bool InvokeSeqHandlerViaLiveSubsystem(const FString& MethodName,
-        const TSharedPtr<FJsonObject>& Payload, UPinWrightSubsystem* Subsystem,
+        const TSharedPtr<FJsonObject>& Payload, UPinWrightRuntimeSubsystem* Subsystem,
         FTestResponseCapture& Capture)
     {
         Capture.Reset();
@@ -131,7 +131,7 @@ bool FSequencerRemoveActorsMatchesInternalNameTest::RunTest(const FString& Param
     // Both verbs are driven through the live subsystem; add_actors dereferences it. In the
     // editor automation run the subsystem is always initialized; its absence is a fixture
     // FAILURE (not a skip) — the defect cannot be exercised without it.
-    UPinWrightSubsystem* Subsystem = GEditor->GetEditorSubsystem<UPinWrightSubsystem>();
+    UPinWrightRuntimeSubsystem* Subsystem = UPinWrightRuntimeSubsystem::Get();
     if (!Subsystem)
     {
         AddError(TEXT("PinWright subsystem unavailable — cannot drive sequencer.add_actors."));

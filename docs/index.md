@@ -111,6 +111,7 @@ Maintainer- and development-process docs. They reference the development host pr
 | [BPIR compiler internals](bpir-compiler-internals.md) | Two-phase compile architecture, resolvers, rollback, layout engine, and design decisions. |
 | [BPIR test matrix](bpir-test-matrix.md) | BPIR test coverage matrix by feature × layer, with known gaps. |
 | [test organization](test-organization.md) | Test category taxonomy, placement rules, file layout, naming conventions. |
+| [runtime module](runtime-module.md) | Contract for the PinWrightRuntime split: module table, include-path rule, activation gate, instance file schema, world accessor, which verbs move. |
 | [error code catalog](error-code-catalog.md) | Generated inventory of handler error codes for the registry migration. |
 | [GeometryScript debug-sink sweep](geometry-debug-sink-sweep.md) | Every GeometryScript call site in `PinWrightGeometry` with a verdict on its `UGeometryScriptDebug*` argument: wired, unreachable, guarded, or no channel. Read before adding a GeometryScript call. |
 | [UE async completion delegates](ue-async-completion-delegates.md) | Editor completion hook reference for async RPC handlers. |

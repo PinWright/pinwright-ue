@@ -192,7 +192,7 @@ bool FSessionHostLanServerTravelOutcomeContractTest::RunTest(const FString& Para
 
     FString HandlerSource;
     const FString HandlerPath = Plugin->GetBaseDir()
-        / TEXT("Source/PinWright/Private/Handlers/System/SessionsHandler.cpp");
+        / TEXT("Source/PinWrightRuntime/Private/Handlers/System/SessionsHandler.cpp");
     if (!TestTrue(TEXT("SessionsHandler.cpp is readable"),
             FFileHelper::LoadFileToString(HandlerSource, *HandlerPath)))
     {

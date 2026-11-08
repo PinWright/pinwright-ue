@@ -2,8 +2,8 @@
 
 // Regression test for B-property-path-silent-world-fallback.
 //
-// The shared property.* object resolver (ResolveObjectForProperty in
-// UtilityPropertyHandler.cpp) used to accept FindObject/StaticLoadObject's
+// The shared property.* object resolver (PropertyHandlerShared::ResolveObjectForProperty in the
+// runtime UtilityPropertyHandler.cpp) used to accept FindObject/StaticLoadObject's
 // silent ancestor fallback: handed a `…:PersistentLevel.<Actor>.<bad-tail>`
 // path whose trailing segment does not resolve, UE's ResolveName climbs to the
 // last resolvable outer (the World) and FindObject returns THAT object. The

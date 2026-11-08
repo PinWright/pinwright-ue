@@ -524,3 +524,11 @@ TSharedPtr<FJsonObject> FPwCandidateRegistry::BuildMissPayload(
     }
     return Out;
 }
+
+FPwCandidateRegistry& PinWrightGetCandidateRegistry()
+{
+    // Moved out of FPluginState when it went to PinWrightRuntime, which cannot see AudioGen.
+    // shortcut: FPluginState::ResetForTesting no longer clears it; add a reset hook if a test needs one.
+    static FPwCandidateRegistry Registry;
+    return Registry;
+}

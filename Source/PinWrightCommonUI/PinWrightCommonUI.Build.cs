@@ -45,7 +45,7 @@ public class PinWrightCommonUI : ModuleRules
             "Core", "CoreUObject", "Engine", "UnrealEd", "Json", "JsonUtilities",
             // Main module: exported handler machinery (FAutoRegisterHandler, FHandlerContext,
             // FResponseCapture) + PinWrightHelpers utilities (ResolveUClass).
-            "PinWright",
+            "PinWright", "PinWrightRuntime",
             // Activatable-widget stack types the ui.activatable_* family drives.
             "CommonUI",
             "UMG", "Slate", "SlateCore",
@@ -59,6 +59,7 @@ public class PinWrightCommonUI : ModuleRules
         // The moved sources keep their main-module include shape
         // ("Handlers/...", "Utils/...", "Tests/...").
         PrivateIncludePaths.Add(Path.Combine(ModuleDirectory, "..", "PinWright", "Private"));
+        PrivateIncludePaths.Add(Path.Combine(ModuleDirectory, "..", "PinWrightRuntime", "Private"));
     }
 
     /// <summary>

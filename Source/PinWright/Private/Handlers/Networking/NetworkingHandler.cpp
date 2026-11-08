@@ -1,7 +1,9 @@
 // Copyright (c) 2026 Alexander Penkin. MIT License.
 
 // NetworkingHandler.cpp - Migrated from PinWright_NetworkingHandlers.cpp
-// Networking & multiplayer: replication, RPCs, authority, relevancy, serialization, prediction
+// Networking & multiplayer: replication, RPCs, relevancy, serialization, prediction (Blueprint
+// authoring). The live-actor verbs (set_owner, check_has_authority, check_is_locally_controlled)
+// are in the PinWrightRuntime module.
 
 #include "Handlers/HandlerRegistration.h"
 #include "Handlers/HandlerContext.h"
@@ -782,40 +784,6 @@ REGISTER_RPC_HANDLER("networking.set_rpc_reliability", "networking", "Set the re
 }
 
 // ---------------------------------------------------------------------------
-// networking.set_owner
-// ---------------------------------------------------------------------------
-REGISTER_RPC_HANDLER("networking.set_owner", "networking", "Set or clear the owner of an actor in the world",
-    RPC_PARAMS(
-        RPC_PARAM_REQ("actorName", "string", "Name of the actor"),
-        RPC_PARAM_OPT("ownerActorName", "string", "Name of the owner actor (empty to clear)")
-    ))
-{
-    using namespace NetworkingHelpersNew;
-
-    FString ActorName;
-    if (!Ctx.RequireString(TEXT("actorName"), ActorName)) return true;
-    FString OwnerActorName = Ctx.GetString(TEXT("ownerActorName"));
-
-    UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
-    if (!World) { Ctx.SendError(TEXT("NO_WORLD"), TEXT("No world available")); return true; }
-
-    AActor* Actor = FindActorByName(World, ActorName);
-    if (!Actor) { Ctx.SendError(TEXT("NOT_FOUND"), TEXT("Actor not found")); return true; }
-
-    AActor* Owner = nullptr;
-    if (!OwnerActorName.IsEmpty()) Owner = FindActorByName(World, OwnerActorName);
-
-    Actor->SetOwner(Owner);
-
-    TSharedPtr<FJsonObject> Resp = MakeShared<FJsonObject>();
-    Resp->SetBoolField(TEXT("success"), true);
-    Resp->SetStringField(TEXT("message"), Owner ? FString::Printf(TEXT("Set owner of %s to %s"), *ActorName, *OwnerActorName) : FString::Printf(TEXT("Cleared owner of %s"), *ActorName));
-    AddActorVerification(Resp, Actor);
-    Ctx.SendSuccess(Resp);
-    return true;
-}
-
-// ---------------------------------------------------------------------------
 // networking.set_autonomous_proxy
 // ---------------------------------------------------------------------------
 REGISTER_RPC_HANDLER("networking.set_autonomous_proxy", "networking", "Configure autonomous proxy replication on replicated properties",
@@ -859,70 +827,6 @@ REGISTER_RPC_HANDLER("networking.set_autonomous_proxy", "networking", "Configure
         BlueprintHandlerUtils::AddCompileDiagnosticsToJson(Diagnostics, Resp);
     }
     AddAssetVerification(Resp, Blueprint);
-    Ctx.SendSuccess(Resp);
-    return true;
-}
-
-// ---------------------------------------------------------------------------
-// networking.check_has_authority
-// ---------------------------------------------------------------------------
-REGISTER_RPC_HANDLER("networking.check_has_authority", "networking", "Check if an actor has authority",
-    RPC_PARAMS(
-        RPC_PARAM_REQ("actorName", "string", "Name of the actor to check")
-    ))
-{
-    using namespace NetworkingHelpersNew;
-
-    FString ActorName;
-    if (!Ctx.RequireString(TEXT("actorName"), ActorName)) return true;
-
-    UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
-    if (!World) { Ctx.SendError(TEXT("NO_WORLD"), TEXT("No world available")); return true; }
-
-    AActor* Actor = FindActorByName(World, ActorName);
-    if (!Actor) { Ctx.SendError(TEXT("NOT_FOUND"), TEXT("Actor not found")); return true; }
-
-    TSharedPtr<FJsonObject> Resp = MakeShared<FJsonObject>();
-    Resp->SetBoolField(TEXT("success"), true);
-    Resp->SetBoolField(TEXT("hasAuthority"), Actor->HasAuthority());
-    Resp->SetStringField(TEXT("role"), NetRoleToString(Actor->GetLocalRole()));
-    Ctx.SendSuccess(Resp);
-    return true;
-}
-
-// ---------------------------------------------------------------------------
-// networking.check_is_locally_controlled
-// ---------------------------------------------------------------------------
-REGISTER_RPC_HANDLER("networking.check_is_locally_controlled", "networking", "Check if an actor/pawn is locally controlled",
-    RPC_PARAMS(
-        RPC_PARAM_REQ("actorName", "string", "Name of the actor to check")
-    ))
-{
-    using namespace NetworkingHelpersNew;
-
-    FString ActorName;
-    if (!Ctx.RequireString(TEXT("actorName"), ActorName)) return true;
-
-    UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
-    if (!World) { Ctx.SendError(TEXT("NO_WORLD"), TEXT("No world available")); return true; }
-
-    AActor* Actor = FindActorByName(World, ActorName);
-    if (!Actor) { Ctx.SendError(TEXT("NOT_FOUND"), TEXT("Actor not found")); return true; }
-
-    bool bIsLocallyControlled = false;
-    bool bIsLocalController = false;
-    APawn* Pawn = Cast<APawn>(Actor);
-    if (Pawn)
-    {
-        bIsLocallyControlled = Pawn->IsLocallyControlled();
-        APlayerController* PC = Cast<APlayerController>(Pawn->GetController());
-        bIsLocalController = PC ? PC->IsLocalController() : false;
-    }
-
-    TSharedPtr<FJsonObject> Resp = MakeShared<FJsonObject>();
-    Resp->SetBoolField(TEXT("success"), true);
-    Resp->SetBoolField(TEXT("isLocallyControlled"), bIsLocallyControlled);
-    Resp->SetBoolField(TEXT("isLocalController"), bIsLocalController);
     Ctx.SendSuccess(Resp);
     return true;
 }

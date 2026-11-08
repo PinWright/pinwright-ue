@@ -2,6 +2,21 @@
 
 ## 1.0.0
 
+- Added: PinWright drives `-game` processes and packaged Development builds, and several
+  processes of one project at once. The transport, dispatcher and every method that works
+  without the editor moved to the new `PinWrightRuntime` module (`Runtime`, built for Debug,
+  DebugGame and Development, never Shipping); editor-only methods stay in `PinWright`. A game
+  serves only when launched with `-PinWright` (ephemeral port) or `-PinWrightPort=<N|0>`, on
+  `127.0.0.1` only. `-PinWrightPort` also starts a second editor that leaves the primary editor's
+  `gateway-port` alone. Every serving process writes `Saved/PinWright/instances/<pid>.json`
+  (`pid`, `port`, its own `token`, `kind`, `project`, `startTime`, `reason`, `map`, `engine`;
+  user-only permissions; removed on clean shutdown). The bundled CLI
+  `Content/Python/pinwright_cli.py` (`list`, `call`, `start`, `stop`) finds and drives every
+  instance through those files. Method pages carry `Runtime: true|false` and `registry.json` a
+  `runtime` flag per method; in a game an editor-only method returns `UNKNOWN_ACTION`. Behaviour
+  change: handler and header locations moved (include paths are unchanged), and code linking
+  `PINWRIGHT_API` symbols that moved now links `PINWRIGHTRUNTIME_API` ones. Guide:
+  `call("game-mode")`, `call("cli")`.
 - Fixed: an `os_input` action (`drive.click`, `hover`, `drag`; Linux/X11) into a window that SDL
   had left in relative mouse mode refused with `POINTER_GRABBED {held_by_this_editor:true}`, even
   when the pointer was free before the call. SDL3 keeps relative mode per window and grabs the

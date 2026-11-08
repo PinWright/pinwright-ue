@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Alexander Penkin. MIT License.
 
 #include "Handlers/UI/WidgetAuthoringUtils.h"
+#include "Handlers/UI/WidgetVisibilityNames.h"
 #include "PinWrightHelpers.h"
 #include "Utils/PropertyUtils.h"
 #include "Compat/EngineVersionCompat.h"
@@ -180,25 +181,9 @@ namespace WidgetAuthoringHelpers
 
     bool TryParseVisibility(const FString& In, ESlateVisibility& Out)
     {
-        // Single source of truth for visibility-string parsing. GetVisibility()
-        // delegates here and falls back to Visible on miss for back-compat.
-        struct FEntry { const TCHAR* Name; ESlateVisibility Value; };
-        static const FEntry Table[] = {
-            { TEXT("Visible"),              ESlateVisibility::Visible },
-            { TEXT("Collapsed"),            ESlateVisibility::Collapsed },
-            { TEXT("Hidden"),               ESlateVisibility::Hidden },
-            { TEXT("HitTestInvisible"),     ESlateVisibility::HitTestInvisible },
-            { TEXT("SelfHitTestInvisible"), ESlateVisibility::SelfHitTestInvisible },
-        };
-        for (const FEntry& E : Table)
-        {
-            if (In.Equals(E.Name, ESearchCase::IgnoreCase))
-            {
-                Out = E.Value;
-                return true;
-            }
-        }
-        return false;
+        // Single source of truth for visibility-string parsing (runtime module, shared with the
+        // ui.* verbs). GetVisibility() delegates here and falls back to Visible on miss.
+        return WidgetVisibilityNames::TryParse(In, Out);
     }
 
     ESlateVisibility GetVisibility(const FString& VisibilityStr)
@@ -210,20 +195,7 @@ namespace WidgetAuthoringHelpers
 
     FString VisibilityToString(ESlateVisibility Visibility)
     {
-        switch (Visibility)
-        {
-        case ESlateVisibility::Collapsed:
-            return TEXT("Collapsed");
-        case ESlateVisibility::Hidden:
-            return TEXT("Hidden");
-        case ESlateVisibility::HitTestInvisible:
-            return TEXT("HitTestInvisible");
-        case ESlateVisibility::SelfHitTestInvisible:
-            return TEXT("SelfHitTestInvisible");
-        case ESlateVisibility::Visible:
-        default:
-            return TEXT("Visible");
-        }
+        return WidgetVisibilityNames::ToString(Visibility);
     }
 
     void AddWidgetToParentOrRoot(UWidgetBlueprint* WidgetBP, UWidget* NewWidget, const FString& ParentSlot, bool bSetAsRootIfEmpty)

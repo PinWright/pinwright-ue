@@ -252,7 +252,7 @@ namespace PwMusicHandlerTests
     /** Frees a fixture's candidates so a later test in the same run is not evicted by it. */
     void DiscardCandidates(const TArray<FString>& CandidateIds)
     {
-        FPwCandidateRegistry& Registry = FPluginState::Get().GetCandidateRegistry();
+        FPwCandidateRegistry& Registry = PinWrightGetCandidateRegistry();
         for (const FString& CandidateId : CandidateIds)
         {
             Registry.Discard(CandidateId);
@@ -654,7 +654,7 @@ bool FAudioMusicRenderStemsIsIdempotentTest::RunTest(const FString& Parameters)
     TestEqual(TEXT("the first render produced one stem"), FirstIds.Num(), 1);
 
     const int32 CountAfterFirst =
-        FPluginState::Get().GetCandidateRegistry().Usage().NumCandidates;
+        PinWrightGetCandidateRegistry().Usage().NumCandidates;
 
     FTestResponseCapture SecondCapture;
     FJobTicket SecondTicket;
@@ -676,7 +676,7 @@ bool FAudioMusicRenderStemsIsIdempotentTest::RunTest(const FString& Parameters)
     }
     // The measurement that a flag cannot fake: the registry did not grow.
     TestEqual(TEXT("the retry added no candidates"),
-        FPluginState::Get().GetCandidateRegistry().Usage().NumCandidates, CountAfterFirst);
+        PinWrightGetCandidateRegistry().Usage().NumCandidates, CountAfterFirst);
     // The counts belong to the render that took them, so a reuse must not republish them (§4).
     TestTrue(TEXT("a reuse says why it carries no per-stem counts"),
         !StringField(Second, TEXT("countsNote")).IsEmpty());
@@ -880,7 +880,7 @@ bool FAudioMusicExportStemsVerifiesAndConvergesTest::RunTest(const FString& Para
     // and compare it against the stem candidate the export was handed.
     {
         const FPwCandidateLookupResult Stem =
-            FPluginState::Get().GetCandidateRegistry().Get(Ids[0]);
+            PinWrightGetCandidateRegistry().Get(Ids[0]);
         USoundWave* Written = Cast<USoundWave>(
             StaticFindObject(UObject::StaticClass(), nullptr, *ObjectPath));
         TestNotNull(TEXT("the exported stem resolves as a USoundWave"), Written);

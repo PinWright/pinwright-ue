@@ -234,7 +234,7 @@ bool FCaptureOnScreenMessagesVramBannerTest::RunTest(const FString& Parameters)
     }
     FString ViewportSource;
     if (TestTrue(TEXT("ViewportHandler.cpp is readable"), PwOnScreenReadSource(
-            TEXT("Source/PinWright/Private/Handlers/Editor/ViewportHandler.cpp"), ViewportSource)))
+            TEXT("Source/PinWrightRuntime/Private/Handlers/Editor/ViewportHandler.cpp"), ViewportSource)))
     {
         TestTrue(TEXT("editor.screenshot publishes the survey"),
             ViewportSource.Contains(TEXT("PinWrightOnScreenMessages::AddOnScreenMessageFields(")));

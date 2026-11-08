@@ -62,7 +62,7 @@
 // resolve reported failure with the correct map loaded. The mount root is also the wrong
 // thing to prefer: an /Engine map is read-only content, so using one keeps this test even
 // further away from the host's own assets.
-static UWorld* ResolveActiveOnDiskMapWorldForOpenAssetTest(UPinWrightSubsystem* Subsystem)
+static UWorld* ResolveActiveOnDiskMapWorldForOpenAssetTest(UPinWrightRuntimeSubsystem* Subsystem)
 {
     auto IsOnDiskMapWorld = [](UWorld* W) -> bool
     {
@@ -113,7 +113,7 @@ bool FEditorOpenAssetWorldNoCrashTest::RunTest(const FString& Parameters)
     // only runs when a real UPinWrightSubsystem is wired into the handler context. In
     // the editor automation run the subsystem is always initialized; its absence is a
     // fixture FAILURE (not a skip) — the fix cannot be exercised without it.
-    UPinWrightSubsystem* Subsystem = GEditor->GetEditorSubsystem<UPinWrightSubsystem>();
+    UPinWrightRuntimeSubsystem* Subsystem = UPinWrightRuntimeSubsystem::Get();
     if (!Subsystem)
     {
         AddError(TEXT("PinWright subsystem unavailable — cannot exercise the World cross-dispatch."));

@@ -931,7 +931,7 @@ REGISTER_RPC_HANDLER("audio.music.render_stems", "audio.music",
     Args.StartedPayload = Started;
     Args.BindNativeDelegate = [Score, Digest, bMixdown](FJobOnComplete OnComplete)
     {
-        FPwCandidateRegistry& Registry = FPluginState::Get().GetCandidateRegistry();
+        FPwCandidateRegistry& Registry = PinWrightGetCandidateRegistry();
 
         // ---------------------------------------------------------------------------------
         // Idempotence: reuse the previous set only when EVERY id in it is still resident.
@@ -1250,7 +1250,7 @@ REGISTER_RPC_HANDLER("audio.music.export_stems", "audio.music",
     const bool bSave = Ctx.GetBool(TEXT("save"), true);
     const bool bOverwrite = Ctx.GetBool(TEXT("overwrite"), false);
 
-    FPwCandidateRegistry& Registry = FPluginState::Get().GetCandidateRegistry();
+    FPwCandidateRegistry& Registry = PinWrightGetCandidateRegistry();
 
     // ---------------------------------------------------------------------------------------
     // Resolve everything BEFORE the ticket (§9). A registry miss keeps the registry's own code.
@@ -1378,7 +1378,7 @@ REGISTER_RPC_HANDLER("audio.music.export_stems", "audio.music",
     Args.BindNativeDelegate =
         [Resolved, ValidatedFolder, bSave, bOverwrite](FJobOnComplete OnComplete)
     {
-        FPwCandidateRegistry& Registry = FPluginState::Get().GetCandidateRegistry();
+        FPwCandidateRegistry& Registry = PinWrightGetCandidateRegistry();
 
         TArray<TSharedPtr<FJsonValue>> Rows;
         int32 NumExported = 0;

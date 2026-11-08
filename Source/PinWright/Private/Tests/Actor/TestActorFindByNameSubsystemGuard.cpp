@@ -48,6 +48,7 @@
 #include "Handlers/Actor/ActorSubsystemUtils.h"
 #include "Handlers/ErrorCodes.h"
 #include "Handlers/HandlerContext.h"
+#include "Tests/TestSourcePaths.h"
 #include "Tests/TestUtils.h"
 
 // Uniquely named namespace: Unity merges test TUs into one translation unit, so an
@@ -67,14 +68,11 @@ namespace ActorFindByNameSubsystemGuardTestLocal
     // resolves it (through IPluginManager, not a relative path).
     FString ErrorCodesHeaderPath()
     {
-        const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("PinWright"));
-        if (!Plugin.IsValid())
+        if (!IPluginManager::Get().FindPlugin(TEXT("PinWright")).IsValid())
         {
             return FString();
         }
-        return Plugin->GetBaseDir()
-            / TEXT("Source") / TEXT("PinWright") / TEXT("Private")
-            / TEXT("Handlers") / TEXT("ErrorCodes.h");
+        return ResolvePluginSourcePath(TEXT("Source/PinWright/Private/Handlers/ErrorCodes.h"));
     }
 }
 

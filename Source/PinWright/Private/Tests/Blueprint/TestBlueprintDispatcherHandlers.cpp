@@ -265,8 +265,8 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBlueprintEnsureExistsAutoCreatesMissingTest,
 
 bool FBlueprintEnsureExistsAutoCreatesMissingTest::RunTest(const FString& Parameters)
 {
-    UPinWrightSubsystem* Subsystem =
-        GEditor ? GEditor->GetEditorSubsystem<UPinWrightSubsystem>() : nullptr;
+    UPinWrightRuntimeSubsystem* Subsystem =
+        GEditor ? UPinWrightRuntimeSubsystem::Get() : nullptr;
     if (!Subsystem)
     {
         PinWrightTestSkip::SkipAssertions(*this, TEXT("no-live-subsystem"),

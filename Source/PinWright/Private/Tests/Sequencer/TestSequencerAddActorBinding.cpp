@@ -85,7 +85,7 @@ namespace
     // subsystem InvokeHandlerWithCapture wires; MakeContextWithCapture carries the real
     // subsystem AND captures SendSuccess/SendError. Returns true iff the handler was found.
     bool InvokeHandlerWithSubsystemCapture(const FString& MethodName,
-        const TSharedPtr<FJsonObject>& Payload, UPinWrightSubsystem* Subsystem,
+        const TSharedPtr<FJsonObject>& Payload, UPinWrightRuntimeSubsystem* Subsystem,
         FTestResponseCapture& Capture)
     {
         Capture.Reset();
@@ -119,7 +119,7 @@ bool FSequencerAddActorBindsPossessableTest::RunTest(const FString& Parameters)
     // add_actor resolves the target actor through the live subsystem. In the editor
     // automation run the subsystem is always initialized; its absence is a fixture
     // FAILURE (not a skip) — the defect cannot be exercised without it.
-    UPinWrightSubsystem* Subsystem = GEditor->GetEditorSubsystem<UPinWrightSubsystem>();
+    UPinWrightRuntimeSubsystem* Subsystem = UPinWrightRuntimeSubsystem::Get();
     if (!Subsystem)
     {
         AddError(TEXT("PinWright subsystem unavailable — cannot drive sequencer.add_actor."));

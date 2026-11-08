@@ -243,7 +243,7 @@ namespace PwSynthGenerateTestHelpers
 
     FPwCandidateRegistry& Registry()
     {
-        return FPluginState::Get().GetCandidateRegistry();
+        return PinWrightGetCandidateRegistry();
     }
 
     int32 ResidentCount()

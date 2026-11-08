@@ -3,7 +3,7 @@
 // Regression test for E-property-list-container-cpptype-type-erased.
 // property.list (and property.get, and system.inspect.inspect_class) report each
 // UPROPERTY's cppType. The site is AddPropertyMetadataFields in
-// Handlers/Utility/UtilityPropertyHandler.cpp (shared by property.list/property.get),
+// PinWrightRuntime Handlers/Utility/UtilityPropertyHandler.cpp (shared by property.list/property.get),
 // which now routes through GetPropertyCppTypeWithParams (Utils/PropertyInspection.cpp).
 // Counterfactual: if that helper is reverted to the bare no-arg Property->GetCPPType(),
 // container properties emit the type-erased token "TMap"/"TArray"/"TSet" with no
