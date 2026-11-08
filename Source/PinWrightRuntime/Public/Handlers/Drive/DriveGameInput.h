@@ -125,7 +125,9 @@ public:
     // Injects after the selected world's current actor tick and completes after its next actor
     // tick; a paused world tick (no actor ticks, controllers tick in the pause frame) takes the
     // same step at OnWorldTickEnd instead. Success is based only on the exact UPlayerInput event
-    // id reaching EventCounts.
+    // id reaching EventCounts. Press delivers Down, then Up once Down was observed (two such
+    // steps), and succeeds only when both edges were delivered; the observation is Down's when
+    // Down failed, else Up's.
     static TSharedPtr<FDriveGameInputRequest> BeginDeliverKey(
         const FDriveGameInputTarget& Target, const FKey& Key, EDriveKeyAction Action,
         TFunction<void(const FDriveGameKeyObservation&)> Completion);

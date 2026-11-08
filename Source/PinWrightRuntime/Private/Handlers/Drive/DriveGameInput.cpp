@@ -379,6 +379,85 @@ namespace DriveGameInputLocal
         TSharedPtr<FPendingGameKeyRequest> SelfKeepAlive;
     };
 
+    // EDriveKeyAction::Press: the Down edge, then the Up edge once Down was observed, so the key
+    // is held for one observed tick (no hold-to-repeat in the game's UI). Up follows an undelivered
+    // Down too, so a press queued but not processed cannot stay held, unless the session ended or
+    // the request was cancelled. Reports Down's observation when Down failed, else Up's.
+    class FPendingGameKeyPress final
+        : public FDriveGameInputRequest
+        , public TSharedFromThis<FPendingGameKeyPress>
+    {
+    public:
+        FPendingGameKeyPress(const FDriveGameInputTarget& InTarget, const FKey& InKey,
+            TFunction<void(const FDriveGameKeyObservation&)> InCompletion)
+            : Target(InTarget)
+            , Key(InKey)
+            , Completion(MoveTemp(InCompletion))
+        {
+        }
+
+        void Start()
+        {
+            // Inner's completion holds this request alive until the last edge completes.
+            const TSharedRef<FPendingGameKeyPress> Self = AsShared();
+            Inner = MakeShared<FPendingGameKeyRequest>(Target, Key, EDriveKeyAction::Down,
+                [Self](const FDriveGameKeyObservation& Down) { Self->OnDown(Down); });
+            Inner->Start();
+        }
+
+        virtual void Cancel(const FString& Route) override
+        {
+            bCancelled = true;
+            if (const TSharedPtr<FPendingGameKeyRequest> Pending = Inner)
+            {
+                Pending->Cancel(Route);
+            }
+        }
+
+    private:
+        void OnDown(const FDriveGameKeyObservation& Down)
+        {
+            DownObservation = Down;
+            UWorld* World = Down.World.Get();
+            UGameViewportClient* ViewportClient = Down.ViewportClient.Get();
+            APlayerController* PlayerController = Down.PlayerController.Get();
+            if (bCancelled || Down.ConsumingRoute == TEXT("pie_ended_before_observation")
+                || !World || !ViewportClient || !PlayerController || !PlayerController->PlayerInput)
+            {
+                Finish(Down);
+                return;
+            }
+            // Raw target pointers are rebuilt from the weak observation: the world may have changed since Start.
+            FDriveGameInputTarget UpTarget = Target;
+            UpTarget.World = World;
+            UpTarget.ViewportClient = ViewportClient;
+            UpTarget.PlayerController = PlayerController;
+            UpTarget.LocalPlayer = nullptr;
+            UpTarget.InputDevice = Down.InputDevice;
+            const TSharedRef<FPendingGameKeyPress> Self = AsShared();
+            Inner = MakeShared<FPendingGameKeyRequest>(UpTarget, Key, EDriveKeyAction::Up,
+                [Self](const FDriveGameKeyObservation& Up) { Self->Finish(Self->DownObservation.bDeliveredToGame ? Up : Self->DownObservation); });
+            Inner->Start();
+        }
+
+        void Finish(const FDriveGameKeyObservation& Observation)
+        {
+            Inner.Reset();
+            TFunction<void(const FDriveGameKeyObservation&)> LocalCompletion = MoveTemp(Completion);
+            if (LocalCompletion)
+            {
+                LocalCompletion(Observation);
+            }
+        }
+
+        FDriveGameInputTarget Target;
+        FKey Key;
+        TFunction<void(const FDriveGameKeyObservation&)> Completion;
+        TSharedPtr<FPendingGameKeyRequest> Inner;
+        FDriveGameKeyObservation DownObservation;
+        bool bCancelled = false;
+    };
+
     FString DescribeFocusedWidget(const TSharedPtr<SWidget>& Widget)
     {
         return Widget.IsValid() ? Widget->GetTypeAsString() : FString(TEXT("none"));
@@ -564,6 +643,13 @@ TSharedPtr<FDriveGameInputRequest> FDriveGameInput::BeginDeliverKey(
         || !Target.PlayerController->PlayerInput || !Completion)
     {
         return nullptr;
+    }
+    if (Action == EDriveKeyAction::Press)
+    {
+        TSharedRef<DriveGameInputLocal::FPendingGameKeyPress> Press =
+            MakeShared<DriveGameInputLocal::FPendingGameKeyPress>(Target, Key, MoveTemp(Completion));
+        Press->Start();
+        return Press;
     }
     TSharedRef<DriveGameInputLocal::FPendingGameKeyRequest> Request =
         MakeShared<DriveGameInputLocal::FPendingGameKeyRequest>(Target, Key, Action, MoveTemp(Completion));

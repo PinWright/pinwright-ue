@@ -14,7 +14,8 @@
 //     editor destination reports route / handled / focusedWidget rather than asserting success.
 //
 // PiePlayerInputDelivery owns a real PIE session and proves the registered handler reaches
-// that session's viewport and UPlayerInput on the following game tick.
+// that session's viewport and UPlayerInput on the following game tick, then that one key_press
+// call delivers both edges and leaves the key released.
 // PausedPiePlayerInputDelivery does the same with the world paused (APlayerController::SetPause).
 
 #include "Misc/AutomationTest.h"
@@ -239,6 +240,7 @@ namespace DriveGameInputTestHelpers
         TSharedPtr<FConsumeF10InputProcessor> Consumer;
         TSharedPtr<FTestResponseCapture> DownCapture;
         TSharedPtr<FTestResponseCapture> UpCapture;
+        TSharedPtr<FTestResponseCapture> PressCapture;
         double Deadline = 0.0;
         int32 Phase = 0;
         bool bConsumerRegistered = false;
@@ -363,7 +365,7 @@ bool FRunOwnedPieInputDelivery::Update()
         State->Phase = 2;
         return false;
     }
-    if (State->UpCapture->CallCount == 0)
+    if (State->Phase == 2 && State->UpCapture->CallCount == 0)
     {
         if (FPlatformTime::Seconds() >= State->Deadline)
         {
@@ -371,6 +373,40 @@ bool FRunOwnedPieInputDelivery::Update()
             return true;
         }
         return false;
+    }
+    if (State->Phase == 3)
+    {
+        if (State->PressCapture->CallCount == 0)
+        {
+            if (FPlatformTime::Seconds() >= State->Deadline)
+            {
+                Test->AddError(TEXT("Timed out waiting for the key_press response."));
+                return true;
+            }
+            return false;
+        }
+        // One call carries both edges: the press must end released, not held for a repeat.
+        Test->TestEqual(TEXT("key_press answers exactly once"), State->PressCapture->CallCount, 1);
+        Test->TestTrue(FString::Printf(TEXT("key_press is delivered to game (%s: %s)"),
+            *State->PressCapture->ErrorCode, *State->PressCapture->Message), State->PressCapture->bSuccess);
+        bool bPressDelivered = false;
+        FString PressRoute;
+        Test->TestTrue(TEXT("key_press reports authoritative delivery"),
+            State->PressCapture->Result.IsValid()
+            && State->PressCapture->Result->TryGetBoolField(TEXT("deliveredToGame"), bPressDelivered)
+            && bPressDelivered);
+        Test->TestTrue(TEXT("key_press names player_input as the consuming route"),
+            State->PressCapture->Result.IsValid()
+            && State->PressCapture->Result->TryGetStringField(TEXT("consumingRoute"), PressRoute)
+            && PressRoute == TEXT("player_input"));
+        Test->TestTrue(TEXT("selected UPlayerInput ends the F10 press released"),
+            Target.PlayerController->PlayerInput->WasJustReleased(EKeys::F10)
+            && !Target.PlayerController->PlayerInput->IsPressed(EKeys::F10));
+        if (State->bPauseWorld)
+        {
+            Test->TestTrue(TEXT("the world stayed paused across the key_press"), Target.World->IsPaused());
+        }
+        return true;
     }
 
     Test->TestEqual(TEXT("key_up answers exactly once"), State->UpCapture->CallCount, 1);
@@ -392,7 +428,17 @@ bool FRunOwnedPieInputDelivery::Update()
     {
         Test->TestTrue(TEXT("the world stayed paused across the key_up"), Target.World->IsPaused());
     }
-    return true;
+
+    State->PressCapture = MakeShared<FTestResponseCapture>();
+    TSharedPtr<FJsonObject> PressPayload = MakeShared<FJsonObject>();
+    PressPayload->SetStringField(TEXT("type"), TEXT("key_press"));
+    PressPayload->SetStringField(TEXT("key"), TEXT("F10"));
+    PressPayload->SetStringField(TEXT("target"), TEXT("game"));
+    FHandlerContext PressCtx = FHandlerContext::MakeTestContextWithSharedCapture(
+        TEXT("pie-input-press"), TEXT("editor.simulate_input"), PressPayload, State->PressCapture.ToSharedRef());
+    Handler(PressCtx);
+    State->Phase = 3;
+    return false;
 }
 
 DEFINE_LATENT_AUTOMATION_COMMAND_TWO_PARAMETER(FCleanupOwnedPieInputDelivery,
@@ -859,5 +905,40 @@ bool FEditorSimulateInputKeyEditorRouteShapeTest::RunTest(const FString& Paramet
     UpPayload->SetStringField(TEXT("target"), TEXT("editor"));
     InvokeHandler(TEXT("editor.simulate_input"), UpPayload);
 
+    return true;
+}
+
+// key_press is one call carrying both edges: the focused receiver sees exactly one down and one up.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEditorSimulateInputKeyPressEditorRouteTest,
+    "PinWright.editor.simulate_input.KeyPressEditorRouteDownThenUp",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FEditorSimulateInputKeyPressEditorRouteTest::RunTest(const FString& Parameters)
+{
+    if (!FSlateApplication::IsInitialized())
+    {
+        PinWrightTestSkip::SkipAssertions(*this, TEXT("slate_not_initialized"),
+            TEXT("FSlateApplication is not initialized; no key can be injected."));
+        return true;
+    }
+
+    DriveGameInputTestHelpers::FOwnedSlateFocusFixture Fixture(FSlateApplication::Get());
+    TestTrue(TEXT("the owned editor-route receiver takes keyboard focus"), Fixture.FocusReceiver());
+
+    FTestResponseCapture Capture;
+    TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+    Payload->SetStringField(TEXT("type"), TEXT("key_press"));
+    Payload->SetStringField(TEXT("key"), TEXT("A"));
+    Payload->SetStringField(TEXT("target"), TEXT("editor"));
+    TestTrue(TEXT("editor.simulate_input handler found"),
+        InvokeHandlerWithCapture(TEXT("editor.simulate_input"), Payload, Capture));
+
+    TestTrue(FString::Printf(TEXT("key_press succeeds (%s: %s)"), *Capture.ErrorCode, *Capture.Message), Capture.bSuccess);
+    bool bHandled = false;
+    TestTrue(TEXT("key_press reports handled"),
+        Capture.Result.IsValid() && Capture.Result->TryGetBoolField(TEXT("handled"), bHandled) && bHandled);
+    TestEqual(TEXT("receiver saw one key down"), Fixture.Receiver->DownCount, 1);
+    TestEqual(TEXT("receiver saw one key up"), Fixture.Receiver->UpCount, 1);
+    TestTrue(TEXT("receiver saw the pressed key"), Fixture.Receiver->LastKey == EKeys::A);
     return true;
 }

@@ -2,6 +2,12 @@
 
 ## 1.0.0
 
+- Added: `editor.simulate_input` `type: "key_press"` (alias `keypress`) taps a key in one call.
+  The game route delivers the down edge, then the up edge once the down was observed by the
+  selected `UPlayerInput`, so the key is held for one observed tick and a game's held-key repeat
+  never starts (separate `key_down` / `key_up` calls hold it for a full round trip). Success needs
+  both edges delivered; the response is the down edge's when it failed, else the up edge's. An
+  undelivered down is still released. The editor route sends both edges to the focused widget.
 - Added: PinWright drives `-game` processes and packaged Development builds, and several
   processes of one project at once. The transport, dispatcher and every method that works
   without the editor moved to the new `PinWrightRuntime` module (`Runtime`, built for Debug,

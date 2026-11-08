@@ -211,7 +211,7 @@ REGISTER_RPC_HANDLER("editor.console_command", "editor", "Execute a console comm
 // ---- editor.simulate_input ----
 REGISTER_RPC_HANDLER("editor.simulate_input", "editor", "Inject a synthetic keyboard or mouse event. Key events go to a RUNNING PIE GAME when one exists: the session's game viewport is put on the keyboard focus path first, the key then travels the real route (focused in-game UMG widget, then the viewport client, then the possessed player's input stack), and the response names the world / player controller / pawn that received it plus whether the player controller registered it. With no PIE session (or target:'editor') the key goes to the focused editor widget instead. In a -game process keys go to the game world ('editor' is EDITOR_ONLY). mouse_click/mouse_move take screen-space coordinates and always route through Slate.",
     RPC_PARAMS(
-        RPC_PARAM_REQ("type", "string", "Event kind: 'key_down', 'key_up', 'mouse_click', or 'mouse_move' (case-insensitive aliases also accepted)."),
+        RPC_PARAM_REQ("type", "string", "Event kind: 'key_down', 'key_up', 'key_press' (down then up in one call: a game key is released one observed tick after the press, so held-key repeat never starts), 'mouse_click', or 'mouse_move' (case-insensitive aliases also accepted)."),
         RPC_PARAM_OPT("key", "string", "FKey name for key events, e.g. 'A', 'SpaceBar', 'LeftShift'."),
         RPC_PARAM_OPT("x", "number", "Screen-space X coordinate for mouse events, in pixels."),
         RPC_PARAM_OPT("y", "number", "Screen-space Y coordinate for mouse events, in pixels."),
@@ -233,7 +233,8 @@ REGISTER_RPC_HANDLER("editor.simulate_input", "editor", "Inject a synthetic keyb
 
   const bool bKeyDown = (InputType == TEXT("key_down") || InputType == TEXT("keydown"));
   const bool bKeyUp = (InputType == TEXT("key_up") || InputType == TEXT("keyup"));
-  if (bKeyDown || bKeyUp) {
+  const bool bKeyPress = (InputType == TEXT("key_press") || InputType == TEXT("keypress"));
+  if (bKeyDown || bKeyUp || bKeyPress) {
     // Key events are routed by FDriveGameInput when a game is running, so a key aimed at a
     // PIE session reaches the possessed pawn's input stack rather than whatever editor widget
     // happens to hold Slate focus (board B-simulate-input-key-events-never-reach-pie-pawn).
@@ -279,8 +280,9 @@ REGISTER_RPC_HANDLER("editor.simulate_input", "editor", "Inject a synthetic keyb
       }
     }
 
-    const EDriveKeyAction Action = bKeyDown ? EDriveKeyAction::Down : EDriveKeyAction::Up;
-    const TCHAR* Verb = bKeyDown ? TEXT("Key down") : TEXT("Key up");
+    const EDriveKeyAction Action = bKeyPress ? EDriveKeyAction::Press
+        : bKeyDown ? EDriveKeyAction::Down : EDriveKeyAction::Up;
+    const TCHAR* Verb = bKeyPress ? TEXT("Key press") : bKeyDown ? TEXT("Key down") : TEXT("Key up");
 
     TSharedPtr<FJsonObject> KeyResp = MakeShared<FJsonObject>();
     KeyResp->SetStringField(TEXT("type"), InputType);
@@ -314,7 +316,7 @@ REGISTER_RPC_HANDLER("editor.simulate_input", "editor", "Inject a synthetic keyb
           MakeShared<TWeakPtr<FDriveGameInputRequest>>();
       TSharedPtr<FDriveGameInputRequest> Request = FDriveGameInput::BeginDeliverKey(
           GameTarget, InputKey, Action,
-          [Token, KeyResp, LeaseHolder, VerbString = FString(Verb), Key](
+          [Token, KeyResp, LeaseHolder, VerbString = FString(Verb), Key, bPress = bKeyPress](
               const FDriveGameKeyObservation& Observation)
           {
             if (LeaseHolder->IsValid() && (*LeaseHolder)->IsActive()) {
@@ -329,8 +331,8 @@ REGISTER_RPC_HANDLER("editor.simulate_input", "editor", "Inject a synthetic keyb
             KeyResp->SetBoolField(TEXT("success"), Observation.bDeliveredToGame);
             if (Observation.bDeliveredToGame) {
               KeyResp->SetStringField(TEXT("message"), FString::Printf(
-                  TEXT("%s: %s reached the selected PIE UPlayerInput on its next tick."),
-                  *VerbString, *Key));
+                  TEXT("%s: %s reached the selected PIE UPlayerInput on its next tick%s."),
+                  *VerbString, *Key, bPress ? TEXT(" (pressed, then released on the following tick)") : TEXT("")));
               Token->SendSuccess(KeyResp);
             } else {
               Token->SendError(ErrorCodes::ERR_INPUT_FAILED, FString::Printf(
@@ -471,7 +473,7 @@ REGISTER_RPC_HANDLER("editor.simulate_input", "editor", "Inject a synthetic keyb
     bSuccess = true;
     Message = FString::Printf(TEXT("Mouse moved to (%f, %f)"), X, Y);
   } else {
-    Message = FString::Printf(TEXT("Unknown input type: %s. Supported: key_down, key_up, mouse_click, mouse_move"), *InputType);
+    Message = FString::Printf(TEXT("Unknown input type: %s. Supported: key_down, key_up, key_press, mouse_click, mouse_move"), *InputType);
   }
 
   TSharedPtr<FJsonObject> Resp = MakeShared<FJsonObject>();

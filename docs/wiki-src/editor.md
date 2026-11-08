@@ -238,7 +238,7 @@ While a session is active the response also carries a top-level `networkEmulatio
 ### editor.simulate_input
 
 **Key events go to the running GAME by default, not to the editor.** With PIE live, `key_down` /
-`key_up` resolve one concrete world, viewport, local player, controller, and input device. The game
+`key_up` / `key_press` resolve one concrete world, viewport, local player, controller, and input device. The game
 route calls that world's `UGameViewportClient::InputKey` after the current world tick and answers
 only after the selected `UPlayerInput` has had its following input tick.
 
@@ -274,6 +274,15 @@ viewport return cannot produce success by themselves; consumed-but-not-processed
 `INPUT_FAILED` with the consuming route. Send `key_down` and `key_up` as a pair: down proves the
 pressed edge and held state, while up proves the released edge and cleared held state. This proves
 PlayerInput delivery, not that an Enhanced Input action or pawn callback executed.
+
+**`key_press` taps a key in one call.** It delivers the down edge, then the up edge once the down
+was observed (the key is held for one observed tick, two in total), and answers after the up. Use it
+for menus and other UI that repeat a held key: a `key_down` / `key_up` pair holds the key for the
+whole round trip between the two calls. `success` and `deliveredToGame` require both edges; the
+response fields describe the down edge when it failed, else the up edge. A down that was queued but
+not delivered is still released; nothing is released after `pie_ended_before_observation` or
+`dispatcher_ended`. On the editor route `key_press` sends both edges to the focused widget at once
+and `handled` is true when either was handled.
 
 An unknown FKey name is `INVALID_KEY`; a missing `key` or an unknown `target` is `INVALID_ARGUMENT`.
 
