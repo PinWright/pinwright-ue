@@ -18,8 +18,10 @@
   (`pid`, `port`, its own `token`, `kind`, `project`, `startTime`, `reason`, `map`, `engine`;
   user-only permissions; removed on clean shutdown). The bundled CLI
   `Content/Python/pinwright_cli.py` (`list`, `call`, `start`, `stop`) finds and drives every
-  instance through those files. Method pages carry `Runtime: true|false` and `registry.json` a
-  `runtime` flag per method; in a game an editor-only method returns `UNKNOWN_ACTION`. Behaviour
+  instance through those files, including a process launched with `-SaveToUserDir`, whose file
+  is under UE's user-dir `Saved/` (`<UserSettingsDir>/<ProjectName>/Saved/`, matched by its
+  `project`). Method pages carry `Runtime: true|false` and `registry.json` a `runtime` flag per
+  method; in a game an editor-only method returns `UNKNOWN_ACTION`. Behaviour
   change: handler and header locations moved (include paths are unchanged), and code linking
   `PINWRIGHT_API` symbols that moved now links `PINWRIGHTRUNTIME_API` ones. Guide:
   `call("game-mode")`, `call("cli")`.

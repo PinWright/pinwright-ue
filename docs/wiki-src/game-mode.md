@@ -18,7 +18,7 @@ Start instances with the CLI (`call("cli")`): `pinwright_cli.py start --name pla
 
 ## Finding and authorizing an instance
 
-Every serving process writes `<Project>/Saved/PinWright/instances/<pid>.json` after it binds and deletes it on a clean shutdown (a packaged build writes under its own `Saved/`):
+Every serving process writes `<Project>/Saved/PinWright/instances/<pid>.json` after it binds and deletes it on a clean shutdown (a packaged build writes under its own `Saved/`; a process launched with `-SaveToUserDir` under `<UserSettingsDir>/<ProjectName>/Saved/`, where the CLI also looks):
 
 ```json
 {"pid": 1234, "port": 51234, "token": "<64 hex>", "kind": "editor|game",

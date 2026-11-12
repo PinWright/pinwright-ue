@@ -31,6 +31,12 @@ class InstanceDiscoveryTests(unittest.TestCase):
         self.pw = os.path.join(self.root, "Saved", "PinWright")
         os.makedirs(os.path.join(self.pw, "instances"))
         self.now_ms = time.time() * 1000
+        # Where -SaveToUserDir puts Saved/: <UserSettingsDir>/<ProjectName>/Saved.
+        user_settings = os.path.join(self.root, "user-settings")
+        self.user_pw = os.path.join(user_settings, "Demo", "Saved", "PinWright")
+        patcher = mock.patch.object(pinwright_cli, "_user_settings_dir", return_value=user_settings)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def _write(self, rel, data):
         path = os.path.join(self.pw, rel)
@@ -75,6 +81,30 @@ class InstanceDiscoveryTests(unittest.TestCase):
         endpoint = pinwright_cli.Endpoint(self.project, live[0])
         self.assertEqual(endpoint._read_token(), "t100")
         self.assertEqual(endpoint._resolve_url(), "http://127.0.0.1:40001/mcp")
+
+    def _user_instance(self, pid, port, project):
+        path = os.path.join(self.user_pw, "instances", "%d.json" % pid)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as fh:
+            json.dump({"pid": pid, "port": port, "token": "t%d" % pid, "kind": "game",
+                       "project": project, "startTime": "2026-01-01T00:00:00Z"}, fh)
+        return path
+
+    def test_save_to_user_dir_instance_is_found(self):
+        # A -game launched with -SaveToUserDir writes under the user-dir Saved, not the project's.
+        path = self._user_instance(100, 40001, self.project)
+        live = pinwright_cli.load_instances(self.project, self._start_ms({100: 0}))
+        self.assertEqual([(e["pid"], e["instanceFile"]) for e in live], [(100, path)])
+        endpoint = pinwright_cli.Endpoint(self.project, live[0])
+        self.assertEqual(endpoint._read_token(), "t100")
+
+    def test_user_dir_instance_of_another_checkout_is_skipped(self):
+        # Every checkout named Demo shares the user-dir Saved; only this project's files count.
+        other = os.path.join(self.root, "other-checkout", "Demo.uproject")
+        self._user_instance(100, 40001, other)
+        self._user_instance(200, 40002, None)
+        live = pinwright_cli.load_instances(self.project, self._start_ms({100: 0, 200: 0}))
+        self.assertEqual(live, [])
 
     def test_selection_errors_are_usage_errors(self):
         live = [{"pid": 1, "port": 40001, "name": "x", "primary": False},

@@ -22,7 +22,10 @@ RPC error, a tool result with isError, a refused start/stop), 2 bad usage or no 
 
 Instance discovery follows docs/runtime-module.md: every serving process writes
 <Project>/Saved/PinWright/instances/<pid>.json ({pid, port, token, kind, project, startTime,
-reason, map, engine}) after it binds and deletes it on a clean shutdown. A file whose pid is gone,
+reason, map, engine}) after it binds and deletes it on a clean shutdown; a process launched with
+-SaveToUserDir writes it under <UserSettingsDir>/<ProjectName>/Saved/ instead, which other
+checkouts of the same project name share, so a file there counts only when its `project` is this
+one. A file whose pid is gone,
 or whose pid belongs to a process started after the file was written (pid reuse), is stale and
 skipped. The primary editor is also found from gateway-port when it has no instance file, and is
 always authorized with gateway-token (the MCP proxy's credential); every other instance with the
@@ -103,6 +106,31 @@ def _names_dir(project):
     return os.path.join(_pinwright_dir(project), "cli-names")
 
 
+def _user_settings_dir():
+    """FPlatformProcess::UserSettingsDir(): %LOCALAPPDATA% on Windows, ~/.config/Epic on Linux."""
+    if sys.platform == "win32":
+        return os.environ.get("LOCALAPPDATA")
+    return os.path.join(os.path.expanduser("~"), ".config", "Epic")
+
+
+def _instance_dirs(project):
+    """(directory, shared) for each place a process of project writes its instance file: the
+    project's Saved/, and, for a process launched with -SaveToUserDir, FPaths::ProjectUserDir's
+    <UserSettingsDir>/<ProjectName>/Saved/. The second is shared by every checkout with the same
+    project name, so its files count only when their `project` is this one."""
+    dirs = [(os.path.join(_pinwright_dir(project), "instances"), False)]
+    user_dir = _user_settings_dir()
+    if user_dir:
+        name = os.path.splitext(os.path.basename(project))[0]
+        dirs.append((os.path.join(user_dir, name, "Saved", "PinWright", "instances"), True))
+    return dirs
+
+
+def _same_path(a, b):
+    return isinstance(a, str) and isinstance(b, str) \
+        and os.path.normcase(os.path.abspath(a)) == os.path.normcase(os.path.abspath(b))
+
+
 def _read_live_record(path, start_ms_fn):
     """The JSON object at path when the pid it names is alive and started before the file was
     written, else None."""
@@ -139,10 +167,14 @@ def load_instances(project, start_ms_fn=pinwright_supervisor.process_start_ms):
     gateway_port = mcp_proxy._read_gateway_port(os.path.dirname(project))
     names = load_names(project, start_ms_fn)
     out = []
-    for path in sorted(glob.glob(os.path.join(pw_dir, "instances", "*.json")),
-                       key=lambda p: (os.path.getmtime(p) if os.path.exists(p) else 0, p)):
+    files = [(path, shared) for directory, shared in _instance_dirs(project)
+             for path in glob.glob(os.path.join(directory, "*.json"))]
+    for path, shared in sorted(
+            files, key=lambda f: (os.path.getmtime(f[0]) if os.path.exists(f[0]) else 0, f[0])):
         data = _read_live_record(path, start_ms_fn)
         if data is None or not _is_port(data.get("port")):
+            continue
+        if shared and not _same_path(data.get("project"), project):
             continue
         data["instanceFile"] = path
         data["primary"] = data["port"] == gateway_port
@@ -359,7 +391,8 @@ def cmd_start(opts, project):
             structured["hint"] = (
                 "no instance file for pid %s appeared under %s; a server without instance-file "
                 "support (docs/runtime-module.md) cannot be found on an ephemeral port"
-                % (endpoint.launched_pid, os.path.join(_pinwright_dir(project), "instances")))
+                % (endpoint.launched_pid,
+                   " or ".join(directory for directory, _ in _instance_dirs(project))))
     return _emit_tool_result({"result": result})
 
 
