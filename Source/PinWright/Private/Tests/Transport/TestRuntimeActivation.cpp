@@ -190,7 +190,8 @@ namespace PinWrightRuntimeActivationTest
         const int32 Mode = static_cast<int32>(Info.st_mode & (S_IRWXU | S_IRWXG | S_IRWXO));
         return (Mode & (S_IRWXG | S_IRWXO)) == 0
             ? FString()
-            : FString::Printf(TEXT("mode %o grants group or other access"), Mode);
+            // UE's checked Printf has no %o: print the three permission digits in octal one by one.
+            : FString::Printf(TEXT("mode 0%d%d%d grants group or other access"), (Mode >> 6) & 7, (Mode >> 3) & 7, Mode & 7);
 #else
         return FString();
 #endif
